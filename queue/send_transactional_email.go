@@ -1,0 +1,37 @@
+package queue
+
+import (
+	"context"
+
+	"github.com/riverqueue/river"
+
+	"deploycrate-ce/email"
+	"deploycrate-ce/queue/jobs"
+)
+
+type SendTransactionalEmailWorker struct {
+	river.WorkerDefaults[jobs.SendTransactionalEmailArgs]
+	sender email.TransactionalSender
+}
+
+func NewSendTransactionalEmailWorker(sender email.TransactionalSender) *SendTransactionalEmailWorker {
+	return &SendTransactionalEmailWorker{
+		sender: sender,
+	}
+}
+
+func (w *SendTransactionalEmailWorker) Register(workers *river.Workers) error {
+	return river.AddWorkerSafely(workers, w)
+}
+
+func (w *SendTransactionalEmailWorker) Work(ctx context.Context, job *river.Job[jobs.SendTransactionalEmailArgs]) error {
+	err := email.SendTransactional(ctx, job.Args.Data, w.sender)
+	if err != nil {
+		if !email.IsRetryable(err) {
+			return river.JobCancel(err)
+		}
+		return err
+	}
+
+	return nil
+}

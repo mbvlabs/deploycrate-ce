@@ -1,0 +1,12 @@
+// Package models contains data models and validation logic.
+package models
+
+type (
+	user  struct{}
+	token struct{}
+)
+
+var (
+	User  user
+	Token token
+)

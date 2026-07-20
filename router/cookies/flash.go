@@ -1,0 +1,78 @@
+package cookies
+
+import (
+	"strings"
+	"time"
+
+	"deploycrate-ce/config"
+	"deploycrate-ce/internal/server"
+
+	"github.com/labstack/echo-contrib/v5/session"
+	"github.com/labstack/echo/v5"
+	"github.com/rs/xid"
+)
+
+type FlashMessage struct {
+	ID        xid.ID
+	Type      FlashType
+	CreatedAt time.Time
+	Message   string
+}
+
+var (
+	flashSession = func() string {
+		if config.Env == server.ProdEnvironment {
+			return strings.ToLower(config.ProjectName) + "_" + "flash_key"
+		}
+
+		return strings.ToLower(config.ProjectName) + "_" + "dev_flash_key"
+	}()
+	flashSessionName = "flash_session"
+)
+
+type FlashType string
+
+const (
+	FlashSuccess FlashType = "success"
+	FlashError   FlashType = "error"
+	FlashWarning FlashType = "warning"
+	FlashInfo    FlashType = "info"
+)
+
+func AddFlash(
+	c *echo.Context, flashType FlashType, msg string,
+) error {
+	sess, err := session.Get(flashSession, c)
+	if err != nil {
+		return err
+	}
+
+	sess.AddFlash(FlashMessage{
+		ID:        xid.New(),
+		Type:      flashType,
+		CreatedAt: time.Now(),
+		Message:   msg,
+	}, flashSessionName)
+
+	return sess.Save(c.Request(), c.Response())
+}
+
+func ExtractFlashes(c *echo.Context) ([]FlashMessage, error) {
+	sess, err := session.Get(flashSession, c)
+	if err != nil {
+		return nil, err
+	}
+
+	var flashMessages []FlashMessage
+	for _, flash := range sess.Flashes(flashSessionName) {
+		if msg, ok := flash.(FlashMessage); ok {
+			flashMessages = append(flashMessages, msg)
+		}
+	}
+
+	if err := sess.Save(c.Request(), c.Response()); err != nil {
+		return nil, err
+	}
+
+	return flashMessages, nil
+}

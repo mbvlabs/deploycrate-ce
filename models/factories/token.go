@@ -1,0 +1,119 @@
+package factories
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"deploycrate-ce/internal/storage"
+	"deploycrate-ce/models"
+
+	"github.com/google/uuid"
+)
+
+// TokenFactory wraps models.TokenEntity for testing
+type TokenFactory struct {
+	models.TokenEntity
+}
+
+// TokenOption is a functional option for configuring a TokenFactory
+type TokenOption func(*TokenFactory)
+
+// BuildToken creates an in-memory Token with default test values.
+// Auto-managed fields (ID, timestamps) are left at zero and set by CreateToken.
+func BuildToken(opts ...TokenOption) models.TokenEntity {
+	f := &TokenFactory{
+		TokenEntity: models.TokenEntity{
+			Scope:     "default",
+			ExpiresAt: time.Now().Add(1 * time.Hour),
+			Hash:      "test-hash",
+			MetaData:  json.RawMessage("{}"),
+		},
+	}
+
+	for _, opt := range opts {
+		opt(f)
+	}
+
+	return f.TokenEntity
+}
+
+// CreateToken creates and persists a Token to the database.
+// It returns the entity populated with all DB-assigned values via RETURNING *.
+func CreateToken(
+	ctx context.Context,
+	exec storage.Executor,
+	opts ...TokenOption,
+) (models.TokenEntity, error) {
+	built := BuildToken(opts...)
+
+	entity := models.TokenEntity{
+		ID:        uuid.New(),
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		Scope:     built.Scope,
+		ExpiresAt: built.ExpiresAt,
+		Hash:      built.Hash,
+		MetaData:  built.MetaData,
+	}
+
+	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
+		return models.TokenEntity{}, err
+	}
+
+	return entity, nil
+}
+
+// CreateTokens creates multiple Token records at once
+func CreateTokens(
+	ctx context.Context,
+	exec storage.Executor,
+	count int,
+	opts ...TokenOption,
+) ([]models.TokenEntity, error) {
+	tokens := make([]models.TokenEntity, 0, count)
+
+	for i := range count {
+		token, err := CreateToken(ctx, exec, opts...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create token %d: %w", i+1, err)
+		}
+		tokens = append(tokens, token)
+	}
+
+	return tokens, nil
+}
+
+// WithScope sets the scope for the token
+func WithScope(scope string) TokenOption {
+	return func(f *TokenFactory) {
+		f.Scope = scope
+	}
+}
+
+// WithExpiresAt sets the expiration time for the token
+func WithExpiresAt(t time.Time) TokenOption {
+	return func(f *TokenFactory) {
+		f.ExpiresAt = t
+	}
+}
+
+// WithMetaData sets the metadata for the token
+func WithMetaData(data json.RawMessage) TokenOption {
+	return func(f *TokenFactory) {
+		f.MetaData = data
+	}
+}
+
+// WithExpired creates a token that has already expired
+func WithExpired() TokenOption {
+	return WithExpiresAt(time.Now().Add(-1 * time.Hour))
+}
+
+// WithHash sets a custom hash
+func WithHash(hash string) TokenOption {
+	return func(f *TokenFactory) {
+		f.Hash = hash
+	}
+}

@@ -1,0 +1,197 @@
+// Package router provides the application routes and middleware setup.
+package router
+
+import (
+	"encoding/gob"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"strings"
+
+	"deploycrate-ce/config"
+	"deploycrate-ce/internal/inertia"
+	"deploycrate-ce/internal/server"
+	"deploycrate-ce/router/cookies"
+	"deploycrate-ce/router/middleware"
+	"deploycrate-ce/telemetry"
+
+	"github.com/google/uuid"
+	"github.com/gorilla/sessions"
+	"github.com/labstack/echo-contrib/v5/session"
+	"github.com/labstack/echo/v5"
+	echomw "github.com/labstack/echo/v5/middleware"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.uber.org/fx"
+)
+
+type Router struct {
+	e       *echo.Echo
+	Handler http.Handler
+}
+
+func New(
+	cfg config.Config,
+	tel *telemetry.Telemetry,
+) (*Router, error) {
+	gob.Register(uuid.UUID{})
+	gob.Register(cookies.FlashMessage{})
+
+	authKey, err := hex.DecodeString(cfg.App.SessionKey)
+	if err != nil {
+		return nil, err
+	}
+	encKey, err := hex.DecodeString(cfg.App.SessionEncryptionKey)
+	if err != nil {
+		return nil, err
+	}
+
+	router := echo.New()
+	defaultHTTPErrorHandler := echo.DefaultHTTPErrorHandler(false)
+	router.HTTPErrorHandler = func(c *echo.Context, err error) {
+		if panicErr, ok := errors.AsType[*echomw.PanicStackError](err); ok {
+			slog.ErrorContext(
+				c.Request().Context(),
+				"http panic recovered",
+				"method", c.Request().Method,
+				"path", c.Request().URL.Path,
+				"error", panicErr.Unwrap(),
+				"stack", string(panicErr.Stack),
+			)
+		} else {
+			slog.ErrorContext(
+				c.Request().Context(),
+				"http handler error",
+				"method", c.Request().Method,
+				"path", c.Request().URL.Path,
+				"error", err,
+			)
+		}
+
+		defaultHTTPErrorHandler(c, err)
+	}
+
+	globalMiddleware, err := SetupGlobalMiddleware(cfg, tel, authKey, encKey, "_csrf")
+	if err != nil {
+		return nil, err
+	}
+
+	router.Use(globalMiddleware...)
+
+	handler := otelhttp.NewHandler(router, "http")
+
+	return &Router{
+		e:       router,
+		Handler: handler,
+	}, nil
+}
+
+func SetupGlobalMiddleware(
+	cfg config.Config,
+	tel *telemetry.Telemetry,
+	authKey []byte,
+	encKey []byte,
+	csrfName string,
+) ([]echo.MiddlewareFunc, error) {
+	csrfMiddleware, err := middleware.CSRFMiddleware(cfg, csrfName)
+	if err != nil {
+		return nil, err
+	}
+	sessionStore, err := newApplicationSessionStore(
+		authKey,
+		encKey,
+		cfg.App.SessionMaxAge,
+		config.Env == server.ProdEnvironment,
+	)
+	if err != nil {
+		return nil, err
+	}
+	corsConfig, err := newCORSConfig(config.BaseURL, cfg.App.CORSAllowedOrigins)
+	if err != nil {
+		return nil, err
+	}
+
+	// Order matters: middlewares execute in the order listed, with Recover last
+	// to catch panics from all preceding middlewares.
+	middlewares := []echo.MiddlewareFunc{
+		middleware.TraceRouteAttributes(tel),
+		middleware.Logger(tel),
+		session.Middleware(sessionStore),
+		middleware.ValidateSession,
+		middleware.RegisterRequestMeta,
+		inertia.Middleware(),
+		echomw.CORSWithConfig(corsConfig),
+		csrfMiddleware,
+		echomw.Recover(),
+	}
+
+	return middlewares, nil
+}
+
+func newApplicationSessionStore(
+	authKey []byte,
+	encKey []byte,
+	maxAge int,
+	secure bool,
+) (*sessions.CookieStore, error) {
+	if maxAge <= 0 {
+		return nil, errors.New("SESSION_MAX_AGE must be greater than zero")
+	}
+
+	store := sessions.NewCookieStore(authKey, encKey)
+	store.Options = &sessions.Options{
+		Path:     "/",
+		MaxAge:   maxAge,
+		HttpOnly: true,
+		Secure:   secure,
+		SameSite: http.SameSiteLaxMode,
+	}
+
+	return store, nil
+}
+
+func newCORSConfig(applicationOrigin string, additionalOrigins []string) (echomw.CORSConfig, error) {
+	applicationOrigin = strings.TrimSpace(applicationOrigin)
+	if applicationOrigin == "" {
+		return echomw.CORSConfig{}, errors.New("application origin must not be empty")
+	}
+	if strings.Contains(applicationOrigin, "*") {
+		return echomw.CORSConfig{}, fmt.Errorf("credentialed CORS origin %q must not contain a wildcard", applicationOrigin)
+	}
+
+	origins := []string{applicationOrigin}
+	for _, configuredOrigin := range additionalOrigins {
+		origin := strings.TrimSpace(configuredOrigin)
+		if origin == "" {
+			continue
+		}
+		if strings.Contains(origin, "*") {
+			return echomw.CORSConfig{}, fmt.Errorf("credentialed CORS origin %q must not contain a wildcard", origin)
+		}
+		origins = append(origins, origin)
+	}
+
+	return echomw.CORSConfig{
+		AllowOrigins:     origins,
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+		AllowHeaders:     []string{"Accept", "Authorization", "Content-Type", "X-CSRF-Token"},
+		AllowCredentials: true,
+		MaxAge:           300,
+	}, nil
+}
+
+func (r *Router) AddRoute(route echo.Route) (echo.RouteInfo, error) {
+	return r.e.AddRoute(route)
+}
+
+func (r *Router) AddRouteNotFound(
+	notFoundHandler echo.HandlerFunc,
+) echo.RouteInfo {
+	return r.e.RouteNotFound("/*", notFoundHandler)
+}
+
+var Module = fx.Module(
+	"router",
+	fx.Provide(New),
+)

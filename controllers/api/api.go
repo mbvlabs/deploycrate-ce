@@ -1,0 +1,40 @@
+package api
+
+import (
+	"errors"
+	"net/http"
+
+	"deploycrate-ce/internal/storage"
+	"deploycrate-ce/router"
+	"deploycrate-ce/router/routes"
+
+	"github.com/labstack/echo/v5"
+)
+
+type API struct {
+	db storage.Pool
+}
+
+func NewAPI(db storage.Pool) API {
+	return API{db}
+}
+
+func (a API) RegisterRoutes(r *router.Router) error {
+	errs := []error{}
+
+	_, err := r.AddRoute(echo.Route{
+		Method:  http.MethodGet,
+		Path:    routes.Health.Path(),
+		Name:    routes.Health.Name(),
+		Handler: a.Health,
+	})
+	if err != nil {
+		errs = append(errs, err)
+	}
+
+	return errors.Join(errs...)
+}
+
+func (a API) Health(etx *echo.Context) error {
+	return etx.JSON(http.StatusOK, "app is healthy and running")
+}

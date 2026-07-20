@@ -1,0 +1,248 @@
+package services
+
+import (
+	"context"
+
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"deploycrate-ce/config"
+	"deploycrate-ce/email"
+
+	"deploycrate-ce/internal/validation"
+	"deploycrate-ce/models"
+
+	"deploycrate-ce/queue/jobs"
+	"deploycrate-ce/router/routes"
+)
+
+const userResetPassword = "user_password_reset"
+
+var (
+	ErrInvalidResetCode = errors.New("invalid reset code")
+	ErrExpiredResetCode = errors.New("reset code has expired")
+)
+
+type RequestResetPasswordData struct {
+	Email string
+}
+
+func (i Identity) RequestResetPassword(
+	ctx context.Context,
+	data RequestResetPasswordData,
+) error {
+	b := validation.NewBuilder()
+	b.Required("email", data.Email)
+	if !b.Errors().Empty() {
+		return b.Errors()
+	}
+
+	tx, err := i.db.BeginTx(ctx, nil)
+
+	if err != nil {
+
+		return fmt.Errorf("begin password reset request transaction: %w", err)
+
+	}
+
+	user, err := models.User.FindByEmail(ctx, tx, data.Email)
+	if err != nil {
+		_ = tx.Rollback()
+
+		if errors.Is(err, models.ErrNotFound) {
+			return nil
+		}
+		return fmt.Errorf("find password reset user: %w", err)
+
+	}
+
+	meta, err := json.Marshal(map[string]string{
+		"email": user.Email,
+	})
+	if err != nil {
+		_ = tx.Rollback()
+
+		return fmt.Errorf("marshal password reset token metadata: %v", err)
+
+	}
+
+	token, err := models.Token.Create(
+		ctx,
+		tx,
+		i.tokenSigningKey,
+
+		userResetPassword,
+		time.Now().Add(1*time.Hour),
+		meta,
+	)
+	if err != nil {
+		_ = tx.Rollback()
+
+		return fmt.Errorf("create password reset token: %w", err)
+
+	}
+
+	if err := tx.Commit(); err != nil {
+
+		return fmt.Errorf("commit password reset request transaction: %w", err)
+
+	}
+
+	resetURL := fmt.Sprintf("%s%s", config.BaseURL, routes.PasswordEdit.URL(token))
+
+	rpEmail := email.ResetPassword{ResetURL: resetURL}
+
+	html, err := rpEmail.ToHTML()
+	if err != nil {
+
+		return fmt.Errorf("render password reset email html: %v", err)
+
+	}
+
+	text, err := rpEmail.ToText()
+	if err != nil {
+
+		return fmt.Errorf("render password reset email text: %v", err)
+
+	}
+
+	_, err = i.insertOnly.Insert(ctx, jobs.SendTransactionalEmailArgs{
+
+		Data: email.TransactionalData{
+			To:       user.Email,
+			From:     config.DefaultSenderSignature,
+			Subject:  "Reset Your Password",
+			HTMLBody: html,
+			TextBody: text,
+		},
+	}, nil)
+
+	if err != nil {
+		return fmt.Errorf("queue password reset email: %v", err)
+	}
+
+	return nil
+}
+
+type ResetPasswordData struct {
+	Token           string
+	Password        string
+	ConfirmPassword string
+}
+
+func (i Identity) ResetPassword(
+	ctx context.Context,
+	data ResetPasswordData,
+) error {
+
+	b := validation.NewBuilder()
+	b.Required("password", data.Password)
+	b.MinLen("password", data.Password, 8)
+	b.Required("confirmPassword", data.ConfirmPassword)
+	if data.Password != data.ConfirmPassword {
+		b.Add("confirmPassword", "mismatch", "Passwords do not match")
+	}
+	if !b.Errors().Empty() {
+		return b.Errors()
+	}
+
+	tx, err := i.db.BeginTx(ctx, nil)
+
+	if err != nil {
+
+		return fmt.Errorf("begin password reset transaction: %w", err)
+
+	}
+
+	token, err := models.Token.FindByScopeAndHash(
+		ctx,
+		tx,
+		i.tokenSigningKey,
+
+		userResetPassword,
+		data.Token,
+	)
+	if err != nil {
+		_ = tx.Rollback()
+
+		if errors.Is(err, models.ErrNotFound) {
+			return ErrInvalidResetCode
+		}
+		return fmt.Errorf("find password reset token: %w", err)
+
+	}
+
+	if !token.IsValid(data.Token, i.tokenSigningKey) {
+
+		_ = tx.Rollback()
+		return ErrExpiredResetCode
+	}
+
+	var meta map[string]string
+	if err := json.Unmarshal(token.MetaData, &meta); err != nil {
+		_ = tx.Rollback()
+
+		return fmt.Errorf("unmarshal password reset token metadata: %v", err)
+
+	}
+
+	emailAddr, ok := meta["email"]
+	if !ok {
+		_ = tx.Rollback()
+
+		return errors.New("password reset token metadata missing email")
+
+	}
+
+	user, err := models.User.FindByEmail(ctx, tx, emailAddr)
+	if err != nil {
+		_ = tx.Rollback()
+
+		if errors.Is(err, models.ErrNotFound) {
+			return ErrInvalidResetCode
+		}
+		return fmt.Errorf("find password reset user: %w", err)
+
+	}
+
+	hashedPassword, err := models.HashPassword(data.Password, i.pepper)
+
+	if err != nil {
+		_ = tx.Rollback()
+
+		return fmt.Errorf("hash reset password: %w", err)
+
+	}
+
+	_, err = models.User.Update(ctx, tx, models.UpdateUserData{
+		ID:               user.ID,
+		Email:            user.Email,
+		EmailValidatedAt: user.EmailValidatedAt,
+		Password:         []byte(hashedPassword),
+		IsAdmin:          user.IsAdmin,
+	})
+	if err != nil {
+		_ = tx.Rollback()
+
+		if errors.Is(err, models.ErrNotFound) {
+			return ErrInvalidResetCode
+		}
+		return fmt.Errorf("update password reset user: %w", err)
+
+	}
+
+	if err := models.Token.Destroy(ctx, tx, token.ID); err != nil {
+		_ = tx.Rollback()
+
+		return fmt.Errorf("destroy password reset token: %w", err)
+
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit password reset transaction: %w", err)
+	}
+
+	return nil
+}

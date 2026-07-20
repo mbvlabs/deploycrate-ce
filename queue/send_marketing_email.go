@@ -1,0 +1,37 @@
+package queue
+
+import (
+	"context"
+
+	"github.com/riverqueue/river"
+
+	"deploycrate-ce/email"
+	"deploycrate-ce/queue/jobs"
+)
+
+type SendMarketingEmailWorker struct {
+	river.WorkerDefaults[jobs.SendMarketingEmailArgs]
+	sender email.MarketingSender
+}
+
+func NewSendMarketingEmailWorker(sender email.MarketingSender) *SendMarketingEmailWorker {
+	return &SendMarketingEmailWorker{
+		sender: sender,
+	}
+}
+
+func (w *SendMarketingEmailWorker) Register(workers *river.Workers) error {
+	return river.AddWorkerSafely(workers, w)
+}
+
+func (w *SendMarketingEmailWorker) Work(ctx context.Context, job *river.Job[jobs.SendMarketingEmailArgs]) error {
+	err := email.SendMarketing(ctx, job.Args.Data, w.sender)
+	if err != nil {
+		if !email.IsRetryable(err) {
+			return river.JobCancel(err)
+		}
+		return err
+	}
+
+	return nil
+}

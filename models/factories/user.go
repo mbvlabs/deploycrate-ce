@@ -1,0 +1,120 @@
+package factories
+
+import (
+	"context"
+	"database/sql"
+	"fmt"
+	"time"
+
+	"deploycrate-ce/internal/storage"
+	"deploycrate-ce/models"
+
+	"github.com/go-faker/faker/v4"
+	"github.com/google/uuid"
+)
+
+// UserFactory wraps models.UserEntity for testing
+type UserFactory struct {
+	models.UserEntity
+}
+
+// UserOption is a functional option for configuring a UserFactory
+type UserOption func(*UserFactory)
+
+// BuildUser creates an in-memory User with default test values.
+// Auto-managed fields (ID, timestamps) are left at zero and set by CreateUser.
+func BuildUser(opts ...UserOption) models.UserEntity {
+	f := &UserFactory{
+		UserEntity: models.UserEntity{
+			Email:            faker.Email(),
+			EmailValidatedAt: sql.NullTime{},
+			Password:         defaultPassword(),
+			IsAdmin:          false,
+		},
+	}
+
+	for _, opt := range opts {
+		opt(f)
+	}
+
+	return f.UserEntity
+}
+
+// CreateUser creates and persists a User to the database.
+// It returns the entity populated with all DB-assigned values via RETURNING *.
+func CreateUser(
+	ctx context.Context,
+	exec storage.Executor,
+	opts ...UserOption,
+) (models.UserEntity, error) {
+	built := BuildUser(opts...)
+
+	entity := models.UserEntity{
+		ID:               uuid.New(),
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
+		Email:            built.Email,
+		EmailValidatedAt: built.EmailValidatedAt,
+		Password:         built.Password,
+		IsAdmin:          built.IsAdmin,
+	}
+
+	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
+		return models.UserEntity{}, err
+	}
+
+	return entity, nil
+}
+
+// CreateUsers creates multiple User records at once
+func CreateUsers(
+	ctx context.Context,
+	exec storage.Executor,
+	count int,
+	opts ...UserOption,
+) ([]models.UserEntity, error) {
+	users := make([]models.UserEntity, 0, count)
+
+	for i := range count {
+		user, err := CreateUser(ctx, exec, opts...)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create user %d: %w", i+1, err)
+		}
+		users = append(users, user)
+	}
+
+	return users, nil
+}
+
+// WithEmail sets the email address for the user
+func WithEmail(email string) UserOption {
+	return func(f *UserFactory) {
+		f.Email = email
+	}
+}
+
+// WithIsAdmin sets whether the user is an admin
+func WithIsAdmin(isAdmin bool) UserOption {
+	return func(f *UserFactory) {
+		f.IsAdmin = isAdmin
+	}
+}
+
+// WithEmailValidatedAt sets the email validation timestamp
+func WithEmailValidatedAt(t time.Time) UserOption {
+	return func(f *UserFactory) {
+		f.EmailValidatedAt = sql.NullTime{Time: t, Valid: true}
+	}
+}
+
+// WithValidatedEmail marks the email as validated at the current time
+func WithValidatedEmail() UserOption {
+	return WithEmailValidatedAt(time.Now())
+}
+
+// WithPassword sets a custom password hash.
+func WithPassword(password []byte) UserOption {
+	return func(f *UserFactory) {
+		f.Password = password
+	}
+}

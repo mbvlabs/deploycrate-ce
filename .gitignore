@@ -1,0 +1,6 @@
+node_modules
+.env
+bin
+tmp
+deploycrate-ce.db
+.andurel-upgrade-state.json
