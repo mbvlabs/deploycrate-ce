@@ -60,10 +60,24 @@ func (s Sessions) RegisterRoutes(r *router.Router) error {
 		errs = append(errs, err)
 	}
 
+	_, err = r.AddRoute(echo.Route{
+		Method:  http.MethodHead,
+		Path:    routes.SessionNew.Path(),
+		Name:    routes.SessionNew.Name() + ".head",
+		Handler: s.New,
+	})
+	if err != nil {
+		errs = append(errs, err)
+	}
+
 	return errors.Join(errs...)
 }
 
 func (s Sessions) New(etx *echo.Context) error {
+	if cookies.ExtractFromCookieApp(etx).IsAuthenticated {
+		return inertia.Redirect(etx, routes.HomePage.URL(), http.StatusSeeOther)
+	}
+
 	return inertia.Page(etx, "Auth/Login", inertia.Props{})
 }
 
@@ -135,7 +149,11 @@ func (s Sessions) Create(etx *echo.Context) error {
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 
-	if flashErr := cookies.AddFlash(etx, cookies.FlashSuccess, "Successfully logged in!"); flashErr != nil {
+	if flashErr := cookies.AddFlash(
+		etx,
+		cookies.FlashSuccess,
+		"Successfully logged in!",
+	); flashErr != nil {
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 
@@ -153,7 +171,11 @@ func (s Sessions) Destroy(etx *echo.Context) error {
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 
-	if flashErr := cookies.AddFlash(etx, cookies.FlashSuccess, "Successfully logged out!"); flashErr != nil {
+	if flashErr := cookies.AddFlash(
+		etx,
+		cookies.FlashSuccess,
+		"Successfully logged out!",
+	); flashErr != nil {
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 

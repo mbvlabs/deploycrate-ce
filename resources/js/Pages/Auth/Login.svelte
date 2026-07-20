@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Link, useForm } from '@inertiajs/svelte'
+  import { useForm } from '@inertiajs/svelte'
 
   import Layout from '@/Layouts/Layout.svelte'
   import { routes } from '@/routes'
@@ -31,10 +31,8 @@
           <input id="password" bind:value={$form.password} type="password" class="flex h-9 w-full border border-[#2f3a37] bg-[#090c0d] px-3 py-1 text-sm text-[#e4dfd2] shadow-inner shadow-black/35 focus:border-[#8df7a4] focus:outline-none focus:ring-2 focus:ring-[#8df7a4]/20" required />
           {#if errors.password}<p class="text-sm font-medium text-[#ff875f]">{errors.password}</p>{/if}
         </div>
-        <p class="text-right text-sm"><Link class="text-[#d7d0bf] hover:text-[#f2ead8] hover:underline" href={routes.passwordNew()}>Forgot your password?</Link></p>
         <button type="submit" disabled={$form.processing} class="inline-flex w-full items-center justify-center bg-[#ff6b1a] px-4 py-2 text-sm font-medium text-[#130f0b] shadow-sm shadow-black/40 hover:bg-[#ff8748] disabled:opacity-60">{$form.processing ? 'Loading' : 'Login'}</button>
       </form>
-      <p class="mt-6 text-center text-sm text-[#8f8a7d]">Don't have an account? <Link class="text-[#d7d0bf] hover:text-[#f2ead8] hover:underline" href={routes.registrationNew()}>Sign up</Link></p>
     </div>
   </section>
 </Layout>

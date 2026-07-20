@@ -22,7 +22,6 @@ templ (w Welcome) Page() {
 							</p>
 							<div class="mt-8 flex flex-wrap gap-3">
 								<a class="bg-[#ff6b1a] px-4 py-2 text-sm font-semibold text-[#130f0b] shadow-sm shadow-black/40 transition hover:bg-[#ff8748]" href="https://andurel.com">Read the docs</a>
-								<a class="border border-[#2f3a37] bg-[#101414]/80 px-4 py-2 text-sm font-semibold text-[#d7d0bf] transition hover:border-[#52605c] hover:text-[#f2ead8]" href={ routes.RegistrationNew.URL() }>Create account</a>
 							</div>
 						</div>
 						<div class="border border-[#2f3a37] bg-[#101414]/80 p-4 shadow-sm shadow-black/40">
@@ -31,7 +30,7 @@ templ (w Welcome) Page() {
 								<span class="text-[#8df7a4]">ready</span>
 							</div>
 							<div class="space-y-4 font-mono text-sm">
-								@consoleLine("auth", "sessions, registration, reset password")
+								@consoleLine("auth", "authenticated sessions")
 								@consoleLine("views", "Templ + Inertia scaffold online")
 								@consoleLine("routes", "slugged endpoints mounted")
 								@consoleLine("jobs", "queue worker ready")
@@ -39,7 +38,7 @@ templ (w Welcome) Page() {
 						</div>
 						<section class="grid gap-4 md:grid-cols-2 lg:col-span-2">
 							@welcomeCard("Documentation", "Start with the framework guides and learn the conventions that shape an Andurel app.", "https://andurel.com")
-							@welcomeCard("Authentication", "Registration, sessions, email confirmation, and password reset are already wired.", routes.RegistrationNew.URL())
+							@welcomeCard("Authentication", "Authenticated sessions are wired and ready.", routes.HomePage.URL())
 							@welcomeCard("Templ and Inertia", "Render server-side Templ pages or scaffold Inertia pages when Inertia is enabled.", routes.HomePage.URL())
 							@welcomeCard("Command line", "Generate models, factories, controllers, routes, jobs, emails, and views from the CLI.", "https://andurel.com")
 						</section>

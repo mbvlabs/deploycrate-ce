@@ -25,7 +25,6 @@
       <nav class="flex flex-wrap items-center justify-end gap-3 text-sm">
         <a class="px-2 py-1 text-[#aaa393] transition hover:text-[#f2ead8]" href="https://andurel.com">Documentation</a>
         <a class="px-2 py-1 text-[#aaa393] transition hover:text-[#f2ead8]" href={routes.sessionNew()}>Log in</a>
-        <a class="px-2 py-1 text-[#aaa393] transition hover:text-[#f2ead8]" href={routes.registrationNew()}>Register</a>
       </nav>
     </div>
   </header>

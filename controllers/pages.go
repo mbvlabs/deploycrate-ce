@@ -9,6 +9,7 @@ import (
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/queue"
 	"deploycrate-ce/router"
+	"deploycrate-ce/router/middleware"
 	"deploycrate-ce/router/routes"
 	"deploycrate-ce/views"
 
@@ -35,22 +36,15 @@ func (p Pages) RegisterRoutes(r *router.Router) error {
 		Path:    routes.HomePage.Path(),
 		Name:    routes.HomePage.Name(),
 		Handler: p.Home,
+		Middlewares: []echo.MiddlewareFunc{
+			middleware.AuthOnly,
+		},
 	})
 	if err != nil {
 		errs = append(errs, err)
 	}
 
-	_, err = r.AddRoute(echo.Route{
-		Method:  http.MethodHead,
-		Path:    routes.HomePage.Path(),
-		Name:    routes.HomePage.Name() + ".head",
-		Handler: p.Home,
-	})
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	_ = r.AddRouteNotFound(p.NotFound)
+	_ = r.AddRouteNotFound(middleware.AuthOnly(p.NotFound))
 
 	return errors.Join(errs...)
 }
