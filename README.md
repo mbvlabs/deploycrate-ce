@@ -987,4 +987,6 @@ For Andurel-specific questions and issues:
 
 ## License
 
-This project is licensed under the MIT License.
+DeployCrate Community Edition is licensed under the [GNU Affero General Public License v3.0 only](LICENSE) (`AGPL-3.0-only`). Unless a directory contains its own license, the AGPL applies to all code in this repository.
+
+Standalone DeployCrate SDKs, API clients, and integration libraries may be released under the MIT or Apache 2.0 license and will identify that license in their own package. Proprietary DeployCrate Cloud features are not part of this repository.
