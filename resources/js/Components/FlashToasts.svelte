@@ -1,7 +1,14 @@
 <script lang="ts">
+  import CircleCheckIcon from '@lucide/svelte/icons/circle-check'
+  import CircleXIcon from '@lucide/svelte/icons/circle-x'
+  import InfoIcon from '@lucide/svelte/icons/info'
   import { router } from '@inertiajs/svelte'
+  import { onMount } from 'svelte'
+
+  import * as Alert from '@/Components/ui/alert'
 
   type FlashMessage = {
+    ID?: string
     Type: string
     Message: string
   }
@@ -11,6 +18,7 @@
   let { initialFlashes }: { initialFlashes?: unknown } = $props()
   let toasts = $state<Toast[]>([])
   let nextId = 0
+  const seenFlashIds = new Set<string>()
 
   function isFlashMessage(value: unknown): value is FlashMessage {
     if (!value || typeof value !== 'object') return false
@@ -23,6 +31,9 @@
     if (!Array.isArray(value)) return
 
     for (const flash of value.filter(isFlashMessage)) {
+      if (flash.ID && seenFlashIds.has(flash.ID)) continue
+      if (flash.ID) seenFlashIds.add(flash.ID)
+
       const id = nextId++
       toasts.push({ ...flash, id })
       window.setTimeout(() => {
@@ -31,28 +42,35 @@
     }
   }
 
-  $effect(() => {
+  onMount(() => {
     pushFlashes(initialFlashes)
-    const removeListener = router.on('success', (event) => {
+    return router.on('success', (event) => {
       pushFlashes(event.detail.page.props.flash)
     })
-
-    return removeListener
   })
 </script>
 
 {#if toasts.length > 0}
-  <div class="fixed bottom-4 right-4 z-50">
+  <div class="fixed bottom-4 right-4 z-50 w-[min(24rem,calc(100vw-2rem))]" aria-live="polite">
     {#each toasts as toast (toast.id)}
-      <div
+      <Alert.Root
+        variant={toast.Type === 'error' ? 'destructive' : 'default'}
         class={`${toast.Type === 'success'
-          ? 'border-[#8df7a4] text-[#8df7a4]'
+          ? 'border-success/50 bg-success/10 text-success'
           : toast.Type === 'error'
-            ? 'border-[#ff875f] text-[#ff875f]'
-            : 'border-[#ff6b1a] text-[#e4dfd2]'} mb-2 border bg-[#101414] px-4 py-3 shadow-lg shadow-black/40 transition-opacity duration-300`}
+            ? 'border-destructive/50 bg-destructive/10'
+            : 'border-primary/50 bg-primary/10 text-primary'} mb-2`}
       >
-        {toast.Message}
-      </div>
+        {#if toast.Type === 'success'}
+          <CircleCheckIcon />
+        {:else if toast.Type === 'error'}
+          <CircleXIcon />
+        {:else}
+          <InfoIcon />
+        {/if}
+        <Alert.Title class="capitalize">{toast.Type || 'Notice'}</Alert.Title>
+        <Alert.Description class="text-current/80">{toast.Message}</Alert.Description>
+      </Alert.Root>
     {/each}
   </div>
 {/if}

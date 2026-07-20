@@ -2,16 +2,17 @@ package controllers
 
 import (
 	"errors"
+	"log/slog"
 	"net/http"
 
-	"deploycrate-ce/internal/hypermedia"
 	"deploycrate-ce/internal/inertia"
 	"deploycrate-ce/internal/storage"
+	"deploycrate-ce/models"
 	"deploycrate-ce/queue"
 	"deploycrate-ce/router"
+	"deploycrate-ce/router/cookies"
 	"deploycrate-ce/router/middleware"
 	"deploycrate-ce/router/routes"
-	"deploycrate-ce/views"
 
 	"github.com/labstack/echo/v5"
 )
@@ -50,7 +51,40 @@ func (p Pages) RegisterRoutes(r *router.Router) error {
 }
 
 func (p Pages) Home(etx *echo.Context) error {
-	return hypermedia.RenderPage(etx, views.Welcome{}.Page())
+	appSession := cookies.ExtractFromCookieApp(etx)
+	if appSession.Email == "" {
+		user, err := models.User.Find(
+			etx.Request().Context(),
+			p.db.Executor(),
+			appSession.UserID,
+		)
+		if err != nil {
+			slog.ErrorContext(
+				etx.Request().Context(),
+				"failed to load authenticated user",
+				"error",
+				err,
+			)
+			return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
+		}
+
+		if err := cookies.CreateAppSession(etx, user); err != nil {
+			slog.ErrorContext(
+				etx.Request().Context(),
+				"failed to refresh authenticated user session",
+				"error",
+				err,
+			)
+			return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
+		}
+		appSession.Email = user.Email
+	}
+
+	return inertia.Page(etx, "Home", inertia.Props{
+		"auth": inertia.Props{
+			"email": appSession.Email,
+		},
+	})
 }
 
 func (p Pages) NotFound(etx *echo.Context) error {

@@ -6,6 +6,7 @@ import { mount } from 'svelte'
 import FlashToasts from '@/Components/FlashToasts.svelte'
 
 createInertiaApp({
+  title: (title) => (title ? `${title} | DeployCrate CE` : 'DeployCrate CE'),
   resolve: (name: string) => {
     const pages = import.meta.glob<ResolvedComponent>('./Pages/**/*.svelte', { eager: true })
     return pages[`./Pages/${name}.svelte`]

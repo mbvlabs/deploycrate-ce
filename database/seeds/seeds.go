@@ -2,15 +2,25 @@ package seeds
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"deploycrate-ce/internal/storage"
+	"deploycrate-ce/models"
 	"deploycrate-ce/models/factories"
 )
 
 const Default = "development"
+
+const (
+	developmentAdminEmail    = "admin@deploycrate.com"
+	developmentAdminPassword = "password123"
+)
 
 type Runner func(context.Context, storage.Executor) error
 
@@ -43,33 +53,51 @@ func Run(ctx context.Context, exec storage.Executor, name string) error {
 }
 
 func Development(ctx context.Context, exec storage.Executor) error {
-	admin, err := factories.CreateUser(ctx, exec,
-		factories.WithEmail("admin@example.com"),
+	pepper := os.Getenv("PEPPER")
+	if pepper == "" {
+		pepper = factories.TestPepper
+	}
+
+	password, err := models.HashPassword(developmentAdminPassword, pepper)
+	if err != nil {
+		return fmt.Errorf("hash development admin password: %w", err)
+	}
+
+	admin, err := models.User.FindByEmail(ctx, exec, developmentAdminEmail)
+	if err == nil {
+		validatedAt := admin.EmailValidatedAt
+		if !validatedAt.Valid {
+			validatedAt = sql.NullTime{Time: time.Now(), Valid: true}
+		}
+
+		admin, err = models.User.Update(ctx, exec, models.UpdateUserData{
+			ID:               admin.ID,
+			Email:            developmentAdminEmail,
+			EmailValidatedAt: validatedAt,
+			Password:         []byte(password),
+			IsAdmin:          true,
+		})
+		if err != nil {
+			return fmt.Errorf("update development admin user: %w", err)
+		}
+
+		fmt.Printf("Updated development admin user: %s\n", admin.Email)
+		return nil
+	}
+	if !errors.Is(err, models.ErrNotFound) {
+		return fmt.Errorf("find development admin user: %w", err)
+	}
+
+	admin, err = factories.CreateUser(ctx, exec,
+		factories.WithEmail(developmentAdminEmail),
+		factories.WithPassword([]byte(password)),
 		factories.WithIsAdmin(true),
 		factories.WithValidatedEmail(),
 	)
 	if err != nil {
-		return fmt.Errorf("failed to create admin user: %w", err)
+		return fmt.Errorf("create development admin user: %w", err)
 	}
-	fmt.Printf("Created admin user: %s\n", admin.Email)
-
-	user, err := factories.CreateUser(ctx, exec,
-		factories.WithEmail("user@example.com"),
-		factories.WithValidatedEmail(),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create regular user: %w", err)
-	}
-	fmt.Printf("Created regular user: %s\n", user.Email)
-
-	// Add more seeds here using factories:
-	//
-	// // Create 10 additional users with random emails
-	// users, err := factories.CreateUsers(ctx, exec, 10)
-	// if err != nil {
-	// 	return fmt.Errorf("failed to create users: %w", err)
-	// }
-	// fmt.Printf("Created %d additional users\n", len(users))
+	fmt.Printf("Created development admin user: %s\n", admin.Email)
 
 	return nil
 }

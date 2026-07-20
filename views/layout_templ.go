@@ -57,7 +57,7 @@ func base(headOpts ...HeadDataOption) templ.Component {
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
-		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "\"><span class=\"grid size-8 grid-cols-2 gap-1 border border-[#52605c] bg-[#101414] p-1 shadow-sm shadow-black/40\"><span class=\"border border-[#8df7a4]\"></span> <span class=\"border border-[#52605c]\"></span> <span class=\"border border-[#52605c]\"></span> <span class=\"bg-[#8df7a4]\"></span></span> <span>Andurel.</span></a><nav class=\"flex flex-wrap items-center justify-end gap-3 text-sm\"><a class=\"px-2 py-1 text-[#aaa393] transition hover:text-[#f2ead8]\" href=\"https://andurel.com\">Documentation</a> <a class=\"px-2 py-1 text-[#aaa393] transition hover:text-[#f2ead8]\" href=\"")
+		templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 3, "\"><span class=\"grid size-8 grid-cols-2 gap-1 border border-[#52605c] bg-[#101414] p-1\"><span class=\"border border-[#8df7a4]\"></span> <span class=\"border border-[#52605c]\"></span> <span class=\"border border-[#52605c]\"></span> <span class=\"bg-[#8df7a4]\"></span></span> <span>Andurel.</span></a><nav class=\"flex flex-wrap items-center justify-end gap-3 text-sm\"><a class=\"px-2 py-1 text-[#aaa393] transition hover:text-[#f2ead8]\" href=\"https://andurel.com\">Documentation</a> <a class=\"px-2 py-1 text-[#aaa393] transition hover:text-[#f2ead8]\" href=\"")
 		if templ_7745c5c3_Err != nil {
 			return templ_7745c5c3_Err
 		}
@@ -96,7 +96,7 @@ func base(headOpts ...HeadDataOption) templ.Component {
 			return templ_7745c5c3_Err
 		}
 		for _, flash := range request.ExtractContext[[]cookies.FlashMessage](ctx, request.SessionFlashesKey) {
-			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<div class=\"border border-[#2f3a37] bg-[#101414] px-4 py-3 text-[#e4dfd2] shadow-lg shadow-black/40\">")
+			templ_7745c5c3_Err = templruntime.WriteString(templ_7745c5c3_Buffer, 7, "<div class=\"border border-[#2f3a37] bg-[#101414] px-4 py-3 text-[#e4dfd2]\">")
 			if templ_7745c5c3_Err != nil {
 				return templ_7745c5c3_Err
 			}

@@ -157,7 +157,7 @@ func (s Sessions) Create(etx *echo.Context) error {
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 
-	return inertia.Location(etx, routes.HomePage.URL())
+	return inertia.Redirect(etx, routes.HomePage.URL(), http.StatusSeeOther)
 }
 
 func (s Sessions) Destroy(etx *echo.Context) error {

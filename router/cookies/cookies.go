@@ -17,11 +17,13 @@ const (
 	isAuthenticated = "is_authenticated"
 	isAdmin         = "is_admin"
 	userID          = "user_id"
+	email           = "email"
 )
 
 type App struct {
 	CurrentPath     string
 	UserID          uuid.UUID
+	Email           string
 	IsAdmin         bool
 	IsAuthenticated bool
 }
@@ -35,6 +37,7 @@ func CreateAppSession(c *echo.Context, user models.UserEntity) error {
 	sess.Values[isAuthenticated] = true
 	sess.Values[isAdmin] = user.IsAdmin
 	sess.Values[userID] = user.ID.String()
+	sess.Values[email] = user.Email
 
 	return sess.Save(c.Request(), c.Response())
 }
@@ -65,6 +68,9 @@ func ExtractFromCookieApp(c *echo.Context) App {
 	}
 	if v, ok := sess.Values[userID].(string); ok {
 		app.UserID, _ = uuid.Parse(v)
+	}
+	if v, ok := sess.Values[email].(string); ok {
+		app.Email = v
 	}
 
 	return app
