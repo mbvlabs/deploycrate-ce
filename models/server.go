@@ -1,0 +1,205 @@
+package models
+
+import (
+	"context"
+	"database/sql"
+	"deploycrate-ce/internal/storage"
+	"deploycrate-ce/internal/validation"
+	"errors"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/uptrace/bun"
+)
+
+type ServerEntity struct {
+	bun.BaseModel `bun:"table:servers,alias:servers"`
+	ID            uuid.UUID    `bun:"id,pk,type:uuid"`
+	CreatedAt     time.Time    `bun:"created_at"`
+	UpdatedAt     time.Time    `bun:"updated_at"`
+	Name          string       `bun:"name"`
+	Slug          string       `bun:"slug"`
+	Address       string       `bun:"address"`
+	ArchivedAt    sql.NullTime `bun:"archived_at"`
+}
+
+func (e *ServerEntity) Validate() error {
+	return nil
+}
+
+func (s server) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (ServerEntity, error) {
+	var entity ServerEntity
+	if err := db.NewSelect().
+		Model(&entity).
+		Where("id = ?", id).
+		Scan(ctx); err != nil {
+		return ServerEntity{}, err
+	}
+
+	return entity, nil
+}
+
+type CreateServerData struct {
+	Name       string
+	Slug       string
+	Address    string
+	ArchivedAt sql.NullTime
+}
+
+func (s server) Create(ctx context.Context, db storage.Executor, data CreateServerData) (ServerEntity, error) {
+	entity := ServerEntity{
+		ID:         uuid.New(),
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+		Name:       data.Name,
+		Slug:       data.Slug,
+		Address:    data.Address,
+		ArchivedAt: data.ArchivedAt,
+	}
+
+	if err := validation.Validate(&entity); err != nil {
+		return ServerEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+
+	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
+		return ServerEntity{}, err
+	}
+
+	return entity, nil
+}
+
+type UpdateServerData struct {
+	ID         uuid.UUID
+	UpdatedAt  time.Time
+	Name       string
+	Slug       string
+	Address    string
+	ArchivedAt sql.NullTime
+}
+
+func (s server) Update(ctx context.Context, db storage.Executor, data UpdateServerData) (ServerEntity, error) {
+	entity := ServerEntity{
+		ID:         data.ID,
+		UpdatedAt:  time.Now(),
+		Name:       data.Name,
+		Slug:       data.Slug,
+		Address:    data.Address,
+		ArchivedAt: data.ArchivedAt,
+	}
+
+	if err := validation.Validate(&entity); err != nil {
+		return ServerEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+
+	if err := db.NewUpdate().
+		Model(&entity).
+		Column("updated_at").
+		Column("name").
+		Column("slug").
+		Column("address").
+		Column("archived_at").
+		WherePK().
+		Returning("*").
+		Scan(ctx); err != nil {
+		return ServerEntity{}, err
+	}
+
+	return entity, nil
+}
+
+func (s server) Destroy(ctx context.Context, db storage.Executor, id uuid.UUID) error {
+	_, err := db.NewDelete().
+		Model((*ServerEntity)(nil)).
+		Where("id = ?", id).
+		Exec(ctx)
+
+	return err
+}
+
+func (s server) All(ctx context.Context, db storage.Executor) ([]ServerEntity, error) {
+	var entities []ServerEntity
+	if err := db.NewSelect().
+		Model(&entities).
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+
+	return entities, nil
+}
+
+type PaginatedServers struct {
+	Servers    []ServerEntity
+	TotalCount int64
+	Page       int64
+	PageSize   int64
+	TotalPages int64
+}
+
+func (s server) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedServers, error) {
+	if page < 1 {
+		page = 1
+	}
+	if pageSize < 1 {
+		pageSize = 10
+	}
+	if pageSize > 100 {
+		pageSize = 100
+	}
+
+	offset := (page - 1) * pageSize
+
+	totalCount, err := db.NewSelect().
+		Model(&ServerEntity{}).Count(ctx)
+	if err != nil {
+		return PaginatedServers{}, err
+	}
+
+	entities := make([]ServerEntity, 0, int(pageSize))
+	if err := db.NewSelect().
+		Model(&entities).
+		Limit(int(pageSize)).
+		Offset(int(offset)).
+		Scan(ctx); err != nil {
+		return PaginatedServers{}, err
+	}
+
+	totalPages := (int64(totalCount) + pageSize - 1) / pageSize
+
+	return PaginatedServers{
+		Servers:    entities,
+		TotalCount: int64(totalCount),
+		Page:       page,
+		PageSize:   pageSize,
+		TotalPages: totalPages,
+	}, nil
+}
+
+func (s server) Upsert(ctx context.Context, db storage.Executor, data CreateServerData) (ServerEntity, error) {
+	entity := ServerEntity{
+		ID:         uuid.New(),
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+		Name:       data.Name,
+		Slug:       data.Slug,
+		Address:    data.Address,
+		ArchivedAt: data.ArchivedAt,
+	}
+
+	if err := validation.Validate(&entity); err != nil {
+		return ServerEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+
+	if err := db.NewInsert().
+		Model(&entity).
+		On("CONFLICT (id) DO UPDATE").
+		Set("name = excluded.name").
+		Set("slug = excluded.slug").
+		Set("address = excluded.address").
+		Set("archived_at = excluded.archived_at").
+		Returning("*").
+		Scan(ctx); err != nil {
+		return ServerEntity{}, err
+	}
+
+	return entity, nil
+}
