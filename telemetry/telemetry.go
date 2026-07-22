@@ -214,7 +214,6 @@ func (t *Telemetry) initTracing(ctx context.Context) error {
 func (t *Telemetry) Shutdown(ctx context.Context) error {
 	eg := errgroup.Group{}
 	for _, fn := range t.shutdownFuncs {
-		fn := fn
 		eg.Go(func() error {
 			if err := fn(ctx); err != nil {
 				fmt.Fprintf(os.Stderr, "[telemetry] shutdown error: %v\n", err)
