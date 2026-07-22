@@ -28,6 +28,7 @@ var Registry = map[string]Runner{
 	"default":     Development,
 	"development": Development,
 	"test":        Test,
+	"ui":          UI,
 }
 
 func Names() []string {
