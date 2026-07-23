@@ -6,14 +6,17 @@ import (
 	"fmt"
 	"net/mail"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"deploycrate-ce/internal/setup"
+	"deploycrate-ce/internal/storage"
 )
 
 type screen int
@@ -416,8 +419,20 @@ func (m Model) updateChoice(key string) (tea.Model, tea.Cmd) {
 	return m, validateRemoteServices(m.config, m.dryRun)
 }
 
-func validateRemoteServices(_ setup.Config, _ bool) tea.Cmd {
+func validateRemoteServices(cfg setup.Config, dryRun bool) tea.Cmd {
 	return func() tea.Msg {
+		if dryRun || !cfg.Database.External {
+			return validationMsg{}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		db, err := storage.NewPostgres(ctx, cfg.DatabaseURL())
+		if err != nil {
+			return validationMsg{err: fmt.Errorf("external database validation failed: %w", err)}
+		}
+		if err := db.Close(); err != nil {
+			return validationMsg{err: fmt.Errorf("close external database validation connection: %w", err)}
+		}
 		return validationMsg{}
 	}
 }
@@ -435,6 +450,13 @@ func (m Model) startInstall() (tea.Model, tea.Cmd) {
 	m.events = nil
 	runner := setup.NewRunner(m.config, m.dryRun)
 	go func() {
+		if !m.dryRun {
+			if err := setup.SaveConfig(m.config); err != nil {
+				stream <- setup.Event{Kind: setup.EventFinished, Err: err}
+				close(stream)
+				return
+			}
+		}
 		err := runner.Execute(ctx, m.config, func(event setup.Event) { stream <- event })
 		if err != nil {
 			stream <- setup.Event{Kind: setup.EventFinished, Err: err}
@@ -471,9 +493,15 @@ func (m Model) updateHandoff(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func reboot(_ bool) tea.Cmd {
+func reboot(dryRun bool) tea.Cmd {
 	return func() tea.Msg {
-		return rebootMsg{}
+		if dryRun {
+			return rebootMsg{}
+		}
+		if err := setup.RemoveTransientSecrets(); err != nil {
+			return rebootMsg{err: err}
+		}
+		return rebootMsg{err: exec.Command("systemctl", "reboot").Run()}
 	}
 }
 
@@ -495,11 +523,11 @@ func (m Model) renderScreen(width int) string {
 	case screenDatabase:
 		content = m.renderForm([]string{"Host", "Port", "Database", "User", "Password", "SSL mode", "CA certificate path"})
 	case screenStorageChoice:
-		content = m.renderChoice("Configure S3-compatible storage for backups?", []string{"Not now", "Yes, collect destination details"})
+		content = m.renderChoice("Configure S3-compatible storage for backups?", []string{"Not now", "Yes, store destination details"})
 	case screenStorage:
 		content = m.renderForm([]string{"Endpoint", "Region", "Bucket", "Access key ID", "Secret access key"})
 	case screenValidating:
-		content = labelStyle.Render("Preparing configuration") + "\n\n" + mutedStyle.Render("Database and S3 validation adapters are currently stubs.")
+		content = labelStyle.Render("Validating configuration") + "\n\n" + mutedStyle.Render("Checking external database connectivity. S3 validation is pending the backup adapter.")
 	case screenReview:
 		content = m.renderReview()
 	case screenRunning:
@@ -563,12 +591,12 @@ func (m Model) renderReview() string {
 		labelStyle.Render("Backups") + "      " + storage,
 		labelStyle.Render("App admin") + "     " + m.config.AdminEmail,
 	}
-	return strings.Join(rows, "\n") + "\n\n" + warnStyle.Render("Stub mode: provisioning steps will not mutate the host.") + "\n\nPress enter to preview the setup run."
+	return strings.Join(rows, "\n") + "\n\n" + warnStyle.Render("This will configure the host and later disable root SSH access.") + "\n\nPress enter to install."
 }
 
 func (m Model) renderProgress() string {
 	if len(m.events) == 0 {
-		return labelStyle.Render("Preparing stubbed setup run...")
+		return labelStyle.Render("Preparing installation...")
 	}
 	start := max(0, len(m.events)-12)
 	var b strings.Builder
@@ -596,15 +624,14 @@ func (m Model) renderProgress() string {
 	}
 	if m.err != nil {
 		b.WriteString("\n")
-		b.WriteString(warnStyle.Render("The stubbed setup flow stopped before completion."))
+		b.WriteString(warnStyle.Render("Fix the reported issue, then run: sudo deploycrate resume"))
 	}
 	return b.String()
 }
 
 func (m Model) renderHandoff() string {
 	var b strings.Builder
-	b.WriteString(okStyle.Bold(true).Render("Setup preview complete"))
-	b.WriteString("\n" + warnStyle.Render("No server changes were applied."))
+	b.WriteString(okStyle.Bold(true).Render("Installation complete"))
 	b.WriteString("\n\n")
 	b.WriteString(labelStyle.Render("Application URL") + "  https://" + m.config.Domain + "\n")
 	b.WriteString(labelStyle.Render("Linux user") + "      deploycrate\n")
@@ -617,12 +644,12 @@ func (m Model) renderHandoff() string {
 	}
 	b.WriteString(labelStyle.Render("App admin") + "       " + m.config.AdminEmail + "\n")
 	b.WriteString(labelStyle.Render("Admin password") + "   " + m.config.Secrets.AdminPassword + "\n\n")
-	b.WriteString(statusLine(m.copied, "Press c to confirm the credential handoff preview") + "\n")
-	b.WriteString(statusLine(m.sshVerified, "Press v to confirm the future SSH verification gate") + "\n")
+	b.WriteString(statusLine(m.copied, "Press c after copying all credentials") + "\n")
+	b.WriteString(statusLine(m.sshVerified, "Open a second terminal, connect over SSH, then press v") + "\n")
 	if m.copied && m.sshVerified {
-		b.WriteString(warnStyle.Render("Press r to finish. Reboot is stubbed."))
+		b.WriteString(warnStyle.Render("Press r to remove transient installer secrets and reboot."))
 	} else {
-		b.WriteString(mutedStyle.Render("The final action remains locked until both preview confirmations are complete."))
+		b.WriteString(mutedStyle.Render("Reboot remains locked until both confirmations are complete."))
 	}
 	return b.String()
 }

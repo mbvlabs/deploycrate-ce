@@ -1,10 +1,15 @@
 package setup
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -58,9 +63,13 @@ func (r Runner) Execute(ctx context.Context, cfg Config, report Reporter) error 
 	if report == nil {
 		report = func(Event) {}
 	}
-	state, err := r.Store.Load(cfg.Version)
-	if err != nil {
-		return err
+	state := State{Version: cfg.Version, Steps: make(map[string]StepState)}
+	if !r.Run.DryRun {
+		var err error
+		state, err = r.Store.Load(cfg.Version)
+		if err != nil {
+			return err
+		}
 	}
 
 	for index, step := range r.Steps {
@@ -126,22 +135,69 @@ func (r Runner) Execute(ctx context.Context, cfg Config, report Reporter) error 
 type Shell struct {
 	DryRun  bool
 	Secrets []string
+	LogPath string
+	mu      *sync.Mutex
 }
 
 func NewShell(dryRun bool, secrets []string) Shell {
+	_, _, stateDir := ConfigPaths()
 	return Shell{
 		DryRun:  dryRun,
 		Secrets: secrets,
+		LogPath: filepath.Join(stateDir, "install.log"),
+		mu:      &sync.Mutex{},
 	}
 }
 
-func (Shell) Run(_ context.Context, stepID string, _ string, _ map[string]string, report Reporter) error {
-	report(Event{Kind: EventLog, StepID: stepID, Line: "stub only: shell execution is not implemented"})
-	return nil
+func (s Shell) Run(ctx context.Context, stepID string, script string, environment map[string]string, report Reporter) error {
+	if s.DryRun {
+		report(Event{Kind: EventLog, StepID: stepID, Line: "dry run: script execution skipped"})
+		return nil
+	}
+
+	command := exec.CommandContext(ctx, "/bin/bash", "-s")
+	command.Stdin = strings.NewReader(script)
+	command.Env = os.Environ()
+	for key, value := range environment {
+		command.Env = append(command.Env, key+"="+value)
+	}
+	output, err := command.CombinedOutput()
+	s.writeLog(stepID, output)
+
+	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	for scanner.Scan() {
+		report(Event{Kind: EventLog, StepID: stepID, Line: redact(scanner.Text(), s.Secrets)})
+	}
+	if err != nil {
+		return fmt.Errorf("setup script failed: %w", err)
+	}
+	return scanner.Err()
 }
 
-func (Shell) Output(_ context.Context, name string, _ ...string) (string, error) {
-	return "", fmt.Errorf("%s output is a stub and is not implemented", name)
+func (s Shell) Output(ctx context.Context, name string, args ...string) (string, error) {
+	if s.DryRun {
+		return "", nil
+	}
+	command := exec.CommandContext(ctx, name, args...)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf("%s failed: %w: %s", name, err, redact(strings.TrimSpace(string(output)), s.Secrets))
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func (s Shell) writeLog(stepID string, output []byte) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.MkdirAll(filepath.Dir(s.LogPath), 0o700); err != nil {
+		return
+	}
+	file, err := os.OpenFile(s.LogPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	_, _ = fmt.Fprintf(file, "\n[%s] %s\n%s", time.Now().Format(time.RFC3339), stepID, redact(string(output), s.Secrets))
 }
 
 func redact(value string, secrets []string) string {

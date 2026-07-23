@@ -4,7 +4,7 @@ A full-stack web application built with [Andurel](https://github.com/mbvlabs/and
 
 ## VPS Bootstrap CLI
 
-This repository contains the initial `deploycrate` Bubble Tea CLI scaffold for the future Debian 13 VPS setup experience.
+This repository contains the `deploycrate` Bubble Tea CLI for configuring a Debian 13 VPS as a DeployCrate CE host.
 
 The released installer is intended to be run as root from an interactive SSH session:
 
@@ -12,21 +12,25 @@ The released installer is intended to be run as root from an interactive SSH ses
 curl -fsSL https://get.deploycrate.com/ce | sudo bash
 ```
 
-The shell installer downloads the release archive, verifies its SHA-256 checksum, verifies the Sigstore bundle when `cosign` is available, installs both binaries, and opens the interactive setup wizard through `/dev/tty`.
+The shell installer downloads the release archive, verifies its SHA-256 checksum, verifies the Sigstore bundle when `cosign` is available, installs both binaries, and opens the interactive setup wizard through `/dev/tty`. GitHub Releases is the default source. `DEPLOYCRATE_RELEASE_BASE_URL` can point at a Cloudflare-hosted directory with the same archive and checksum layout when that endpoint is available.
 
-The current wizard collects and reviews the intended configuration for:
+The wizard collects the configuration and then:
 
 - A normal `deploycrate` Linux user with SSH access, Docker access, and unrestricted passwordless sudo.
-- Baseline host configuration and Docker Engine.
-- Either a local Docker PostgreSQL database or an externally hosted PostgreSQL database.
-- Database migrations and application administrator creation.
-- Optional S3-compatible backup storage.
-- Application services, Caddy, firewall rules, and SSH hardening.
-- A final credential handoff and reboot confirmation gate.
+- Runs embedded, idempotent host setup scripts derived from the DeployCrate provisioning scripts.
+- Installs Docker Engine and either creates a local PostgreSQL 17 container or connects to an externally hosted PostgreSQL database.
+- Installs a pinned and checksum-verified Cloud Native Buildpacks `pack` CLI, Git, and a deploycrate-owned build workspace without pre-pulling a builder image.
+- Applies the embedded database migrations and creates or updates the application administrator.
+- Stores optional S3-compatible backup details in a protected environment file. Backup execution remains pending.
+- Places the release binary in `/opt/deploycrate-ce/releases/<version>/` and activates it through the blue slot.
+- Creates blue and green systemd slots on ports 8080 and 8081, starting only the initial blue slot.
+- Creates the application, production environment, server, network, database resource, bootstrap change, release, deployment, instance, domain, Caddy route, and route backend records.
+- Applies the database-backed route through Caddy's local API and configures Caddy to resume its autosaved API configuration after reboot.
+- Keeps database credentials in the protected application environment file until the resource credential encryption contract is implemented.
+- Writes protected runtime secrets, enables the firewall, and hardens SSH.
+- Requires a final credential handoff and reboot confirmation gate.
 
-All provisioning steps currently emit simulated progress and do not change the server, connect to external services, persist secrets, run migrations, create users, or reboot. These boundaries are intentionally stubbed until the matching DeployCrate CE application capabilities exist.
-
-The planned installer does not create an emergency user. The `deploycrate` user will have unrestricted passwordless sudo and Docker access by explicit product design.
+The installer does not create an emergency user. The `deploycrate` user has unrestricted passwordless sudo and Docker access by explicit product design.
 
 ### CLI Commands
 
@@ -39,9 +43,9 @@ sudo deploycrate logs
 deploycrate version
 ```
 
-`resume`, `doctor`, `logs`, and `backup` are command stubs and report that their implementation is pending. The install wizard itself is also non-mutating, whether or not `--dry-run` is supplied.
+`resume` continues from persisted step state and `logs` prints the redacted setup log. `doctor` and `backup` remain command stubs.
 
-To walk through the current scaffold locally:
+To walk through the complete flow without changing the host:
 
 ```bash
 sudo deploycrate install --dry-run

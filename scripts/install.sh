@@ -3,6 +3,7 @@ set -euo pipefail
 
 repository="${DEPLOYCRATE_RELEASE_REPOSITORY:-mbvlabs/deploycrate-ce-cli}"
 requested_version="${DEPLOYCRATE_VERSION:-latest}"
+requested_base_url="${DEPLOYCRATE_RELEASE_BASE_URL:-}"
 
 fail() {
   printf 'deploycrate installer: %s\n' "$1" >&2
@@ -34,7 +35,11 @@ else
 fi
 
 archive="deploycrate-ce_${os}_${arch}.tar.gz"
-base_url="https://github.com/${repository}/releases/${release_path}"
+if [ -n "${requested_base_url}" ]; then
+  base_url="${requested_base_url%/}"
+else
+  base_url="https://github.com/${repository}/releases/${release_path}"
+fi
 
 curl -fL "${base_url}/${archive}" -o "${work_dir}/${archive}"
 curl -fL "${base_url}/checksums.txt" -o "${work_dir}/checksums.txt"

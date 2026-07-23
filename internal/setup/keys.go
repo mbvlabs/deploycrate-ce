@@ -33,8 +33,12 @@ func GenerateSSHKeyPair() (publicKey string, privateKey string, err error) {
 }
 
 func ValidateSSHPublicKey(value string) error {
-	if _, _, _, _, err := ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(value))); err != nil {
+	_, _, _, remainder, err := ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(value)))
+	if err != nil {
 		return fmt.Errorf("invalid SSH public key: %w", err)
+	}
+	if len(strings.TrimSpace(string(remainder))) != 0 {
+		return fmt.Errorf("invalid SSH public key: provide exactly one key")
 	}
 	return nil
 }

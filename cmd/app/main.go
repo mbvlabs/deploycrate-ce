@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -41,7 +40,7 @@ func main() {
 			func() services.CurrentVersion { return services.CurrentVersion(appVersion) },
 			func(cfg config.Config) (email.TransactionalSender, email.MarketingSender) {
 				if config.Env == server.ProdEnvironment {
-					log.Fatal("provide real email sender")
+					return mailclients.NewAwsSes(cfg), mailclients.NewAwsSes(cfg)
 				}
 
 				return mailclients.NewMailpit(cfg), mailclients.NewMailpit(cfg)

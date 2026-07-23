@@ -41,7 +41,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "doctor":
 		return doctor(ctx, args[1:], stdout)
 	case "logs":
-		return stubCommand(args[1:], "logs")
+		return logs(args[1:], stdout)
 	case "backup":
 		return stubCommand(args[1:], "backup")
 	case "version", "--version", "-v":
@@ -66,10 +66,18 @@ func install(ctx context.Context, args []string) error {
 	if !isTerminal(os.Stdin) {
 		return errors.New("interactive installation requires a TTY; run sudo deploycrate install from a terminal")
 	}
-	host, err := setup.Preflight(ctx, true)
+	if !*dryRun && setup.HasSavedConfig() {
+		return errors.New("an installation is already configured; run sudo deploycrate resume")
+	}
+	host, err := setup.Preflight(ctx, *dryRun)
 	if err != nil {
 		return err
 	}
+	lock, err := setup.AcquireInstallLock(*dryRun)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
 
 	cfg, err := setup.NewConfig(version)
 	if err != nil {
@@ -79,13 +87,36 @@ func install(ctx context.Context, args []string) error {
 	return err
 }
 
-func resume(_ context.Context, args []string, _ io.Writer) error {
+func resume(ctx context.Context, args []string, stdout io.Writer) error {
 	flags := flag.NewFlagSet("resume", flag.ContinueOnError)
-	_ = flags.Bool("dry-run", false, "inspect resume behavior without mutating the host")
+	dryRun := flags.Bool("dry-run", false, "inspect resume behavior without mutating the host")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	return errors.New("resume is a stub until installer state persistence is implemented")
+	if _, err := setup.Preflight(ctx, *dryRun); err != nil {
+		return err
+	}
+	lock, err := setup.AcquireInstallLock(*dryRun)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	cfg, err := setup.LoadConfig()
+	if err != nil {
+		return err
+	}
+	return setup.NewRunner(cfg, *dryRun).Execute(ctx, cfg, func(event setup.Event) {
+		switch event.Kind {
+		case setup.EventStarted:
+			fmt.Fprintf(stdout, "[%d/%d] %s\n", event.Index, event.Total, event.Description)
+		case setup.EventLog:
+			fmt.Fprintln(stdout, "  "+event.Line)
+		case setup.EventCompleted:
+			fmt.Fprintln(stdout, "  complete")
+		case setup.EventSkipped:
+			fmt.Fprintf(stdout, "[%d/%d] %s: already complete\n", event.Index, event.Total, event.Description)
+		}
+	})
 }
 
 func doctor(_ context.Context, args []string, _ io.Writer) error {
@@ -102,6 +133,19 @@ func stubCommand(args []string, name string) error {
 		return fmt.Errorf("%s does not accept arguments yet", name)
 	}
 	return fmt.Errorf("%s is a stub and is not implemented yet", name)
+}
+
+func logs(args []string, stdout io.Writer) error {
+	if len(args) != 0 {
+		return errors.New("logs does not accept arguments")
+	}
+	file, err := os.Open(setup.NewShell(false, nil).LogPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	_, err = io.Copy(stdout, file)
+	return err
 }
 
 func isTerminal(file *os.File) bool {

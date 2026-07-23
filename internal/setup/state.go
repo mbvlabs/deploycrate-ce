@@ -1,6 +1,10 @@
 package setup
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
 	"path/filepath"
 	"time"
 )
@@ -42,9 +46,28 @@ func (s StateStore) Path() string {
 }
 
 func (s StateStore) Load(version string) (State, error) {
-	return State{Version: version, Steps: make(map[string]StepState)}, nil
+	data, err := os.ReadFile(s.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return State{Version: version, Steps: make(map[string]StepState)}, nil
+	}
+	if err != nil {
+		return State{}, fmt.Errorf("read installer state: %w", err)
+	}
+	var state State
+	if err := json.Unmarshal(data, &state); err != nil {
+		return State{}, fmt.Errorf("decode installer state: %w", err)
+	}
+	if state.Steps == nil {
+		state.Steps = make(map[string]StepState)
+	}
+	return state, nil
 }
 
-func (StateStore) Save(State) error {
-	return nil
+func (s StateStore) Save(state State) error {
+	state.UpdatedAt = time.Now()
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode installer state: %w", err)
+	}
+	return writeProtectedFile(s.path, data, 0o600)
 }

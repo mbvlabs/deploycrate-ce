@@ -114,8 +114,17 @@ func (c Config) Validate() error {
 	if c.LinuxUser != "deploycrate" {
 		errs = append(errs, errors.New("Linux user must be deploycrate"))
 	}
-	if strings.TrimSpace(c.Domain) == "" || strings.ContainsAny(c.Domain, " /:") {
+	if !validHostname(c.Domain) {
 		errs = append(errs, errors.New("a valid domain without protocol is required"))
+	}
+	for name, value := range map[string]string{
+		"domain": c.Domain, "Linux user": c.LinuxUser, "SSH public key": c.SSHPublicKey,
+		"admin email": c.AdminEmail, "database host": c.Database.Host, "database name": c.Database.Name,
+		"database user": c.Database.User,
+	} {
+		if strings.ContainsAny(value, "\r\n\x00") {
+			errs = append(errs, fmt.Errorf("%s contains unsupported control characters", name))
+		}
 	}
 	if c.SSHPort < 1 || c.SSHPort > 65535 {
 		errs = append(errs, errors.New("SSH port must be between 1 and 65535"))
@@ -183,6 +192,27 @@ func ConfigPaths() (string, string, string) {
 		stateDir = DefaultStateDir
 	}
 	return filepath.Join(etcDir, "installer.json"), filepath.Join(etcDir, "installer-secrets.json"), stateDir
+}
+
+func validHostname(value string) bool {
+	if value == "" || len(value) > 253 || strings.HasSuffix(value, ".") {
+		return false
+	}
+	for label := range strings.SplitSeq(value, ".") {
+		if len(label) == 0 || len(label) > 63 || !hostnameCharacter(label[0]) || !hostnameCharacter(label[len(label)-1]) {
+			return false
+		}
+		for index := 1; index < len(label)-1; index++ {
+			if !hostnameCharacter(label[index]) && label[index] != '-' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func hostnameCharacter(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9'
 }
 
 func randomHex(bytes int) (string, error) {
