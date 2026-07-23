@@ -13,19 +13,16 @@ import (
 )
 
 type NetworkAccessRuleEntity struct {
-	bun.BaseModel      `bun:"table:network_access_rules,alias:network_access_rules"`
-	ID                 uuid.UUID    `bun:"id,pk,type:uuid"`
-	CreatedAt          time.Time    `bun:"created_at"`
-	UpdatedAt          time.Time    `bun:"updated_at"`
-	PrivateNetworkID   uuid.UUID    `bun:"private_network_id,type:uuid"`
-	EnvironmentID      uuid.UUID    `bun:"environment_id,type:uuid"`
-	ResourceEndpointID uuid.UUID    `bun:"resource_endpoint_id,type:uuid"`
-	DependencyID       uuid.UUID    `bun:"dependency_id,type:uuid"`
-	Protocol           string       `bun:"protocol"`
-	DestinationAddress string       `bun:"destination_address"`
-	DestinationPort    int32        `bun:"destination_port"`
-	Action             string       `bun:"action"`
-	ArchivedAt         sql.NullTime `bun:"archived_at"`
+	bun.BaseModel         `bun:"table:network_access_rules,alias:network_access_rules"`
+	ID                    uuid.UUID    `bun:"id,pk,type:uuid"`
+	CreatedAt             time.Time    `bun:"created_at"`
+	UpdatedAt             time.Time    `bun:"updated_at"`
+	Protocol              string       `bun:"protocol"`
+	DestinationAddress    string       `bun:"destination_address"`
+	DestinationPort       int32        `bun:"destination_port"`
+	Action                string       `bun:"action"`
+	ArchivedAt            sql.NullTime `bun:"archived_at"`
+	EnvironmentResourceID uuid.UUID    `bun:"environment_resource_id,type:uuid"`
 }
 
 func (e *NetworkAccessRuleEntity) Validate() error {
@@ -45,31 +42,25 @@ func (nar networkAccessRule) Find(ctx context.Context, db storage.Executor, id u
 }
 
 type CreateNetworkAccessRuleData struct {
-	PrivateNetworkID   uuid.UUID
-	EnvironmentID      uuid.UUID
-	ResourceEndpointID uuid.UUID
-	DependencyID       uuid.UUID
-	Protocol           string
-	DestinationAddress string
-	DestinationPort    int32
-	Action             string
-	ArchivedAt         sql.NullTime
+	Protocol              string
+	DestinationAddress    string
+	DestinationPort       int32
+	Action                string
+	ArchivedAt            sql.NullTime
+	EnvironmentResourceID uuid.UUID
 }
 
 func (nar networkAccessRule) Create(ctx context.Context, db storage.Executor, data CreateNetworkAccessRuleData) (NetworkAccessRuleEntity, error) {
 	entity := NetworkAccessRuleEntity{
-		ID:                 uuid.New(),
-		CreatedAt:          time.Now(),
-		UpdatedAt:          time.Now(),
-		PrivateNetworkID:   data.PrivateNetworkID,
-		EnvironmentID:      data.EnvironmentID,
-		ResourceEndpointID: data.ResourceEndpointID,
-		DependencyID:       data.DependencyID,
-		Protocol:           data.Protocol,
-		DestinationAddress: data.DestinationAddress,
-		DestinationPort:    data.DestinationPort,
-		Action:             data.Action,
-		ArchivedAt:         data.ArchivedAt,
+		ID:                    uuid.New(),
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
+		Protocol:              data.Protocol,
+		DestinationAddress:    data.DestinationAddress,
+		DestinationPort:       data.DestinationPort,
+		Action:                data.Action,
+		ArchivedAt:            data.ArchivedAt,
+		EnvironmentResourceID: data.EnvironmentResourceID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -84,32 +75,26 @@ func (nar networkAccessRule) Create(ctx context.Context, db storage.Executor, da
 }
 
 type UpdateNetworkAccessRuleData struct {
-	ID                 uuid.UUID
-	UpdatedAt          time.Time
-	PrivateNetworkID   uuid.UUID
-	EnvironmentID      uuid.UUID
-	ResourceEndpointID uuid.UUID
-	DependencyID       uuid.UUID
-	Protocol           string
-	DestinationAddress string
-	DestinationPort    int32
-	Action             string
-	ArchivedAt         sql.NullTime
+	ID                    uuid.UUID
+	UpdatedAt             time.Time
+	Protocol              string
+	DestinationAddress    string
+	DestinationPort       int32
+	Action                string
+	ArchivedAt            sql.NullTime
+	EnvironmentResourceID uuid.UUID
 }
 
 func (nar networkAccessRule) Update(ctx context.Context, db storage.Executor, data UpdateNetworkAccessRuleData) (NetworkAccessRuleEntity, error) {
 	entity := NetworkAccessRuleEntity{
-		ID:                 data.ID,
-		UpdatedAt:          time.Now(),
-		PrivateNetworkID:   data.PrivateNetworkID,
-		EnvironmentID:      data.EnvironmentID,
-		ResourceEndpointID: data.ResourceEndpointID,
-		DependencyID:       data.DependencyID,
-		Protocol:           data.Protocol,
-		DestinationAddress: data.DestinationAddress,
-		DestinationPort:    data.DestinationPort,
-		Action:             data.Action,
-		ArchivedAt:         data.ArchivedAt,
+		ID:                    data.ID,
+		UpdatedAt:             time.Now(),
+		Protocol:              data.Protocol,
+		DestinationAddress:    data.DestinationAddress,
+		DestinationPort:       data.DestinationPort,
+		Action:                data.Action,
+		ArchivedAt:            data.ArchivedAt,
+		EnvironmentResourceID: data.EnvironmentResourceID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -119,15 +104,12 @@ func (nar networkAccessRule) Update(ctx context.Context, db storage.Executor, da
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("private_network_id").
-		Column("environment_id").
-		Column("resource_endpoint_id").
-		Column("dependency_id").
 		Column("protocol").
 		Column("destination_address").
 		Column("destination_port").
 		Column("action").
 		Column("archived_at").
+		Column("environment_resource_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -206,18 +188,15 @@ func (nar networkAccessRule) Paginate(ctx context.Context, db storage.Executor, 
 
 func (nar networkAccessRule) Upsert(ctx context.Context, db storage.Executor, data CreateNetworkAccessRuleData) (NetworkAccessRuleEntity, error) {
 	entity := NetworkAccessRuleEntity{
-		ID:                 uuid.New(),
-		CreatedAt:          time.Now(),
-		UpdatedAt:          time.Now(),
-		PrivateNetworkID:   data.PrivateNetworkID,
-		EnvironmentID:      data.EnvironmentID,
-		ResourceEndpointID: data.ResourceEndpointID,
-		DependencyID:       data.DependencyID,
-		Protocol:           data.Protocol,
-		DestinationAddress: data.DestinationAddress,
-		DestinationPort:    data.DestinationPort,
-		Action:             data.Action,
-		ArchivedAt:         data.ArchivedAt,
+		ID:                    uuid.New(),
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
+		Protocol:              data.Protocol,
+		DestinationAddress:    data.DestinationAddress,
+		DestinationPort:       data.DestinationPort,
+		Action:                data.Action,
+		ArchivedAt:            data.ArchivedAt,
+		EnvironmentResourceID: data.EnvironmentResourceID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -227,15 +206,12 @@ func (nar networkAccessRule) Upsert(ctx context.Context, db storage.Executor, da
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("private_network_id = excluded.private_network_id").
-		Set("environment_id = excluded.environment_id").
-		Set("resource_endpoint_id = excluded.resource_endpoint_id").
-		Set("dependency_id = excluded.dependency_id").
 		Set("protocol = excluded.protocol").
 		Set("destination_address = excluded.destination_address").
 		Set("destination_port = excluded.destination_port").
 		Set("action = excluded.action").
 		Set("archived_at = excluded.archived_at").
+		Set("environment_resource_id = excluded.environment_resource_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return NetworkAccessRuleEntity{}, err

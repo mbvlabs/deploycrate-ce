@@ -17,8 +17,6 @@ type EnvironmentHealthCheckEntity struct {
 	ID              uuid.UUID    `bun:"id,pk,type:uuid"`
 	CreatedAt       time.Time    `bun:"created_at"`
 	UpdatedAt       time.Time    `bun:"updated_at"`
-	EnvironmentID   uuid.UUID    `bun:"environment_id,type:uuid"`
-	DependencyID    *uuid.UUID   `bun:"dependency_id,type:uuid"`
 	Name            string       `bun:"name"`
 	Url             string       `bun:"url"`
 	Method          string       `bun:"method"`
@@ -27,6 +25,7 @@ type EnvironmentHealthCheckEntity struct {
 	IntervalSeconds int32        `bun:"interval_seconds"`
 	Enabled         bool         `bun:"enabled"`
 	ArchivedAt      sql.NullTime `bun:"archived_at"`
+	EnvironmentID   uuid.UUID    `bun:"environment_id,type:uuid"`
 }
 
 func (e *EnvironmentHealthCheckEntity) Validate() error {
@@ -46,8 +45,6 @@ func (ehc environmentHealthCheck) Find(ctx context.Context, db storage.Executor,
 }
 
 type CreateEnvironmentHealthCheckData struct {
-	EnvironmentID   uuid.UUID
-	DependencyID    *uuid.UUID
 	Name            string
 	Url             string
 	Method          string
@@ -56,6 +53,7 @@ type CreateEnvironmentHealthCheckData struct {
 	IntervalSeconds int32
 	Enabled         bool
 	ArchivedAt      sql.NullTime
+	EnvironmentID   uuid.UUID
 }
 
 func (ehc environmentHealthCheck) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentHealthCheckData) (EnvironmentHealthCheckEntity, error) {
@@ -63,8 +61,6 @@ func (ehc environmentHealthCheck) Create(ctx context.Context, db storage.Executo
 		ID:              uuid.New(),
 		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
-		EnvironmentID:   data.EnvironmentID,
-		DependencyID:    data.DependencyID,
 		Name:            data.Name,
 		Url:             data.Url,
 		Method:          data.Method,
@@ -73,6 +69,7 @@ func (ehc environmentHealthCheck) Create(ctx context.Context, db storage.Executo
 		IntervalSeconds: data.IntervalSeconds,
 		Enabled:         data.Enabled,
 		ArchivedAt:      data.ArchivedAt,
+		EnvironmentID:   data.EnvironmentID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -89,8 +86,6 @@ func (ehc environmentHealthCheck) Create(ctx context.Context, db storage.Executo
 type UpdateEnvironmentHealthCheckData struct {
 	ID              uuid.UUID
 	UpdatedAt       time.Time
-	EnvironmentID   uuid.UUID
-	DependencyID    *uuid.UUID
 	Name            string
 	Url             string
 	Method          string
@@ -99,14 +94,13 @@ type UpdateEnvironmentHealthCheckData struct {
 	IntervalSeconds int32
 	Enabled         bool
 	ArchivedAt      sql.NullTime
+	EnvironmentID   uuid.UUID
 }
 
 func (ehc environmentHealthCheck) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentHealthCheckData) (EnvironmentHealthCheckEntity, error) {
 	entity := EnvironmentHealthCheckEntity{
 		ID:              data.ID,
 		UpdatedAt:       time.Now(),
-		EnvironmentID:   data.EnvironmentID,
-		DependencyID:    data.DependencyID,
 		Name:            data.Name,
 		Url:             data.Url,
 		Method:          data.Method,
@@ -115,6 +109,7 @@ func (ehc environmentHealthCheck) Update(ctx context.Context, db storage.Executo
 		IntervalSeconds: data.IntervalSeconds,
 		Enabled:         data.Enabled,
 		ArchivedAt:      data.ArchivedAt,
+		EnvironmentID:   data.EnvironmentID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -124,8 +119,6 @@ func (ehc environmentHealthCheck) Update(ctx context.Context, db storage.Executo
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("environment_id").
-		Column("dependency_id").
 		Column("name").
 		Column("url").
 		Column("method").
@@ -134,6 +127,7 @@ func (ehc environmentHealthCheck) Update(ctx context.Context, db storage.Executo
 		Column("interval_seconds").
 		Column("enabled").
 		Column("archived_at").
+		Column("environment_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -215,8 +209,6 @@ func (ehc environmentHealthCheck) Upsert(ctx context.Context, db storage.Executo
 		ID:              uuid.New(),
 		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
-		EnvironmentID:   data.EnvironmentID,
-		DependencyID:    data.DependencyID,
 		Name:            data.Name,
 		Url:             data.Url,
 		Method:          data.Method,
@@ -225,6 +217,7 @@ func (ehc environmentHealthCheck) Upsert(ctx context.Context, db storage.Executo
 		IntervalSeconds: data.IntervalSeconds,
 		Enabled:         data.Enabled,
 		ArchivedAt:      data.ArchivedAt,
+		EnvironmentID:   data.EnvironmentID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -234,8 +227,6 @@ func (ehc environmentHealthCheck) Upsert(ctx context.Context, db storage.Executo
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("environment_id = excluded.environment_id").
-		Set("dependency_id = excluded.dependency_id").
 		Set("name = excluded.name").
 		Set("url = excluded.url").
 		Set("method = excluded.method").
@@ -244,6 +235,7 @@ func (ehc environmentHealthCheck) Upsert(ctx context.Context, db storage.Executo
 		Set("interval_seconds = excluded.interval_seconds").
 		Set("enabled = excluded.enabled").
 		Set("archived_at = excluded.archived_at").
+		Set("environment_id = excluded.environment_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return EnvironmentHealthCheckEntity{}, err

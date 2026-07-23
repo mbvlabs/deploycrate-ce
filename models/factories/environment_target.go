@@ -22,10 +22,10 @@ type EnvironmentTargetOption func(*EnvironmentTargetFactory)
 func BuildEnvironmentTarget(environmentID uuid.UUID, serverID uuid.UUID, opts ...EnvironmentTargetOption) models.EnvironmentTargetEntity {
 	f := &EnvironmentTargetFactory{
 		EnvironmentTargetEntity: models.EnvironmentTargetEntity{
-			EnvironmentID: environmentID,
-			ServerID:      serverID,
 			AttachedAt:    time.Time{},
 			DetachedAt:    sql.NullTime{Time: time.Now(), Valid: true},
+			EnvironmentID: environmentID,
+			ServerID:      serverID,
 		},
 	}
 
@@ -43,10 +43,10 @@ func CreateEnvironmentTarget(ctx context.Context, exec storage.Executor, environ
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
-		EnvironmentID: built.EnvironmentID,
-		ServerID:      built.ServerID,
 		AttachedAt:    built.AttachedAt,
 		DetachedAt:    built.DetachedAt,
+		EnvironmentID: built.EnvironmentID,
+		ServerID:      built.ServerID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -70,18 +70,6 @@ func CreateEnvironmentTargets(ctx context.Context, exec storage.Executor, enviro
 	return environmenttargets, nil
 }
 
-func WithEnvironmentTargetsEnvironmentID(value uuid.UUID) EnvironmentTargetOption {
-	return func(f *EnvironmentTargetFactory) {
-		f.EnvironmentTargetEntity.EnvironmentID = value
-	}
-}
-
-func WithEnvironmentTargetsServerID(value uuid.UUID) EnvironmentTargetOption {
-	return func(f *EnvironmentTargetFactory) {
-		f.EnvironmentTargetEntity.ServerID = value
-	}
-}
-
 func WithEnvironmentTargetsAttachedAt(value time.Time) EnvironmentTargetOption {
 	return func(f *EnvironmentTargetFactory) {
 		f.EnvironmentTargetEntity.AttachedAt = value
@@ -91,5 +79,17 @@ func WithEnvironmentTargetsAttachedAt(value time.Time) EnvironmentTargetOption {
 func WithEnvironmentTargetsDetachedAt(value sql.NullTime) EnvironmentTargetOption {
 	return func(f *EnvironmentTargetFactory) {
 		f.EnvironmentTargetEntity.DetachedAt = value
+	}
+}
+
+func WithEnvironmentTargetsEnvironmentID(value uuid.UUID) EnvironmentTargetOption {
+	return func(f *EnvironmentTargetFactory) {
+		f.EnvironmentTargetEntity.EnvironmentID = value
+	}
+}
+
+func WithEnvironmentTargetsServerID(value uuid.UUID) EnvironmentTargetOption {
+	return func(f *EnvironmentTargetFactory) {
+		f.EnvironmentTargetEntity.ServerID = value
 	}
 }

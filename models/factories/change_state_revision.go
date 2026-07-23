@@ -22,9 +22,9 @@ type ChangeStateRevisionOption func(*ChangeStateRevisionFactory)
 func BuildChangeStateRevision(changeID uuid.UUID, environmentStateRevisionID uuid.UUID, opts ...ChangeStateRevisionOption) models.ChangeStateRevisionEntity {
 	f := &ChangeStateRevisionFactory{
 		ChangeStateRevisionEntity: models.ChangeStateRevisionEntity{
+			Role:                       faker.Word(),
 			ChangeID:                   changeID,
 			EnvironmentStateRevisionID: environmentStateRevisionID,
-			Role:                       faker.Word(),
 		},
 	}
 
@@ -42,9 +42,9 @@ func CreateChangeStateRevision(ctx context.Context, exec storage.Executor, chang
 		ID:                         built.ID,
 		CreatedAt:                  time.Now(),
 		UpdatedAt:                  time.Now(),
+		Role:                       built.Role,
 		ChangeID:                   built.ChangeID,
 		EnvironmentStateRevisionID: built.EnvironmentStateRevisionID,
-		Role:                       built.Role,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -68,6 +68,12 @@ func CreateChangeStateRevisions(ctx context.Context, exec storage.Executor, chan
 	return changestaterevisions, nil
 }
 
+func WithChangeStateRevisionsRole(value string) ChangeStateRevisionOption {
+	return func(f *ChangeStateRevisionFactory) {
+		f.ChangeStateRevisionEntity.Role = value
+	}
+}
+
 func WithChangeStateRevisionsChangeID(value uuid.UUID) ChangeStateRevisionOption {
 	return func(f *ChangeStateRevisionFactory) {
 		f.ChangeStateRevisionEntity.ChangeID = value
@@ -77,11 +83,5 @@ func WithChangeStateRevisionsChangeID(value uuid.UUID) ChangeStateRevisionOption
 func WithChangeStateRevisionsEnvironmentStateRevisionID(value uuid.UUID) ChangeStateRevisionOption {
 	return func(f *ChangeStateRevisionFactory) {
 		f.ChangeStateRevisionEntity.EnvironmentStateRevisionID = value
-	}
-}
-
-func WithChangeStateRevisionsRole(value string) ChangeStateRevisionOption {
-	return func(f *ChangeStateRevisionFactory) {
-		f.ChangeStateRevisionEntity.Role = value
 	}
 }

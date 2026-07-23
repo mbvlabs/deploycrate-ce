@@ -15,28 +15,30 @@ import (
 
 type ResourceInstallationStatusEntity struct {
 	bun.BaseModel          `bun:"table:resource_installation_statuses,alias:resource_installation_statuses"`
-	ID                     int32           `bun:"id,pk,autoincrement"`
 	CreatedAt              time.Time       `bun:"created_at"`
 	UpdatedAt              time.Time       `bun:"updated_at"`
-	ResourceInstallationID uuid.UUID       `bun:"resource_installation_id,type:uuid"`
 	ExternalID             sql.NullString  `bun:"external_id"`
 	State                  string          `bun:"state"`
 	InstalledVersion       sql.NullString  `bun:"installed_version"`
-	ServiceState           sql.NullString  `bun:"service_state"`
-	Health                 sql.NullString  `bun:"health"`
+	ServiceState           string          `bun:"service_state"`
+	Health                 string          `bun:"health"`
+	Source                 string          `bun:"source"`
+	HealthReason           sql.NullString  `bun:"health_reason"`
 	Details                json.RawMessage `bun:"details,type:jsonb"`
 	ObservedAt             time.Time       `bun:"observed_at"`
+	ExpiresAt              time.Time       `bun:"expires_at"`
+	ResourceInstallationID uuid.UUID       `bun:"resource_installation_id,pk,type:uuid"`
 }
 
 func (e *ResourceInstallationStatusEntity) Validate() error {
 	return nil
 }
 
-func (ris resourceInstallationStatus) Find(ctx context.Context, db storage.Executor, id int32) (ResourceInstallationStatusEntity, error) {
+func (ris resourceInstallationStatus) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (ResourceInstallationStatusEntity, error) {
 	var entity ResourceInstallationStatusEntity
 	if err := db.NewSelect().
 		Model(&entity).
-		Where("id = ?", id).
+		Where("resource_installation_id = ?", id).
 		Scan(ctx); err != nil {
 		return ResourceInstallationStatusEntity{}, err
 	}
@@ -49,24 +51,30 @@ type CreateResourceInstallationStatusData struct {
 	ExternalID             sql.NullString
 	State                  string
 	InstalledVersion       sql.NullString
-	ServiceState           sql.NullString
-	Health                 sql.NullString
+	ServiceState           string
+	Health                 string
+	Source                 string
+	HealthReason           sql.NullString
 	Details                json.RawMessage
 	ObservedAt             time.Time
+	ExpiresAt              time.Time
 }
 
 func (ris resourceInstallationStatus) Create(ctx context.Context, db storage.Executor, data CreateResourceInstallationStatusData) (ResourceInstallationStatusEntity, error) {
 	entity := ResourceInstallationStatusEntity{
+		ResourceInstallationID: data.ResourceInstallationID,
 		CreatedAt:              time.Now(),
 		UpdatedAt:              time.Now(),
-		ResourceInstallationID: data.ResourceInstallationID,
 		ExternalID:             data.ExternalID,
 		State:                  data.State,
 		InstalledVersion:       data.InstalledVersion,
 		ServiceState:           data.ServiceState,
 		Health:                 data.Health,
+		Source:                 data.Source,
+		HealthReason:           data.HealthReason,
 		Details:                data.Details,
 		ObservedAt:             data.ObservedAt,
+		ExpiresAt:              data.ExpiresAt,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -81,30 +89,34 @@ func (ris resourceInstallationStatus) Create(ctx context.Context, db storage.Exe
 }
 
 type UpdateResourceInstallationStatusData struct {
-	ID                     int32
-	UpdatedAt              time.Time
 	ResourceInstallationID uuid.UUID
+	UpdatedAt              time.Time
 	ExternalID             sql.NullString
 	State                  string
 	InstalledVersion       sql.NullString
-	ServiceState           sql.NullString
-	Health                 sql.NullString
+	ServiceState           string
+	Health                 string
+	Source                 string
+	HealthReason           sql.NullString
 	Details                json.RawMessage
 	ObservedAt             time.Time
+	ExpiresAt              time.Time
 }
 
 func (ris resourceInstallationStatus) Update(ctx context.Context, db storage.Executor, data UpdateResourceInstallationStatusData) (ResourceInstallationStatusEntity, error) {
 	entity := ResourceInstallationStatusEntity{
-		ID:                     data.ID,
-		UpdatedAt:              time.Now(),
 		ResourceInstallationID: data.ResourceInstallationID,
+		UpdatedAt:              time.Now(),
 		ExternalID:             data.ExternalID,
 		State:                  data.State,
 		InstalledVersion:       data.InstalledVersion,
 		ServiceState:           data.ServiceState,
 		Health:                 data.Health,
+		Source:                 data.Source,
+		HealthReason:           data.HealthReason,
 		Details:                data.Details,
 		ObservedAt:             data.ObservedAt,
+		ExpiresAt:              data.ExpiresAt,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -114,14 +126,16 @@ func (ris resourceInstallationStatus) Update(ctx context.Context, db storage.Exe
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("resource_installation_id").
 		Column("external_id").
 		Column("state").
 		Column("installed_version").
 		Column("service_state").
 		Column("health").
+		Column("source").
+		Column("health_reason").
 		Column("details").
 		Column("observed_at").
+		Column("expires_at").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -131,10 +145,10 @@ func (ris resourceInstallationStatus) Update(ctx context.Context, db storage.Exe
 	return entity, nil
 }
 
-func (ris resourceInstallationStatus) Destroy(ctx context.Context, db storage.Executor, id int32) error {
+func (ris resourceInstallationStatus) Destroy(ctx context.Context, db storage.Executor, id uuid.UUID) error {
 	_, err := db.NewDelete().
 		Model((*ResourceInstallationStatusEntity)(nil)).
-		Where("id = ?", id).
+		Where("resource_installation_id = ?", id).
 		Exec(ctx)
 
 	return err
@@ -200,16 +214,19 @@ func (ris resourceInstallationStatus) Paginate(ctx context.Context, db storage.E
 
 func (ris resourceInstallationStatus) Upsert(ctx context.Context, db storage.Executor, data CreateResourceInstallationStatusData) (ResourceInstallationStatusEntity, error) {
 	entity := ResourceInstallationStatusEntity{
+		ResourceInstallationID: data.ResourceInstallationID,
 		CreatedAt:              time.Now(),
 		UpdatedAt:              time.Now(),
-		ResourceInstallationID: data.ResourceInstallationID,
 		ExternalID:             data.ExternalID,
 		State:                  data.State,
 		InstalledVersion:       data.InstalledVersion,
 		ServiceState:           data.ServiceState,
 		Health:                 data.Health,
+		Source:                 data.Source,
+		HealthReason:           data.HealthReason,
 		Details:                data.Details,
 		ObservedAt:             data.ObservedAt,
+		ExpiresAt:              data.ExpiresAt,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -218,15 +235,17 @@ func (ris resourceInstallationStatus) Upsert(ctx context.Context, db storage.Exe
 
 	if err := db.NewInsert().
 		Model(&entity).
-		On("CONFLICT (id) DO UPDATE").
-		Set("resource_installation_id = excluded.resource_installation_id").
+		On("CONFLICT (resource_installation_id) DO UPDATE").
 		Set("external_id = excluded.external_id").
 		Set("state = excluded.state").
 		Set("installed_version = excluded.installed_version").
 		Set("service_state = excluded.service_state").
 		Set("health = excluded.health").
+		Set("source = excluded.source").
+		Set("health_reason = excluded.health_reason").
 		Set("details = excluded.details").
 		Set("observed_at = excluded.observed_at").
+		Set("expires_at = excluded.expires_at").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ResourceInstallationStatusEntity{}, err

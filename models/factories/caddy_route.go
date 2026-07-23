@@ -20,17 +20,17 @@ type CaddyRouteFactory struct {
 
 type CaddyRouteOption func(*CaddyRouteFactory)
 
-func BuildCaddyRoute(environmentTargetID uuid.UUID, environmentDomainID uuid.UUID, releaseID uuid.UUID, externalID string, opts ...CaddyRouteOption) models.CaddyRouteEntity {
+func BuildCaddyRoute(externalID string, environmentTargetID uuid.UUID, environmentDomainID uuid.UUID, releaseID uuid.UUID, opts ...CaddyRouteOption) models.CaddyRouteEntity {
 	f := &CaddyRouteFactory{
 		CaddyRouteEntity: models.CaddyRouteEntity{
-			EnvironmentTargetID: environmentTargetID,
-			EnvironmentDomainID: environmentDomainID,
-			ReleaseID:           releaseID,
 			ExternalID:          externalID,
 			State:               faker.Word(),
 			AppliedAt:           sql.NullTime{Time: time.Now(), Valid: true},
 			ObservedAt:          sql.NullTime{Time: time.Now(), Valid: true},
 			RemovedAt:           sql.NullTime{Time: time.Now(), Valid: true},
+			EnvironmentTargetID: environmentTargetID,
+			EnvironmentDomainID: environmentDomainID,
+			ReleaseID:           releaseID,
 		},
 	}
 
@@ -41,21 +41,21 @@ func BuildCaddyRoute(environmentTargetID uuid.UUID, environmentDomainID uuid.UUI
 	return f.CaddyRouteEntity
 }
 
-func CreateCaddyRoute(ctx context.Context, exec storage.Executor, environmentTargetID uuid.UUID, environmentDomainID uuid.UUID, releaseID uuid.UUID, externalID string, opts ...CaddyRouteOption) (models.CaddyRouteEntity, error) {
-	built := BuildCaddyRoute(environmentTargetID, environmentDomainID, releaseID, externalID, opts...)
+func CreateCaddyRoute(ctx context.Context, exec storage.Executor, externalID string, environmentTargetID uuid.UUID, environmentDomainID uuid.UUID, releaseID uuid.UUID, opts ...CaddyRouteOption) (models.CaddyRouteEntity, error) {
+	built := BuildCaddyRoute(externalID, environmentTargetID, environmentDomainID, releaseID, opts...)
 
 	entity := models.CaddyRouteEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		EnvironmentTargetID: built.EnvironmentTargetID,
-		EnvironmentDomainID: built.EnvironmentDomainID,
-		ReleaseID:           built.ReleaseID,
 		ExternalID:          built.ExternalID,
 		State:               built.State,
 		AppliedAt:           built.AppliedAt,
 		ObservedAt:          built.ObservedAt,
 		RemovedAt:           built.RemovedAt,
+		EnvironmentTargetID: built.EnvironmentTargetID,
+		EnvironmentDomainID: built.EnvironmentDomainID,
+		ReleaseID:           built.ReleaseID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -65,11 +65,11 @@ func CreateCaddyRoute(ctx context.Context, exec storage.Executor, environmentTar
 	return entity, nil
 }
 
-func CreateCaddyRoutes(ctx context.Context, exec storage.Executor, environmentTargetID uuid.UUID, environmentDomainID uuid.UUID, releaseID uuid.UUID, externalID string, count int, opts ...CaddyRouteOption) ([]models.CaddyRouteEntity, error) {
+func CreateCaddyRoutes(ctx context.Context, exec storage.Executor, externalID string, environmentTargetID uuid.UUID, environmentDomainID uuid.UUID, releaseID uuid.UUID, count int, opts ...CaddyRouteOption) ([]models.CaddyRouteEntity, error) {
 	caddyroutes := make([]models.CaddyRouteEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateCaddyRoute(ctx, exec, environmentTargetID, environmentDomainID, releaseID, externalID, opts...)
+		entity, err := CreateCaddyRoute(ctx, exec, externalID, environmentTargetID, environmentDomainID, releaseID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create caddyroute %d: %w", i+1, err)
 		}
@@ -77,24 +77,6 @@ func CreateCaddyRoutes(ctx context.Context, exec storage.Executor, environmentTa
 	}
 
 	return caddyroutes, nil
-}
-
-func WithCaddyRoutesEnvironmentTargetID(value uuid.UUID) CaddyRouteOption {
-	return func(f *CaddyRouteFactory) {
-		f.CaddyRouteEntity.EnvironmentTargetID = value
-	}
-}
-
-func WithCaddyRoutesEnvironmentDomainID(value uuid.UUID) CaddyRouteOption {
-	return func(f *CaddyRouteFactory) {
-		f.CaddyRouteEntity.EnvironmentDomainID = value
-	}
-}
-
-func WithCaddyRoutesReleaseID(value uuid.UUID) CaddyRouteOption {
-	return func(f *CaddyRouteFactory) {
-		f.CaddyRouteEntity.ReleaseID = value
-	}
 }
 
 func WithCaddyRoutesExternalID(value string) CaddyRouteOption {
@@ -124,5 +106,23 @@ func WithCaddyRoutesObservedAt(value sql.NullTime) CaddyRouteOption {
 func WithCaddyRoutesRemovedAt(value sql.NullTime) CaddyRouteOption {
 	return func(f *CaddyRouteFactory) {
 		f.CaddyRouteEntity.RemovedAt = value
+	}
+}
+
+func WithCaddyRoutesEnvironmentTargetID(value uuid.UUID) CaddyRouteOption {
+	return func(f *CaddyRouteFactory) {
+		f.CaddyRouteEntity.EnvironmentTargetID = value
+	}
+}
+
+func WithCaddyRoutesEnvironmentDomainID(value uuid.UUID) CaddyRouteOption {
+	return func(f *CaddyRouteFactory) {
+		f.CaddyRouteEntity.EnvironmentDomainID = value
+	}
+}
+
+func WithCaddyRoutesReleaseID(value uuid.UUID) CaddyRouteOption {
+	return func(f *CaddyRouteFactory) {
+		f.CaddyRouteEntity.ReleaseID = value
 	}
 }

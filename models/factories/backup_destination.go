@@ -24,7 +24,6 @@ func BuildBackupDestination(credentialID uuid.UUID, opts ...BackupDestinationOpt
 	f := &BackupDestinationFactory{
 		BackupDestinationEntity: models.BackupDestinationEntity{
 			Name:           faker.Word(),
-			CredentialID:   credentialID,
 			Provider:       faker.Word(),
 			Endpoint:       sql.NullString{String: faker.Word(), Valid: true},
 			Region:         sql.NullString{String: faker.Word(), Valid: true},
@@ -32,6 +31,7 @@ func BuildBackupDestination(credentialID uuid.UUID, opts ...BackupDestinationOpt
 			Prefix:         sql.NullString{String: faker.Word(), Valid: true},
 			ForcePathStyle: randomBool(),
 			ArchivedAt:     sql.NullTime{Time: time.Now(), Valid: true},
+			CredentialID:   credentialID,
 		},
 	}
 
@@ -50,7 +50,6 @@ func CreateBackupDestination(ctx context.Context, exec storage.Executor, credent
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 		Name:           built.Name,
-		CredentialID:   built.CredentialID,
 		Provider:       built.Provider,
 		Endpoint:       built.Endpoint,
 		Region:         built.Region,
@@ -58,6 +57,7 @@ func CreateBackupDestination(ctx context.Context, exec storage.Executor, credent
 		Prefix:         built.Prefix,
 		ForcePathStyle: built.ForcePathStyle,
 		ArchivedAt:     built.ArchivedAt,
+		CredentialID:   built.CredentialID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -84,12 +84,6 @@ func CreateBackupDestinations(ctx context.Context, exec storage.Executor, creden
 func WithBackupDestinationsName(value string) BackupDestinationOption {
 	return func(f *BackupDestinationFactory) {
 		f.BackupDestinationEntity.Name = value
-	}
-}
-
-func WithBackupDestinationsCredentialID(value uuid.UUID) BackupDestinationOption {
-	return func(f *BackupDestinationFactory) {
-		f.BackupDestinationEntity.CredentialID = value
 	}
 }
 
@@ -132,5 +126,11 @@ func WithBackupDestinationsForcePathStyle(value bool) BackupDestinationOption {
 func WithBackupDestinationsArchivedAt(value sql.NullTime) BackupDestinationOption {
 	return func(f *BackupDestinationFactory) {
 		f.BackupDestinationEntity.ArchivedAt = value
+	}
+}
+
+func WithBackupDestinationsCredentialID(value uuid.UUID) BackupDestinationOption {
+	return func(f *BackupDestinationFactory) {
+		f.BackupDestinationEntity.CredentialID = value
 	}
 }

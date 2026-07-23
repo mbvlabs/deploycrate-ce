@@ -24,10 +24,8 @@ func BuildPrivateNetwork(ownerEnvironmentID *uuid.UUID, opts ...PrivateNetworkOp
 	f := &PrivateNetworkFactory{
 		PrivateNetworkEntity: models.PrivateNetworkEntity{
 			Name:               faker.Word(),
-			Cidr:               faker.Word(),
-			Scope:              faker.Word(),
-			OwnerEnvironmentID: ownerEnvironmentID,
 			ArchivedAt:         sql.NullTime{Time: time.Now(), Valid: true},
+			OwnerEnvironmentID: ownerEnvironmentID,
 		},
 	}
 
@@ -46,10 +44,8 @@ func CreatePrivateNetwork(ctx context.Context, exec storage.Executor, ownerEnvir
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
 		Name:               built.Name,
-		Cidr:               built.Cidr,
-		Scope:              built.Scope,
-		OwnerEnvironmentID: built.OwnerEnvironmentID,
 		ArchivedAt:         built.ArchivedAt,
+		OwnerEnvironmentID: built.OwnerEnvironmentID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -79,26 +75,14 @@ func WithPrivateNetworksName(value string) PrivateNetworkOption {
 	}
 }
 
-func WithPrivateNetworksCidr(value string) PrivateNetworkOption {
+func WithPrivateNetworksArchivedAt(value sql.NullTime) PrivateNetworkOption {
 	return func(f *PrivateNetworkFactory) {
-		f.PrivateNetworkEntity.Cidr = value
-	}
-}
-
-func WithPrivateNetworksScope(value string) PrivateNetworkOption {
-	return func(f *PrivateNetworkFactory) {
-		f.PrivateNetworkEntity.Scope = value
+		f.PrivateNetworkEntity.ArchivedAt = value
 	}
 }
 
 func WithPrivateNetworksOwnerEnvironmentID(value *uuid.UUID) PrivateNetworkOption {
 	return func(f *PrivateNetworkFactory) {
 		f.PrivateNetworkEntity.OwnerEnvironmentID = value
-	}
-}
-
-func WithPrivateNetworksArchivedAt(value sql.NullTime) PrivateNetworkOption {
-	return func(f *PrivateNetworkFactory) {
-		f.PrivateNetworkEntity.ArchivedAt = value
 	}
 }

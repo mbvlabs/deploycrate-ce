@@ -24,7 +24,6 @@ type ChangeTaskAttemptOption func(*ChangeTaskAttemptFactory)
 func BuildChangeTaskAttempt(changeTaskID uuid.UUID, opts ...ChangeTaskAttemptOption) models.ChangeTaskAttemptEntity {
 	f := &ChangeTaskAttemptFactory{
 		ChangeTaskAttemptEntity: models.ChangeTaskAttemptEntity{
-			ChangeTaskID:    changeTaskID,
 			Attempt:         randomInt(1, 1000, 100),
 			Status:          faker.Word(),
 			StartedAt:       time.Time{},
@@ -32,6 +31,7 @@ func BuildChangeTaskAttempt(changeTaskID uuid.UUID, opts ...ChangeTaskAttemptOpt
 			FinishedAt:      sql.NullTime{Time: time.Now(), Valid: true},
 			Result:          json.RawMessage{},
 			Error:           sql.NullString{String: faker.Word(), Valid: true},
+			ChangeTaskID:    changeTaskID,
 		},
 	}
 
@@ -49,7 +49,6 @@ func CreateChangeTaskAttempt(ctx context.Context, exec storage.Executor, changeT
 		ID:              uuid.New(),
 		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
-		ChangeTaskID:    built.ChangeTaskID,
 		Attempt:         built.Attempt,
 		Status:          built.Status,
 		StartedAt:       built.StartedAt,
@@ -57,6 +56,7 @@ func CreateChangeTaskAttempt(ctx context.Context, exec storage.Executor, changeT
 		FinishedAt:      built.FinishedAt,
 		Result:          built.Result,
 		Error:           built.Error,
+		ChangeTaskID:    built.ChangeTaskID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -78,12 +78,6 @@ func CreateChangeTaskAttempts(ctx context.Context, exec storage.Executor, change
 	}
 
 	return changetaskattempts, nil
-}
-
-func WithChangeTaskAttemptsChangeTaskID(value uuid.UUID) ChangeTaskAttemptOption {
-	return func(f *ChangeTaskAttemptFactory) {
-		f.ChangeTaskAttemptEntity.ChangeTaskID = value
-	}
 }
 
 func WithChangeTaskAttemptsAttempt(value int32) ChangeTaskAttemptOption {
@@ -125,5 +119,11 @@ func WithChangeTaskAttemptsResult(value json.RawMessage) ChangeTaskAttemptOption
 func WithChangeTaskAttemptsError(value sql.NullString) ChangeTaskAttemptOption {
 	return func(f *ChangeTaskAttemptFactory) {
 		f.ChangeTaskAttemptEntity.Error = value
+	}
+}
+
+func WithChangeTaskAttemptsChangeTaskID(value uuid.UUID) ChangeTaskAttemptOption {
+	return func(f *ChangeTaskAttemptFactory) {
+		f.ChangeTaskAttemptEntity.ChangeTaskID = value
 	}
 }

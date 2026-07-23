@@ -18,14 +18,14 @@ type ChangeLogEntity struct {
 	ID                  int32           `bun:"id,pk,autoincrement"`
 	CreatedAt           time.Time       `bun:"created_at"`
 	UpdatedAt           time.Time       `bun:"updated_at"`
-	ChangeID            uuid.UUID       `bun:"change_id,type:uuid"`
-	ChangeTaskID        *uuid.UUID      `bun:"change_task_id,type:uuid"`
-	ChangeTaskAttemptID *uuid.UUID      `bun:"change_task_attempt_id,type:uuid"`
 	OccurredAt          time.Time       `bun:"occurred_at"`
 	Level               string          `bun:"level"`
 	Step                sql.NullString  `bun:"step"`
 	Message             string          `bun:"message"`
 	Metadata            json.RawMessage `bun:"metadata,type:jsonb"`
+	ChangeID            uuid.UUID       `bun:"change_id,type:uuid"`
+	ChangeTaskID        *uuid.UUID      `bun:"change_task_id,type:uuid"`
+	ChangeTaskAttemptID *uuid.UUID      `bun:"change_task_attempt_id,type:uuid"`
 }
 
 func (e *ChangeLogEntity) Validate() error {
@@ -45,28 +45,28 @@ func (cl changeLog) Find(ctx context.Context, db storage.Executor, id int32) (Ch
 }
 
 type CreateChangeLogData struct {
-	ChangeID            uuid.UUID
-	ChangeTaskID        *uuid.UUID
-	ChangeTaskAttemptID *uuid.UUID
 	OccurredAt          time.Time
 	Level               string
 	Step                sql.NullString
 	Message             string
 	Metadata            json.RawMessage
+	ChangeID            uuid.UUID
+	ChangeTaskID        *uuid.UUID
+	ChangeTaskAttemptID *uuid.UUID
 }
 
 func (cl changeLog) Create(ctx context.Context, db storage.Executor, data CreateChangeLogData) (ChangeLogEntity, error) {
 	entity := ChangeLogEntity{
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		ChangeID:            data.ChangeID,
-		ChangeTaskID:        data.ChangeTaskID,
-		ChangeTaskAttemptID: data.ChangeTaskAttemptID,
 		OccurredAt:          data.OccurredAt,
 		Level:               data.Level,
 		Step:                data.Step,
 		Message:             data.Message,
 		Metadata:            data.Metadata,
+		ChangeID:            data.ChangeID,
+		ChangeTaskID:        data.ChangeTaskID,
+		ChangeTaskAttemptID: data.ChangeTaskAttemptID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -83,28 +83,28 @@ func (cl changeLog) Create(ctx context.Context, db storage.Executor, data Create
 type UpdateChangeLogData struct {
 	ID                  int32
 	UpdatedAt           time.Time
-	ChangeID            uuid.UUID
-	ChangeTaskID        *uuid.UUID
-	ChangeTaskAttemptID *uuid.UUID
 	OccurredAt          time.Time
 	Level               string
 	Step                sql.NullString
 	Message             string
 	Metadata            json.RawMessage
+	ChangeID            uuid.UUID
+	ChangeTaskID        *uuid.UUID
+	ChangeTaskAttemptID *uuid.UUID
 }
 
 func (cl changeLog) Update(ctx context.Context, db storage.Executor, data UpdateChangeLogData) (ChangeLogEntity, error) {
 	entity := ChangeLogEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
-		ChangeID:            data.ChangeID,
-		ChangeTaskID:        data.ChangeTaskID,
-		ChangeTaskAttemptID: data.ChangeTaskAttemptID,
 		OccurredAt:          data.OccurredAt,
 		Level:               data.Level,
 		Step:                data.Step,
 		Message:             data.Message,
 		Metadata:            data.Metadata,
+		ChangeID:            data.ChangeID,
+		ChangeTaskID:        data.ChangeTaskID,
+		ChangeTaskAttemptID: data.ChangeTaskAttemptID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -114,14 +114,14 @@ func (cl changeLog) Update(ctx context.Context, db storage.Executor, data Update
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("change_id").
-		Column("change_task_id").
-		Column("change_task_attempt_id").
 		Column("occurred_at").
 		Column("level").
 		Column("step").
 		Column("message").
 		Column("metadata").
+		Column("change_id").
+		Column("change_task_id").
+		Column("change_task_attempt_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -202,14 +202,14 @@ func (cl changeLog) Upsert(ctx context.Context, db storage.Executor, data Create
 	entity := ChangeLogEntity{
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		ChangeID:            data.ChangeID,
-		ChangeTaskID:        data.ChangeTaskID,
-		ChangeTaskAttemptID: data.ChangeTaskAttemptID,
 		OccurredAt:          data.OccurredAt,
 		Level:               data.Level,
 		Step:                data.Step,
 		Message:             data.Message,
 		Metadata:            data.Metadata,
+		ChangeID:            data.ChangeID,
+		ChangeTaskID:        data.ChangeTaskID,
+		ChangeTaskAttemptID: data.ChangeTaskAttemptID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -219,14 +219,14 @@ func (cl changeLog) Upsert(ctx context.Context, db storage.Executor, data Create
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("change_id = excluded.change_id").
-		Set("change_task_id = excluded.change_task_id").
-		Set("change_task_attempt_id = excluded.change_task_attempt_id").
 		Set("occurred_at = excluded.occurred_at").
 		Set("level = excluded.level").
 		Set("step = excluded.step").
 		Set("message = excluded.message").
 		Set("metadata = excluded.metadata").
+		Set("change_id = excluded.change_id").
+		Set("change_task_id = excluded.change_task_id").
+		Set("change_task_attempt_id = excluded.change_task_attempt_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ChangeLogEntity{}, err

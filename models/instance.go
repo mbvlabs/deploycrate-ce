@@ -18,9 +18,6 @@ type InstanceEntity struct {
 	ID                  uuid.UUID       `bun:"id,pk,type:uuid"`
 	CreatedAt           time.Time       `bun:"created_at"`
 	UpdatedAt           time.Time       `bun:"updated_at"`
-	DeploymentID        uuid.UUID       `bun:"deployment_id,type:uuid"`
-	ReleaseID           uuid.UUID       `bun:"release_id,type:uuid"`
-	EnvironmentTargetID uuid.UUID       `bun:"environment_target_id,type:uuid"`
 	ExternalID          string          `bun:"external_id"`
 	Slot                string          `bun:"slot"`
 	ReplicaKey          string          `bun:"replica_key"`
@@ -28,6 +25,9 @@ type InstanceEntity struct {
 	Ports               json.RawMessage `bun:"ports,type:jsonb"`
 	ObservedAt          time.Time       `bun:"observed_at"`
 	RemovedAt           sql.NullTime    `bun:"removed_at"`
+	DeploymentID        uuid.UUID       `bun:"deployment_id,type:uuid"`
+	ReleaseID           uuid.UUID       `bun:"release_id,type:uuid"`
+	EnvironmentTargetID uuid.UUID       `bun:"environment_target_id,type:uuid"`
 }
 
 func (e *InstanceEntity) Validate() error {
@@ -47,9 +47,6 @@ func (i instance) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (
 }
 
 type CreateInstanceData struct {
-	DeploymentID        uuid.UUID
-	ReleaseID           uuid.UUID
-	EnvironmentTargetID uuid.UUID
 	ExternalID          string
 	Slot                string
 	ReplicaKey          string
@@ -57,6 +54,9 @@ type CreateInstanceData struct {
 	Ports               json.RawMessage
 	ObservedAt          time.Time
 	RemovedAt           sql.NullTime
+	DeploymentID        uuid.UUID
+	ReleaseID           uuid.UUID
+	EnvironmentTargetID uuid.UUID
 }
 
 func (i instance) Create(ctx context.Context, db storage.Executor, data CreateInstanceData) (InstanceEntity, error) {
@@ -64,9 +64,6 @@ func (i instance) Create(ctx context.Context, db storage.Executor, data CreateIn
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		DeploymentID:        data.DeploymentID,
-		ReleaseID:           data.ReleaseID,
-		EnvironmentTargetID: data.EnvironmentTargetID,
 		ExternalID:          data.ExternalID,
 		Slot:                data.Slot,
 		ReplicaKey:          data.ReplicaKey,
@@ -74,6 +71,9 @@ func (i instance) Create(ctx context.Context, db storage.Executor, data CreateIn
 		Ports:               data.Ports,
 		ObservedAt:          data.ObservedAt,
 		RemovedAt:           data.RemovedAt,
+		DeploymentID:        data.DeploymentID,
+		ReleaseID:           data.ReleaseID,
+		EnvironmentTargetID: data.EnvironmentTargetID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -90,9 +90,6 @@ func (i instance) Create(ctx context.Context, db storage.Executor, data CreateIn
 type UpdateInstanceData struct {
 	ID                  uuid.UUID
 	UpdatedAt           time.Time
-	DeploymentID        uuid.UUID
-	ReleaseID           uuid.UUID
-	EnvironmentTargetID uuid.UUID
 	ExternalID          string
 	Slot                string
 	ReplicaKey          string
@@ -100,15 +97,15 @@ type UpdateInstanceData struct {
 	Ports               json.RawMessage
 	ObservedAt          time.Time
 	RemovedAt           sql.NullTime
+	DeploymentID        uuid.UUID
+	ReleaseID           uuid.UUID
+	EnvironmentTargetID uuid.UUID
 }
 
 func (i instance) Update(ctx context.Context, db storage.Executor, data UpdateInstanceData) (InstanceEntity, error) {
 	entity := InstanceEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
-		DeploymentID:        data.DeploymentID,
-		ReleaseID:           data.ReleaseID,
-		EnvironmentTargetID: data.EnvironmentTargetID,
 		ExternalID:          data.ExternalID,
 		Slot:                data.Slot,
 		ReplicaKey:          data.ReplicaKey,
@@ -116,6 +113,9 @@ func (i instance) Update(ctx context.Context, db storage.Executor, data UpdateIn
 		Ports:               data.Ports,
 		ObservedAt:          data.ObservedAt,
 		RemovedAt:           data.RemovedAt,
+		DeploymentID:        data.DeploymentID,
+		ReleaseID:           data.ReleaseID,
+		EnvironmentTargetID: data.EnvironmentTargetID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -125,9 +125,6 @@ func (i instance) Update(ctx context.Context, db storage.Executor, data UpdateIn
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("deployment_id").
-		Column("release_id").
-		Column("environment_target_id").
 		Column("external_id").
 		Column("slot").
 		Column("replica_key").
@@ -135,6 +132,9 @@ func (i instance) Update(ctx context.Context, db storage.Executor, data UpdateIn
 		Column("ports").
 		Column("observed_at").
 		Column("removed_at").
+		Column("deployment_id").
+		Column("release_id").
+		Column("environment_target_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -216,9 +216,6 @@ func (i instance) Upsert(ctx context.Context, db storage.Executor, data CreateIn
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		DeploymentID:        data.DeploymentID,
-		ReleaseID:           data.ReleaseID,
-		EnvironmentTargetID: data.EnvironmentTargetID,
 		ExternalID:          data.ExternalID,
 		Slot:                data.Slot,
 		ReplicaKey:          data.ReplicaKey,
@@ -226,6 +223,9 @@ func (i instance) Upsert(ctx context.Context, db storage.Executor, data CreateIn
 		Ports:               data.Ports,
 		ObservedAt:          data.ObservedAt,
 		RemovedAt:           data.RemovedAt,
+		DeploymentID:        data.DeploymentID,
+		ReleaseID:           data.ReleaseID,
+		EnvironmentTargetID: data.EnvironmentTargetID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -235,9 +235,6 @@ func (i instance) Upsert(ctx context.Context, db storage.Executor, data CreateIn
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("deployment_id = excluded.deployment_id").
-		Set("release_id = excluded.release_id").
-		Set("environment_target_id = excluded.environment_target_id").
 		Set("external_id = excluded.external_id").
 		Set("slot = excluded.slot").
 		Set("replica_key = excluded.replica_key").
@@ -245,6 +242,9 @@ func (i instance) Upsert(ctx context.Context, db storage.Executor, data CreateIn
 		Set("ports = excluded.ports").
 		Set("observed_at = excluded.observed_at").
 		Set("removed_at = excluded.removed_at").
+		Set("deployment_id = excluded.deployment_id").
+		Set("release_id = excluded.release_id").
+		Set("environment_target_id = excluded.environment_target_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return InstanceEntity{}, err

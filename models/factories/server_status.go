@@ -2,10 +2,8 @@ package factories
 
 import (
 	"context"
-	"database/sql"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -24,16 +22,9 @@ type ServerStatusOption func(*ServerStatusFactory)
 func BuildServerStatus(serverID uuid.UUID, opts ...ServerStatusOption) models.ServerStatusEntity {
 	f := &ServerStatusFactory{
 		ServerStatusEntity: models.ServerStatusEntity{
-			ServerID:            serverID,
-			State:               faker.Word(),
-			OperatingSystem:     sql.NullString{String: faker.Word(), Valid: true},
-			Distribution:        sql.NullString{String: faker.Word(), Valid: true},
-			DistributionVersion: sql.NullString{String: faker.Word(), Valid: true},
-			Architecture:        sql.NullString{String: faker.Word(), Valid: true},
-			PackageManager:      sql.NullString{String: faker.Word(), Valid: true},
-			InitSystem:          sql.NullString{String: faker.Word(), Valid: true},
-			Capabilities:        json.RawMessage{},
-			ObservedAt:          time.Time{},
+			State:      faker.Word(),
+			ObservedAt: time.Time{},
+			ServerID:   serverID,
 		},
 	}
 
@@ -48,19 +39,12 @@ func CreateServerStatus(ctx context.Context, exec storage.Executor, serverID uui
 	built := BuildServerStatus(serverID, opts...)
 
 	entity := models.ServerStatusEntity{
-		ID:                  built.ID,
-		CreatedAt:           time.Now(),
-		UpdatedAt:           time.Now(),
-		ServerID:            built.ServerID,
-		State:               built.State,
-		OperatingSystem:     built.OperatingSystem,
-		Distribution:        built.Distribution,
-		DistributionVersion: built.DistributionVersion,
-		Architecture:        built.Architecture,
-		PackageManager:      built.PackageManager,
-		InitSystem:          built.InitSystem,
-		Capabilities:        built.Capabilities,
-		ObservedAt:          built.ObservedAt,
+		ID:         built.ID,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+		State:      built.State,
+		ObservedAt: built.ObservedAt,
+		ServerID:   built.ServerID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -70,24 +54,18 @@ func CreateServerStatus(ctx context.Context, exec storage.Executor, serverID uui
 	return entity, nil
 }
 
-func CreateServerStatuses(ctx context.Context, exec storage.Executor, serverID uuid.UUID, count int, opts ...ServerStatusOption) ([]models.ServerStatusEntity, error) {
-	serverStatuses := make([]models.ServerStatusEntity, 0, count)
+func CreateServerStatuss(ctx context.Context, exec storage.Executor, serverID uuid.UUID, count int, opts ...ServerStatusOption) ([]models.ServerStatusEntity, error) {
+	serverstatuss := make([]models.ServerStatusEntity, 0, count)
 
 	for i := range count {
 		entity, err := CreateServerStatus(ctx, exec, serverID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create serverstatus %d: %w", i+1, err)
 		}
-		serverStatuses = append(serverStatuses, entity)
+		serverstatuss = append(serverstatuss, entity)
 	}
 
-	return serverStatuses, nil
-}
-
-func WithServerStatusesServerID(value uuid.UUID) ServerStatusOption {
-	return func(f *ServerStatusFactory) {
-		f.ServerStatusEntity.ServerID = value
-	}
+	return serverstatuss, nil
 }
 
 func WithServerStatusesState(value string) ServerStatusOption {
@@ -96,50 +74,14 @@ func WithServerStatusesState(value string) ServerStatusOption {
 	}
 }
 
-func WithServerStatusesOperatingSystem(value sql.NullString) ServerStatusOption {
-	return func(f *ServerStatusFactory) {
-		f.ServerStatusEntity.OperatingSystem = value
-	}
-}
-
-func WithServerStatusesDistribution(value sql.NullString) ServerStatusOption {
-	return func(f *ServerStatusFactory) {
-		f.ServerStatusEntity.Distribution = value
-	}
-}
-
-func WithServerStatusesDistributionVersion(value sql.NullString) ServerStatusOption {
-	return func(f *ServerStatusFactory) {
-		f.ServerStatusEntity.DistributionVersion = value
-	}
-}
-
-func WithServerStatusesArchitecture(value sql.NullString) ServerStatusOption {
-	return func(f *ServerStatusFactory) {
-		f.ServerStatusEntity.Architecture = value
-	}
-}
-
-func WithServerStatusesPackageManager(value sql.NullString) ServerStatusOption {
-	return func(f *ServerStatusFactory) {
-		f.ServerStatusEntity.PackageManager = value
-	}
-}
-
-func WithServerStatusesInitSystem(value sql.NullString) ServerStatusOption {
-	return func(f *ServerStatusFactory) {
-		f.ServerStatusEntity.InitSystem = value
-	}
-}
-
-func WithServerStatusesCapabilities(value json.RawMessage) ServerStatusOption {
-	return func(f *ServerStatusFactory) {
-		f.ServerStatusEntity.Capabilities = value
-	}
-}
-
 func WithServerStatusesObservedAt(value time.Time) ServerStatusOption {
 	return func(f *ServerStatusFactory) {
 		f.ServerStatusEntity.ObservedAt = value
+	}
+}
+
+func WithServerStatusesServerID(value uuid.UUID) ServerStatusOption {
+	return func(f *ServerStatusFactory) {
+		f.ServerStatusEntity.ServerID = value
 	}
 }

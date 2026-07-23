@@ -17,12 +17,12 @@ type ChangeItemEntity struct {
 	ID             int32           `bun:"id,pk,autoincrement"`
 	CreatedAt      time.Time       `bun:"created_at"`
 	UpdatedAt      time.Time       `bun:"updated_at"`
-	ChangeID       uuid.UUID       `bun:"change_id,type:uuid"`
 	Action         string          `bun:"action"`
 	SubjectType    string          `bun:"subject_type"`
 	SubjectID      uuid.UUID       `bun:"subject_id,type:uuid"`
 	PreviousValue  json.RawMessage `bun:"previous_value,type:jsonb"`
 	RequestedValue json.RawMessage `bun:"requested_value,type:jsonb"`
+	ChangeID       uuid.UUID       `bun:"change_id,type:uuid"`
 }
 
 func (e *ChangeItemEntity) Validate() error {
@@ -42,24 +42,24 @@ func (ci changeItem) Find(ctx context.Context, db storage.Executor, id int32) (C
 }
 
 type CreateChangeItemData struct {
-	ChangeID       uuid.UUID
 	Action         string
 	SubjectType    string
 	SubjectID      uuid.UUID
 	PreviousValue  json.RawMessage
 	RequestedValue json.RawMessage
+	ChangeID       uuid.UUID
 }
 
 func (ci changeItem) Create(ctx context.Context, db storage.Executor, data CreateChangeItemData) (ChangeItemEntity, error) {
 	entity := ChangeItemEntity{
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
-		ChangeID:       data.ChangeID,
 		Action:         data.Action,
 		SubjectType:    data.SubjectType,
 		SubjectID:      data.SubjectID,
 		PreviousValue:  data.PreviousValue,
 		RequestedValue: data.RequestedValue,
+		ChangeID:       data.ChangeID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -76,24 +76,24 @@ func (ci changeItem) Create(ctx context.Context, db storage.Executor, data Creat
 type UpdateChangeItemData struct {
 	ID             int32
 	UpdatedAt      time.Time
-	ChangeID       uuid.UUID
 	Action         string
 	SubjectType    string
 	SubjectID      uuid.UUID
 	PreviousValue  json.RawMessage
 	RequestedValue json.RawMessage
+	ChangeID       uuid.UUID
 }
 
 func (ci changeItem) Update(ctx context.Context, db storage.Executor, data UpdateChangeItemData) (ChangeItemEntity, error) {
 	entity := ChangeItemEntity{
 		ID:             data.ID,
 		UpdatedAt:      time.Now(),
-		ChangeID:       data.ChangeID,
 		Action:         data.Action,
 		SubjectType:    data.SubjectType,
 		SubjectID:      data.SubjectID,
 		PreviousValue:  data.PreviousValue,
 		RequestedValue: data.RequestedValue,
+		ChangeID:       data.ChangeID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -103,12 +103,12 @@ func (ci changeItem) Update(ctx context.Context, db storage.Executor, data Updat
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("change_id").
 		Column("action").
 		Column("subject_type").
 		Column("subject_id").
 		Column("previous_value").
 		Column("requested_value").
+		Column("change_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -189,12 +189,12 @@ func (ci changeItem) Upsert(ctx context.Context, db storage.Executor, data Creat
 	entity := ChangeItemEntity{
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
-		ChangeID:       data.ChangeID,
 		Action:         data.Action,
 		SubjectType:    data.SubjectType,
 		SubjectID:      data.SubjectID,
 		PreviousValue:  data.PreviousValue,
 		RequestedValue: data.RequestedValue,
+		ChangeID:       data.ChangeID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -204,12 +204,12 @@ func (ci changeItem) Upsert(ctx context.Context, db storage.Executor, data Creat
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("change_id = excluded.change_id").
 		Set("action = excluded.action").
 		Set("subject_type = excluded.subject_type").
 		Set("subject_id = excluded.subject_id").
 		Set("previous_value = excluded.previous_value").
 		Set("requested_value = excluded.requested_value").
+		Set("change_id = excluded.change_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ChangeItemEntity{}, err

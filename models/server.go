@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -13,14 +14,25 @@ import (
 )
 
 type ServerEntity struct {
-	bun.BaseModel `bun:"table:servers,alias:servers"`
-	ID            uuid.UUID    `bun:"id,pk,type:uuid"`
-	CreatedAt     time.Time    `bun:"created_at"`
-	UpdatedAt     time.Time    `bun:"updated_at"`
-	Name          string       `bun:"name"`
-	Slug          string       `bun:"slug"`
-	Address       string       `bun:"address"`
-	ArchivedAt    sql.NullTime `bun:"archived_at"`
+	bun.BaseModel       `bun:"table:servers,alias:servers"`
+	ID                  uuid.UUID       `bun:"id,pk,type:uuid"`
+	CreatedAt           time.Time       `bun:"created_at"`
+	UpdatedAt           time.Time       `bun:"updated_at"`
+	ArchivedAt          sql.NullTime    `bun:"archived_at"`
+	Name                string          `bun:"name"`
+	Slug                string          `bun:"slug"`
+	Kind                string          `bun:"kind"`
+	Capabilities        json.RawMessage `bun:"capabilities,type:jsonb"`
+	OperatingSystem     sql.NullString  `bun:"operating_system"`
+	Distribution        sql.NullString  `bun:"distribution"`
+	DistributionVersion sql.NullString  `bun:"distribution_version"`
+	Architecture        sql.NullString  `bun:"architecture"`
+	PackageManager      sql.NullString  `bun:"package_manager"`
+	InitSystem          sql.NullString  `bun:"init_system"`
+	Ipv4Address         string          `bun:"ipv4_address"`
+	Ipv6Address         string          `bun:"ipv6_address"`
+	IsConfigured        bool            `bun:"is_configured"`
+	Address             string          `bun:"address"`
 }
 
 func (e *ServerEntity) Validate() error {
@@ -40,21 +52,43 @@ func (s server) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (Se
 }
 
 type CreateServerData struct {
-	Name       string
-	Slug       string
-	Address    string
-	ArchivedAt sql.NullTime
+	ArchivedAt          sql.NullTime
+	Name                string
+	Slug                string
+	Kind                string
+	Capabilities        json.RawMessage
+	OperatingSystem     sql.NullString
+	Distribution        sql.NullString
+	DistributionVersion sql.NullString
+	Architecture        sql.NullString
+	PackageManager      sql.NullString
+	InitSystem          sql.NullString
+	Ipv4Address         string
+	Ipv6Address         string
+	IsConfigured        bool
+	Address             string
 }
 
 func (s server) Create(ctx context.Context, db storage.Executor, data CreateServerData) (ServerEntity, error) {
 	entity := ServerEntity{
-		ID:         uuid.New(),
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
-		Name:       data.Name,
-		Slug:       data.Slug,
-		Address:    data.Address,
-		ArchivedAt: data.ArchivedAt,
+		ID:                  uuid.New(),
+		CreatedAt:           time.Now(),
+		UpdatedAt:           time.Now(),
+		ArchivedAt:          data.ArchivedAt,
+		Name:                data.Name,
+		Slug:                data.Slug,
+		Kind:                data.Kind,
+		Capabilities:        data.Capabilities,
+		OperatingSystem:     data.OperatingSystem,
+		Distribution:        data.Distribution,
+		DistributionVersion: data.DistributionVersion,
+		Architecture:        data.Architecture,
+		PackageManager:      data.PackageManager,
+		InitSystem:          data.InitSystem,
+		Ipv4Address:         data.Ipv4Address,
+		Ipv6Address:         data.Ipv6Address,
+		IsConfigured:        data.IsConfigured,
+		Address:             data.Address,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -69,22 +103,44 @@ func (s server) Create(ctx context.Context, db storage.Executor, data CreateServ
 }
 
 type UpdateServerData struct {
-	ID         uuid.UUID
-	UpdatedAt  time.Time
-	Name       string
-	Slug       string
-	Address    string
-	ArchivedAt sql.NullTime
+	ID                  uuid.UUID
+	UpdatedAt           time.Time
+	ArchivedAt          sql.NullTime
+	Name                string
+	Slug                string
+	Kind                string
+	Capabilities        json.RawMessage
+	OperatingSystem     sql.NullString
+	Distribution        sql.NullString
+	DistributionVersion sql.NullString
+	Architecture        sql.NullString
+	PackageManager      sql.NullString
+	InitSystem          sql.NullString
+	Ipv4Address         string
+	Ipv6Address         string
+	IsConfigured        bool
+	Address             string
 }
 
 func (s server) Update(ctx context.Context, db storage.Executor, data UpdateServerData) (ServerEntity, error) {
 	entity := ServerEntity{
-		ID:         data.ID,
-		UpdatedAt:  time.Now(),
-		Name:       data.Name,
-		Slug:       data.Slug,
-		Address:    data.Address,
-		ArchivedAt: data.ArchivedAt,
+		ID:                  data.ID,
+		UpdatedAt:           time.Now(),
+		ArchivedAt:          data.ArchivedAt,
+		Name:                data.Name,
+		Slug:                data.Slug,
+		Kind:                data.Kind,
+		Capabilities:        data.Capabilities,
+		OperatingSystem:     data.OperatingSystem,
+		Distribution:        data.Distribution,
+		DistributionVersion: data.DistributionVersion,
+		Architecture:        data.Architecture,
+		PackageManager:      data.PackageManager,
+		InitSystem:          data.InitSystem,
+		Ipv4Address:         data.Ipv4Address,
+		Ipv6Address:         data.Ipv6Address,
+		IsConfigured:        data.IsConfigured,
+		Address:             data.Address,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -94,10 +150,21 @@ func (s server) Update(ctx context.Context, db storage.Executor, data UpdateServ
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
+		Column("archived_at").
 		Column("name").
 		Column("slug").
+		Column("kind").
+		Column("capabilities").
+		Column("operating_system").
+		Column("distribution").
+		Column("distribution_version").
+		Column("architecture").
+		Column("package_manager").
+		Column("init_system").
+		Column("ipv4_address").
+		Column("ipv6_address").
+		Column("is_configured").
 		Column("address").
-		Column("archived_at").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -176,13 +243,24 @@ func (s server) Paginate(ctx context.Context, db storage.Executor, page, pageSiz
 
 func (s server) Upsert(ctx context.Context, db storage.Executor, data CreateServerData) (ServerEntity, error) {
 	entity := ServerEntity{
-		ID:         uuid.New(),
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
-		Name:       data.Name,
-		Slug:       data.Slug,
-		Address:    data.Address,
-		ArchivedAt: data.ArchivedAt,
+		ID:                  uuid.New(),
+		CreatedAt:           time.Now(),
+		UpdatedAt:           time.Now(),
+		ArchivedAt:          data.ArchivedAt,
+		Name:                data.Name,
+		Slug:                data.Slug,
+		Kind:                data.Kind,
+		Capabilities:        data.Capabilities,
+		OperatingSystem:     data.OperatingSystem,
+		Distribution:        data.Distribution,
+		DistributionVersion: data.DistributionVersion,
+		Architecture:        data.Architecture,
+		PackageManager:      data.PackageManager,
+		InitSystem:          data.InitSystem,
+		Ipv4Address:         data.Ipv4Address,
+		Ipv6Address:         data.Ipv6Address,
+		IsConfigured:        data.IsConfigured,
+		Address:             data.Address,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -192,10 +270,21 @@ func (s server) Upsert(ctx context.Context, db storage.Executor, data CreateServ
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
+		Set("archived_at = excluded.archived_at").
 		Set("name = excluded.name").
 		Set("slug = excluded.slug").
+		Set("kind = excluded.kind").
+		Set("capabilities = excluded.capabilities").
+		Set("operating_system = excluded.operating_system").
+		Set("distribution = excluded.distribution").
+		Set("distribution_version = excluded.distribution_version").
+		Set("architecture = excluded.architecture").
+		Set("package_manager = excluded.package_manager").
+		Set("init_system = excluded.init_system").
+		Set("ipv4_address = excluded.ipv4_address").
+		Set("ipv6_address = excluded.ipv6_address").
+		Set("is_configured = excluded.is_configured").
 		Set("address = excluded.address").
-		Set("archived_at = excluded.archived_at").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ServerEntity{}, err

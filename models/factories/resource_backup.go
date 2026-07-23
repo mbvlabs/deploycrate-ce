@@ -20,17 +20,12 @@ type ResourceBackupFactory struct {
 
 type ResourceBackupOption func(*ResourceBackupFactory)
 
-func BuildResourceBackup(changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid.UUID, resourceID uuid.UUID, resourceBindingID *uuid.UUID, resourceInstallationID *uuid.UUID, backupDestinationID uuid.UUID, opts ...ResourceBackupOption) models.ResourceBackupEntity {
+func BuildResourceBackup(changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid.UUID, resourceID uuid.UUID, environmentResourceID *uuid.UUID, resourceInstallationID *uuid.UUID, resourceVolumeID *uuid.UUID, backupDestinationID uuid.UUID, opts ...ResourceBackupOption) models.ResourceBackupEntity {
 	f := &ResourceBackupFactory{
 		ResourceBackupEntity: models.ResourceBackupEntity{
-			ChangeID:               changeID,
-			ChangeTaskID:           changeTaskID,
-			BackupPolicyID:         backupPolicyID,
-			ResourceID:             resourceID,
-			ResourceBindingID:      resourceBindingID,
-			ResourceInstallationID: resourceInstallationID,
-			BackupDestinationID:    backupDestinationID,
 			TriggerType:            faker.Word(),
+			Strategy:               faker.Word(),
+			Driver:                 faker.Word(),
 			Format:                 faker.Word(),
 			ObjectKey:              faker.Word(),
 			Status:                 faker.Word(),
@@ -41,6 +36,14 @@ func BuildResourceBackup(changeID uuid.UUID, changeTaskID uuid.UUID, backupPolic
 			Digest:                 []byte{},
 			VerifiedAt:             sql.NullTime{Time: time.Now(), Valid: true},
 			Error:                  sql.NullString{String: faker.Word(), Valid: true},
+			ChangeID:               changeID,
+			ChangeTaskID:           changeTaskID,
+			BackupPolicyID:         backupPolicyID,
+			ResourceID:             resourceID,
+			EnvironmentResourceID:  environmentResourceID,
+			ResourceInstallationID: resourceInstallationID,
+			ResourceVolumeID:       resourceVolumeID,
+			BackupDestinationID:    backupDestinationID,
 		},
 	}
 
@@ -51,21 +54,16 @@ func BuildResourceBackup(changeID uuid.UUID, changeTaskID uuid.UUID, backupPolic
 	return f.ResourceBackupEntity
 }
 
-func CreateResourceBackup(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid.UUID, resourceID uuid.UUID, resourceBindingID *uuid.UUID, resourceInstallationID *uuid.UUID, backupDestinationID uuid.UUID, opts ...ResourceBackupOption) (models.ResourceBackupEntity, error) {
-	built := BuildResourceBackup(changeID, changeTaskID, backupPolicyID, resourceID, resourceBindingID, resourceInstallationID, backupDestinationID, opts...)
+func CreateResourceBackup(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid.UUID, resourceID uuid.UUID, environmentResourceID *uuid.UUID, resourceInstallationID *uuid.UUID, resourceVolumeID *uuid.UUID, backupDestinationID uuid.UUID, opts ...ResourceBackupOption) (models.ResourceBackupEntity, error) {
+	built := BuildResourceBackup(changeID, changeTaskID, backupPolicyID, resourceID, environmentResourceID, resourceInstallationID, resourceVolumeID, backupDestinationID, opts...)
 
 	entity := models.ResourceBackupEntity{
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),
 		UpdatedAt:              time.Now(),
-		ChangeID:               built.ChangeID,
-		ChangeTaskID:           built.ChangeTaskID,
-		BackupPolicyID:         built.BackupPolicyID,
-		ResourceID:             built.ResourceID,
-		ResourceBindingID:      built.ResourceBindingID,
-		ResourceInstallationID: built.ResourceInstallationID,
-		BackupDestinationID:    built.BackupDestinationID,
 		TriggerType:            built.TriggerType,
+		Strategy:               built.Strategy,
+		Driver:                 built.Driver,
 		Format:                 built.Format,
 		ObjectKey:              built.ObjectKey,
 		Status:                 built.Status,
@@ -76,6 +74,14 @@ func CreateResourceBackup(ctx context.Context, exec storage.Executor, changeID u
 		Digest:                 built.Digest,
 		VerifiedAt:             built.VerifiedAt,
 		Error:                  built.Error,
+		ChangeID:               built.ChangeID,
+		ChangeTaskID:           built.ChangeTaskID,
+		BackupPolicyID:         built.BackupPolicyID,
+		ResourceID:             built.ResourceID,
+		EnvironmentResourceID:  built.EnvironmentResourceID,
+		ResourceInstallationID: built.ResourceInstallationID,
+		ResourceVolumeID:       built.ResourceVolumeID,
+		BackupDestinationID:    built.BackupDestinationID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -85,11 +91,11 @@ func CreateResourceBackup(ctx context.Context, exec storage.Executor, changeID u
 	return entity, nil
 }
 
-func CreateResourceBackups(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid.UUID, resourceID uuid.UUID, resourceBindingID *uuid.UUID, resourceInstallationID *uuid.UUID, backupDestinationID uuid.UUID, count int, opts ...ResourceBackupOption) ([]models.ResourceBackupEntity, error) {
+func CreateResourceBackups(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid.UUID, resourceID uuid.UUID, environmentResourceID *uuid.UUID, resourceInstallationID *uuid.UUID, resourceVolumeID *uuid.UUID, backupDestinationID uuid.UUID, count int, opts ...ResourceBackupOption) ([]models.ResourceBackupEntity, error) {
 	resourcebackups := make([]models.ResourceBackupEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateResourceBackup(ctx, exec, changeID, changeTaskID, backupPolicyID, resourceID, resourceBindingID, resourceInstallationID, backupDestinationID, opts...)
+		entity, err := CreateResourceBackup(ctx, exec, changeID, changeTaskID, backupPolicyID, resourceID, environmentResourceID, resourceInstallationID, resourceVolumeID, backupDestinationID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resourcebackup %d: %w", i+1, err)
 		}
@@ -99,51 +105,21 @@ func CreateResourceBackups(ctx context.Context, exec storage.Executor, changeID 
 	return resourcebackups, nil
 }
 
-func WithResourceBackupsChangeID(value uuid.UUID) ResourceBackupOption {
-	return func(f *ResourceBackupFactory) {
-		f.ResourceBackupEntity.ChangeID = value
-	}
-}
-
-func WithResourceBackupsChangeTaskID(value uuid.UUID) ResourceBackupOption {
-	return func(f *ResourceBackupFactory) {
-		f.ResourceBackupEntity.ChangeTaskID = value
-	}
-}
-
-func WithResourceBackupsBackupPolicyID(value uuid.UUID) ResourceBackupOption {
-	return func(f *ResourceBackupFactory) {
-		f.ResourceBackupEntity.BackupPolicyID = value
-	}
-}
-
-func WithResourceBackupsResourceID(value uuid.UUID) ResourceBackupOption {
-	return func(f *ResourceBackupFactory) {
-		f.ResourceBackupEntity.ResourceID = value
-	}
-}
-
-func WithResourceBackupsResourceBindingID(value *uuid.UUID) ResourceBackupOption {
-	return func(f *ResourceBackupFactory) {
-		f.ResourceBackupEntity.ResourceBindingID = value
-	}
-}
-
-func WithResourceBackupsResourceInstallationID(value *uuid.UUID) ResourceBackupOption {
-	return func(f *ResourceBackupFactory) {
-		f.ResourceBackupEntity.ResourceInstallationID = value
-	}
-}
-
-func WithResourceBackupsBackupDestinationID(value uuid.UUID) ResourceBackupOption {
-	return func(f *ResourceBackupFactory) {
-		f.ResourceBackupEntity.BackupDestinationID = value
-	}
-}
-
 func WithResourceBackupsTriggerType(value string) ResourceBackupOption {
 	return func(f *ResourceBackupFactory) {
 		f.ResourceBackupEntity.TriggerType = value
+	}
+}
+
+func WithResourceBackupsStrategy(value string) ResourceBackupOption {
+	return func(f *ResourceBackupFactory) {
+		f.ResourceBackupEntity.Strategy = value
+	}
+}
+
+func WithResourceBackupsDriver(value string) ResourceBackupOption {
+	return func(f *ResourceBackupFactory) {
+		f.ResourceBackupEntity.Driver = value
 	}
 }
 
@@ -204,5 +180,53 @@ func WithResourceBackupsVerifiedAt(value sql.NullTime) ResourceBackupOption {
 func WithResourceBackupsError(value sql.NullString) ResourceBackupOption {
 	return func(f *ResourceBackupFactory) {
 		f.ResourceBackupEntity.Error = value
+	}
+}
+
+func WithResourceBackupsChangeID(value uuid.UUID) ResourceBackupOption {
+	return func(f *ResourceBackupFactory) {
+		f.ResourceBackupEntity.ChangeID = value
+	}
+}
+
+func WithResourceBackupsChangeTaskID(value uuid.UUID) ResourceBackupOption {
+	return func(f *ResourceBackupFactory) {
+		f.ResourceBackupEntity.ChangeTaskID = value
+	}
+}
+
+func WithResourceBackupsBackupPolicyID(value uuid.UUID) ResourceBackupOption {
+	return func(f *ResourceBackupFactory) {
+		f.ResourceBackupEntity.BackupPolicyID = value
+	}
+}
+
+func WithResourceBackupsResourceID(value uuid.UUID) ResourceBackupOption {
+	return func(f *ResourceBackupFactory) {
+		f.ResourceBackupEntity.ResourceID = value
+	}
+}
+
+func WithResourceBackupsEnvironmentResourceID(value *uuid.UUID) ResourceBackupOption {
+	return func(f *ResourceBackupFactory) {
+		f.ResourceBackupEntity.EnvironmentResourceID = value
+	}
+}
+
+func WithResourceBackupsResourceInstallationID(value *uuid.UUID) ResourceBackupOption {
+	return func(f *ResourceBackupFactory) {
+		f.ResourceBackupEntity.ResourceInstallationID = value
+	}
+}
+
+func WithResourceBackupsResourceVolumeID(value *uuid.UUID) ResourceBackupOption {
+	return func(f *ResourceBackupFactory) {
+		f.ResourceBackupEntity.ResourceVolumeID = value
+	}
+}
+
+func WithResourceBackupsBackupDestinationID(value uuid.UUID) ResourceBackupOption {
+	return func(f *ResourceBackupFactory) {
+		f.ResourceBackupEntity.BackupDestinationID = value
 	}
 }

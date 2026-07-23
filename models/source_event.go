@@ -18,7 +18,6 @@ type SourceEventEntity struct {
 	ID                  uuid.UUID       `bun:"id,pk,type:uuid"`
 	CreatedAt           time.Time       `bun:"created_at"`
 	UpdatedAt           time.Time       `bun:"updated_at"`
-	EnvironmentSourceID uuid.UUID       `bun:"environment_source_id,type:uuid"`
 	ExternalID          string          `bun:"external_id"`
 	Kind                string          `bun:"kind"`
 	SourceRevision      sql.NullString  `bun:"source_revision"`
@@ -26,6 +25,7 @@ type SourceEventEntity struct {
 	ReceivedAt          time.Time       `bun:"received_at"`
 	ProcessedAt         sql.NullTime    `bun:"processed_at"`
 	Error               sql.NullString  `bun:"error"`
+	EnvironmentSourceID uuid.UUID       `bun:"environment_source_id,type:uuid"`
 }
 
 func (e *SourceEventEntity) Validate() error {
@@ -45,7 +45,6 @@ func (se sourceEvent) Find(ctx context.Context, db storage.Executor, id uuid.UUI
 }
 
 type CreateSourceEventData struct {
-	EnvironmentSourceID uuid.UUID
 	ExternalID          string
 	Kind                string
 	SourceRevision      sql.NullString
@@ -53,6 +52,7 @@ type CreateSourceEventData struct {
 	ReceivedAt          time.Time
 	ProcessedAt         sql.NullTime
 	Error               sql.NullString
+	EnvironmentSourceID uuid.UUID
 }
 
 func (se sourceEvent) Create(ctx context.Context, db storage.Executor, data CreateSourceEventData) (SourceEventEntity, error) {
@@ -60,7 +60,6 @@ func (se sourceEvent) Create(ctx context.Context, db storage.Executor, data Crea
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		EnvironmentSourceID: data.EnvironmentSourceID,
 		ExternalID:          data.ExternalID,
 		Kind:                data.Kind,
 		SourceRevision:      data.SourceRevision,
@@ -68,6 +67,7 @@ func (se sourceEvent) Create(ctx context.Context, db storage.Executor, data Crea
 		ReceivedAt:          data.ReceivedAt,
 		ProcessedAt:         data.ProcessedAt,
 		Error:               data.Error,
+		EnvironmentSourceID: data.EnvironmentSourceID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -84,7 +84,6 @@ func (se sourceEvent) Create(ctx context.Context, db storage.Executor, data Crea
 type UpdateSourceEventData struct {
 	ID                  uuid.UUID
 	UpdatedAt           time.Time
-	EnvironmentSourceID uuid.UUID
 	ExternalID          string
 	Kind                string
 	SourceRevision      sql.NullString
@@ -92,13 +91,13 @@ type UpdateSourceEventData struct {
 	ReceivedAt          time.Time
 	ProcessedAt         sql.NullTime
 	Error               sql.NullString
+	EnvironmentSourceID uuid.UUID
 }
 
 func (se sourceEvent) Update(ctx context.Context, db storage.Executor, data UpdateSourceEventData) (SourceEventEntity, error) {
 	entity := SourceEventEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
-		EnvironmentSourceID: data.EnvironmentSourceID,
 		ExternalID:          data.ExternalID,
 		Kind:                data.Kind,
 		SourceRevision:      data.SourceRevision,
@@ -106,6 +105,7 @@ func (se sourceEvent) Update(ctx context.Context, db storage.Executor, data Upda
 		ReceivedAt:          data.ReceivedAt,
 		ProcessedAt:         data.ProcessedAt,
 		Error:               data.Error,
+		EnvironmentSourceID: data.EnvironmentSourceID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -115,7 +115,6 @@ func (se sourceEvent) Update(ctx context.Context, db storage.Executor, data Upda
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("environment_source_id").
 		Column("external_id").
 		Column("kind").
 		Column("source_revision").
@@ -123,6 +122,7 @@ func (se sourceEvent) Update(ctx context.Context, db storage.Executor, data Upda
 		Column("received_at").
 		Column("processed_at").
 		Column("error").
+		Column("environment_source_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -204,7 +204,6 @@ func (se sourceEvent) Upsert(ctx context.Context, db storage.Executor, data Crea
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		EnvironmentSourceID: data.EnvironmentSourceID,
 		ExternalID:          data.ExternalID,
 		Kind:                data.Kind,
 		SourceRevision:      data.SourceRevision,
@@ -212,6 +211,7 @@ func (se sourceEvent) Upsert(ctx context.Context, db storage.Executor, data Crea
 		ReceivedAt:          data.ReceivedAt,
 		ProcessedAt:         data.ProcessedAt,
 		Error:               data.Error,
+		EnvironmentSourceID: data.EnvironmentSourceID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -221,7 +221,6 @@ func (se sourceEvent) Upsert(ctx context.Context, db storage.Executor, data Crea
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("environment_source_id = excluded.environment_source_id").
 		Set("external_id = excluded.external_id").
 		Set("kind = excluded.kind").
 		Set("source_revision = excluded.source_revision").
@@ -229,6 +228,7 @@ func (se sourceEvent) Upsert(ctx context.Context, db storage.Executor, data Crea
 		Set("received_at = excluded.received_at").
 		Set("processed_at = excluded.processed_at").
 		Set("error = excluded.error").
+		Set("environment_source_id = excluded.environment_source_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return SourceEventEntity{}, err

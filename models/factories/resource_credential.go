@@ -24,14 +24,14 @@ type ResourceCredentialOption func(*ResourceCredentialFactory)
 func BuildResourceCredential(resourceID uuid.UUID, resourceInstallationID *uuid.UUID, opts ...ResourceCredentialOption) models.ResourceCredentialEntity {
 	f := &ResourceCredentialFactory{
 		ResourceCredentialEntity: models.ResourceCredentialEntity{
-			ResourceID:             resourceID,
-			ResourceInstallationID: resourceInstallationID,
 			Name:                   faker.Word(),
 			Role:                   faker.Word(),
 			Username:               sql.NullString{String: faker.Word(), Valid: true},
 			Metadata:               json.RawMessage{},
 			EncPayload:             []byte{},
 			ArchivedAt:             sql.NullTime{Time: time.Now(), Valid: true},
+			ResourceID:             resourceID,
+			ResourceInstallationID: resourceInstallationID,
 		},
 	}
 
@@ -49,14 +49,14 @@ func CreateResourceCredential(ctx context.Context, exec storage.Executor, resour
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),
 		UpdatedAt:              time.Now(),
-		ResourceID:             built.ResourceID,
-		ResourceInstallationID: built.ResourceInstallationID,
 		Name:                   built.Name,
 		Role:                   built.Role,
 		Username:               built.Username,
 		Metadata:               built.Metadata,
 		EncPayload:             built.EncPayload,
 		ArchivedAt:             built.ArchivedAt,
+		ResourceID:             built.ResourceID,
+		ResourceInstallationID: built.ResourceInstallationID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -78,18 +78,6 @@ func CreateResourceCredentials(ctx context.Context, exec storage.Executor, resou
 	}
 
 	return resourcecredentials, nil
-}
-
-func WithResourceCredentialsResourceID(value uuid.UUID) ResourceCredentialOption {
-	return func(f *ResourceCredentialFactory) {
-		f.ResourceCredentialEntity.ResourceID = value
-	}
-}
-
-func WithResourceCredentialsResourceInstallationID(value *uuid.UUID) ResourceCredentialOption {
-	return func(f *ResourceCredentialFactory) {
-		f.ResourceCredentialEntity.ResourceInstallationID = value
-	}
 }
 
 func WithResourceCredentialsName(value string) ResourceCredentialOption {
@@ -125,5 +113,17 @@ func WithResourceCredentialsEncPayload(value []byte) ResourceCredentialOption {
 func WithResourceCredentialsArchivedAt(value sql.NullTime) ResourceCredentialOption {
 	return func(f *ResourceCredentialFactory) {
 		f.ResourceCredentialEntity.ArchivedAt = value
+	}
+}
+
+func WithResourceCredentialsResourceID(value uuid.UUID) ResourceCredentialOption {
+	return func(f *ResourceCredentialFactory) {
+		f.ResourceCredentialEntity.ResourceID = value
+	}
+}
+
+func WithResourceCredentialsResourceInstallationID(value *uuid.UUID) ResourceCredentialOption {
+	return func(f *ResourceCredentialFactory) {
+		f.ResourceCredentialEntity.ResourceInstallationID = value
 	}
 }

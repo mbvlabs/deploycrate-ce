@@ -18,13 +18,11 @@ type ChangeEntity struct {
 	ID                uuid.UUID       `bun:"id,pk,type:uuid"`
 	CreatedAt         time.Time       `bun:"created_at"`
 	UpdatedAt         time.Time       `bun:"updated_at"`
-	EnvironmentID     uuid.UUID       `bun:"environment_id,type:uuid"`
 	Sequence          int64           `bun:"sequence"`
 	Kind              string          `bun:"kind"`
 	TriggerType       string          `bun:"trigger_type"`
 	ActorType         string          `bun:"actor_type"`
 	ActorID           *uuid.UUID      `bun:"actor_id,type:uuid"`
-	CorrectsChangeID  *uuid.UUID      `bun:"corrects_change_id,type:uuid"`
 	CauseSystem       sql.NullString  `bun:"cause_system"`
 	CauseReference    sql.NullString  `bun:"cause_reference"`
 	CorrelationID     uuid.UUID       `bun:"correlation_id,type:uuid"`
@@ -37,6 +35,8 @@ type ChangeEntity struct {
 	FinishedAt        sql.NullTime    `bun:"finished_at"`
 	CancelledAt       sql.NullTime    `bun:"cancelled_at"`
 	Error             sql.NullString  `bun:"error"`
+	EnvironmentID     uuid.UUID       `bun:"environment_id,type:uuid"`
+	CorrectsChangeID  *uuid.UUID      `bun:"corrects_change_id,type:uuid"`
 }
 
 func (e *ChangeEntity) Validate() error {
@@ -56,13 +56,11 @@ func (c change) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (Ch
 }
 
 type CreateChangeData struct {
-	EnvironmentID     uuid.UUID
 	Sequence          int64
 	Kind              string
 	TriggerType       string
 	ActorType         string
 	ActorID           *uuid.UUID
-	CorrectsChangeID  *uuid.UUID
 	CauseSystem       sql.NullString
 	CauseReference    sql.NullString
 	CorrelationID     uuid.UUID
@@ -75,6 +73,8 @@ type CreateChangeData struct {
 	FinishedAt        sql.NullTime
 	CancelledAt       sql.NullTime
 	Error             sql.NullString
+	EnvironmentID     uuid.UUID
+	CorrectsChangeID  *uuid.UUID
 }
 
 func (c change) Create(ctx context.Context, db storage.Executor, data CreateChangeData) (ChangeEntity, error) {
@@ -82,13 +82,11 @@ func (c change) Create(ctx context.Context, db storage.Executor, data CreateChan
 		ID:                uuid.New(),
 		CreatedAt:         time.Now(),
 		UpdatedAt:         time.Now(),
-		EnvironmentID:     data.EnvironmentID,
 		Sequence:          data.Sequence,
 		Kind:              data.Kind,
 		TriggerType:       data.TriggerType,
 		ActorType:         data.ActorType,
 		ActorID:           data.ActorID,
-		CorrectsChangeID:  data.CorrectsChangeID,
 		CauseSystem:       data.CauseSystem,
 		CauseReference:    data.CauseReference,
 		CorrelationID:     data.CorrelationID,
@@ -101,6 +99,8 @@ func (c change) Create(ctx context.Context, db storage.Executor, data CreateChan
 		FinishedAt:        data.FinishedAt,
 		CancelledAt:       data.CancelledAt,
 		Error:             data.Error,
+		EnvironmentID:     data.EnvironmentID,
+		CorrectsChangeID:  data.CorrectsChangeID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -117,13 +117,11 @@ func (c change) Create(ctx context.Context, db storage.Executor, data CreateChan
 type UpdateChangeData struct {
 	ID                uuid.UUID
 	UpdatedAt         time.Time
-	EnvironmentID     uuid.UUID
 	Sequence          int64
 	Kind              string
 	TriggerType       string
 	ActorType         string
 	ActorID           *uuid.UUID
-	CorrectsChangeID  *uuid.UUID
 	CauseSystem       sql.NullString
 	CauseReference    sql.NullString
 	CorrelationID     uuid.UUID
@@ -136,19 +134,19 @@ type UpdateChangeData struct {
 	FinishedAt        sql.NullTime
 	CancelledAt       sql.NullTime
 	Error             sql.NullString
+	EnvironmentID     uuid.UUID
+	CorrectsChangeID  *uuid.UUID
 }
 
 func (c change) Update(ctx context.Context, db storage.Executor, data UpdateChangeData) (ChangeEntity, error) {
 	entity := ChangeEntity{
 		ID:                data.ID,
 		UpdatedAt:         time.Now(),
-		EnvironmentID:     data.EnvironmentID,
 		Sequence:          data.Sequence,
 		Kind:              data.Kind,
 		TriggerType:       data.TriggerType,
 		ActorType:         data.ActorType,
 		ActorID:           data.ActorID,
-		CorrectsChangeID:  data.CorrectsChangeID,
 		CauseSystem:       data.CauseSystem,
 		CauseReference:    data.CauseReference,
 		CorrelationID:     data.CorrelationID,
@@ -161,6 +159,8 @@ func (c change) Update(ctx context.Context, db storage.Executor, data UpdateChan
 		FinishedAt:        data.FinishedAt,
 		CancelledAt:       data.CancelledAt,
 		Error:             data.Error,
+		EnvironmentID:     data.EnvironmentID,
+		CorrectsChangeID:  data.CorrectsChangeID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -170,13 +170,11 @@ func (c change) Update(ctx context.Context, db storage.Executor, data UpdateChan
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("environment_id").
 		Column("sequence").
 		Column("kind").
 		Column("trigger_type").
 		Column("actor_type").
 		Column("actor_id").
-		Column("corrects_change_id").
 		Column("cause_system").
 		Column("cause_reference").
 		Column("correlation_id").
@@ -189,6 +187,8 @@ func (c change) Update(ctx context.Context, db storage.Executor, data UpdateChan
 		Column("finished_at").
 		Column("cancelled_at").
 		Column("error").
+		Column("environment_id").
+		Column("corrects_change_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -270,13 +270,11 @@ func (c change) Upsert(ctx context.Context, db storage.Executor, data CreateChan
 		ID:                uuid.New(),
 		CreatedAt:         time.Now(),
 		UpdatedAt:         time.Now(),
-		EnvironmentID:     data.EnvironmentID,
 		Sequence:          data.Sequence,
 		Kind:              data.Kind,
 		TriggerType:       data.TriggerType,
 		ActorType:         data.ActorType,
 		ActorID:           data.ActorID,
-		CorrectsChangeID:  data.CorrectsChangeID,
 		CauseSystem:       data.CauseSystem,
 		CauseReference:    data.CauseReference,
 		CorrelationID:     data.CorrelationID,
@@ -289,6 +287,8 @@ func (c change) Upsert(ctx context.Context, db storage.Executor, data CreateChan
 		FinishedAt:        data.FinishedAt,
 		CancelledAt:       data.CancelledAt,
 		Error:             data.Error,
+		EnvironmentID:     data.EnvironmentID,
+		CorrectsChangeID:  data.CorrectsChangeID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -298,13 +298,11 @@ func (c change) Upsert(ctx context.Context, db storage.Executor, data CreateChan
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("environment_id = excluded.environment_id").
 		Set("sequence = excluded.sequence").
 		Set("kind = excluded.kind").
 		Set("trigger_type = excluded.trigger_type").
 		Set("actor_type = excluded.actor_type").
 		Set("actor_id = excluded.actor_id").
-		Set("corrects_change_id = excluded.corrects_change_id").
 		Set("cause_system = excluded.cause_system").
 		Set("cause_reference = excluded.cause_reference").
 		Set("correlation_id = excluded.correlation_id").
@@ -317,6 +315,8 @@ func (c change) Upsert(ctx context.Context, db storage.Executor, data CreateChan
 		Set("finished_at = excluded.finished_at").
 		Set("cancelled_at = excluded.cancelled_at").
 		Set("error = excluded.error").
+		Set("environment_id = excluded.environment_id").
+		Set("corrects_change_id = excluded.corrects_change_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ChangeEntity{}, err

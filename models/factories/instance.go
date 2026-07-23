@@ -21,12 +21,9 @@ type InstanceFactory struct {
 
 type InstanceOption func(*InstanceFactory)
 
-func BuildInstance(deploymentID uuid.UUID, releaseID uuid.UUID, environmentTargetID uuid.UUID, externalID string, opts ...InstanceOption) models.InstanceEntity {
+func BuildInstance(externalID string, deploymentID uuid.UUID, releaseID uuid.UUID, environmentTargetID uuid.UUID, opts ...InstanceOption) models.InstanceEntity {
 	f := &InstanceFactory{
 		InstanceEntity: models.InstanceEntity{
-			DeploymentID:        deploymentID,
-			ReleaseID:           releaseID,
-			EnvironmentTargetID: environmentTargetID,
 			ExternalID:          externalID,
 			Slot:                faker.Word(),
 			ReplicaKey:          faker.Word(),
@@ -34,6 +31,9 @@ func BuildInstance(deploymentID uuid.UUID, releaseID uuid.UUID, environmentTarge
 			Ports:               json.RawMessage{},
 			ObservedAt:          time.Time{},
 			RemovedAt:           sql.NullTime{Time: time.Now(), Valid: true},
+			DeploymentID:        deploymentID,
+			ReleaseID:           releaseID,
+			EnvironmentTargetID: environmentTargetID,
 		},
 	}
 
@@ -44,16 +44,13 @@ func BuildInstance(deploymentID uuid.UUID, releaseID uuid.UUID, environmentTarge
 	return f.InstanceEntity
 }
 
-func CreateInstance(ctx context.Context, exec storage.Executor, deploymentID uuid.UUID, releaseID uuid.UUID, environmentTargetID uuid.UUID, externalID string, opts ...InstanceOption) (models.InstanceEntity, error) {
-	built := BuildInstance(deploymentID, releaseID, environmentTargetID, externalID, opts...)
+func CreateInstance(ctx context.Context, exec storage.Executor, externalID string, deploymentID uuid.UUID, releaseID uuid.UUID, environmentTargetID uuid.UUID, opts ...InstanceOption) (models.InstanceEntity, error) {
+	built := BuildInstance(externalID, deploymentID, releaseID, environmentTargetID, opts...)
 
 	entity := models.InstanceEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		DeploymentID:        built.DeploymentID,
-		ReleaseID:           built.ReleaseID,
-		EnvironmentTargetID: built.EnvironmentTargetID,
 		ExternalID:          built.ExternalID,
 		Slot:                built.Slot,
 		ReplicaKey:          built.ReplicaKey,
@@ -61,6 +58,9 @@ func CreateInstance(ctx context.Context, exec storage.Executor, deploymentID uui
 		Ports:               built.Ports,
 		ObservedAt:          built.ObservedAt,
 		RemovedAt:           built.RemovedAt,
+		DeploymentID:        built.DeploymentID,
+		ReleaseID:           built.ReleaseID,
+		EnvironmentTargetID: built.EnvironmentTargetID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -70,11 +70,11 @@ func CreateInstance(ctx context.Context, exec storage.Executor, deploymentID uui
 	return entity, nil
 }
 
-func CreateInstances(ctx context.Context, exec storage.Executor, deploymentID uuid.UUID, releaseID uuid.UUID, environmentTargetID uuid.UUID, externalID string, count int, opts ...InstanceOption) ([]models.InstanceEntity, error) {
+func CreateInstances(ctx context.Context, exec storage.Executor, externalID string, deploymentID uuid.UUID, releaseID uuid.UUID, environmentTargetID uuid.UUID, count int, opts ...InstanceOption) ([]models.InstanceEntity, error) {
 	instances := make([]models.InstanceEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateInstance(ctx, exec, deploymentID, releaseID, environmentTargetID, externalID, opts...)
+		entity, err := CreateInstance(ctx, exec, externalID, deploymentID, releaseID, environmentTargetID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create instance %d: %w", i+1, err)
 		}
@@ -82,24 +82,6 @@ func CreateInstances(ctx context.Context, exec storage.Executor, deploymentID uu
 	}
 
 	return instances, nil
-}
-
-func WithInstancesDeploymentID(value uuid.UUID) InstanceOption {
-	return func(f *InstanceFactory) {
-		f.InstanceEntity.DeploymentID = value
-	}
-}
-
-func WithInstancesReleaseID(value uuid.UUID) InstanceOption {
-	return func(f *InstanceFactory) {
-		f.InstanceEntity.ReleaseID = value
-	}
-}
-
-func WithInstancesEnvironmentTargetID(value uuid.UUID) InstanceOption {
-	return func(f *InstanceFactory) {
-		f.InstanceEntity.EnvironmentTargetID = value
-	}
 }
 
 func WithInstancesExternalID(value string) InstanceOption {
@@ -141,5 +123,23 @@ func WithInstancesObservedAt(value time.Time) InstanceOption {
 func WithInstancesRemovedAt(value sql.NullTime) InstanceOption {
 	return func(f *InstanceFactory) {
 		f.InstanceEntity.RemovedAt = value
+	}
+}
+
+func WithInstancesDeploymentID(value uuid.UUID) InstanceOption {
+	return func(f *InstanceFactory) {
+		f.InstanceEntity.DeploymentID = value
+	}
+}
+
+func WithInstancesReleaseID(value uuid.UUID) InstanceOption {
+	return func(f *InstanceFactory) {
+		f.InstanceEntity.ReleaseID = value
+	}
+}
+
+func WithInstancesEnvironmentTargetID(value uuid.UUID) InstanceOption {
+	return func(f *InstanceFactory) {
+		f.InstanceEntity.EnvironmentTargetID = value
 	}
 }

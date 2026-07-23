@@ -18,9 +18,6 @@ type ResourceEndpointEntity struct {
 	ID                     uuid.UUID       `bun:"id,pk,type:uuid"`
 	CreatedAt              time.Time       `bun:"created_at"`
 	UpdatedAt              time.Time       `bun:"updated_at"`
-	ResourceID             uuid.UUID       `bun:"resource_id,type:uuid"`
-	ResourceInstallationID *uuid.UUID      `bun:"resource_installation_id,type:uuid"`
-	PrivateNetworkID       *uuid.UUID      `bun:"private_network_id,type:uuid"`
 	Name                   string          `bun:"name"`
 	Role                   string          `bun:"role"`
 	Address                string          `bun:"address"`
@@ -29,6 +26,9 @@ type ResourceEndpointEntity struct {
 	TlsMode                string          `bun:"tls_mode"`
 	Settings               json.RawMessage `bun:"settings,type:jsonb"`
 	ArchivedAt             sql.NullTime    `bun:"archived_at"`
+	ResourceID             uuid.UUID       `bun:"resource_id,type:uuid"`
+	ResourceInstallationID *uuid.UUID      `bun:"resource_installation_id,type:uuid"`
+	PrivateNetworkID       *uuid.UUID      `bun:"private_network_id,type:uuid"`
 }
 
 func (e *ResourceEndpointEntity) Validate() error {
@@ -48,9 +48,6 @@ func (re resourceEndpoint) Find(ctx context.Context, db storage.Executor, id uui
 }
 
 type CreateResourceEndpointData struct {
-	ResourceID             uuid.UUID
-	ResourceInstallationID *uuid.UUID
-	PrivateNetworkID       *uuid.UUID
 	Name                   string
 	Role                   string
 	Address                string
@@ -59,6 +56,9 @@ type CreateResourceEndpointData struct {
 	TlsMode                string
 	Settings               json.RawMessage
 	ArchivedAt             sql.NullTime
+	ResourceID             uuid.UUID
+	ResourceInstallationID *uuid.UUID
+	PrivateNetworkID       *uuid.UUID
 }
 
 func (re resourceEndpoint) Create(ctx context.Context, db storage.Executor, data CreateResourceEndpointData) (ResourceEndpointEntity, error) {
@@ -66,9 +66,6 @@ func (re resourceEndpoint) Create(ctx context.Context, db storage.Executor, data
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),
 		UpdatedAt:              time.Now(),
-		ResourceID:             data.ResourceID,
-		ResourceInstallationID: data.ResourceInstallationID,
-		PrivateNetworkID:       data.PrivateNetworkID,
 		Name:                   data.Name,
 		Role:                   data.Role,
 		Address:                data.Address,
@@ -77,6 +74,9 @@ func (re resourceEndpoint) Create(ctx context.Context, db storage.Executor, data
 		TlsMode:                data.TlsMode,
 		Settings:               data.Settings,
 		ArchivedAt:             data.ArchivedAt,
+		ResourceID:             data.ResourceID,
+		ResourceInstallationID: data.ResourceInstallationID,
+		PrivateNetworkID:       data.PrivateNetworkID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -93,9 +93,6 @@ func (re resourceEndpoint) Create(ctx context.Context, db storage.Executor, data
 type UpdateResourceEndpointData struct {
 	ID                     uuid.UUID
 	UpdatedAt              time.Time
-	ResourceID             uuid.UUID
-	ResourceInstallationID *uuid.UUID
-	PrivateNetworkID       *uuid.UUID
 	Name                   string
 	Role                   string
 	Address                string
@@ -104,15 +101,15 @@ type UpdateResourceEndpointData struct {
 	TlsMode                string
 	Settings               json.RawMessage
 	ArchivedAt             sql.NullTime
+	ResourceID             uuid.UUID
+	ResourceInstallationID *uuid.UUID
+	PrivateNetworkID       *uuid.UUID
 }
 
 func (re resourceEndpoint) Update(ctx context.Context, db storage.Executor, data UpdateResourceEndpointData) (ResourceEndpointEntity, error) {
 	entity := ResourceEndpointEntity{
 		ID:                     data.ID,
 		UpdatedAt:              time.Now(),
-		ResourceID:             data.ResourceID,
-		ResourceInstallationID: data.ResourceInstallationID,
-		PrivateNetworkID:       data.PrivateNetworkID,
 		Name:                   data.Name,
 		Role:                   data.Role,
 		Address:                data.Address,
@@ -121,6 +118,9 @@ func (re resourceEndpoint) Update(ctx context.Context, db storage.Executor, data
 		TlsMode:                data.TlsMode,
 		Settings:               data.Settings,
 		ArchivedAt:             data.ArchivedAt,
+		ResourceID:             data.ResourceID,
+		ResourceInstallationID: data.ResourceInstallationID,
+		PrivateNetworkID:       data.PrivateNetworkID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -130,9 +130,6 @@ func (re resourceEndpoint) Update(ctx context.Context, db storage.Executor, data
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("resource_id").
-		Column("resource_installation_id").
-		Column("private_network_id").
 		Column("name").
 		Column("role").
 		Column("address").
@@ -141,6 +138,9 @@ func (re resourceEndpoint) Update(ctx context.Context, db storage.Executor, data
 		Column("tls_mode").
 		Column("settings").
 		Column("archived_at").
+		Column("resource_id").
+		Column("resource_installation_id").
+		Column("private_network_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -222,9 +222,6 @@ func (re resourceEndpoint) Upsert(ctx context.Context, db storage.Executor, data
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),
 		UpdatedAt:              time.Now(),
-		ResourceID:             data.ResourceID,
-		ResourceInstallationID: data.ResourceInstallationID,
-		PrivateNetworkID:       data.PrivateNetworkID,
 		Name:                   data.Name,
 		Role:                   data.Role,
 		Address:                data.Address,
@@ -233,6 +230,9 @@ func (re resourceEndpoint) Upsert(ctx context.Context, db storage.Executor, data
 		TlsMode:                data.TlsMode,
 		Settings:               data.Settings,
 		ArchivedAt:             data.ArchivedAt,
+		ResourceID:             data.ResourceID,
+		ResourceInstallationID: data.ResourceInstallationID,
+		PrivateNetworkID:       data.PrivateNetworkID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -242,9 +242,6 @@ func (re resourceEndpoint) Upsert(ctx context.Context, db storage.Executor, data
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("resource_id = excluded.resource_id").
-		Set("resource_installation_id = excluded.resource_installation_id").
-		Set("private_network_id = excluded.private_network_id").
 		Set("name = excluded.name").
 		Set("role = excluded.role").
 		Set("address = excluded.address").
@@ -253,6 +250,9 @@ func (re resourceEndpoint) Upsert(ctx context.Context, db storage.Executor, data
 		Set("tls_mode = excluded.tls_mode").
 		Set("settings = excluded.settings").
 		Set("archived_at = excluded.archived_at").
+		Set("resource_id = excluded.resource_id").
+		Set("resource_installation_id = excluded.resource_installation_id").
+		Set("private_network_id = excluded.private_network_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ResourceEndpointEntity{}, err

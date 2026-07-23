@@ -17,10 +17,10 @@ type EnvironmentNetworkEntity struct {
 	ID               int32        `bun:"id,pk,autoincrement"`
 	CreatedAt        time.Time    `bun:"created_at"`
 	UpdatedAt        time.Time    `bun:"updated_at"`
-	EnvironmentID    uuid.UUID    `bun:"environment_id,type:uuid"`
-	PrivateNetworkID uuid.UUID    `bun:"private_network_id,type:uuid"`
 	Role             string       `bun:"role"`
 	RemovedAt        sql.NullTime `bun:"removed_at"`
+	EnvironmentID    uuid.UUID    `bun:"environment_id,type:uuid"`
+	PrivateNetworkID uuid.UUID    `bun:"private_network_id,type:uuid"`
 }
 
 func (e *EnvironmentNetworkEntity) Validate() error {
@@ -40,20 +40,20 @@ func (en environmentNetwork) Find(ctx context.Context, db storage.Executor, id i
 }
 
 type CreateEnvironmentNetworkData struct {
-	EnvironmentID    uuid.UUID
-	PrivateNetworkID uuid.UUID
 	Role             string
 	RemovedAt        sql.NullTime
+	EnvironmentID    uuid.UUID
+	PrivateNetworkID uuid.UUID
 }
 
 func (en environmentNetwork) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentNetworkData) (EnvironmentNetworkEntity, error) {
 	entity := EnvironmentNetworkEntity{
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),
-		EnvironmentID:    data.EnvironmentID,
-		PrivateNetworkID: data.PrivateNetworkID,
 		Role:             data.Role,
 		RemovedAt:        data.RemovedAt,
+		EnvironmentID:    data.EnvironmentID,
+		PrivateNetworkID: data.PrivateNetworkID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -70,20 +70,20 @@ func (en environmentNetwork) Create(ctx context.Context, db storage.Executor, da
 type UpdateEnvironmentNetworkData struct {
 	ID               int32
 	UpdatedAt        time.Time
-	EnvironmentID    uuid.UUID
-	PrivateNetworkID uuid.UUID
 	Role             string
 	RemovedAt        sql.NullTime
+	EnvironmentID    uuid.UUID
+	PrivateNetworkID uuid.UUID
 }
 
 func (en environmentNetwork) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentNetworkData) (EnvironmentNetworkEntity, error) {
 	entity := EnvironmentNetworkEntity{
 		ID:               data.ID,
 		UpdatedAt:        time.Now(),
-		EnvironmentID:    data.EnvironmentID,
-		PrivateNetworkID: data.PrivateNetworkID,
 		Role:             data.Role,
 		RemovedAt:        data.RemovedAt,
+		EnvironmentID:    data.EnvironmentID,
+		PrivateNetworkID: data.PrivateNetworkID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -93,10 +93,10 @@ func (en environmentNetwork) Update(ctx context.Context, db storage.Executor, da
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("environment_id").
-		Column("private_network_id").
 		Column("role").
 		Column("removed_at").
+		Column("environment_id").
+		Column("private_network_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -177,10 +177,10 @@ func (en environmentNetwork) Upsert(ctx context.Context, db storage.Executor, da
 	entity := EnvironmentNetworkEntity{
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),
-		EnvironmentID:    data.EnvironmentID,
-		PrivateNetworkID: data.PrivateNetworkID,
 		Role:             data.Role,
 		RemovedAt:        data.RemovedAt,
+		EnvironmentID:    data.EnvironmentID,
+		PrivateNetworkID: data.PrivateNetworkID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -190,10 +190,10 @@ func (en environmentNetwork) Upsert(ctx context.Context, db storage.Executor, da
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("environment_id = excluded.environment_id").
-		Set("private_network_id = excluded.private_network_id").
 		Set("role = excluded.role").
 		Set("removed_at = excluded.removed_at").
+		Set("environment_id = excluded.environment_id").
+		Set("private_network_id = excluded.private_network_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return EnvironmentNetworkEntity{}, err

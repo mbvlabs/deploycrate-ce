@@ -18,9 +18,6 @@ type EnvironmentTargetNetworkEntity struct {
 	ID                  int32           `bun:"id,pk,autoincrement"`
 	CreatedAt           time.Time       `bun:"created_at"`
 	UpdatedAt           time.Time       `bun:"updated_at"`
-	EnvironmentTargetID uuid.UUID       `bun:"environment_target_id,type:uuid"`
-	PrivateNetworkID    uuid.UUID       `bun:"private_network_id,type:uuid"`
-	Address             string          `bun:"address"`
 	Driver              string          `bun:"driver"`
 	ExternalID          sql.NullString  `bun:"external_id"`
 	Configuration       json.RawMessage `bun:"configuration,type:jsonb"`
@@ -29,6 +26,8 @@ type EnvironmentTargetNetworkEntity struct {
 	ObservedAt          sql.NullTime    `bun:"observed_at"`
 	Error               sql.NullString  `bun:"error"`
 	RemovedAt           sql.NullTime    `bun:"removed_at"`
+	EnvironmentTargetID uuid.UUID       `bun:"environment_target_id,type:uuid"`
+	PrivateNetworkID    uuid.UUID       `bun:"private_network_id,type:uuid"`
 }
 
 func (e *EnvironmentTargetNetworkEntity) Validate() error {
@@ -48,9 +47,6 @@ func (etn environmentTargetNetwork) Find(ctx context.Context, db storage.Executo
 }
 
 type CreateEnvironmentTargetNetworkData struct {
-	EnvironmentTargetID uuid.UUID
-	PrivateNetworkID    uuid.UUID
-	Address             string
 	Driver              string
 	ExternalID          sql.NullString
 	Configuration       json.RawMessage
@@ -59,15 +55,14 @@ type CreateEnvironmentTargetNetworkData struct {
 	ObservedAt          sql.NullTime
 	Error               sql.NullString
 	RemovedAt           sql.NullTime
+	EnvironmentTargetID uuid.UUID
+	PrivateNetworkID    uuid.UUID
 }
 
 func (etn environmentTargetNetwork) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentTargetNetworkData) (EnvironmentTargetNetworkEntity, error) {
 	entity := EnvironmentTargetNetworkEntity{
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		EnvironmentTargetID: data.EnvironmentTargetID,
-		PrivateNetworkID:    data.PrivateNetworkID,
-		Address:             data.Address,
 		Driver:              data.Driver,
 		ExternalID:          data.ExternalID,
 		Configuration:       data.Configuration,
@@ -76,6 +71,8 @@ func (etn environmentTargetNetwork) Create(ctx context.Context, db storage.Execu
 		ObservedAt:          data.ObservedAt,
 		Error:               data.Error,
 		RemovedAt:           data.RemovedAt,
+		EnvironmentTargetID: data.EnvironmentTargetID,
+		PrivateNetworkID:    data.PrivateNetworkID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -92,9 +89,6 @@ func (etn environmentTargetNetwork) Create(ctx context.Context, db storage.Execu
 type UpdateEnvironmentTargetNetworkData struct {
 	ID                  int32
 	UpdatedAt           time.Time
-	EnvironmentTargetID uuid.UUID
-	PrivateNetworkID    uuid.UUID
-	Address             string
 	Driver              string
 	ExternalID          sql.NullString
 	Configuration       json.RawMessage
@@ -103,15 +97,14 @@ type UpdateEnvironmentTargetNetworkData struct {
 	ObservedAt          sql.NullTime
 	Error               sql.NullString
 	RemovedAt           sql.NullTime
+	EnvironmentTargetID uuid.UUID
+	PrivateNetworkID    uuid.UUID
 }
 
 func (etn environmentTargetNetwork) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentTargetNetworkData) (EnvironmentTargetNetworkEntity, error) {
 	entity := EnvironmentTargetNetworkEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
-		EnvironmentTargetID: data.EnvironmentTargetID,
-		PrivateNetworkID:    data.PrivateNetworkID,
-		Address:             data.Address,
 		Driver:              data.Driver,
 		ExternalID:          data.ExternalID,
 		Configuration:       data.Configuration,
@@ -120,6 +113,8 @@ func (etn environmentTargetNetwork) Update(ctx context.Context, db storage.Execu
 		ObservedAt:          data.ObservedAt,
 		Error:               data.Error,
 		RemovedAt:           data.RemovedAt,
+		EnvironmentTargetID: data.EnvironmentTargetID,
+		PrivateNetworkID:    data.PrivateNetworkID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -129,9 +124,6 @@ func (etn environmentTargetNetwork) Update(ctx context.Context, db storage.Execu
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("environment_target_id").
-		Column("private_network_id").
-		Column("address").
 		Column("driver").
 		Column("external_id").
 		Column("configuration").
@@ -140,6 +132,8 @@ func (etn environmentTargetNetwork) Update(ctx context.Context, db storage.Execu
 		Column("observed_at").
 		Column("error").
 		Column("removed_at").
+		Column("environment_target_id").
+		Column("private_network_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -220,9 +214,6 @@ func (etn environmentTargetNetwork) Upsert(ctx context.Context, db storage.Execu
 	entity := EnvironmentTargetNetworkEntity{
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		EnvironmentTargetID: data.EnvironmentTargetID,
-		PrivateNetworkID:    data.PrivateNetworkID,
-		Address:             data.Address,
 		Driver:              data.Driver,
 		ExternalID:          data.ExternalID,
 		Configuration:       data.Configuration,
@@ -231,6 +222,8 @@ func (etn environmentTargetNetwork) Upsert(ctx context.Context, db storage.Execu
 		ObservedAt:          data.ObservedAt,
 		Error:               data.Error,
 		RemovedAt:           data.RemovedAt,
+		EnvironmentTargetID: data.EnvironmentTargetID,
+		PrivateNetworkID:    data.PrivateNetworkID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -240,9 +233,6 @@ func (etn environmentTargetNetwork) Upsert(ctx context.Context, db storage.Execu
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("environment_target_id = excluded.environment_target_id").
-		Set("private_network_id = excluded.private_network_id").
-		Set("address = excluded.address").
 		Set("driver = excluded.driver").
 		Set("external_id = excluded.external_id").
 		Set("configuration = excluded.configuration").
@@ -251,6 +241,8 @@ func (etn environmentTargetNetwork) Upsert(ctx context.Context, db storage.Execu
 		Set("observed_at = excluded.observed_at").
 		Set("error = excluded.error").
 		Set("removed_at = excluded.removed_at").
+		Set("environment_target_id = excluded.environment_target_id").
+		Set("private_network_id = excluded.private_network_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return EnvironmentTargetNetworkEntity{}, err

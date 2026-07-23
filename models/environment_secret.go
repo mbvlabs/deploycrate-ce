@@ -17,13 +17,13 @@ type EnvironmentSecretEntity struct {
 	ID            uuid.UUID    `bun:"id,pk,type:uuid"`
 	CreatedAt     time.Time    `bun:"created_at"`
 	UpdatedAt     time.Time    `bun:"updated_at"`
-	EnvironmentID uuid.UUID    `bun:"environment_id,type:uuid"`
 	Key           string       `bun:"key"`
 	EncValue      []byte       `bun:"enc_value"`
 	Digest        []byte       `bun:"digest"`
 	SourceType    string       `bun:"source_type"`
 	SourceID      uuid.UUID    `bun:"source_id,type:uuid"`
 	ArchivedAt    sql.NullTime `bun:"archived_at"`
+	EnvironmentID uuid.UUID    `bun:"environment_id,type:uuid"`
 }
 
 func (e *EnvironmentSecretEntity) Validate() error {
@@ -43,13 +43,13 @@ func (es environmentSecret) Find(ctx context.Context, db storage.Executor, id uu
 }
 
 type CreateEnvironmentSecretData struct {
-	EnvironmentID uuid.UUID
 	Key           string
 	EncValue      []byte
 	Digest        []byte
 	SourceType    string
 	SourceID      uuid.UUID
 	ArchivedAt    sql.NullTime
+	EnvironmentID uuid.UUID
 }
 
 func (es environmentSecret) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentSecretData) (EnvironmentSecretEntity, error) {
@@ -57,13 +57,13 @@ func (es environmentSecret) Create(ctx context.Context, db storage.Executor, dat
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
-		EnvironmentID: data.EnvironmentID,
 		Key:           data.Key,
 		EncValue:      data.EncValue,
 		Digest:        data.Digest,
 		SourceType:    data.SourceType,
 		SourceID:      data.SourceID,
 		ArchivedAt:    data.ArchivedAt,
+		EnvironmentID: data.EnvironmentID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -80,26 +80,26 @@ func (es environmentSecret) Create(ctx context.Context, db storage.Executor, dat
 type UpdateEnvironmentSecretData struct {
 	ID            uuid.UUID
 	UpdatedAt     time.Time
-	EnvironmentID uuid.UUID
 	Key           string
 	EncValue      []byte
 	Digest        []byte
 	SourceType    string
 	SourceID      uuid.UUID
 	ArchivedAt    sql.NullTime
+	EnvironmentID uuid.UUID
 }
 
 func (es environmentSecret) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentSecretData) (EnvironmentSecretEntity, error) {
 	entity := EnvironmentSecretEntity{
 		ID:            data.ID,
 		UpdatedAt:     time.Now(),
-		EnvironmentID: data.EnvironmentID,
 		Key:           data.Key,
 		EncValue:      data.EncValue,
 		Digest:        data.Digest,
 		SourceType:    data.SourceType,
 		SourceID:      data.SourceID,
 		ArchivedAt:    data.ArchivedAt,
+		EnvironmentID: data.EnvironmentID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -109,13 +109,13 @@ func (es environmentSecret) Update(ctx context.Context, db storage.Executor, dat
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("environment_id").
 		Column("key").
 		Column("enc_value").
 		Column("digest").
 		Column("source_type").
 		Column("source_id").
 		Column("archived_at").
+		Column("environment_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -197,13 +197,13 @@ func (es environmentSecret) Upsert(ctx context.Context, db storage.Executor, dat
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
-		EnvironmentID: data.EnvironmentID,
 		Key:           data.Key,
 		EncValue:      data.EncValue,
 		Digest:        data.Digest,
 		SourceType:    data.SourceType,
 		SourceID:      data.SourceID,
 		ArchivedAt:    data.ArchivedAt,
+		EnvironmentID: data.EnvironmentID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -213,13 +213,13 @@ func (es environmentSecret) Upsert(ctx context.Context, db storage.Executor, dat
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("environment_id = excluded.environment_id").
 		Set("key = excluded.key").
 		Set("enc_value = excluded.enc_value").
 		Set("digest = excluded.digest").
 		Set("source_type = excluded.source_type").
 		Set("source_id = excluded.source_id").
 		Set("archived_at = excluded.archived_at").
+		Set("environment_id = excluded.environment_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return EnvironmentSecretEntity{}, err

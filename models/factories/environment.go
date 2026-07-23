@@ -23,13 +23,13 @@ type EnvironmentOption func(*EnvironmentFactory)
 func BuildEnvironment(applicationID uuid.UUID, opts ...EnvironmentOption) models.EnvironmentEntity {
 	f := &EnvironmentFactory{
 		EnvironmentEntity: models.EnvironmentEntity{
-			ApplicationID:      applicationID,
 			Name:               faker.Word(),
 			Slug:               faker.Word(),
 			Kind:               faker.Word(),
 			WebhookTokenPrefix: sql.NullString{String: faker.Word(), Valid: true},
 			WebhookTokenDigest: []byte{},
 			ArchivedAt:         sql.NullTime{Time: time.Now(), Valid: true},
+			ApplicationID:      applicationID,
 		},
 	}
 
@@ -47,13 +47,13 @@ func CreateEnvironment(ctx context.Context, exec storage.Executor, applicationID
 		ID:                 uuid.New(),
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
-		ApplicationID:      built.ApplicationID,
 		Name:               built.Name,
 		Slug:               built.Slug,
 		Kind:               built.Kind,
 		WebhookTokenPrefix: built.WebhookTokenPrefix,
 		WebhookTokenDigest: built.WebhookTokenDigest,
 		ArchivedAt:         built.ArchivedAt,
+		ApplicationID:      built.ApplicationID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -75,12 +75,6 @@ func CreateEnvironments(ctx context.Context, exec storage.Executor, applicationI
 	}
 
 	return environments, nil
-}
-
-func WithEnvironmentsApplicationID(value uuid.UUID) EnvironmentOption {
-	return func(f *EnvironmentFactory) {
-		f.EnvironmentEntity.ApplicationID = value
-	}
 }
 
 func WithEnvironmentsName(value string) EnvironmentOption {
@@ -116,5 +110,11 @@ func WithEnvironmentsWebhookTokenDigest(value []byte) EnvironmentOption {
 func WithEnvironmentsArchivedAt(value sql.NullTime) EnvironmentOption {
 	return func(f *EnvironmentFactory) {
 		f.EnvironmentEntity.ArchivedAt = value
+	}
+}
+
+func WithEnvironmentsApplicationID(value uuid.UUID) EnvironmentOption {
+	return func(f *EnvironmentFactory) {
+		f.EnvironmentEntity.ApplicationID = value
 	}
 }

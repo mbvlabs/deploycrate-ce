@@ -21,19 +21,22 @@ type BackupPolicyFactory struct {
 
 type BackupPolicyOption func(*BackupPolicyFactory)
 
-func BuildBackupPolicy(resourceID uuid.UUID, resourceBindingID *uuid.UUID, backupDestinationID uuid.UUID, opts ...BackupPolicyOption) models.BackupPolicyEntity {
+func BuildBackupPolicy(resourceID uuid.UUID, environmentResourceID *uuid.UUID, resourceVolumeID *uuid.UUID, backupDestinationID uuid.UUID, opts ...BackupPolicyOption) models.BackupPolicyEntity {
 	f := &BackupPolicyFactory{
 		BackupPolicyEntity: models.BackupPolicyEntity{
-			ResourceID:          resourceID,
-			ResourceBindingID:   resourceBindingID,
-			BackupDestinationID: backupDestinationID,
-			Name:                faker.Word(),
-			Schedule:            faker.Word(),
-			Retention:           json.RawMessage{},
-			Format:              faker.Word(),
-			Verification:        json.RawMessage{},
-			Settings:            json.RawMessage{},
-			ArchivedAt:          sql.NullTime{Time: time.Now(), Valid: true},
+			Name:                  faker.Word(),
+			Schedule:              faker.Word(),
+			Strategy:              faker.Word(),
+			Driver:                faker.Word(),
+			Retention:             json.RawMessage{},
+			Format:                faker.Word(),
+			Verification:          json.RawMessage{},
+			Settings:              json.RawMessage{},
+			ArchivedAt:            sql.NullTime{Time: time.Now(), Valid: true},
+			ResourceID:            resourceID,
+			EnvironmentResourceID: environmentResourceID,
+			ResourceVolumeID:      resourceVolumeID,
+			BackupDestinationID:   backupDestinationID,
 		},
 	}
 
@@ -44,23 +47,26 @@ func BuildBackupPolicy(resourceID uuid.UUID, resourceBindingID *uuid.UUID, backu
 	return f.BackupPolicyEntity
 }
 
-func CreateBackupPolicy(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, resourceBindingID *uuid.UUID, backupDestinationID uuid.UUID, opts ...BackupPolicyOption) (models.BackupPolicyEntity, error) {
-	built := BuildBackupPolicy(resourceID, resourceBindingID, backupDestinationID, opts...)
+func CreateBackupPolicy(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, environmentResourceID *uuid.UUID, resourceVolumeID *uuid.UUID, backupDestinationID uuid.UUID, opts ...BackupPolicyOption) (models.BackupPolicyEntity, error) {
+	built := BuildBackupPolicy(resourceID, environmentResourceID, resourceVolumeID, backupDestinationID, opts...)
 
 	entity := models.BackupPolicyEntity{
-		ID:                  uuid.New(),
-		CreatedAt:           time.Now(),
-		UpdatedAt:           time.Now(),
-		ResourceID:          built.ResourceID,
-		ResourceBindingID:   built.ResourceBindingID,
-		BackupDestinationID: built.BackupDestinationID,
-		Name:                built.Name,
-		Schedule:            built.Schedule,
-		Retention:           built.Retention,
-		Format:              built.Format,
-		Verification:        built.Verification,
-		Settings:            built.Settings,
-		ArchivedAt:          built.ArchivedAt,
+		ID:                    uuid.New(),
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
+		Name:                  built.Name,
+		Schedule:              built.Schedule,
+		Strategy:              built.Strategy,
+		Driver:                built.Driver,
+		Retention:             built.Retention,
+		Format:                built.Format,
+		Verification:          built.Verification,
+		Settings:              built.Settings,
+		ArchivedAt:            built.ArchivedAt,
+		ResourceID:            built.ResourceID,
+		EnvironmentResourceID: built.EnvironmentResourceID,
+		ResourceVolumeID:      built.ResourceVolumeID,
+		BackupDestinationID:   built.BackupDestinationID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -70,36 +76,18 @@ func CreateBackupPolicy(ctx context.Context, exec storage.Executor, resourceID u
 	return entity, nil
 }
 
-func CreateBackupPolicies(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, resourceBindingID *uuid.UUID, backupDestinationID uuid.UUID, count int, opts ...BackupPolicyOption) ([]models.BackupPolicyEntity, error) {
-	backupPolicies := make([]models.BackupPolicyEntity, 0, count)
+func CreateBackupPolicys(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, environmentResourceID *uuid.UUID, resourceVolumeID *uuid.UUID, backupDestinationID uuid.UUID, count int, opts ...BackupPolicyOption) ([]models.BackupPolicyEntity, error) {
+	backuppolicys := make([]models.BackupPolicyEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateBackupPolicy(ctx, exec, resourceID, resourceBindingID, backupDestinationID, opts...)
+		entity, err := CreateBackupPolicy(ctx, exec, resourceID, environmentResourceID, resourceVolumeID, backupDestinationID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create backuppolicy %d: %w", i+1, err)
 		}
-		backupPolicies = append(backupPolicies, entity)
+		backuppolicys = append(backuppolicys, entity)
 	}
 
-	return backupPolicies, nil
-}
-
-func WithBackupPoliciesResourceID(value uuid.UUID) BackupPolicyOption {
-	return func(f *BackupPolicyFactory) {
-		f.BackupPolicyEntity.ResourceID = value
-	}
-}
-
-func WithBackupPoliciesResourceBindingID(value *uuid.UUID) BackupPolicyOption {
-	return func(f *BackupPolicyFactory) {
-		f.BackupPolicyEntity.ResourceBindingID = value
-	}
-}
-
-func WithBackupPoliciesBackupDestinationID(value uuid.UUID) BackupPolicyOption {
-	return func(f *BackupPolicyFactory) {
-		f.BackupPolicyEntity.BackupDestinationID = value
-	}
+	return backuppolicys, nil
 }
 
 func WithBackupPoliciesName(value string) BackupPolicyOption {
@@ -111,6 +99,18 @@ func WithBackupPoliciesName(value string) BackupPolicyOption {
 func WithBackupPoliciesSchedule(value string) BackupPolicyOption {
 	return func(f *BackupPolicyFactory) {
 		f.BackupPolicyEntity.Schedule = value
+	}
+}
+
+func WithBackupPoliciesStrategy(value string) BackupPolicyOption {
+	return func(f *BackupPolicyFactory) {
+		f.BackupPolicyEntity.Strategy = value
+	}
+}
+
+func WithBackupPoliciesDriver(value string) BackupPolicyOption {
+	return func(f *BackupPolicyFactory) {
+		f.BackupPolicyEntity.Driver = value
 	}
 }
 
@@ -141,5 +141,29 @@ func WithBackupPoliciesSettings(value json.RawMessage) BackupPolicyOption {
 func WithBackupPoliciesArchivedAt(value sql.NullTime) BackupPolicyOption {
 	return func(f *BackupPolicyFactory) {
 		f.BackupPolicyEntity.ArchivedAt = value
+	}
+}
+
+func WithBackupPoliciesResourceID(value uuid.UUID) BackupPolicyOption {
+	return func(f *BackupPolicyFactory) {
+		f.BackupPolicyEntity.ResourceID = value
+	}
+}
+
+func WithBackupPoliciesEnvironmentResourceID(value *uuid.UUID) BackupPolicyOption {
+	return func(f *BackupPolicyFactory) {
+		f.BackupPolicyEntity.EnvironmentResourceID = value
+	}
+}
+
+func WithBackupPoliciesResourceVolumeID(value *uuid.UUID) BackupPolicyOption {
+	return func(f *BackupPolicyFactory) {
+		f.BackupPolicyEntity.ResourceVolumeID = value
+	}
+}
+
+func WithBackupPoliciesBackupDestinationID(value uuid.UUID) BackupPolicyOption {
+	return func(f *BackupPolicyFactory) {
+		f.BackupPolicyEntity.BackupDestinationID = value
 	}
 }

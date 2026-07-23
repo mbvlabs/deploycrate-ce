@@ -18,9 +18,6 @@ type DeploymentEntity struct {
 	ID                   uuid.UUID       `bun:"id,pk,type:uuid"`
 	CreatedAt            time.Time       `bun:"created_at"`
 	UpdatedAt            time.Time       `bun:"updated_at"`
-	ChangeID             uuid.UUID       `bun:"change_id,type:uuid"`
-	ReleaseID            uuid.UUID       `bun:"release_id,type:uuid"`
-	EnvironmentTargetID  uuid.UUID       `bun:"environment_target_id,type:uuid"`
 	Attempt              int32           `bun:"attempt"`
 	Strategy             json.RawMessage `bun:"strategy,type:jsonb"`
 	RuntimeConfiguration json.RawMessage `bun:"runtime_configuration,type:jsonb"`
@@ -29,6 +26,9 @@ type DeploymentEntity struct {
 	StartedAt            sql.NullTime    `bun:"started_at"`
 	FinishedAt           sql.NullTime    `bun:"finished_at"`
 	Error                sql.NullString  `bun:"error"`
+	ChangeID             uuid.UUID       `bun:"change_id,type:uuid"`
+	ReleaseID            uuid.UUID       `bun:"release_id,type:uuid"`
+	EnvironmentTargetID  uuid.UUID       `bun:"environment_target_id,type:uuid"`
 }
 
 func (e *DeploymentEntity) Validate() error {
@@ -48,9 +48,6 @@ func (d deployment) Find(ctx context.Context, db storage.Executor, id uuid.UUID)
 }
 
 type CreateDeploymentData struct {
-	ChangeID             uuid.UUID
-	ReleaseID            uuid.UUID
-	EnvironmentTargetID  uuid.UUID
 	Attempt              int32
 	Strategy             json.RawMessage
 	RuntimeConfiguration json.RawMessage
@@ -59,6 +56,9 @@ type CreateDeploymentData struct {
 	StartedAt            sql.NullTime
 	FinishedAt           sql.NullTime
 	Error                sql.NullString
+	ChangeID             uuid.UUID
+	ReleaseID            uuid.UUID
+	EnvironmentTargetID  uuid.UUID
 }
 
 func (d deployment) Create(ctx context.Context, db storage.Executor, data CreateDeploymentData) (DeploymentEntity, error) {
@@ -66,9 +66,6 @@ func (d deployment) Create(ctx context.Context, db storage.Executor, data Create
 		ID:                   uuid.New(),
 		CreatedAt:            time.Now(),
 		UpdatedAt:            time.Now(),
-		ChangeID:             data.ChangeID,
-		ReleaseID:            data.ReleaseID,
-		EnvironmentTargetID:  data.EnvironmentTargetID,
 		Attempt:              data.Attempt,
 		Strategy:             data.Strategy,
 		RuntimeConfiguration: data.RuntimeConfiguration,
@@ -77,6 +74,9 @@ func (d deployment) Create(ctx context.Context, db storage.Executor, data Create
 		StartedAt:            data.StartedAt,
 		FinishedAt:           data.FinishedAt,
 		Error:                data.Error,
+		ChangeID:             data.ChangeID,
+		ReleaseID:            data.ReleaseID,
+		EnvironmentTargetID:  data.EnvironmentTargetID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -93,9 +93,6 @@ func (d deployment) Create(ctx context.Context, db storage.Executor, data Create
 type UpdateDeploymentData struct {
 	ID                   uuid.UUID
 	UpdatedAt            time.Time
-	ChangeID             uuid.UUID
-	ReleaseID            uuid.UUID
-	EnvironmentTargetID  uuid.UUID
 	Attempt              int32
 	Strategy             json.RawMessage
 	RuntimeConfiguration json.RawMessage
@@ -104,15 +101,15 @@ type UpdateDeploymentData struct {
 	StartedAt            sql.NullTime
 	FinishedAt           sql.NullTime
 	Error                sql.NullString
+	ChangeID             uuid.UUID
+	ReleaseID            uuid.UUID
+	EnvironmentTargetID  uuid.UUID
 }
 
 func (d deployment) Update(ctx context.Context, db storage.Executor, data UpdateDeploymentData) (DeploymentEntity, error) {
 	entity := DeploymentEntity{
 		ID:                   data.ID,
 		UpdatedAt:            time.Now(),
-		ChangeID:             data.ChangeID,
-		ReleaseID:            data.ReleaseID,
-		EnvironmentTargetID:  data.EnvironmentTargetID,
 		Attempt:              data.Attempt,
 		Strategy:             data.Strategy,
 		RuntimeConfiguration: data.RuntimeConfiguration,
@@ -121,6 +118,9 @@ func (d deployment) Update(ctx context.Context, db storage.Executor, data Update
 		StartedAt:            data.StartedAt,
 		FinishedAt:           data.FinishedAt,
 		Error:                data.Error,
+		ChangeID:             data.ChangeID,
+		ReleaseID:            data.ReleaseID,
+		EnvironmentTargetID:  data.EnvironmentTargetID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -130,9 +130,6 @@ func (d deployment) Update(ctx context.Context, db storage.Executor, data Update
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("change_id").
-		Column("release_id").
-		Column("environment_target_id").
 		Column("attempt").
 		Column("strategy").
 		Column("runtime_configuration").
@@ -141,6 +138,9 @@ func (d deployment) Update(ctx context.Context, db storage.Executor, data Update
 		Column("started_at").
 		Column("finished_at").
 		Column("error").
+		Column("change_id").
+		Column("release_id").
+		Column("environment_target_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -222,9 +222,6 @@ func (d deployment) Upsert(ctx context.Context, db storage.Executor, data Create
 		ID:                   uuid.New(),
 		CreatedAt:            time.Now(),
 		UpdatedAt:            time.Now(),
-		ChangeID:             data.ChangeID,
-		ReleaseID:            data.ReleaseID,
-		EnvironmentTargetID:  data.EnvironmentTargetID,
 		Attempt:              data.Attempt,
 		Strategy:             data.Strategy,
 		RuntimeConfiguration: data.RuntimeConfiguration,
@@ -233,6 +230,9 @@ func (d deployment) Upsert(ctx context.Context, db storage.Executor, data Create
 		StartedAt:            data.StartedAt,
 		FinishedAt:           data.FinishedAt,
 		Error:                data.Error,
+		ChangeID:             data.ChangeID,
+		ReleaseID:            data.ReleaseID,
+		EnvironmentTargetID:  data.EnvironmentTargetID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -242,9 +242,6 @@ func (d deployment) Upsert(ctx context.Context, db storage.Executor, data Create
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("change_id = excluded.change_id").
-		Set("release_id = excluded.release_id").
-		Set("environment_target_id = excluded.environment_target_id").
 		Set("attempt = excluded.attempt").
 		Set("strategy = excluded.strategy").
 		Set("runtime_configuration = excluded.runtime_configuration").
@@ -253,6 +250,9 @@ func (d deployment) Upsert(ctx context.Context, db storage.Executor, data Create
 		Set("started_at = excluded.started_at").
 		Set("finished_at = excluded.finished_at").
 		Set("error = excluded.error").
+		Set("change_id = excluded.change_id").
+		Set("release_id = excluded.release_id").
+		Set("environment_target_id = excluded.environment_target_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return DeploymentEntity{}, err

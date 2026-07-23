@@ -14,17 +14,19 @@ import (
 )
 
 type ResourceInstallationEntity struct {
-	bun.BaseModel  `bun:"table:resource_installations,alias:resource_installations"`
-	ID             uuid.UUID       `bun:"id,pk,type:uuid"`
-	CreatedAt      time.Time       `bun:"created_at"`
-	UpdatedAt      time.Time       `bun:"updated_at"`
-	ResourceID     uuid.UUID       `bun:"resource_id,type:uuid"`
-	ServerID       *uuid.UUID      `bun:"server_id,type:uuid"`
-	Mode           string          `bun:"mode"`
-	Driver         string          `bun:"driver"`
-	DesiredVersion sql.NullString  `bun:"desired_version"`
-	Configuration  json.RawMessage `bun:"configuration,type:jsonb"`
-	ArchivedAt     sql.NullTime    `bun:"archived_at"`
+	bun.BaseModel        `bun:"table:resource_installations,alias:resource_installations"`
+	ID                   uuid.UUID       `bun:"id,pk,type:uuid"`
+	CreatedAt            time.Time       `bun:"created_at"`
+	UpdatedAt            time.Time       `bun:"updated_at"`
+	ImageReference       string          `bun:"image_reference"`
+	ImageDigest          sql.NullString  `bun:"image_digest"`
+	ContainerName        string          `bun:"container_name"`
+	RestartPolicy        string          `bun:"restart_policy"`
+	Configuration        json.RawMessage `bun:"configuration,type:jsonb"`
+	ArchivedAt           sql.NullTime    `bun:"archived_at"`
+	ResourceID           uuid.UUID       `bun:"resource_id,type:uuid"`
+	ServerID             uuid.UUID       `bun:"server_id,type:uuid"`
+	RegistryCredentialID *uuid.UUID      `bun:"registry_credential_id,type:uuid"`
 }
 
 func (e *ResourceInstallationEntity) Validate() error {
@@ -44,27 +46,31 @@ func (ri resourceInstallation) Find(ctx context.Context, db storage.Executor, id
 }
 
 type CreateResourceInstallationData struct {
-	ResourceID     uuid.UUID
-	ServerID       *uuid.UUID
-	Mode           string
-	Driver         string
-	DesiredVersion sql.NullString
-	Configuration  json.RawMessage
-	ArchivedAt     sql.NullTime
+	ImageReference       string
+	ImageDigest          sql.NullString
+	ContainerName        string
+	RestartPolicy        string
+	Configuration        json.RawMessage
+	ArchivedAt           sql.NullTime
+	ResourceID           uuid.UUID
+	ServerID             uuid.UUID
+	RegistryCredentialID *uuid.UUID
 }
 
 func (ri resourceInstallation) Create(ctx context.Context, db storage.Executor, data CreateResourceInstallationData) (ResourceInstallationEntity, error) {
 	entity := ResourceInstallationEntity{
-		ID:             uuid.New(),
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
-		ResourceID:     data.ResourceID,
-		ServerID:       data.ServerID,
-		Mode:           data.Mode,
-		Driver:         data.Driver,
-		DesiredVersion: data.DesiredVersion,
-		Configuration:  data.Configuration,
-		ArchivedAt:     data.ArchivedAt,
+		ID:                   uuid.New(),
+		CreatedAt:            time.Now(),
+		UpdatedAt:            time.Now(),
+		ImageReference:       data.ImageReference,
+		ImageDigest:          data.ImageDigest,
+		ContainerName:        data.ContainerName,
+		RestartPolicy:        data.RestartPolicy,
+		Configuration:        data.Configuration,
+		ArchivedAt:           data.ArchivedAt,
+		ResourceID:           data.ResourceID,
+		ServerID:             data.ServerID,
+		RegistryCredentialID: data.RegistryCredentialID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -79,28 +85,32 @@ func (ri resourceInstallation) Create(ctx context.Context, db storage.Executor, 
 }
 
 type UpdateResourceInstallationData struct {
-	ID             uuid.UUID
-	UpdatedAt      time.Time
-	ResourceID     uuid.UUID
-	ServerID       *uuid.UUID
-	Mode           string
-	Driver         string
-	DesiredVersion sql.NullString
-	Configuration  json.RawMessage
-	ArchivedAt     sql.NullTime
+	ID                   uuid.UUID
+	UpdatedAt            time.Time
+	ImageReference       string
+	ImageDigest          sql.NullString
+	ContainerName        string
+	RestartPolicy        string
+	Configuration        json.RawMessage
+	ArchivedAt           sql.NullTime
+	ResourceID           uuid.UUID
+	ServerID             uuid.UUID
+	RegistryCredentialID *uuid.UUID
 }
 
 func (ri resourceInstallation) Update(ctx context.Context, db storage.Executor, data UpdateResourceInstallationData) (ResourceInstallationEntity, error) {
 	entity := ResourceInstallationEntity{
-		ID:             data.ID,
-		UpdatedAt:      time.Now(),
-		ResourceID:     data.ResourceID,
-		ServerID:       data.ServerID,
-		Mode:           data.Mode,
-		Driver:         data.Driver,
-		DesiredVersion: data.DesiredVersion,
-		Configuration:  data.Configuration,
-		ArchivedAt:     data.ArchivedAt,
+		ID:                   data.ID,
+		UpdatedAt:            time.Now(),
+		ImageReference:       data.ImageReference,
+		ImageDigest:          data.ImageDigest,
+		ContainerName:        data.ContainerName,
+		RestartPolicy:        data.RestartPolicy,
+		Configuration:        data.Configuration,
+		ArchivedAt:           data.ArchivedAt,
+		ResourceID:           data.ResourceID,
+		ServerID:             data.ServerID,
+		RegistryCredentialID: data.RegistryCredentialID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -110,13 +120,15 @@ func (ri resourceInstallation) Update(ctx context.Context, db storage.Executor, 
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("resource_id").
-		Column("server_id").
-		Column("mode").
-		Column("driver").
-		Column("desired_version").
+		Column("image_reference").
+		Column("image_digest").
+		Column("container_name").
+		Column("restart_policy").
 		Column("configuration").
 		Column("archived_at").
+		Column("resource_id").
+		Column("server_id").
+		Column("registry_credential_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -195,16 +207,18 @@ func (ri resourceInstallation) Paginate(ctx context.Context, db storage.Executor
 
 func (ri resourceInstallation) Upsert(ctx context.Context, db storage.Executor, data CreateResourceInstallationData) (ResourceInstallationEntity, error) {
 	entity := ResourceInstallationEntity{
-		ID:             uuid.New(),
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
-		ResourceID:     data.ResourceID,
-		ServerID:       data.ServerID,
-		Mode:           data.Mode,
-		Driver:         data.Driver,
-		DesiredVersion: data.DesiredVersion,
-		Configuration:  data.Configuration,
-		ArchivedAt:     data.ArchivedAt,
+		ID:                   uuid.New(),
+		CreatedAt:            time.Now(),
+		UpdatedAt:            time.Now(),
+		ImageReference:       data.ImageReference,
+		ImageDigest:          data.ImageDigest,
+		ContainerName:        data.ContainerName,
+		RestartPolicy:        data.RestartPolicy,
+		Configuration:        data.Configuration,
+		ArchivedAt:           data.ArchivedAt,
+		ResourceID:           data.ResourceID,
+		ServerID:             data.ServerID,
+		RegistryCredentialID: data.RegistryCredentialID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -214,13 +228,15 @@ func (ri resourceInstallation) Upsert(ctx context.Context, db storage.Executor, 
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("resource_id = excluded.resource_id").
-		Set("server_id = excluded.server_id").
-		Set("mode = excluded.mode").
-		Set("driver = excluded.driver").
-		Set("desired_version = excluded.desired_version").
+		Set("image_reference = excluded.image_reference").
+		Set("image_digest = excluded.image_digest").
+		Set("container_name = excluded.container_name").
+		Set("restart_policy = excluded.restart_policy").
 		Set("configuration = excluded.configuration").
 		Set("archived_at = excluded.archived_at").
+		Set("resource_id = excluded.resource_id").
+		Set("server_id = excluded.server_id").
+		Set("registry_credential_id = excluded.registry_credential_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ResourceInstallationEntity{}, err

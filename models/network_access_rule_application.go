@@ -18,8 +18,6 @@ type NetworkAccessRuleApplicationEntity struct {
 	ID                         uuid.UUID       `bun:"id,pk,type:uuid"`
 	CreatedAt                  time.Time       `bun:"created_at"`
 	UpdatedAt                  time.Time       `bun:"updated_at"`
-	NetworkAccessRuleID        uuid.UUID       `bun:"network_access_rule_id,type:uuid"`
-	EnvironmentTargetNetworkID int32           `bun:"environment_target_network_id"`
 	Driver                     string          `bun:"driver"`
 	ExternalID                 sql.NullString  `bun:"external_id"`
 	Configuration              json.RawMessage `bun:"configuration,type:jsonb"`
@@ -28,6 +26,8 @@ type NetworkAccessRuleApplicationEntity struct {
 	ObservedAt                 sql.NullTime    `bun:"observed_at"`
 	RemovedAt                  sql.NullTime    `bun:"removed_at"`
 	Error                      sql.NullString  `bun:"error"`
+	NetworkAccessRuleID        uuid.UUID       `bun:"network_access_rule_id,type:uuid"`
+	EnvironmentTargetNetworkID int32           `bun:"environment_target_network_id"`
 }
 
 func (e *NetworkAccessRuleApplicationEntity) Validate() error {
@@ -47,8 +47,6 @@ func (nara networkAccessRuleApplication) Find(ctx context.Context, db storage.Ex
 }
 
 type CreateNetworkAccessRuleApplicationData struct {
-	NetworkAccessRuleID        uuid.UUID
-	EnvironmentTargetNetworkID int32
 	Driver                     string
 	ExternalID                 sql.NullString
 	Configuration              json.RawMessage
@@ -57,6 +55,8 @@ type CreateNetworkAccessRuleApplicationData struct {
 	ObservedAt                 sql.NullTime
 	RemovedAt                  sql.NullTime
 	Error                      sql.NullString
+	NetworkAccessRuleID        uuid.UUID
+	EnvironmentTargetNetworkID int32
 }
 
 func (nara networkAccessRuleApplication) Create(ctx context.Context, db storage.Executor, data CreateNetworkAccessRuleApplicationData) (NetworkAccessRuleApplicationEntity, error) {
@@ -64,8 +64,6 @@ func (nara networkAccessRuleApplication) Create(ctx context.Context, db storage.
 		ID:                         uuid.New(),
 		CreatedAt:                  time.Now(),
 		UpdatedAt:                  time.Now(),
-		NetworkAccessRuleID:        data.NetworkAccessRuleID,
-		EnvironmentTargetNetworkID: data.EnvironmentTargetNetworkID,
 		Driver:                     data.Driver,
 		ExternalID:                 data.ExternalID,
 		Configuration:              data.Configuration,
@@ -74,6 +72,8 @@ func (nara networkAccessRuleApplication) Create(ctx context.Context, db storage.
 		ObservedAt:                 data.ObservedAt,
 		RemovedAt:                  data.RemovedAt,
 		Error:                      data.Error,
+		NetworkAccessRuleID:        data.NetworkAccessRuleID,
+		EnvironmentTargetNetworkID: data.EnvironmentTargetNetworkID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -90,8 +90,6 @@ func (nara networkAccessRuleApplication) Create(ctx context.Context, db storage.
 type UpdateNetworkAccessRuleApplicationData struct {
 	ID                         uuid.UUID
 	UpdatedAt                  time.Time
-	NetworkAccessRuleID        uuid.UUID
-	EnvironmentTargetNetworkID int32
 	Driver                     string
 	ExternalID                 sql.NullString
 	Configuration              json.RawMessage
@@ -100,14 +98,14 @@ type UpdateNetworkAccessRuleApplicationData struct {
 	ObservedAt                 sql.NullTime
 	RemovedAt                  sql.NullTime
 	Error                      sql.NullString
+	NetworkAccessRuleID        uuid.UUID
+	EnvironmentTargetNetworkID int32
 }
 
 func (nara networkAccessRuleApplication) Update(ctx context.Context, db storage.Executor, data UpdateNetworkAccessRuleApplicationData) (NetworkAccessRuleApplicationEntity, error) {
 	entity := NetworkAccessRuleApplicationEntity{
 		ID:                         data.ID,
 		UpdatedAt:                  time.Now(),
-		NetworkAccessRuleID:        data.NetworkAccessRuleID,
-		EnvironmentTargetNetworkID: data.EnvironmentTargetNetworkID,
 		Driver:                     data.Driver,
 		ExternalID:                 data.ExternalID,
 		Configuration:              data.Configuration,
@@ -116,6 +114,8 @@ func (nara networkAccessRuleApplication) Update(ctx context.Context, db storage.
 		ObservedAt:                 data.ObservedAt,
 		RemovedAt:                  data.RemovedAt,
 		Error:                      data.Error,
+		NetworkAccessRuleID:        data.NetworkAccessRuleID,
+		EnvironmentTargetNetworkID: data.EnvironmentTargetNetworkID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -125,8 +125,6 @@ func (nara networkAccessRuleApplication) Update(ctx context.Context, db storage.
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("network_access_rule_id").
-		Column("environment_target_network_id").
 		Column("driver").
 		Column("external_id").
 		Column("configuration").
@@ -135,6 +133,8 @@ func (nara networkAccessRuleApplication) Update(ctx context.Context, db storage.
 		Column("observed_at").
 		Column("removed_at").
 		Column("error").
+		Column("network_access_rule_id").
+		Column("environment_target_network_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -216,8 +216,6 @@ func (nara networkAccessRuleApplication) Upsert(ctx context.Context, db storage.
 		ID:                         uuid.New(),
 		CreatedAt:                  time.Now(),
 		UpdatedAt:                  time.Now(),
-		NetworkAccessRuleID:        data.NetworkAccessRuleID,
-		EnvironmentTargetNetworkID: data.EnvironmentTargetNetworkID,
 		Driver:                     data.Driver,
 		ExternalID:                 data.ExternalID,
 		Configuration:              data.Configuration,
@@ -226,6 +224,8 @@ func (nara networkAccessRuleApplication) Upsert(ctx context.Context, db storage.
 		ObservedAt:                 data.ObservedAt,
 		RemovedAt:                  data.RemovedAt,
 		Error:                      data.Error,
+		NetworkAccessRuleID:        data.NetworkAccessRuleID,
+		EnvironmentTargetNetworkID: data.EnvironmentTargetNetworkID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -235,8 +235,6 @@ func (nara networkAccessRuleApplication) Upsert(ctx context.Context, db storage.
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("network_access_rule_id = excluded.network_access_rule_id").
-		Set("environment_target_network_id = excluded.environment_target_network_id").
 		Set("driver = excluded.driver").
 		Set("external_id = excluded.external_id").
 		Set("configuration = excluded.configuration").
@@ -245,6 +243,8 @@ func (nara networkAccessRuleApplication) Upsert(ctx context.Context, db storage.
 		Set("observed_at = excluded.observed_at").
 		Set("removed_at = excluded.removed_at").
 		Set("error = excluded.error").
+		Set("network_access_rule_id = excluded.network_access_rule_id").
+		Set("environment_target_network_id = excluded.environment_target_network_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return NetworkAccessRuleApplicationEntity{}, err

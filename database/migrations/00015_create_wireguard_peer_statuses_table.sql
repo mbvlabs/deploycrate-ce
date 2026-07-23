@@ -6,11 +6,12 @@ CREATE TABLE wireguard_peer_statuses (
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
 
-    wireguard_peer_id UUID NOT NULL REFERENCES wireguard_peers (id) ON DELETE RESTRICT,
     state TEXT NOT NULL,
     latest_handshake_at TIMESTAMPTZ,
     error TEXT,
-    observed_at TIMESTAMPTZ NOT NULL
+    observed_at TIMESTAMPTZ NOT NULL,
+
+    wireguard_peer_id UUID NOT NULL REFERENCES wireguard_peers (id) ON DELETE RESTRICT
 );
 -- +goose StatementEnd
 

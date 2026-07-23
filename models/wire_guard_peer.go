@@ -17,7 +17,6 @@ type WireGuardPeerEntity struct {
 	ID             uuid.UUID      `bun:"id,pk,type:uuid"`
 	CreatedAt      time.Time      `bun:"created_at"`
 	UpdatedAt      time.Time      `bun:"updated_at"`
-	ServerID       uuid.UUID      `bun:"server_id,type:uuid"`
 	PublicKey      string         `bun:"public_key"`
 	EncPrivateKey  []byte         `bun:"enc_private_key"`
 	PrivateAddress string         `bun:"private_address"`
@@ -25,6 +24,7 @@ type WireGuardPeerEntity struct {
 	ListenPort     int32          `bun:"listen_port"`
 	ActivatedAt    time.Time      `bun:"activated_at"`
 	RetiredAt      sql.NullTime   `bun:"retired_at"`
+	ServerID       uuid.UUID      `bun:"server_id,type:uuid"`
 }
 
 func (e *WireGuardPeerEntity) Validate() error {
@@ -44,7 +44,6 @@ func (wgp wireGuardPeer) Find(ctx context.Context, db storage.Executor, id uuid.
 }
 
 type CreateWireGuardPeerData struct {
-	ServerID       uuid.UUID
 	PublicKey      string
 	EncPrivateKey  []byte
 	PrivateAddress string
@@ -52,6 +51,7 @@ type CreateWireGuardPeerData struct {
 	ListenPort     int32
 	ActivatedAt    time.Time
 	RetiredAt      sql.NullTime
+	ServerID       uuid.UUID
 }
 
 func (wgp wireGuardPeer) Create(ctx context.Context, db storage.Executor, data CreateWireGuardPeerData) (WireGuardPeerEntity, error) {
@@ -59,7 +59,6 @@ func (wgp wireGuardPeer) Create(ctx context.Context, db storage.Executor, data C
 		ID:             uuid.New(),
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
-		ServerID:       data.ServerID,
 		PublicKey:      data.PublicKey,
 		EncPrivateKey:  data.EncPrivateKey,
 		PrivateAddress: data.PrivateAddress,
@@ -67,6 +66,7 @@ func (wgp wireGuardPeer) Create(ctx context.Context, db storage.Executor, data C
 		ListenPort:     data.ListenPort,
 		ActivatedAt:    data.ActivatedAt,
 		RetiredAt:      data.RetiredAt,
+		ServerID:       data.ServerID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -83,7 +83,6 @@ func (wgp wireGuardPeer) Create(ctx context.Context, db storage.Executor, data C
 type UpdateWireGuardPeerData struct {
 	ID             uuid.UUID
 	UpdatedAt      time.Time
-	ServerID       uuid.UUID
 	PublicKey      string
 	EncPrivateKey  []byte
 	PrivateAddress string
@@ -91,13 +90,13 @@ type UpdateWireGuardPeerData struct {
 	ListenPort     int32
 	ActivatedAt    time.Time
 	RetiredAt      sql.NullTime
+	ServerID       uuid.UUID
 }
 
 func (wgp wireGuardPeer) Update(ctx context.Context, db storage.Executor, data UpdateWireGuardPeerData) (WireGuardPeerEntity, error) {
 	entity := WireGuardPeerEntity{
 		ID:             data.ID,
 		UpdatedAt:      time.Now(),
-		ServerID:       data.ServerID,
 		PublicKey:      data.PublicKey,
 		EncPrivateKey:  data.EncPrivateKey,
 		PrivateAddress: data.PrivateAddress,
@@ -105,6 +104,7 @@ func (wgp wireGuardPeer) Update(ctx context.Context, db storage.Executor, data U
 		ListenPort:     data.ListenPort,
 		ActivatedAt:    data.ActivatedAt,
 		RetiredAt:      data.RetiredAt,
+		ServerID:       data.ServerID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -114,7 +114,6 @@ func (wgp wireGuardPeer) Update(ctx context.Context, db storage.Executor, data U
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("server_id").
 		Column("public_key").
 		Column("enc_private_key").
 		Column("private_address").
@@ -122,6 +121,7 @@ func (wgp wireGuardPeer) Update(ctx context.Context, db storage.Executor, data U
 		Column("listen_port").
 		Column("activated_at").
 		Column("retired_at").
+		Column("server_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -151,15 +151,15 @@ func (wgp wireGuardPeer) All(ctx context.Context, db storage.Executor) ([]WireGu
 	return entities, nil
 }
 
-type PaginatedWireGuardPeers struct {
-	WireGuardPeers []WireGuardPeerEntity
-	TotalCount     int64
-	Page           int64
-	PageSize       int64
-	TotalPages     int64
+type PaginatedWireGuardPeer struct {
+	WireGuardPeer []WireGuardPeerEntity
+	TotalCount    int64
+	Page          int64
+	PageSize      int64
+	TotalPages    int64
 }
 
-func (wgp wireGuardPeer) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedWireGuardPeers, error) {
+func (wgp wireGuardPeer) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedWireGuardPeer, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -175,7 +175,7 @@ func (wgp wireGuardPeer) Paginate(ctx context.Context, db storage.Executor, page
 	totalCount, err := db.NewSelect().
 		Model(&WireGuardPeerEntity{}).Count(ctx)
 	if err != nil {
-		return PaginatedWireGuardPeers{}, err
+		return PaginatedWireGuardPeer{}, err
 	}
 
 	entities := make([]WireGuardPeerEntity, 0, int(pageSize))
@@ -184,17 +184,17 @@ func (wgp wireGuardPeer) Paginate(ctx context.Context, db storage.Executor, page
 		Limit(int(pageSize)).
 		Offset(int(offset)).
 		Scan(ctx); err != nil {
-		return PaginatedWireGuardPeers{}, err
+		return PaginatedWireGuardPeer{}, err
 	}
 
 	totalPages := (int64(totalCount) + pageSize - 1) / pageSize
 
-	return PaginatedWireGuardPeers{
-		WireGuardPeers: entities,
-		TotalCount:     int64(totalCount),
-		Page:           page,
-		PageSize:       pageSize,
-		TotalPages:     totalPages,
+	return PaginatedWireGuardPeer{
+		WireGuardPeer: entities,
+		TotalCount:    int64(totalCount),
+		Page:          page,
+		PageSize:      pageSize,
+		TotalPages:    totalPages,
 	}, nil
 }
 
@@ -203,7 +203,6 @@ func (wgp wireGuardPeer) Upsert(ctx context.Context, db storage.Executor, data C
 		ID:             uuid.New(),
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
-		ServerID:       data.ServerID,
 		PublicKey:      data.PublicKey,
 		EncPrivateKey:  data.EncPrivateKey,
 		PrivateAddress: data.PrivateAddress,
@@ -211,6 +210,7 @@ func (wgp wireGuardPeer) Upsert(ctx context.Context, db storage.Executor, data C
 		ListenPort:     data.ListenPort,
 		ActivatedAt:    data.ActivatedAt,
 		RetiredAt:      data.RetiredAt,
+		ServerID:       data.ServerID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -220,7 +220,6 @@ func (wgp wireGuardPeer) Upsert(ctx context.Context, db storage.Executor, data C
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("server_id = excluded.server_id").
 		Set("public_key = excluded.public_key").
 		Set("enc_private_key = excluded.enc_private_key").
 		Set("private_address = excluded.private_address").
@@ -228,6 +227,7 @@ func (wgp wireGuardPeer) Upsert(ctx context.Context, db storage.Executor, data C
 		Set("listen_port = excluded.listen_port").
 		Set("activated_at = excluded.activated_at").
 		Set("retired_at = excluded.retired_at").
+		Set("server_id = excluded.server_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return WireGuardPeerEntity{}, err

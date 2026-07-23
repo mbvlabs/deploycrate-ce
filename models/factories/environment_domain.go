@@ -23,10 +23,10 @@ type EnvironmentDomainOption func(*EnvironmentDomainFactory)
 func BuildEnvironmentDomain(environmentID uuid.UUID, opts ...EnvironmentDomainOption) models.EnvironmentDomainEntity {
 	f := &EnvironmentDomainFactory{
 		EnvironmentDomainEntity: models.EnvironmentDomainEntity{
-			EnvironmentID: environmentID,
 			Hostname:      faker.Word(),
 			IsPrimary:     randomBool(),
 			ArchivedAt:    sql.NullTime{Time: time.Now(), Valid: true},
+			EnvironmentID: environmentID,
 		},
 	}
 
@@ -44,10 +44,10 @@ func CreateEnvironmentDomain(ctx context.Context, exec storage.Executor, environ
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
-		EnvironmentID: built.EnvironmentID,
 		Hostname:      built.Hostname,
 		IsPrimary:     built.IsPrimary,
 		ArchivedAt:    built.ArchivedAt,
+		EnvironmentID: built.EnvironmentID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -71,12 +71,6 @@ func CreateEnvironmentDomains(ctx context.Context, exec storage.Executor, enviro
 	return environmentdomains, nil
 }
 
-func WithEnvironmentDomainsEnvironmentID(value uuid.UUID) EnvironmentDomainOption {
-	return func(f *EnvironmentDomainFactory) {
-		f.EnvironmentDomainEntity.EnvironmentID = value
-	}
-}
-
 func WithEnvironmentDomainsHostname(value string) EnvironmentDomainOption {
 	return func(f *EnvironmentDomainFactory) {
 		f.EnvironmentDomainEntity.Hostname = value
@@ -92,5 +86,11 @@ func WithEnvironmentDomainsIsPrimary(value bool) EnvironmentDomainOption {
 func WithEnvironmentDomainsArchivedAt(value sql.NullTime) EnvironmentDomainOption {
 	return func(f *EnvironmentDomainFactory) {
 		f.EnvironmentDomainEntity.ArchivedAt = value
+	}
+}
+
+func WithEnvironmentDomainsEnvironmentID(value uuid.UUID) EnvironmentDomainOption {
+	return func(f *EnvironmentDomainFactory) {
+		f.EnvironmentDomainEntity.EnvironmentID = value
 	}
 }

@@ -17,10 +17,10 @@ type EnvironmentTargetEntity struct {
 	ID            uuid.UUID    `bun:"id,pk,type:uuid"`
 	CreatedAt     time.Time    `bun:"created_at"`
 	UpdatedAt     time.Time    `bun:"updated_at"`
-	EnvironmentID uuid.UUID    `bun:"environment_id,type:uuid"`
-	ServerID      uuid.UUID    `bun:"server_id,type:uuid"`
 	AttachedAt    time.Time    `bun:"attached_at"`
 	DetachedAt    sql.NullTime `bun:"detached_at"`
+	EnvironmentID uuid.UUID    `bun:"environment_id,type:uuid"`
+	ServerID      uuid.UUID    `bun:"server_id,type:uuid"`
 }
 
 func (e *EnvironmentTargetEntity) Validate() error {
@@ -40,10 +40,10 @@ func (et environmentTarget) Find(ctx context.Context, db storage.Executor, id uu
 }
 
 type CreateEnvironmentTargetData struct {
-	EnvironmentID uuid.UUID
-	ServerID      uuid.UUID
 	AttachedAt    time.Time
 	DetachedAt    sql.NullTime
+	EnvironmentID uuid.UUID
+	ServerID      uuid.UUID
 }
 
 func (et environmentTarget) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentTargetData) (EnvironmentTargetEntity, error) {
@@ -51,10 +51,10 @@ func (et environmentTarget) Create(ctx context.Context, db storage.Executor, dat
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
-		EnvironmentID: data.EnvironmentID,
-		ServerID:      data.ServerID,
 		AttachedAt:    data.AttachedAt,
 		DetachedAt:    data.DetachedAt,
+		EnvironmentID: data.EnvironmentID,
+		ServerID:      data.ServerID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -71,20 +71,20 @@ func (et environmentTarget) Create(ctx context.Context, db storage.Executor, dat
 type UpdateEnvironmentTargetData struct {
 	ID            uuid.UUID
 	UpdatedAt     time.Time
-	EnvironmentID uuid.UUID
-	ServerID      uuid.UUID
 	AttachedAt    time.Time
 	DetachedAt    sql.NullTime
+	EnvironmentID uuid.UUID
+	ServerID      uuid.UUID
 }
 
 func (et environmentTarget) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentTargetData) (EnvironmentTargetEntity, error) {
 	entity := EnvironmentTargetEntity{
 		ID:            data.ID,
 		UpdatedAt:     time.Now(),
-		EnvironmentID: data.EnvironmentID,
-		ServerID:      data.ServerID,
 		AttachedAt:    data.AttachedAt,
 		DetachedAt:    data.DetachedAt,
+		EnvironmentID: data.EnvironmentID,
+		ServerID:      data.ServerID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -94,10 +94,10 @@ func (et environmentTarget) Update(ctx context.Context, db storage.Executor, dat
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("environment_id").
-		Column("server_id").
 		Column("attached_at").
 		Column("detached_at").
+		Column("environment_id").
+		Column("server_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -179,10 +179,10 @@ func (et environmentTarget) Upsert(ctx context.Context, db storage.Executor, dat
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
-		EnvironmentID: data.EnvironmentID,
-		ServerID:      data.ServerID,
 		AttachedAt:    data.AttachedAt,
 		DetachedAt:    data.DetachedAt,
+		EnvironmentID: data.EnvironmentID,
+		ServerID:      data.ServerID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -192,10 +192,10 @@ func (et environmentTarget) Upsert(ctx context.Context, db storage.Executor, dat
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("environment_id = excluded.environment_id").
-		Set("server_id = excluded.server_id").
 		Set("attached_at = excluded.attached_at").
 		Set("detached_at = excluded.detached_at").
+		Set("environment_id = excluded.environment_id").
+		Set("server_id = excluded.server_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return EnvironmentTargetEntity{}, err

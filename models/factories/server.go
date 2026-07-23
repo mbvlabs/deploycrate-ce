@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -23,10 +24,21 @@ type ServerOption func(*ServerFactory)
 func BuildServer(opts ...ServerOption) models.ServerEntity {
 	f := &ServerFactory{
 		ServerEntity: models.ServerEntity{
-			Name:       faker.Word(),
-			Slug:       faker.Word(),
-			Address:    faker.Word(),
-			ArchivedAt: sql.NullTime{Time: time.Now(), Valid: true},
+			ArchivedAt:          sql.NullTime{Time: time.Now(), Valid: true},
+			Name:                faker.Word(),
+			Slug:                faker.Word(),
+			Kind:                faker.Word(),
+			Capabilities:        json.RawMessage{},
+			OperatingSystem:     sql.NullString{String: faker.Word(), Valid: true},
+			Distribution:        sql.NullString{String: faker.Word(), Valid: true},
+			DistributionVersion: sql.NullString{String: faker.Word(), Valid: true},
+			Architecture:        sql.NullString{String: faker.Word(), Valid: true},
+			PackageManager:      sql.NullString{String: faker.Word(), Valid: true},
+			InitSystem:          sql.NullString{String: faker.Word(), Valid: true},
+			Ipv4Address:         faker.Word(),
+			Ipv6Address:         faker.Word(),
+			IsConfigured:        randomBool(),
+			Address:             faker.Word(),
 		},
 	}
 
@@ -41,13 +53,24 @@ func CreateServer(ctx context.Context, exec storage.Executor, opts ...ServerOpti
 	built := BuildServer(opts...)
 
 	entity := models.ServerEntity{
-		ID:         uuid.New(),
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
-		Name:       built.Name,
-		Slug:       built.Slug,
-		Address:    built.Address,
-		ArchivedAt: built.ArchivedAt,
+		ID:                  uuid.New(),
+		CreatedAt:           time.Now(),
+		UpdatedAt:           time.Now(),
+		ArchivedAt:          built.ArchivedAt,
+		Name:                built.Name,
+		Slug:                built.Slug,
+		Kind:                built.Kind,
+		Capabilities:        built.Capabilities,
+		OperatingSystem:     built.OperatingSystem,
+		Distribution:        built.Distribution,
+		DistributionVersion: built.DistributionVersion,
+		Architecture:        built.Architecture,
+		PackageManager:      built.PackageManager,
+		InitSystem:          built.InitSystem,
+		Ipv4Address:         built.Ipv4Address,
+		Ipv6Address:         built.Ipv6Address,
+		IsConfigured:        built.IsConfigured,
+		Address:             built.Address,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -71,6 +94,12 @@ func CreateServers(ctx context.Context, exec storage.Executor, count int, opts .
 	return servers, nil
 }
 
+func WithServersArchivedAt(value sql.NullTime) ServerOption {
+	return func(f *ServerFactory) {
+		f.ServerEntity.ArchivedAt = value
+	}
+}
+
 func WithServersName(value string) ServerOption {
 	return func(f *ServerFactory) {
 		f.ServerEntity.Name = value
@@ -83,14 +112,82 @@ func WithServersSlug(value string) ServerOption {
 	}
 }
 
+func WithServersKind(value string) ServerOption {
+	return func(f *ServerFactory) {
+		f.ServerEntity.Kind = value
+	}
+}
+
+func WithServersCapabilities(value json.RawMessage) ServerOption {
+	return func(f *ServerFactory) {
+		f.ServerEntity.Capabilities = value
+	}
+}
+
+func WithServersOperatingSystem(value sql.NullString) ServerOption {
+	return func(f *ServerFactory) {
+		f.ServerEntity.OperatingSystem = value
+	}
+}
+
+func WithServersDistribution(value sql.NullString) ServerOption {
+	return func(f *ServerFactory) {
+		f.ServerEntity.Distribution = value
+	}
+}
+
+func WithServersDistributionVersion(value sql.NullString) ServerOption {
+	return func(f *ServerFactory) {
+		f.ServerEntity.DistributionVersion = value
+	}
+}
+
+func WithServersArchitecture(value sql.NullString) ServerOption {
+	return func(f *ServerFactory) {
+		f.ServerEntity.Architecture = value
+	}
+}
+
+func WithServersPackageManager(value sql.NullString) ServerOption {
+	return func(f *ServerFactory) {
+		f.ServerEntity.PackageManager = value
+	}
+}
+
+func WithServersInitSystem(value sql.NullString) ServerOption {
+	return func(f *ServerFactory) {
+		f.ServerEntity.InitSystem = value
+	}
+}
+
+func WithServersIpv4Address(value string) ServerOption {
+	return func(f *ServerFactory) {
+		f.ServerEntity.Ipv4Address = value
+	}
+}
+
+func WithServersIpv6Address(value string) ServerOption {
+	return func(f *ServerFactory) {
+		f.ServerEntity.Ipv6Address = value
+	}
+}
+
+func WithServersIsConfigured(value bool) ServerOption {
+	return func(f *ServerFactory) {
+		f.ServerEntity.IsConfigured = value
+	}
+}
+
 func WithServersAddress(value string) ServerOption {
 	return func(f *ServerFactory) {
 		f.ServerEntity.Address = value
 	}
 }
 
-func WithServersArchivedAt(value sql.NullTime) ServerOption {
-	return func(f *ServerFactory) {
-		f.ServerEntity.ArchivedAt = value
-	}
+func WithServersIPv4Address(value string) ServerOption {
+	return WithServersIpv4Address(value)
+}
+
+func WithServersIPv6Address(value string) ServerOption {
+	return WithServersIpv6Address(value)
 }

@@ -17,10 +17,6 @@ type ChangeTaskEntity struct {
 	ID                  uuid.UUID       `bun:"id,pk,type:uuid"`
 	CreatedAt           time.Time       `bun:"created_at"`
 	UpdatedAt           time.Time       `bun:"updated_at"`
-	ChangeID            uuid.UUID       `bun:"change_id,type:uuid"`
-	ParentTaskID        *uuid.UUID      `bun:"parent_task_id,type:uuid"`
-	ServerID            *uuid.UUID      `bun:"server_id,type:uuid"`
-	EnvironmentTargetID *uuid.UUID      `bun:"environment_target_id,type:uuid"`
 	Kind                string          `bun:"kind"`
 	SubjectType         string          `bun:"subject_type"`
 	SubjectID           uuid.UUID       `bun:"subject_id,type:uuid"`
@@ -29,6 +25,10 @@ type ChangeTaskEntity struct {
 	Status              string          `bun:"status"`
 	AttemptCount        int32           `bun:"attempt_count"`
 	AvailableAt         time.Time       `bun:"available_at"`
+	ChangeID            uuid.UUID       `bun:"change_id,type:uuid"`
+	ParentTaskID        *uuid.UUID      `bun:"parent_task_id,type:uuid"`
+	ServerID            *uuid.UUID      `bun:"server_id,type:uuid"`
+	EnvironmentTargetID *uuid.UUID      `bun:"environment_target_id,type:uuid"`
 }
 
 func (e *ChangeTaskEntity) Validate() error {
@@ -48,10 +48,6 @@ func (ct changeTask) Find(ctx context.Context, db storage.Executor, id uuid.UUID
 }
 
 type CreateChangeTaskData struct {
-	ChangeID            uuid.UUID
-	ParentTaskID        *uuid.UUID
-	ServerID            *uuid.UUID
-	EnvironmentTargetID *uuid.UUID
 	Kind                string
 	SubjectType         string
 	SubjectID           uuid.UUID
@@ -60,6 +56,10 @@ type CreateChangeTaskData struct {
 	Status              string
 	AttemptCount        int32
 	AvailableAt         time.Time
+	ChangeID            uuid.UUID
+	ParentTaskID        *uuid.UUID
+	ServerID            *uuid.UUID
+	EnvironmentTargetID *uuid.UUID
 }
 
 func (ct changeTask) Create(ctx context.Context, db storage.Executor, data CreateChangeTaskData) (ChangeTaskEntity, error) {
@@ -67,10 +67,6 @@ func (ct changeTask) Create(ctx context.Context, db storage.Executor, data Creat
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		ChangeID:            data.ChangeID,
-		ParentTaskID:        data.ParentTaskID,
-		ServerID:            data.ServerID,
-		EnvironmentTargetID: data.EnvironmentTargetID,
 		Kind:                data.Kind,
 		SubjectType:         data.SubjectType,
 		SubjectID:           data.SubjectID,
@@ -79,6 +75,10 @@ func (ct changeTask) Create(ctx context.Context, db storage.Executor, data Creat
 		Status:              data.Status,
 		AttemptCount:        data.AttemptCount,
 		AvailableAt:         data.AvailableAt,
+		ChangeID:            data.ChangeID,
+		ParentTaskID:        data.ParentTaskID,
+		ServerID:            data.ServerID,
+		EnvironmentTargetID: data.EnvironmentTargetID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -95,10 +95,6 @@ func (ct changeTask) Create(ctx context.Context, db storage.Executor, data Creat
 type UpdateChangeTaskData struct {
 	ID                  uuid.UUID
 	UpdatedAt           time.Time
-	ChangeID            uuid.UUID
-	ParentTaskID        *uuid.UUID
-	ServerID            *uuid.UUID
-	EnvironmentTargetID *uuid.UUID
 	Kind                string
 	SubjectType         string
 	SubjectID           uuid.UUID
@@ -107,16 +103,16 @@ type UpdateChangeTaskData struct {
 	Status              string
 	AttemptCount        int32
 	AvailableAt         time.Time
+	ChangeID            uuid.UUID
+	ParentTaskID        *uuid.UUID
+	ServerID            *uuid.UUID
+	EnvironmentTargetID *uuid.UUID
 }
 
 func (ct changeTask) Update(ctx context.Context, db storage.Executor, data UpdateChangeTaskData) (ChangeTaskEntity, error) {
 	entity := ChangeTaskEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
-		ChangeID:            data.ChangeID,
-		ParentTaskID:        data.ParentTaskID,
-		ServerID:            data.ServerID,
-		EnvironmentTargetID: data.EnvironmentTargetID,
 		Kind:                data.Kind,
 		SubjectType:         data.SubjectType,
 		SubjectID:           data.SubjectID,
@@ -125,6 +121,10 @@ func (ct changeTask) Update(ctx context.Context, db storage.Executor, data Updat
 		Status:              data.Status,
 		AttemptCount:        data.AttemptCount,
 		AvailableAt:         data.AvailableAt,
+		ChangeID:            data.ChangeID,
+		ParentTaskID:        data.ParentTaskID,
+		ServerID:            data.ServerID,
+		EnvironmentTargetID: data.EnvironmentTargetID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -134,10 +134,6 @@ func (ct changeTask) Update(ctx context.Context, db storage.Executor, data Updat
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("change_id").
-		Column("parent_task_id").
-		Column("server_id").
-		Column("environment_target_id").
 		Column("kind").
 		Column("subject_type").
 		Column("subject_id").
@@ -146,6 +142,10 @@ func (ct changeTask) Update(ctx context.Context, db storage.Executor, data Updat
 		Column("status").
 		Column("attempt_count").
 		Column("available_at").
+		Column("change_id").
+		Column("parent_task_id").
+		Column("server_id").
+		Column("environment_target_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -227,10 +227,6 @@ func (ct changeTask) Upsert(ctx context.Context, db storage.Executor, data Creat
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		ChangeID:            data.ChangeID,
-		ParentTaskID:        data.ParentTaskID,
-		ServerID:            data.ServerID,
-		EnvironmentTargetID: data.EnvironmentTargetID,
 		Kind:                data.Kind,
 		SubjectType:         data.SubjectType,
 		SubjectID:           data.SubjectID,
@@ -239,6 +235,10 @@ func (ct changeTask) Upsert(ctx context.Context, db storage.Executor, data Creat
 		Status:              data.Status,
 		AttemptCount:        data.AttemptCount,
 		AvailableAt:         data.AvailableAt,
+		ChangeID:            data.ChangeID,
+		ParentTaskID:        data.ParentTaskID,
+		ServerID:            data.ServerID,
+		EnvironmentTargetID: data.EnvironmentTargetID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -248,10 +248,6 @@ func (ct changeTask) Upsert(ctx context.Context, db storage.Executor, data Creat
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("change_id = excluded.change_id").
-		Set("parent_task_id = excluded.parent_task_id").
-		Set("server_id = excluded.server_id").
-		Set("environment_target_id = excluded.environment_target_id").
 		Set("kind = excluded.kind").
 		Set("subject_type = excluded.subject_type").
 		Set("subject_id = excluded.subject_id").
@@ -260,6 +256,10 @@ func (ct changeTask) Upsert(ctx context.Context, db storage.Executor, data Creat
 		Set("status = excluded.status").
 		Set("attempt_count = excluded.attempt_count").
 		Set("available_at = excluded.available_at").
+		Set("change_id = excluded.change_id").
+		Set("parent_task_id = excluded.parent_task_id").
+		Set("server_id = excluded.server_id").
+		Set("environment_target_id = excluded.environment_target_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ChangeTaskEntity{}, err

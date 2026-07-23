@@ -21,16 +21,14 @@ type ChangeFactory struct {
 
 type ChangeOption func(*ChangeFactory)
 
-func BuildChange(environmentID uuid.UUID, actorID *uuid.UUID, correctsChangeID *uuid.UUID, correlationID uuid.UUID, opts ...ChangeOption) models.ChangeEntity {
+func BuildChange(actorID *uuid.UUID, correlationID uuid.UUID, environmentID uuid.UUID, correctsChangeID *uuid.UUID, opts ...ChangeOption) models.ChangeEntity {
 	f := &ChangeFactory{
 		ChangeEntity: models.ChangeEntity{
-			EnvironmentID:     environmentID,
 			Sequence:          randomInt64(1, 1000, 100),
 			Kind:              faker.Word(),
 			TriggerType:       faker.Word(),
 			ActorType:         faker.Word(),
 			ActorID:           actorID,
-			CorrectsChangeID:  correctsChangeID,
 			CauseSystem:       sql.NullString{String: faker.Word(), Valid: true},
 			CauseReference:    sql.NullString{String: faker.Word(), Valid: true},
 			CorrelationID:     correlationID,
@@ -43,6 +41,8 @@ func BuildChange(environmentID uuid.UUID, actorID *uuid.UUID, correctsChangeID *
 			FinishedAt:        sql.NullTime{Time: time.Now(), Valid: true},
 			CancelledAt:       sql.NullTime{Time: time.Now(), Valid: true},
 			Error:             sql.NullString{String: faker.Word(), Valid: true},
+			EnvironmentID:     environmentID,
+			CorrectsChangeID:  correctsChangeID,
 		},
 	}
 
@@ -53,20 +53,18 @@ func BuildChange(environmentID uuid.UUID, actorID *uuid.UUID, correctsChangeID *
 	return f.ChangeEntity
 }
 
-func CreateChange(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, actorID *uuid.UUID, correctsChangeID *uuid.UUID, correlationID uuid.UUID, opts ...ChangeOption) (models.ChangeEntity, error) {
-	built := BuildChange(environmentID, actorID, correctsChangeID, correlationID, opts...)
+func CreateChange(ctx context.Context, exec storage.Executor, actorID *uuid.UUID, correlationID uuid.UUID, environmentID uuid.UUID, correctsChangeID *uuid.UUID, opts ...ChangeOption) (models.ChangeEntity, error) {
+	built := BuildChange(actorID, correlationID, environmentID, correctsChangeID, opts...)
 
 	entity := models.ChangeEntity{
 		ID:                uuid.New(),
 		CreatedAt:         time.Now(),
 		UpdatedAt:         time.Now(),
-		EnvironmentID:     built.EnvironmentID,
 		Sequence:          built.Sequence,
 		Kind:              built.Kind,
 		TriggerType:       built.TriggerType,
 		ActorType:         built.ActorType,
 		ActorID:           built.ActorID,
-		CorrectsChangeID:  built.CorrectsChangeID,
 		CauseSystem:       built.CauseSystem,
 		CauseReference:    built.CauseReference,
 		CorrelationID:     built.CorrelationID,
@@ -79,6 +77,8 @@ func CreateChange(ctx context.Context, exec storage.Executor, environmentID uuid
 		FinishedAt:        built.FinishedAt,
 		CancelledAt:       built.CancelledAt,
 		Error:             built.Error,
+		EnvironmentID:     built.EnvironmentID,
+		CorrectsChangeID:  built.CorrectsChangeID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -88,11 +88,11 @@ func CreateChange(ctx context.Context, exec storage.Executor, environmentID uuid
 	return entity, nil
 }
 
-func CreateChanges(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, actorID *uuid.UUID, correctsChangeID *uuid.UUID, correlationID uuid.UUID, count int, opts ...ChangeOption) ([]models.ChangeEntity, error) {
+func CreateChanges(ctx context.Context, exec storage.Executor, actorID *uuid.UUID, correlationID uuid.UUID, environmentID uuid.UUID, correctsChangeID *uuid.UUID, count int, opts ...ChangeOption) ([]models.ChangeEntity, error) {
 	changes := make([]models.ChangeEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateChange(ctx, exec, environmentID, actorID, correctsChangeID, correlationID, opts...)
+		entity, err := CreateChange(ctx, exec, actorID, correlationID, environmentID, correctsChangeID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create change %d: %w", i+1, err)
 		}
@@ -100,12 +100,6 @@ func CreateChanges(ctx context.Context, exec storage.Executor, environmentID uui
 	}
 
 	return changes, nil
-}
-
-func WithChangesEnvironmentID(value uuid.UUID) ChangeOption {
-	return func(f *ChangeFactory) {
-		f.ChangeEntity.EnvironmentID = value
-	}
 }
 
 func WithChangesSequence(value int64) ChangeOption {
@@ -135,12 +129,6 @@ func WithChangesActorType(value string) ChangeOption {
 func WithChangesActorID(value *uuid.UUID) ChangeOption {
 	return func(f *ChangeFactory) {
 		f.ChangeEntity.ActorID = value
-	}
-}
-
-func WithChangesCorrectsChangeID(value *uuid.UUID) ChangeOption {
-	return func(f *ChangeFactory) {
-		f.ChangeEntity.CorrectsChangeID = value
 	}
 }
 
@@ -213,5 +201,17 @@ func WithChangesCancelledAt(value sql.NullTime) ChangeOption {
 func WithChangesError(value sql.NullString) ChangeOption {
 	return func(f *ChangeFactory) {
 		f.ChangeEntity.Error = value
+	}
+}
+
+func WithChangesEnvironmentID(value uuid.UUID) ChangeOption {
+	return func(f *ChangeFactory) {
+		f.ChangeEntity.EnvironmentID = value
+	}
+}
+
+func WithChangesCorrectsChangeID(value *uuid.UUID) ChangeOption {
+	return func(f *ChangeFactory) {
+		f.ChangeEntity.CorrectsChangeID = value
 	}
 }

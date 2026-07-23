@@ -24,8 +24,6 @@ type DeploymentEventOption func(*DeploymentEventFactory)
 func BuildDeploymentEvent(deploymentID uuid.UUID, changeTaskAttemptID *uuid.UUID, opts ...DeploymentEventOption) models.DeploymentEventEntity {
 	f := &DeploymentEventFactory{
 		DeploymentEventEntity: models.DeploymentEventEntity{
-			DeploymentID:        deploymentID,
-			ChangeTaskAttemptID: changeTaskAttemptID,
 			Sequence:            randomInt64(1, 1000, 100),
 			EventType:           faker.Word(),
 			Status:              sql.NullString{String: faker.Word(), Valid: true},
@@ -34,6 +32,8 @@ func BuildDeploymentEvent(deploymentID uuid.UUID, changeTaskAttemptID *uuid.UUID
 			Metadata:            json.RawMessage{},
 			Error:               sql.NullString{String: faker.Word(), Valid: true},
 			OccurredAt:          time.Time{},
+			DeploymentID:        deploymentID,
+			ChangeTaskAttemptID: changeTaskAttemptID,
 		},
 	}
 
@@ -51,8 +51,6 @@ func CreateDeploymentEvent(ctx context.Context, exec storage.Executor, deploymen
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		DeploymentID:        built.DeploymentID,
-		ChangeTaskAttemptID: built.ChangeTaskAttemptID,
 		Sequence:            built.Sequence,
 		EventType:           built.EventType,
 		Status:              built.Status,
@@ -61,6 +59,8 @@ func CreateDeploymentEvent(ctx context.Context, exec storage.Executor, deploymen
 		Metadata:            built.Metadata,
 		Error:               built.Error,
 		OccurredAt:          built.OccurredAt,
+		DeploymentID:        built.DeploymentID,
+		ChangeTaskAttemptID: built.ChangeTaskAttemptID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -82,18 +82,6 @@ func CreateDeploymentEvents(ctx context.Context, exec storage.Executor, deployme
 	}
 
 	return deploymentevents, nil
-}
-
-func WithDeploymentEventsDeploymentID(value uuid.UUID) DeploymentEventOption {
-	return func(f *DeploymentEventFactory) {
-		f.DeploymentEventEntity.DeploymentID = value
-	}
-}
-
-func WithDeploymentEventsChangeTaskAttemptID(value *uuid.UUID) DeploymentEventOption {
-	return func(f *DeploymentEventFactory) {
-		f.DeploymentEventEntity.ChangeTaskAttemptID = value
-	}
 }
 
 func WithDeploymentEventsSequence(value int64) DeploymentEventOption {
@@ -141,5 +129,17 @@ func WithDeploymentEventsError(value sql.NullString) DeploymentEventOption {
 func WithDeploymentEventsOccurredAt(value time.Time) DeploymentEventOption {
 	return func(f *DeploymentEventFactory) {
 		f.DeploymentEventEntity.OccurredAt = value
+	}
+}
+
+func WithDeploymentEventsDeploymentID(value uuid.UUID) DeploymentEventOption {
+	return func(f *DeploymentEventFactory) {
+		f.DeploymentEventEntity.DeploymentID = value
+	}
+}
+
+func WithDeploymentEventsChangeTaskAttemptID(value *uuid.UUID) DeploymentEventOption {
+	return func(f *DeploymentEventFactory) {
+		f.DeploymentEventEntity.ChangeTaskAttemptID = value
 	}
 }

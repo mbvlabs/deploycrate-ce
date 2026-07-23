@@ -18,14 +18,14 @@ type ResourceCredentialEntity struct {
 	ID                     uuid.UUID       `bun:"id,pk,type:uuid"`
 	CreatedAt              time.Time       `bun:"created_at"`
 	UpdatedAt              time.Time       `bun:"updated_at"`
-	ResourceID             uuid.UUID       `bun:"resource_id,type:uuid"`
-	ResourceInstallationID *uuid.UUID      `bun:"resource_installation_id,type:uuid"`
 	Name                   string          `bun:"name"`
 	Role                   string          `bun:"role"`
 	Username               sql.NullString  `bun:"username"`
 	Metadata               json.RawMessage `bun:"metadata,type:jsonb"`
 	EncPayload             []byte          `bun:"enc_payload"`
 	ArchivedAt             sql.NullTime    `bun:"archived_at"`
+	ResourceID             uuid.UUID       `bun:"resource_id,type:uuid"`
+	ResourceInstallationID *uuid.UUID      `bun:"resource_installation_id,type:uuid"`
 }
 
 func (e *ResourceCredentialEntity) Validate() error {
@@ -45,14 +45,14 @@ func (rc resourceCredential) Find(ctx context.Context, db storage.Executor, id u
 }
 
 type CreateResourceCredentialData struct {
-	ResourceID             uuid.UUID
-	ResourceInstallationID *uuid.UUID
 	Name                   string
 	Role                   string
 	Username               sql.NullString
 	Metadata               json.RawMessage
 	EncPayload             []byte
 	ArchivedAt             sql.NullTime
+	ResourceID             uuid.UUID
+	ResourceInstallationID *uuid.UUID
 }
 
 func (rc resourceCredential) Create(ctx context.Context, db storage.Executor, data CreateResourceCredentialData) (ResourceCredentialEntity, error) {
@@ -60,14 +60,14 @@ func (rc resourceCredential) Create(ctx context.Context, db storage.Executor, da
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),
 		UpdatedAt:              time.Now(),
-		ResourceID:             data.ResourceID,
-		ResourceInstallationID: data.ResourceInstallationID,
 		Name:                   data.Name,
 		Role:                   data.Role,
 		Username:               data.Username,
 		Metadata:               data.Metadata,
 		EncPayload:             data.EncPayload,
 		ArchivedAt:             data.ArchivedAt,
+		ResourceID:             data.ResourceID,
+		ResourceInstallationID: data.ResourceInstallationID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -84,28 +84,28 @@ func (rc resourceCredential) Create(ctx context.Context, db storage.Executor, da
 type UpdateResourceCredentialData struct {
 	ID                     uuid.UUID
 	UpdatedAt              time.Time
-	ResourceID             uuid.UUID
-	ResourceInstallationID *uuid.UUID
 	Name                   string
 	Role                   string
 	Username               sql.NullString
 	Metadata               json.RawMessage
 	EncPayload             []byte
 	ArchivedAt             sql.NullTime
+	ResourceID             uuid.UUID
+	ResourceInstallationID *uuid.UUID
 }
 
 func (rc resourceCredential) Update(ctx context.Context, db storage.Executor, data UpdateResourceCredentialData) (ResourceCredentialEntity, error) {
 	entity := ResourceCredentialEntity{
 		ID:                     data.ID,
 		UpdatedAt:              time.Now(),
-		ResourceID:             data.ResourceID,
-		ResourceInstallationID: data.ResourceInstallationID,
 		Name:                   data.Name,
 		Role:                   data.Role,
 		Username:               data.Username,
 		Metadata:               data.Metadata,
 		EncPayload:             data.EncPayload,
 		ArchivedAt:             data.ArchivedAt,
+		ResourceID:             data.ResourceID,
+		ResourceInstallationID: data.ResourceInstallationID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -115,14 +115,14 @@ func (rc resourceCredential) Update(ctx context.Context, db storage.Executor, da
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("resource_id").
-		Column("resource_installation_id").
 		Column("name").
 		Column("role").
 		Column("username").
 		Column("metadata").
 		Column("enc_payload").
 		Column("archived_at").
+		Column("resource_id").
+		Column("resource_installation_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -204,14 +204,14 @@ func (rc resourceCredential) Upsert(ctx context.Context, db storage.Executor, da
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),
 		UpdatedAt:              time.Now(),
-		ResourceID:             data.ResourceID,
-		ResourceInstallationID: data.ResourceInstallationID,
 		Name:                   data.Name,
 		Role:                   data.Role,
 		Username:               data.Username,
 		Metadata:               data.Metadata,
 		EncPayload:             data.EncPayload,
 		ArchivedAt:             data.ArchivedAt,
+		ResourceID:             data.ResourceID,
+		ResourceInstallationID: data.ResourceInstallationID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -221,14 +221,14 @@ func (rc resourceCredential) Upsert(ctx context.Context, db storage.Executor, da
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("resource_id = excluded.resource_id").
-		Set("resource_installation_id = excluded.resource_installation_id").
 		Set("name = excluded.name").
 		Set("role = excluded.role").
 		Set("username = excluded.username").
 		Set("metadata = excluded.metadata").
 		Set("enc_payload = excluded.enc_payload").
 		Set("archived_at = excluded.archived_at").
+		Set("resource_id = excluded.resource_id").
+		Set("resource_installation_id = excluded.resource_installation_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ResourceCredentialEntity{}, err

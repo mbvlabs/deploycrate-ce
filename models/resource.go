@@ -17,11 +17,12 @@ type ResourceEntity struct {
 	ID                 uuid.UUID    `bun:"id,pk,type:uuid"`
 	CreatedAt          time.Time    `bun:"created_at"`
 	UpdatedAt          time.Time    `bun:"updated_at"`
-	OwnerEnvironmentID uuid.UUID    `bun:"owner_environment_id,type:uuid"`
 	Name               string       `bun:"name"`
 	Category           string       `bun:"category"`
 	Kind               string       `bun:"kind"`
+	SharingScope       string       `bun:"sharing_scope"`
 	ArchivedAt         sql.NullTime `bun:"archived_at"`
+	OwnerEnvironmentID uuid.UUID    `bun:"owner_environment_id,type:uuid"`
 }
 
 func (e *ResourceEntity) Validate() error {
@@ -41,11 +42,12 @@ func (r resource) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (
 }
 
 type CreateResourceData struct {
-	OwnerEnvironmentID uuid.UUID
 	Name               string
 	Category           string
 	Kind               string
+	SharingScope       string
 	ArchivedAt         sql.NullTime
+	OwnerEnvironmentID uuid.UUID
 }
 
 func (r resource) Create(ctx context.Context, db storage.Executor, data CreateResourceData) (ResourceEntity, error) {
@@ -53,11 +55,12 @@ func (r resource) Create(ctx context.Context, db storage.Executor, data CreateRe
 		ID:                 uuid.New(),
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
-		OwnerEnvironmentID: data.OwnerEnvironmentID,
 		Name:               data.Name,
 		Category:           data.Category,
 		Kind:               data.Kind,
+		SharingScope:       data.SharingScope,
 		ArchivedAt:         data.ArchivedAt,
+		OwnerEnvironmentID: data.OwnerEnvironmentID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -74,22 +77,24 @@ func (r resource) Create(ctx context.Context, db storage.Executor, data CreateRe
 type UpdateResourceData struct {
 	ID                 uuid.UUID
 	UpdatedAt          time.Time
-	OwnerEnvironmentID uuid.UUID
 	Name               string
 	Category           string
 	Kind               string
+	SharingScope       string
 	ArchivedAt         sql.NullTime
+	OwnerEnvironmentID uuid.UUID
 }
 
 func (r resource) Update(ctx context.Context, db storage.Executor, data UpdateResourceData) (ResourceEntity, error) {
 	entity := ResourceEntity{
 		ID:                 data.ID,
 		UpdatedAt:          time.Now(),
-		OwnerEnvironmentID: data.OwnerEnvironmentID,
 		Name:               data.Name,
 		Category:           data.Category,
 		Kind:               data.Kind,
+		SharingScope:       data.SharingScope,
 		ArchivedAt:         data.ArchivedAt,
+		OwnerEnvironmentID: data.OwnerEnvironmentID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -99,11 +104,12 @@ func (r resource) Update(ctx context.Context, db storage.Executor, data UpdateRe
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("owner_environment_id").
 		Column("name").
 		Column("category").
 		Column("kind").
+		Column("sharing_scope").
 		Column("archived_at").
+		Column("owner_environment_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -185,11 +191,12 @@ func (r resource) Upsert(ctx context.Context, db storage.Executor, data CreateRe
 		ID:                 uuid.New(),
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
-		OwnerEnvironmentID: data.OwnerEnvironmentID,
 		Name:               data.Name,
 		Category:           data.Category,
 		Kind:               data.Kind,
+		SharingScope:       data.SharingScope,
 		ArchivedAt:         data.ArchivedAt,
+		OwnerEnvironmentID: data.OwnerEnvironmentID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -199,11 +206,12 @@ func (r resource) Upsert(ctx context.Context, db storage.Executor, data CreateRe
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("owner_environment_id = excluded.owner_environment_id").
 		Set("name = excluded.name").
 		Set("category = excluded.category").
 		Set("kind = excluded.kind").
+		Set("sharing_scope = excluded.sharing_scope").
 		Set("archived_at = excluded.archived_at").
+		Set("owner_environment_id = excluded.owner_environment_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ResourceEntity{}, err
