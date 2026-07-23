@@ -1,24 +1,22 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE wireguard_peers (
+CREATE TABLE resource_volumes (
     id UUID NOT NULL PRIMARY KEY,
 
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
 
-    public_key TEXT NOT NULL,
-    enc_private_key BYTEA NOT NULL,
-    private_address INET NOT NULL,
-    endpoint TEXT,
-    listen_port INTEGER NOT NULL,
-    activated_at TIMESTAMPTZ NOT NULL,
-    retired_at TIMESTAMPTZ,
+    name TEXT NOT NULL,
+    driver TEXT NOT NULL,
+    configuration JSONB NOT NULL,
+    archived_at TIMESTAMPTZ,
 
+    resource_id UUID NOT NULL REFERENCES resources (id) ON DELETE RESTRICT,
     server_id UUID NOT NULL REFERENCES servers (id) ON DELETE RESTRICT
 );
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-DROP TABLE wireguard_peers;
+DROP TABLE resource_volumes;
 -- +goose StatementEnd

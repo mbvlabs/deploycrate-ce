@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE servers (
+CREATE TABLE container_registries (
     id UUID NOT NULL PRIMARY KEY,
 
     created_at TIMESTAMPTZ NOT NULL,
@@ -8,16 +8,14 @@ CREATE TABLE servers (
     archived_at TIMESTAMPTZ,
 
     name TEXT NOT NULL,
-    slug TEXT NOT NULL,
-    ipv4_address text NOT NULL,
-    ipv6_address text NOT NULL,
-	is_configured boolean NOT NULL,
+    provider TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
 
-    address TEXT NOT NULL
+    credential_id UUID NOT NULL REFERENCES credentials (id) ON DELETE RESTRICT
 );
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-DROP TABLE servers;
+DROP TABLE container_registries;
 -- +goose StatementEnd

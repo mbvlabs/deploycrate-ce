@@ -1,23 +1,25 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE environments (
+CREATE TABLE backup_destinations (
     id UUID NOT NULL PRIMARY KEY,
 
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
 
     name TEXT NOT NULL,
-    slug TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    webhook_token_prefix TEXT,  -- TODO: not sure
-    webhook_token_digest BYTEA, -- TODO: not sure
+    provider TEXT NOT NULL,
+    endpoint TEXT,
+    region TEXT,
+    bucket TEXT NOT NULL,
+    prefix TEXT,
+    force_path_style BOOLEAN NOT NULL,
     archived_at TIMESTAMPTZ,
 
-    application_id UUID NOT NULL REFERENCES applications (id) ON DELETE RESTRICT
+    credential_id UUID NOT NULL REFERENCES credentials (id) ON DELETE RESTRICT
 );
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-DROP TABLE environments;
+DROP TABLE backup_destinations;
 -- +goose StatementEnd

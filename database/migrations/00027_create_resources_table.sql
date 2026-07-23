@@ -1,23 +1,22 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE servers (
+CREATE TABLE resources (
     id UUID NOT NULL PRIMARY KEY,
 
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
-    archived_at TIMESTAMPTZ,
 
     name TEXT NOT NULL,
-    slug TEXT NOT NULL,
-    ipv4_address text NOT NULL,
-    ipv6_address text NOT NULL,
-	is_configured boolean NOT NULL,
+    category TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    sharing_scope TEXT NOT NULL,
+    archived_at TIMESTAMPTZ,
 
-    address TEXT NOT NULL
+    owner_environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE RESTRICT
 );
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-DROP TABLE servers;
+DROP TABLE resources;
 -- +goose StatementEnd

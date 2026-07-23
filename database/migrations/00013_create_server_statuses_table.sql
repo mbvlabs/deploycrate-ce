@@ -6,7 +6,6 @@ CREATE TABLE server_statuses (
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
 
-    server_id UUID NOT NULL REFERENCES servers (id) ON DELETE RESTRICT,
     state TEXT NOT NULL,
     operating_system TEXT,
     distribution TEXT,
@@ -15,7 +14,9 @@ CREATE TABLE server_statuses (
     package_manager TEXT,
     init_system TEXT,
     capabilities JSONB NOT NULL,
-    observed_at TIMESTAMPTZ NOT NULL
+    observed_at TIMESTAMPTZ NOT NULL,
+
+    server_id UUID NOT NULL REFERENCES servers (id) ON DELETE RESTRICT
 );
 -- +goose StatementEnd
 
