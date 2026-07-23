@@ -2,6 +2,51 @@
 
 A full-stack web application built with [Andurel](https://github.com/mbvlabs/andurel), a Rails-like web framework for Go that prioritizes development speed.
 
+## VPS Bootstrap CLI
+
+This repository contains the initial `deploycrate` Bubble Tea CLI scaffold for the future Debian 13 VPS setup experience.
+
+The released installer is intended to be run as root from an interactive SSH session:
+
+```bash
+curl -fsSL https://get.deploycrate.com/ce | sudo bash
+```
+
+The shell installer downloads the release archive, verifies its SHA-256 checksum, verifies the Sigstore bundle when `cosign` is available, installs both binaries, and opens the interactive setup wizard through `/dev/tty`.
+
+The current wizard collects and reviews the intended configuration for:
+
+- A normal `deploycrate` Linux user with SSH access, Docker access, and unrestricted passwordless sudo.
+- Baseline host configuration and Docker Engine.
+- Either a local Docker PostgreSQL database or an externally hosted PostgreSQL database.
+- Database migrations and application administrator creation.
+- Optional S3-compatible backup storage.
+- Application services, Caddy, firewall rules, and SSH hardening.
+- A final credential handoff and reboot confirmation gate.
+
+All provisioning steps currently emit simulated progress and do not change the server, connect to external services, persist secrets, run migrations, create users, or reboot. These boundaries are intentionally stubbed until the matching DeployCrate CE application capabilities exist.
+
+The planned installer does not create an emergency user. The `deploycrate` user will have unrestricted passwordless sudo and Docker access by explicit product design.
+
+### CLI Commands
+
+```bash
+sudo deploycrate install
+sudo deploycrate resume
+sudo deploycrate doctor
+sudo deploycrate doctor --json
+sudo deploycrate logs
+deploycrate version
+```
+
+`resume`, `doctor`, `logs`, and `backup` are command stubs and report that their implementation is pending. The install wizard itself is also non-mutating, whether or not `--dry-run` is supplied.
+
+To walk through the current scaffold locally:
+
+```bash
+sudo deploycrate install --dry-run
+```
+
 ## Project Structure
 
 ```

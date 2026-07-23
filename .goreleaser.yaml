@@ -1,0 +1,61 @@
+version: 2
+
+project_name: deploycrate-ce
+
+builds:
+  - id: deploycrate
+    main: ./cmd/deploycrate
+    binary: deploycrate
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+  - id: deploycrate-ce
+    main: ./cmd/app
+    binary: deploycrate-ce
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X main.appVersion={{.Version}}
+
+archives:
+  - ids:
+      - deploycrate
+      - deploycrate-ce
+    formats:
+      - tar.gz
+    name_template: "deploycrate-ce_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  name_template: checksums.txt
+
+sboms:
+  - artifacts: archive
+
+signs:
+  - cmd: cosign
+    signature: "${artifact}.sigstore.json"
+    args:
+      - sign-blob
+      - --yes
+      - --bundle=${signature}
+      - ${artifact}
+    artifacts: checksum
+
+release:
+  make_latest: true
+
+changelog:
+  disable: true
