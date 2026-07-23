@@ -14,18 +14,19 @@ import (
 )
 
 type EnvironmentSourceEntity struct {
-	bun.BaseModel `bun:"table:environment_sources,alias:environment_sources"`
-	ID            uuid.UUID       `bun:"id,pk,type:uuid"`
-	CreatedAt     time.Time       `bun:"created_at"`
-	UpdatedAt     time.Time       `bun:"updated_at"`
-	EnvironmentID uuid.UUID       `bun:"environment_id,type:uuid"`
-	CredentialID  *uuid.UUID      `bun:"credential_id,type:uuid"`
-	Kind          string          `bun:"kind"`
-	Provider      string          `bun:"provider"`
-	Repository    string          `bun:"repository"`
-	Reference     string          `bun:"reference"`
-	Settings      json.RawMessage `bun:"settings,type:jsonb"`
-	ArchivedAt    sql.NullTime    `bun:"archived_at"`
+	bun.BaseModel       `bun:"table:environment_sources,alias:environment_sources"`
+	ID                  uuid.UUID       `bun:"id,pk,type:uuid"`
+	CreatedAt           time.Time       `bun:"created_at"`
+	UpdatedAt           time.Time       `bun:"updated_at"`
+	ArchivedAt          sql.NullTime    `bun:"archived_at"`
+	Kind                string          `bun:"kind"`
+	Provider            string          `bun:"provider"`
+	Repository          string          `bun:"repository"`
+	Reference           string          `bun:"reference"`
+	Settings            json.RawMessage `bun:"settings,type:jsonb"`
+	EnvironmentID       uuid.UUID       `bun:"environment_id,type:uuid"`
+	CredentialID        *uuid.UUID      `bun:"credential_id,type:uuid"`
+	ContainerRegistryID *uuid.UUID      `bun:"container_registry_id,type:uuid"`
 }
 
 func (e *EnvironmentSourceEntity) Validate() error {
@@ -45,29 +46,31 @@ func (es environmentSource) Find(ctx context.Context, db storage.Executor, id uu
 }
 
 type CreateEnvironmentSourceData struct {
-	EnvironmentID uuid.UUID
-	CredentialID  *uuid.UUID
-	Kind          string
-	Provider      string
-	Repository    string
-	Reference     string
-	Settings      json.RawMessage
-	ArchivedAt    sql.NullTime
+	ArchivedAt          sql.NullTime
+	Kind                string
+	Provider            string
+	Repository          string
+	Reference           string
+	Settings            json.RawMessage
+	EnvironmentID       uuid.UUID
+	CredentialID        *uuid.UUID
+	ContainerRegistryID *uuid.UUID
 }
 
 func (es environmentSource) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentSourceData) (EnvironmentSourceEntity, error) {
 	entity := EnvironmentSourceEntity{
-		ID:            uuid.New(),
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
-		EnvironmentID: data.EnvironmentID,
-		CredentialID:  data.CredentialID,
-		Kind:          data.Kind,
-		Provider:      data.Provider,
-		Repository:    data.Repository,
-		Reference:     data.Reference,
-		Settings:      data.Settings,
-		ArchivedAt:    data.ArchivedAt,
+		ID:                  uuid.New(),
+		CreatedAt:           time.Now(),
+		UpdatedAt:           time.Now(),
+		ArchivedAt:          data.ArchivedAt,
+		Kind:                data.Kind,
+		Provider:            data.Provider,
+		Repository:          data.Repository,
+		Reference:           data.Reference,
+		Settings:            data.Settings,
+		EnvironmentID:       data.EnvironmentID,
+		CredentialID:        data.CredentialID,
+		ContainerRegistryID: data.ContainerRegistryID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -82,30 +85,32 @@ func (es environmentSource) Create(ctx context.Context, db storage.Executor, dat
 }
 
 type UpdateEnvironmentSourceData struct {
-	ID            uuid.UUID
-	UpdatedAt     time.Time
-	EnvironmentID uuid.UUID
-	CredentialID  *uuid.UUID
-	Kind          string
-	Provider      string
-	Repository    string
-	Reference     string
-	Settings      json.RawMessage
-	ArchivedAt    sql.NullTime
+	ID                  uuid.UUID
+	UpdatedAt           time.Time
+	ArchivedAt          sql.NullTime
+	Kind                string
+	Provider            string
+	Repository          string
+	Reference           string
+	Settings            json.RawMessage
+	EnvironmentID       uuid.UUID
+	CredentialID        *uuid.UUID
+	ContainerRegistryID *uuid.UUID
 }
 
 func (es environmentSource) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentSourceData) (EnvironmentSourceEntity, error) {
 	entity := EnvironmentSourceEntity{
-		ID:            data.ID,
-		UpdatedAt:     time.Now(),
-		EnvironmentID: data.EnvironmentID,
-		CredentialID:  data.CredentialID,
-		Kind:          data.Kind,
-		Provider:      data.Provider,
-		Repository:    data.Repository,
-		Reference:     data.Reference,
-		Settings:      data.Settings,
-		ArchivedAt:    data.ArchivedAt,
+		ID:                  data.ID,
+		UpdatedAt:           time.Now(),
+		ArchivedAt:          data.ArchivedAt,
+		Kind:                data.Kind,
+		Provider:            data.Provider,
+		Repository:          data.Repository,
+		Reference:           data.Reference,
+		Settings:            data.Settings,
+		EnvironmentID:       data.EnvironmentID,
+		CredentialID:        data.CredentialID,
+		ContainerRegistryID: data.ContainerRegistryID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -115,14 +120,15 @@ func (es environmentSource) Update(ctx context.Context, db storage.Executor, dat
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("environment_id").
-		Column("credential_id").
+		Column("archived_at").
 		Column("kind").
 		Column("provider").
 		Column("repository").
 		Column("reference").
 		Column("settings").
-		Column("archived_at").
+		Column("environment_id").
+		Column("credential_id").
+		Column("container_registry_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -201,17 +207,18 @@ func (es environmentSource) Paginate(ctx context.Context, db storage.Executor, p
 
 func (es environmentSource) Upsert(ctx context.Context, db storage.Executor, data CreateEnvironmentSourceData) (EnvironmentSourceEntity, error) {
 	entity := EnvironmentSourceEntity{
-		ID:            uuid.New(),
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
-		EnvironmentID: data.EnvironmentID,
-		CredentialID:  data.CredentialID,
-		Kind:          data.Kind,
-		Provider:      data.Provider,
-		Repository:    data.Repository,
-		Reference:     data.Reference,
-		Settings:      data.Settings,
-		ArchivedAt:    data.ArchivedAt,
+		ID:                  uuid.New(),
+		CreatedAt:           time.Now(),
+		UpdatedAt:           time.Now(),
+		ArchivedAt:          data.ArchivedAt,
+		Kind:                data.Kind,
+		Provider:            data.Provider,
+		Repository:          data.Repository,
+		Reference:           data.Reference,
+		Settings:            data.Settings,
+		EnvironmentID:       data.EnvironmentID,
+		CredentialID:        data.CredentialID,
+		ContainerRegistryID: data.ContainerRegistryID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -221,14 +228,15 @@ func (es environmentSource) Upsert(ctx context.Context, db storage.Executor, dat
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("environment_id = excluded.environment_id").
-		Set("credential_id = excluded.credential_id").
+		Set("archived_at = excluded.archived_at").
 		Set("kind = excluded.kind").
 		Set("provider = excluded.provider").
 		Set("repository = excluded.repository").
 		Set("reference = excluded.reference").
 		Set("settings = excluded.settings").
-		Set("archived_at = excluded.archived_at").
+		Set("environment_id = excluded.environment_id").
+		Set("credential_id = excluded.credential_id").
+		Set("container_registry_id = excluded.container_registry_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return EnvironmentSourceEntity{}, err

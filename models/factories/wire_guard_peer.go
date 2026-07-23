@@ -23,7 +23,6 @@ type WireGuardPeerOption func(*WireGuardPeerFactory)
 func BuildWireGuardPeer(serverID uuid.UUID, opts ...WireGuardPeerOption) models.WireGuardPeerEntity {
 	f := &WireGuardPeerFactory{
 		WireGuardPeerEntity: models.WireGuardPeerEntity{
-			ServerID:       serverID,
 			PublicKey:      faker.Word(),
 			EncPrivateKey:  []byte{},
 			PrivateAddress: faker.Word(),
@@ -31,6 +30,7 @@ func BuildWireGuardPeer(serverID uuid.UUID, opts ...WireGuardPeerOption) models.
 			ListenPort:     randomInt(1, 1000, 100),
 			ActivatedAt:    time.Time{},
 			RetiredAt:      sql.NullTime{Time: time.Now(), Valid: true},
+			ServerID:       serverID,
 		},
 	}
 
@@ -48,7 +48,6 @@ func CreateWireGuardPeer(ctx context.Context, exec storage.Executor, serverID uu
 		ID:             uuid.New(),
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
-		ServerID:       built.ServerID,
 		PublicKey:      built.PublicKey,
 		EncPrivateKey:  built.EncPrivateKey,
 		PrivateAddress: built.PrivateAddress,
@@ -56,6 +55,7 @@ func CreateWireGuardPeer(ctx context.Context, exec storage.Executor, serverID uu
 		ListenPort:     built.ListenPort,
 		ActivatedAt:    built.ActivatedAt,
 		RetiredAt:      built.RetiredAt,
+		ServerID:       built.ServerID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -77,12 +77,6 @@ func CreateWireGuardPeers(ctx context.Context, exec storage.Executor, serverID u
 	}
 
 	return wireguardpeers, nil
-}
-
-func WithWireguardPeersServerID(value uuid.UUID) WireGuardPeerOption {
-	return func(f *WireGuardPeerFactory) {
-		f.WireGuardPeerEntity.ServerID = value
-	}
 }
 
 func WithWireguardPeersPublicKey(value string) WireGuardPeerOption {
@@ -124,5 +118,11 @@ func WithWireguardPeersActivatedAt(value time.Time) WireGuardPeerOption {
 func WithWireguardPeersRetiredAt(value sql.NullTime) WireGuardPeerOption {
 	return func(f *WireGuardPeerFactory) {
 		f.WireGuardPeerEntity.RetiredAt = value
+	}
+}
+
+func WithWireguardPeersServerID(value uuid.UUID) WireGuardPeerOption {
+	return func(f *WireGuardPeerFactory) {
+		f.WireGuardPeerEntity.ServerID = value
 	}
 }

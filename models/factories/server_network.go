@@ -21,12 +21,9 @@ type ServerNetworkFactory struct {
 
 type ServerNetworkOption func(*ServerNetworkFactory)
 
-func BuildServerNetwork(serverID uuid.UUID, privateNetworkID uuid.UUID, externalID sql.NullString, opts ...ServerNetworkOption) models.ServerNetworkEntity {
+func BuildServerNetwork(externalID sql.NullString, serverID uuid.UUID, privateNetworkID uuid.UUID, opts ...ServerNetworkOption) models.ServerNetworkEntity {
 	f := &ServerNetworkFactory{
 		ServerNetworkEntity: models.ServerNetworkEntity{
-			ServerID:         serverID,
-			PrivateNetworkID: privateNetworkID,
-			Address:          faker.Word(),
 			Driver:           faker.Word(),
 			ExternalID:       externalID,
 			Configuration:    json.RawMessage{},
@@ -35,6 +32,8 @@ func BuildServerNetwork(serverID uuid.UUID, privateNetworkID uuid.UUID, external
 			ObservedAt:       sql.NullTime{Time: time.Now(), Valid: true},
 			Error:            sql.NullString{String: faker.Word(), Valid: true},
 			RemovedAt:        sql.NullTime{Time: time.Now(), Valid: true},
+			ServerID:         serverID,
+			PrivateNetworkID: privateNetworkID,
 		},
 	}
 
@@ -45,16 +44,13 @@ func BuildServerNetwork(serverID uuid.UUID, privateNetworkID uuid.UUID, external
 	return f.ServerNetworkEntity
 }
 
-func CreateServerNetwork(ctx context.Context, exec storage.Executor, serverID uuid.UUID, privateNetworkID uuid.UUID, externalID sql.NullString, opts ...ServerNetworkOption) (models.ServerNetworkEntity, error) {
-	built := BuildServerNetwork(serverID, privateNetworkID, externalID, opts...)
+func CreateServerNetwork(ctx context.Context, exec storage.Executor, externalID sql.NullString, serverID uuid.UUID, privateNetworkID uuid.UUID, opts ...ServerNetworkOption) (models.ServerNetworkEntity, error) {
+	built := BuildServerNetwork(externalID, serverID, privateNetworkID, opts...)
 
 	entity := models.ServerNetworkEntity{
 		ID:               built.ID,
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),
-		ServerID:         built.ServerID,
-		PrivateNetworkID: built.PrivateNetworkID,
-		Address:          built.Address,
 		Driver:           built.Driver,
 		ExternalID:       built.ExternalID,
 		Configuration:    built.Configuration,
@@ -63,6 +59,8 @@ func CreateServerNetwork(ctx context.Context, exec storage.Executor, serverID uu
 		ObservedAt:       built.ObservedAt,
 		Error:            built.Error,
 		RemovedAt:        built.RemovedAt,
+		ServerID:         built.ServerID,
+		PrivateNetworkID: built.PrivateNetworkID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -72,11 +70,11 @@ func CreateServerNetwork(ctx context.Context, exec storage.Executor, serverID uu
 	return entity, nil
 }
 
-func CreateServerNetworks(ctx context.Context, exec storage.Executor, serverID uuid.UUID, privateNetworkID uuid.UUID, externalID sql.NullString, count int, opts ...ServerNetworkOption) ([]models.ServerNetworkEntity, error) {
+func CreateServerNetworks(ctx context.Context, exec storage.Executor, externalID sql.NullString, serverID uuid.UUID, privateNetworkID uuid.UUID, count int, opts ...ServerNetworkOption) ([]models.ServerNetworkEntity, error) {
 	servernetworks := make([]models.ServerNetworkEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateServerNetwork(ctx, exec, serverID, privateNetworkID, externalID, opts...)
+		entity, err := CreateServerNetwork(ctx, exec, externalID, serverID, privateNetworkID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create servernetwork %d: %w", i+1, err)
 		}
@@ -84,24 +82,6 @@ func CreateServerNetworks(ctx context.Context, exec storage.Executor, serverID u
 	}
 
 	return servernetworks, nil
-}
-
-func WithServerNetworksServerID(value uuid.UUID) ServerNetworkOption {
-	return func(f *ServerNetworkFactory) {
-		f.ServerNetworkEntity.ServerID = value
-	}
-}
-
-func WithServerNetworksPrivateNetworkID(value uuid.UUID) ServerNetworkOption {
-	return func(f *ServerNetworkFactory) {
-		f.ServerNetworkEntity.PrivateNetworkID = value
-	}
-}
-
-func WithServerNetworksAddress(value string) ServerNetworkOption {
-	return func(f *ServerNetworkFactory) {
-		f.ServerNetworkEntity.Address = value
-	}
 }
 
 func WithServerNetworksDriver(value string) ServerNetworkOption {
@@ -149,5 +129,17 @@ func WithServerNetworksError(value sql.NullString) ServerNetworkOption {
 func WithServerNetworksRemovedAt(value sql.NullTime) ServerNetworkOption {
 	return func(f *ServerNetworkFactory) {
 		f.ServerNetworkEntity.RemovedAt = value
+	}
+}
+
+func WithServerNetworksServerID(value uuid.UUID) ServerNetworkOption {
+	return func(f *ServerNetworkFactory) {
+		f.ServerNetworkEntity.ServerID = value
+	}
+}
+
+func WithServerNetworksPrivateNetworkID(value uuid.UUID) ServerNetworkOption {
+	return func(f *ServerNetworkFactory) {
+		f.ServerNetworkEntity.PrivateNetworkID = value
 	}
 }

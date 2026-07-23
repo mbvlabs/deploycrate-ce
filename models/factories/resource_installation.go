@@ -21,16 +21,18 @@ type ResourceInstallationFactory struct {
 
 type ResourceInstallationOption func(*ResourceInstallationFactory)
 
-func BuildResourceInstallation(resourceID uuid.UUID, serverID *uuid.UUID, opts ...ResourceInstallationOption) models.ResourceInstallationEntity {
+func BuildResourceInstallation(resourceID uuid.UUID, serverID uuid.UUID, registryCredentialID *uuid.UUID, opts ...ResourceInstallationOption) models.ResourceInstallationEntity {
 	f := &ResourceInstallationFactory{
 		ResourceInstallationEntity: models.ResourceInstallationEntity{
-			ResourceID:     resourceID,
-			ServerID:       serverID,
-			Mode:           faker.Word(),
-			Driver:         faker.Word(),
-			DesiredVersion: sql.NullString{String: faker.Word(), Valid: true},
-			Configuration:  json.RawMessage{},
-			ArchivedAt:     sql.NullTime{Time: time.Now(), Valid: true},
+			ImageReference:       faker.Word(),
+			ImageDigest:          sql.NullString{String: faker.Word(), Valid: true},
+			ContainerName:        faker.Word(),
+			RestartPolicy:        faker.Word(),
+			Configuration:        json.RawMessage{},
+			ArchivedAt:           sql.NullTime{Time: time.Now(), Valid: true},
+			ResourceID:           resourceID,
+			ServerID:             serverID,
+			RegistryCredentialID: registryCredentialID,
 		},
 	}
 
@@ -41,20 +43,22 @@ func BuildResourceInstallation(resourceID uuid.UUID, serverID *uuid.UUID, opts .
 	return f.ResourceInstallationEntity
 }
 
-func CreateResourceInstallation(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, serverID *uuid.UUID, opts ...ResourceInstallationOption) (models.ResourceInstallationEntity, error) {
-	built := BuildResourceInstallation(resourceID, serverID, opts...)
+func CreateResourceInstallation(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, serverID uuid.UUID, registryCredentialID *uuid.UUID, opts ...ResourceInstallationOption) (models.ResourceInstallationEntity, error) {
+	built := BuildResourceInstallation(resourceID, serverID, registryCredentialID, opts...)
 
 	entity := models.ResourceInstallationEntity{
-		ID:             uuid.New(),
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
-		ResourceID:     built.ResourceID,
-		ServerID:       built.ServerID,
-		Mode:           built.Mode,
-		Driver:         built.Driver,
-		DesiredVersion: built.DesiredVersion,
-		Configuration:  built.Configuration,
-		ArchivedAt:     built.ArchivedAt,
+		ID:                   uuid.New(),
+		CreatedAt:            time.Now(),
+		UpdatedAt:            time.Now(),
+		ImageReference:       built.ImageReference,
+		ImageDigest:          built.ImageDigest,
+		ContainerName:        built.ContainerName,
+		RestartPolicy:        built.RestartPolicy,
+		Configuration:        built.Configuration,
+		ArchivedAt:           built.ArchivedAt,
+		ResourceID:           built.ResourceID,
+		ServerID:             built.ServerID,
+		RegistryCredentialID: built.RegistryCredentialID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -64,11 +68,11 @@ func CreateResourceInstallation(ctx context.Context, exec storage.Executor, reso
 	return entity, nil
 }
 
-func CreateResourceInstallations(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, serverID *uuid.UUID, count int, opts ...ResourceInstallationOption) ([]models.ResourceInstallationEntity, error) {
+func CreateResourceInstallations(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, serverID uuid.UUID, registryCredentialID *uuid.UUID, count int, opts ...ResourceInstallationOption) ([]models.ResourceInstallationEntity, error) {
 	resourceinstallations := make([]models.ResourceInstallationEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateResourceInstallation(ctx, exec, resourceID, serverID, opts...)
+		entity, err := CreateResourceInstallation(ctx, exec, resourceID, serverID, registryCredentialID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resourceinstallation %d: %w", i+1, err)
 		}
@@ -78,33 +82,27 @@ func CreateResourceInstallations(ctx context.Context, exec storage.Executor, res
 	return resourceinstallations, nil
 }
 
-func WithResourceInstallationsResourceID(value uuid.UUID) ResourceInstallationOption {
+func WithResourceInstallationsImageReference(value string) ResourceInstallationOption {
 	return func(f *ResourceInstallationFactory) {
-		f.ResourceInstallationEntity.ResourceID = value
+		f.ResourceInstallationEntity.ImageReference = value
 	}
 }
 
-func WithResourceInstallationsServerID(value *uuid.UUID) ResourceInstallationOption {
+func WithResourceInstallationsImageDigest(value sql.NullString) ResourceInstallationOption {
 	return func(f *ResourceInstallationFactory) {
-		f.ResourceInstallationEntity.ServerID = value
+		f.ResourceInstallationEntity.ImageDigest = value
 	}
 }
 
-func WithResourceInstallationsMode(value string) ResourceInstallationOption {
+func WithResourceInstallationsContainerName(value string) ResourceInstallationOption {
 	return func(f *ResourceInstallationFactory) {
-		f.ResourceInstallationEntity.Mode = value
+		f.ResourceInstallationEntity.ContainerName = value
 	}
 }
 
-func WithResourceInstallationsDriver(value string) ResourceInstallationOption {
+func WithResourceInstallationsRestartPolicy(value string) ResourceInstallationOption {
 	return func(f *ResourceInstallationFactory) {
-		f.ResourceInstallationEntity.Driver = value
-	}
-}
-
-func WithResourceInstallationsDesiredVersion(value sql.NullString) ResourceInstallationOption {
-	return func(f *ResourceInstallationFactory) {
-		f.ResourceInstallationEntity.DesiredVersion = value
+		f.ResourceInstallationEntity.RestartPolicy = value
 	}
 }
 
@@ -117,5 +115,23 @@ func WithResourceInstallationsConfiguration(value json.RawMessage) ResourceInsta
 func WithResourceInstallationsArchivedAt(value sql.NullTime) ResourceInstallationOption {
 	return func(f *ResourceInstallationFactory) {
 		f.ResourceInstallationEntity.ArchivedAt = value
+	}
+}
+
+func WithResourceInstallationsResourceID(value uuid.UUID) ResourceInstallationOption {
+	return func(f *ResourceInstallationFactory) {
+		f.ResourceInstallationEntity.ResourceID = value
+	}
+}
+
+func WithResourceInstallationsServerID(value uuid.UUID) ResourceInstallationOption {
+	return func(f *ResourceInstallationFactory) {
+		f.ResourceInstallationEntity.ServerID = value
+	}
+}
+
+func WithResourceInstallationsRegistryCredentialID(value *uuid.UUID) ResourceInstallationOption {
+	return func(f *ResourceInstallationFactory) {
+		f.ResourceInstallationEntity.RegistryCredentialID = value
 	}
 }

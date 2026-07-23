@@ -17,13 +17,13 @@ type EnvironmentEntity struct {
 	ID                 uuid.UUID      `bun:"id,pk,type:uuid"`
 	CreatedAt          time.Time      `bun:"created_at"`
 	UpdatedAt          time.Time      `bun:"updated_at"`
-	ApplicationID      uuid.UUID      `bun:"application_id,type:uuid"`
 	Name               string         `bun:"name"`
 	Slug               string         `bun:"slug"`
 	Kind               string         `bun:"kind"`
 	WebhookTokenPrefix sql.NullString `bun:"webhook_token_prefix"`
 	WebhookTokenDigest []byte         `bun:"webhook_token_digest"`
 	ArchivedAt         sql.NullTime   `bun:"archived_at"`
+	ApplicationID      uuid.UUID      `bun:"application_id,type:uuid"`
 }
 
 func (e *EnvironmentEntity) Validate() error {
@@ -43,13 +43,13 @@ func (e environment) Find(ctx context.Context, db storage.Executor, id uuid.UUID
 }
 
 type CreateEnvironmentData struct {
-	ApplicationID      uuid.UUID
 	Name               string
 	Slug               string
 	Kind               string
 	WebhookTokenPrefix sql.NullString
 	WebhookTokenDigest []byte
 	ArchivedAt         sql.NullTime
+	ApplicationID      uuid.UUID
 }
 
 func (e environment) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentData) (EnvironmentEntity, error) {
@@ -57,13 +57,13 @@ func (e environment) Create(ctx context.Context, db storage.Executor, data Creat
 		ID:                 uuid.New(),
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
-		ApplicationID:      data.ApplicationID,
 		Name:               data.Name,
 		Slug:               data.Slug,
 		Kind:               data.Kind,
 		WebhookTokenPrefix: data.WebhookTokenPrefix,
 		WebhookTokenDigest: data.WebhookTokenDigest,
 		ArchivedAt:         data.ArchivedAt,
+		ApplicationID:      data.ApplicationID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -80,26 +80,26 @@ func (e environment) Create(ctx context.Context, db storage.Executor, data Creat
 type UpdateEnvironmentData struct {
 	ID                 uuid.UUID
 	UpdatedAt          time.Time
-	ApplicationID      uuid.UUID
 	Name               string
 	Slug               string
 	Kind               string
 	WebhookTokenPrefix sql.NullString
 	WebhookTokenDigest []byte
 	ArchivedAt         sql.NullTime
+	ApplicationID      uuid.UUID
 }
 
 func (e environment) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentData) (EnvironmentEntity, error) {
 	entity := EnvironmentEntity{
 		ID:                 data.ID,
 		UpdatedAt:          time.Now(),
-		ApplicationID:      data.ApplicationID,
 		Name:               data.Name,
 		Slug:               data.Slug,
 		Kind:               data.Kind,
 		WebhookTokenPrefix: data.WebhookTokenPrefix,
 		WebhookTokenDigest: data.WebhookTokenDigest,
 		ArchivedAt:         data.ArchivedAt,
+		ApplicationID:      data.ApplicationID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -109,13 +109,13 @@ func (e environment) Update(ctx context.Context, db storage.Executor, data Updat
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("application_id").
 		Column("name").
 		Column("slug").
 		Column("kind").
 		Column("webhook_token_prefix").
 		Column("webhook_token_digest").
 		Column("archived_at").
+		Column("application_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -197,13 +197,13 @@ func (e environment) Upsert(ctx context.Context, db storage.Executor, data Creat
 		ID:                 uuid.New(),
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
-		ApplicationID:      data.ApplicationID,
 		Name:               data.Name,
 		Slug:               data.Slug,
 		Kind:               data.Kind,
 		WebhookTokenPrefix: data.WebhookTokenPrefix,
 		WebhookTokenDigest: data.WebhookTokenDigest,
 		ArchivedAt:         data.ArchivedAt,
+		ApplicationID:      data.ApplicationID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -213,13 +213,13 @@ func (e environment) Upsert(ctx context.Context, db storage.Executor, data Creat
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("application_id = excluded.application_id").
 		Set("name = excluded.name").
 		Set("slug = excluded.slug").
 		Set("kind = excluded.kind").
 		Set("webhook_token_prefix = excluded.webhook_token_prefix").
 		Set("webhook_token_digest = excluded.webhook_token_digest").
 		Set("archived_at = excluded.archived_at").
+		Set("application_id = excluded.application_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return EnvironmentEntity{}, err

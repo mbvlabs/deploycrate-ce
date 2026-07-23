@@ -18,10 +18,8 @@ type PrivateNetworkEntity struct {
 	CreatedAt          time.Time    `bun:"created_at"`
 	UpdatedAt          time.Time    `bun:"updated_at"`
 	Name               string       `bun:"name"`
-	Cidr               string       `bun:"cidr"`
-	Scope              string       `bun:"scope"`
-	OwnerEnvironmentID *uuid.UUID   `bun:"owner_environment_id,type:uuid"`
 	ArchivedAt         sql.NullTime `bun:"archived_at"`
+	OwnerEnvironmentID *uuid.UUID   `bun:"owner_environment_id,type:uuid"`
 }
 
 func (e *PrivateNetworkEntity) Validate() error {
@@ -42,10 +40,8 @@ func (pn privateNetwork) Find(ctx context.Context, db storage.Executor, id uuid.
 
 type CreatePrivateNetworkData struct {
 	Name               string
-	Cidr               string
-	Scope              string
-	OwnerEnvironmentID *uuid.UUID
 	ArchivedAt         sql.NullTime
+	OwnerEnvironmentID *uuid.UUID
 }
 
 func (pn privateNetwork) Create(ctx context.Context, db storage.Executor, data CreatePrivateNetworkData) (PrivateNetworkEntity, error) {
@@ -54,10 +50,8 @@ func (pn privateNetwork) Create(ctx context.Context, db storage.Executor, data C
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
 		Name:               data.Name,
-		Cidr:               data.Cidr,
-		Scope:              data.Scope,
-		OwnerEnvironmentID: data.OwnerEnvironmentID,
 		ArchivedAt:         data.ArchivedAt,
+		OwnerEnvironmentID: data.OwnerEnvironmentID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -75,10 +69,8 @@ type UpdatePrivateNetworkData struct {
 	ID                 uuid.UUID
 	UpdatedAt          time.Time
 	Name               string
-	Cidr               string
-	Scope              string
-	OwnerEnvironmentID *uuid.UUID
 	ArchivedAt         sql.NullTime
+	OwnerEnvironmentID *uuid.UUID
 }
 
 func (pn privateNetwork) Update(ctx context.Context, db storage.Executor, data UpdatePrivateNetworkData) (PrivateNetworkEntity, error) {
@@ -86,10 +78,8 @@ func (pn privateNetwork) Update(ctx context.Context, db storage.Executor, data U
 		ID:                 data.ID,
 		UpdatedAt:          time.Now(),
 		Name:               data.Name,
-		Cidr:               data.Cidr,
-		Scope:              data.Scope,
-		OwnerEnvironmentID: data.OwnerEnvironmentID,
 		ArchivedAt:         data.ArchivedAt,
+		OwnerEnvironmentID: data.OwnerEnvironmentID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -100,10 +90,8 @@ func (pn privateNetwork) Update(ctx context.Context, db storage.Executor, data U
 		Model(&entity).
 		Column("updated_at").
 		Column("name").
-		Column("cidr").
-		Column("scope").
-		Column("owner_environment_id").
 		Column("archived_at").
+		Column("owner_environment_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -186,10 +174,8 @@ func (pn privateNetwork) Upsert(ctx context.Context, db storage.Executor, data C
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
 		Name:               data.Name,
-		Cidr:               data.Cidr,
-		Scope:              data.Scope,
-		OwnerEnvironmentID: data.OwnerEnvironmentID,
 		ArchivedAt:         data.ArchivedAt,
+		OwnerEnvironmentID: data.OwnerEnvironmentID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -200,10 +186,8 @@ func (pn privateNetwork) Upsert(ctx context.Context, db storage.Executor, data C
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
 		Set("name = excluded.name").
-		Set("cidr = excluded.cidr").
-		Set("scope = excluded.scope").
-		Set("owner_environment_id = excluded.owner_environment_id").
 		Set("archived_at = excluded.archived_at").
+		Set("owner_environment_id = excluded.owner_environment_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return PrivateNetworkEntity{}, err

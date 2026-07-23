@@ -18,8 +18,6 @@ type DeploymentEventEntity struct {
 	ID                  uuid.UUID       `bun:"id,pk,type:uuid"`
 	CreatedAt           time.Time       `bun:"created_at"`
 	UpdatedAt           time.Time       `bun:"updated_at"`
-	DeploymentID        uuid.UUID       `bun:"deployment_id,type:uuid"`
-	ChangeTaskAttemptID *uuid.UUID      `bun:"change_task_attempt_id,type:uuid"`
 	Sequence            int64           `bun:"sequence"`
 	EventType           string          `bun:"event_type"`
 	Status              sql.NullString  `bun:"status"`
@@ -28,6 +26,8 @@ type DeploymentEventEntity struct {
 	Metadata            json.RawMessage `bun:"metadata,type:jsonb"`
 	Error               sql.NullString  `bun:"error"`
 	OccurredAt          time.Time       `bun:"occurred_at"`
+	DeploymentID        uuid.UUID       `bun:"deployment_id,type:uuid"`
+	ChangeTaskAttemptID *uuid.UUID      `bun:"change_task_attempt_id,type:uuid"`
 }
 
 func (e *DeploymentEventEntity) Validate() error {
@@ -47,8 +47,6 @@ func (de deploymentEvent) Find(ctx context.Context, db storage.Executor, id uuid
 }
 
 type CreateDeploymentEventData struct {
-	DeploymentID        uuid.UUID
-	ChangeTaskAttemptID *uuid.UUID
 	Sequence            int64
 	EventType           string
 	Status              sql.NullString
@@ -57,6 +55,8 @@ type CreateDeploymentEventData struct {
 	Metadata            json.RawMessage
 	Error               sql.NullString
 	OccurredAt          time.Time
+	DeploymentID        uuid.UUID
+	ChangeTaskAttemptID *uuid.UUID
 }
 
 func (de deploymentEvent) Create(ctx context.Context, db storage.Executor, data CreateDeploymentEventData) (DeploymentEventEntity, error) {
@@ -64,8 +64,6 @@ func (de deploymentEvent) Create(ctx context.Context, db storage.Executor, data 
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		DeploymentID:        data.DeploymentID,
-		ChangeTaskAttemptID: data.ChangeTaskAttemptID,
 		Sequence:            data.Sequence,
 		EventType:           data.EventType,
 		Status:              data.Status,
@@ -74,6 +72,8 @@ func (de deploymentEvent) Create(ctx context.Context, db storage.Executor, data 
 		Metadata:            data.Metadata,
 		Error:               data.Error,
 		OccurredAt:          data.OccurredAt,
+		DeploymentID:        data.DeploymentID,
+		ChangeTaskAttemptID: data.ChangeTaskAttemptID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -90,8 +90,6 @@ func (de deploymentEvent) Create(ctx context.Context, db storage.Executor, data 
 type UpdateDeploymentEventData struct {
 	ID                  uuid.UUID
 	UpdatedAt           time.Time
-	DeploymentID        uuid.UUID
-	ChangeTaskAttemptID *uuid.UUID
 	Sequence            int64
 	EventType           string
 	Status              sql.NullString
@@ -100,14 +98,14 @@ type UpdateDeploymentEventData struct {
 	Metadata            json.RawMessage
 	Error               sql.NullString
 	OccurredAt          time.Time
+	DeploymentID        uuid.UUID
+	ChangeTaskAttemptID *uuid.UUID
 }
 
 func (de deploymentEvent) Update(ctx context.Context, db storage.Executor, data UpdateDeploymentEventData) (DeploymentEventEntity, error) {
 	entity := DeploymentEventEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
-		DeploymentID:        data.DeploymentID,
-		ChangeTaskAttemptID: data.ChangeTaskAttemptID,
 		Sequence:            data.Sequence,
 		EventType:           data.EventType,
 		Status:              data.Status,
@@ -116,6 +114,8 @@ func (de deploymentEvent) Update(ctx context.Context, db storage.Executor, data 
 		Metadata:            data.Metadata,
 		Error:               data.Error,
 		OccurredAt:          data.OccurredAt,
+		DeploymentID:        data.DeploymentID,
+		ChangeTaskAttemptID: data.ChangeTaskAttemptID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -125,8 +125,6 @@ func (de deploymentEvent) Update(ctx context.Context, db storage.Executor, data 
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("deployment_id").
-		Column("change_task_attempt_id").
 		Column("sequence").
 		Column("event_type").
 		Column("status").
@@ -135,6 +133,8 @@ func (de deploymentEvent) Update(ctx context.Context, db storage.Executor, data 
 		Column("metadata").
 		Column("error").
 		Column("occurred_at").
+		Column("deployment_id").
+		Column("change_task_attempt_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -216,8 +216,6 @@ func (de deploymentEvent) Upsert(ctx context.Context, db storage.Executor, data 
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		DeploymentID:        data.DeploymentID,
-		ChangeTaskAttemptID: data.ChangeTaskAttemptID,
 		Sequence:            data.Sequence,
 		EventType:           data.EventType,
 		Status:              data.Status,
@@ -226,6 +224,8 @@ func (de deploymentEvent) Upsert(ctx context.Context, db storage.Executor, data 
 		Metadata:            data.Metadata,
 		Error:               data.Error,
 		OccurredAt:          data.OccurredAt,
+		DeploymentID:        data.DeploymentID,
+		ChangeTaskAttemptID: data.ChangeTaskAttemptID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -235,8 +235,6 @@ func (de deploymentEvent) Upsert(ctx context.Context, db storage.Executor, data 
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("deployment_id = excluded.deployment_id").
-		Set("change_task_attempt_id = excluded.change_task_attempt_id").
 		Set("sequence = excluded.sequence").
 		Set("event_type = excluded.event_type").
 		Set("status = excluded.status").
@@ -245,6 +243,8 @@ func (de deploymentEvent) Upsert(ctx context.Context, db storage.Executor, data 
 		Set("metadata = excluded.metadata").
 		Set("error = excluded.error").
 		Set("occurred_at = excluded.occurred_at").
+		Set("deployment_id = excluded.deployment_id").
+		Set("change_task_attempt_id = excluded.change_task_attempt_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return DeploymentEventEntity{}, err

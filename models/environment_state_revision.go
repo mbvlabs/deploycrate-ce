@@ -17,9 +17,9 @@ type EnvironmentStateRevisionEntity struct {
 	ID            uuid.UUID       `bun:"id,pk,type:uuid"`
 	CreatedAt     time.Time       `bun:"created_at"`
 	UpdatedAt     time.Time       `bun:"updated_at"`
+	State         json.RawMessage `bun:"state,type:jsonb"`
 	EnvironmentID uuid.UUID       `bun:"environment_id,type:uuid"`
 	ChangeID      uuid.UUID       `bun:"change_id,type:uuid"`
-	State         json.RawMessage `bun:"state,type:jsonb"`
 }
 
 func (e *EnvironmentStateRevisionEntity) Validate() error {
@@ -39,9 +39,9 @@ func (esr environmentStateRevision) Find(ctx context.Context, db storage.Executo
 }
 
 type CreateEnvironmentStateRevisionData struct {
+	State         json.RawMessage
 	EnvironmentID uuid.UUID
 	ChangeID      uuid.UUID
-	State         json.RawMessage
 }
 
 func (esr environmentStateRevision) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentStateRevisionData) (EnvironmentStateRevisionEntity, error) {
@@ -49,9 +49,9 @@ func (esr environmentStateRevision) Create(ctx context.Context, db storage.Execu
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
+		State:         data.State,
 		EnvironmentID: data.EnvironmentID,
 		ChangeID:      data.ChangeID,
-		State:         data.State,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -68,18 +68,18 @@ func (esr environmentStateRevision) Create(ctx context.Context, db storage.Execu
 type UpdateEnvironmentStateRevisionData struct {
 	ID            uuid.UUID
 	UpdatedAt     time.Time
+	State         json.RawMessage
 	EnvironmentID uuid.UUID
 	ChangeID      uuid.UUID
-	State         json.RawMessage
 }
 
 func (esr environmentStateRevision) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentStateRevisionData) (EnvironmentStateRevisionEntity, error) {
 	entity := EnvironmentStateRevisionEntity{
 		ID:            data.ID,
 		UpdatedAt:     time.Now(),
+		State:         data.State,
 		EnvironmentID: data.EnvironmentID,
 		ChangeID:      data.ChangeID,
-		State:         data.State,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -89,9 +89,9 @@ func (esr environmentStateRevision) Update(ctx context.Context, db storage.Execu
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
+		Column("state").
 		Column("environment_id").
 		Column("change_id").
-		Column("state").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -173,9 +173,9 @@ func (esr environmentStateRevision) Upsert(ctx context.Context, db storage.Execu
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
+		State:         data.State,
 		EnvironmentID: data.EnvironmentID,
 		ChangeID:      data.ChangeID,
-		State:         data.State,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -185,9 +185,9 @@ func (esr environmentStateRevision) Upsert(ctx context.Context, db storage.Execu
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
+		Set("state = excluded.state").
 		Set("environment_id = excluded.environment_id").
 		Set("change_id = excluded.change_id").
-		Set("state = excluded.state").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return EnvironmentStateRevisionEntity{}, err

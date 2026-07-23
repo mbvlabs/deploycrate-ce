@@ -20,13 +20,9 @@ type ChangeTaskFactory struct {
 
 type ChangeTaskOption func(*ChangeTaskFactory)
 
-func BuildChangeTask(changeID uuid.UUID, parentTaskID *uuid.UUID, serverID *uuid.UUID, environmentTargetID *uuid.UUID, subjectID uuid.UUID, opts ...ChangeTaskOption) models.ChangeTaskEntity {
+func BuildChangeTask(subjectID uuid.UUID, changeID uuid.UUID, parentTaskID *uuid.UUID, serverID *uuid.UUID, environmentTargetID *uuid.UUID, opts ...ChangeTaskOption) models.ChangeTaskEntity {
 	f := &ChangeTaskFactory{
 		ChangeTaskEntity: models.ChangeTaskEntity{
-			ChangeID:            changeID,
-			ParentTaskID:        parentTaskID,
-			ServerID:            serverID,
-			EnvironmentTargetID: environmentTargetID,
 			Kind:                faker.Word(),
 			SubjectType:         faker.Word(),
 			SubjectID:           subjectID,
@@ -35,6 +31,10 @@ func BuildChangeTask(changeID uuid.UUID, parentTaskID *uuid.UUID, serverID *uuid
 			Status:              faker.Word(),
 			AttemptCount:        randomInt(1, 1000, 100),
 			AvailableAt:         time.Time{},
+			ChangeID:            changeID,
+			ParentTaskID:        parentTaskID,
+			ServerID:            serverID,
+			EnvironmentTargetID: environmentTargetID,
 		},
 	}
 
@@ -45,17 +45,13 @@ func BuildChangeTask(changeID uuid.UUID, parentTaskID *uuid.UUID, serverID *uuid
 	return f.ChangeTaskEntity
 }
 
-func CreateChangeTask(ctx context.Context, exec storage.Executor, changeID uuid.UUID, parentTaskID *uuid.UUID, serverID *uuid.UUID, environmentTargetID *uuid.UUID, subjectID uuid.UUID, opts ...ChangeTaskOption) (models.ChangeTaskEntity, error) {
-	built := BuildChangeTask(changeID, parentTaskID, serverID, environmentTargetID, subjectID, opts...)
+func CreateChangeTask(ctx context.Context, exec storage.Executor, subjectID uuid.UUID, changeID uuid.UUID, parentTaskID *uuid.UUID, serverID *uuid.UUID, environmentTargetID *uuid.UUID, opts ...ChangeTaskOption) (models.ChangeTaskEntity, error) {
+	built := BuildChangeTask(subjectID, changeID, parentTaskID, serverID, environmentTargetID, opts...)
 
 	entity := models.ChangeTaskEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		ChangeID:            built.ChangeID,
-		ParentTaskID:        built.ParentTaskID,
-		ServerID:            built.ServerID,
-		EnvironmentTargetID: built.EnvironmentTargetID,
 		Kind:                built.Kind,
 		SubjectType:         built.SubjectType,
 		SubjectID:           built.SubjectID,
@@ -64,6 +60,10 @@ func CreateChangeTask(ctx context.Context, exec storage.Executor, changeID uuid.
 		Status:              built.Status,
 		AttemptCount:        built.AttemptCount,
 		AvailableAt:         built.AvailableAt,
+		ChangeID:            built.ChangeID,
+		ParentTaskID:        built.ParentTaskID,
+		ServerID:            built.ServerID,
+		EnvironmentTargetID: built.EnvironmentTargetID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -73,11 +73,11 @@ func CreateChangeTask(ctx context.Context, exec storage.Executor, changeID uuid.
 	return entity, nil
 }
 
-func CreateChangeTasks(ctx context.Context, exec storage.Executor, changeID uuid.UUID, parentTaskID *uuid.UUID, serverID *uuid.UUID, environmentTargetID *uuid.UUID, subjectID uuid.UUID, count int, opts ...ChangeTaskOption) ([]models.ChangeTaskEntity, error) {
+func CreateChangeTasks(ctx context.Context, exec storage.Executor, subjectID uuid.UUID, changeID uuid.UUID, parentTaskID *uuid.UUID, serverID *uuid.UUID, environmentTargetID *uuid.UUID, count int, opts ...ChangeTaskOption) ([]models.ChangeTaskEntity, error) {
 	changetasks := make([]models.ChangeTaskEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateChangeTask(ctx, exec, changeID, parentTaskID, serverID, environmentTargetID, subjectID, opts...)
+		entity, err := CreateChangeTask(ctx, exec, subjectID, changeID, parentTaskID, serverID, environmentTargetID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create changetask %d: %w", i+1, err)
 		}
@@ -85,30 +85,6 @@ func CreateChangeTasks(ctx context.Context, exec storage.Executor, changeID uuid
 	}
 
 	return changetasks, nil
-}
-
-func WithChangeTasksChangeID(value uuid.UUID) ChangeTaskOption {
-	return func(f *ChangeTaskFactory) {
-		f.ChangeTaskEntity.ChangeID = value
-	}
-}
-
-func WithChangeTasksParentTaskID(value *uuid.UUID) ChangeTaskOption {
-	return func(f *ChangeTaskFactory) {
-		f.ChangeTaskEntity.ParentTaskID = value
-	}
-}
-
-func WithChangeTasksServerID(value *uuid.UUID) ChangeTaskOption {
-	return func(f *ChangeTaskFactory) {
-		f.ChangeTaskEntity.ServerID = value
-	}
-}
-
-func WithChangeTasksEnvironmentTargetID(value *uuid.UUID) ChangeTaskOption {
-	return func(f *ChangeTaskFactory) {
-		f.ChangeTaskEntity.EnvironmentTargetID = value
-	}
 }
 
 func WithChangeTasksKind(value string) ChangeTaskOption {
@@ -156,5 +132,29 @@ func WithChangeTasksAttemptCount(value int32) ChangeTaskOption {
 func WithChangeTasksAvailableAt(value time.Time) ChangeTaskOption {
 	return func(f *ChangeTaskFactory) {
 		f.ChangeTaskEntity.AvailableAt = value
+	}
+}
+
+func WithChangeTasksChangeID(value uuid.UUID) ChangeTaskOption {
+	return func(f *ChangeTaskFactory) {
+		f.ChangeTaskEntity.ChangeID = value
+	}
+}
+
+func WithChangeTasksParentTaskID(value *uuid.UUID) ChangeTaskOption {
+	return func(f *ChangeTaskFactory) {
+		f.ChangeTaskEntity.ParentTaskID = value
+	}
+}
+
+func WithChangeTasksServerID(value *uuid.UUID) ChangeTaskOption {
+	return func(f *ChangeTaskFactory) {
+		f.ChangeTaskEntity.ServerID = value
+	}
+}
+
+func WithChangeTasksEnvironmentTargetID(value *uuid.UUID) ChangeTaskOption {
+	return func(f *ChangeTaskFactory) {
+		f.ChangeTaskEntity.EnvironmentTargetID = value
 	}
 }

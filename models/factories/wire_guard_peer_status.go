@@ -23,11 +23,11 @@ type WireGuardPeerStatusOption func(*WireGuardPeerStatusFactory)
 func BuildWireGuardPeerStatus(wireguardPeerID uuid.UUID, opts ...WireGuardPeerStatusOption) models.WireGuardPeerStatusEntity {
 	f := &WireGuardPeerStatusFactory{
 		WireGuardPeerStatusEntity: models.WireGuardPeerStatusEntity{
-			WireguardPeerID:   wireguardPeerID,
 			State:             faker.Word(),
 			LatestHandshakeAt: sql.NullTime{Time: time.Now(), Valid: true},
 			Error:             sql.NullString{String: faker.Word(), Valid: true},
 			ObservedAt:        time.Time{},
+			WireguardPeerID:   wireguardPeerID,
 		},
 	}
 
@@ -45,11 +45,11 @@ func CreateWireGuardPeerStatus(ctx context.Context, exec storage.Executor, wireg
 		ID:                uuid.New(),
 		CreatedAt:         time.Now(),
 		UpdatedAt:         time.Now(),
-		WireguardPeerID:   built.WireguardPeerID,
 		State:             built.State,
 		LatestHandshakeAt: built.LatestHandshakeAt,
 		Error:             built.Error,
 		ObservedAt:        built.ObservedAt,
+		WireguardPeerID:   built.WireguardPeerID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -59,24 +59,18 @@ func CreateWireGuardPeerStatus(ctx context.Context, exec storage.Executor, wireg
 	return entity, nil
 }
 
-func CreateWireGuardPeerStatuses(ctx context.Context, exec storage.Executor, wireguardPeerID uuid.UUID, count int, opts ...WireGuardPeerStatusOption) ([]models.WireGuardPeerStatusEntity, error) {
-	wireGuardPeerStatuses := make([]models.WireGuardPeerStatusEntity, 0, count)
+func CreateWireGuardPeerStatuss(ctx context.Context, exec storage.Executor, wireguardPeerID uuid.UUID, count int, opts ...WireGuardPeerStatusOption) ([]models.WireGuardPeerStatusEntity, error) {
+	wireguardpeerstatuss := make([]models.WireGuardPeerStatusEntity, 0, count)
 
 	for i := range count {
 		entity, err := CreateWireGuardPeerStatus(ctx, exec, wireguardPeerID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create wireguardpeerstatus %d: %w", i+1, err)
 		}
-		wireGuardPeerStatuses = append(wireGuardPeerStatuses, entity)
+		wireguardpeerstatuss = append(wireguardpeerstatuss, entity)
 	}
 
-	return wireGuardPeerStatuses, nil
-}
-
-func WithWireguardPeerStatusesWireguardPeerID(value uuid.UUID) WireGuardPeerStatusOption {
-	return func(f *WireGuardPeerStatusFactory) {
-		f.WireGuardPeerStatusEntity.WireguardPeerID = value
-	}
+	return wireguardpeerstatuss, nil
 }
 
 func WithWireguardPeerStatusesState(value string) WireGuardPeerStatusOption {
@@ -100,5 +94,11 @@ func WithWireguardPeerStatusesError(value sql.NullString) WireGuardPeerStatusOpt
 func WithWireguardPeerStatusesObservedAt(value time.Time) WireGuardPeerStatusOption {
 	return func(f *WireGuardPeerStatusFactory) {
 		f.WireGuardPeerStatusEntity.ObservedAt = value
+	}
+}
+
+func WithWireguardPeerStatusesWireguardPeerID(value uuid.UUID) WireGuardPeerStatusOption {
+	return func(f *WireGuardPeerStatusFactory) {
+		f.WireGuardPeerStatusEntity.WireguardPeerID = value
 	}
 }

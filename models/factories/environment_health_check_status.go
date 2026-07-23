@@ -23,15 +23,15 @@ type EnvironmentHealthCheckStatusOption func(*EnvironmentHealthCheckStatusFactor
 func BuildEnvironmentHealthCheckStatus(healthCheckID uuid.UUID, environmentTargetID *uuid.UUID, instanceID *uuid.UUID, releaseID *uuid.UUID, opts ...EnvironmentHealthCheckStatusOption) models.EnvironmentHealthCheckStatusEntity {
 	f := &EnvironmentHealthCheckStatusFactory{
 		EnvironmentHealthCheckStatusEntity: models.EnvironmentHealthCheckStatusEntity{
-			HealthCheckID:       healthCheckID,
-			EnvironmentTargetID: environmentTargetID,
-			InstanceID:          instanceID,
-			ReleaseID:           releaseID,
 			State:               faker.Word(),
 			StatusCode:          sql.NullInt32{Int32: randomInt(1, 1000, 100), Valid: true},
 			DurationMs:          randomInt(1, 1000, 100),
 			Error:               sql.NullString{String: faker.Word(), Valid: true},
 			ObservedAt:          time.Time{},
+			HealthCheckID:       healthCheckID,
+			EnvironmentTargetID: environmentTargetID,
+			InstanceID:          instanceID,
+			ReleaseID:           releaseID,
 		},
 	}
 
@@ -49,15 +49,15 @@ func CreateEnvironmentHealthCheckStatus(ctx context.Context, exec storage.Execut
 		ID:                  built.ID,
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		HealthCheckID:       built.HealthCheckID,
-		EnvironmentTargetID: built.EnvironmentTargetID,
-		InstanceID:          built.InstanceID,
-		ReleaseID:           built.ReleaseID,
 		State:               built.State,
 		StatusCode:          built.StatusCode,
 		DurationMs:          built.DurationMs,
 		Error:               built.Error,
 		ObservedAt:          built.ObservedAt,
+		HealthCheckID:       built.HealthCheckID,
+		EnvironmentTargetID: built.EnvironmentTargetID,
+		InstanceID:          built.InstanceID,
+		ReleaseID:           built.ReleaseID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -67,42 +67,18 @@ func CreateEnvironmentHealthCheckStatus(ctx context.Context, exec storage.Execut
 	return entity, nil
 }
 
-func CreateEnvironmentHealthCheckStatuses(ctx context.Context, exec storage.Executor, healthCheckID uuid.UUID, environmentTargetID *uuid.UUID, instanceID *uuid.UUID, releaseID *uuid.UUID, count int, opts ...EnvironmentHealthCheckStatusOption) ([]models.EnvironmentHealthCheckStatusEntity, error) {
-	environmentHealthCheckStatuses := make([]models.EnvironmentHealthCheckStatusEntity, 0, count)
+func CreateEnvironmentHealthCheckStatuss(ctx context.Context, exec storage.Executor, healthCheckID uuid.UUID, environmentTargetID *uuid.UUID, instanceID *uuid.UUID, releaseID *uuid.UUID, count int, opts ...EnvironmentHealthCheckStatusOption) ([]models.EnvironmentHealthCheckStatusEntity, error) {
+	environmenthealthcheckstatuss := make([]models.EnvironmentHealthCheckStatusEntity, 0, count)
 
 	for i := range count {
 		entity, err := CreateEnvironmentHealthCheckStatus(ctx, exec, healthCheckID, environmentTargetID, instanceID, releaseID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create environmenthealthcheckstatus %d: %w", i+1, err)
 		}
-		environmentHealthCheckStatuses = append(environmentHealthCheckStatuses, entity)
+		environmenthealthcheckstatuss = append(environmenthealthcheckstatuss, entity)
 	}
 
-	return environmentHealthCheckStatuses, nil
-}
-
-func WithEnvironmentHealthCheckStatusesHealthCheckID(value uuid.UUID) EnvironmentHealthCheckStatusOption {
-	return func(f *EnvironmentHealthCheckStatusFactory) {
-		f.EnvironmentHealthCheckStatusEntity.HealthCheckID = value
-	}
-}
-
-func WithEnvironmentHealthCheckStatusesEnvironmentTargetID(value *uuid.UUID) EnvironmentHealthCheckStatusOption {
-	return func(f *EnvironmentHealthCheckStatusFactory) {
-		f.EnvironmentHealthCheckStatusEntity.EnvironmentTargetID = value
-	}
-}
-
-func WithEnvironmentHealthCheckStatusesInstanceID(value *uuid.UUID) EnvironmentHealthCheckStatusOption {
-	return func(f *EnvironmentHealthCheckStatusFactory) {
-		f.EnvironmentHealthCheckStatusEntity.InstanceID = value
-	}
-}
-
-func WithEnvironmentHealthCheckStatusesReleaseID(value *uuid.UUID) EnvironmentHealthCheckStatusOption {
-	return func(f *EnvironmentHealthCheckStatusFactory) {
-		f.EnvironmentHealthCheckStatusEntity.ReleaseID = value
-	}
+	return environmenthealthcheckstatuss, nil
 }
 
 func WithEnvironmentHealthCheckStatusesState(value string) EnvironmentHealthCheckStatusOption {
@@ -132,5 +108,29 @@ func WithEnvironmentHealthCheckStatusesError(value sql.NullString) EnvironmentHe
 func WithEnvironmentHealthCheckStatusesObservedAt(value time.Time) EnvironmentHealthCheckStatusOption {
 	return func(f *EnvironmentHealthCheckStatusFactory) {
 		f.EnvironmentHealthCheckStatusEntity.ObservedAt = value
+	}
+}
+
+func WithEnvironmentHealthCheckStatusesHealthCheckID(value uuid.UUID) EnvironmentHealthCheckStatusOption {
+	return func(f *EnvironmentHealthCheckStatusFactory) {
+		f.EnvironmentHealthCheckStatusEntity.HealthCheckID = value
+	}
+}
+
+func WithEnvironmentHealthCheckStatusesEnvironmentTargetID(value *uuid.UUID) EnvironmentHealthCheckStatusOption {
+	return func(f *EnvironmentHealthCheckStatusFactory) {
+		f.EnvironmentHealthCheckStatusEntity.EnvironmentTargetID = value
+	}
+}
+
+func WithEnvironmentHealthCheckStatusesInstanceID(value *uuid.UUID) EnvironmentHealthCheckStatusOption {
+	return func(f *EnvironmentHealthCheckStatusFactory) {
+		f.EnvironmentHealthCheckStatusEntity.InstanceID = value
+	}
+}
+
+func WithEnvironmentHealthCheckStatusesReleaseID(value *uuid.UUID) EnvironmentHealthCheckStatusOption {
+	return func(f *EnvironmentHealthCheckStatusFactory) {
+		f.EnvironmentHealthCheckStatusEntity.ReleaseID = value
 	}
 }

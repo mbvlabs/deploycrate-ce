@@ -18,9 +18,6 @@ type BuildEntity struct {
 	ID                  uuid.UUID       `bun:"id,pk,type:uuid"`
 	CreatedAt           time.Time       `bun:"created_at"`
 	UpdatedAt           time.Time       `bun:"updated_at"`
-	EnvironmentID       uuid.UUID       `bun:"environment_id,type:uuid"`
-	EnvironmentSourceID uuid.UUID       `bun:"environment_source_id,type:uuid"`
-	ChangeID            uuid.UUID       `bun:"change_id,type:uuid"`
 	SourceRevision      string          `bun:"source_revision"`
 	BuildMethod         string          `bun:"build_method"`
 	BuildConfiguration  json.RawMessage `bun:"build_configuration,type:jsonb"`
@@ -30,6 +27,9 @@ type BuildEntity struct {
 	StartedAt           sql.NullTime    `bun:"started_at"`
 	FinishedAt          sql.NullTime    `bun:"finished_at"`
 	Error               sql.NullString  `bun:"error"`
+	EnvironmentID       uuid.UUID       `bun:"environment_id,type:uuid"`
+	EnvironmentSourceID uuid.UUID       `bun:"environment_source_id,type:uuid"`
+	ChangeID            uuid.UUID       `bun:"change_id,type:uuid"`
 }
 
 func (e *BuildEntity) Validate() error {
@@ -49,9 +49,6 @@ func (b build) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (Bui
 }
 
 type CreateBuildData struct {
-	EnvironmentID       uuid.UUID
-	EnvironmentSourceID uuid.UUID
-	ChangeID            uuid.UUID
 	SourceRevision      string
 	BuildMethod         string
 	BuildConfiguration  json.RawMessage
@@ -61,6 +58,9 @@ type CreateBuildData struct {
 	StartedAt           sql.NullTime
 	FinishedAt          sql.NullTime
 	Error               sql.NullString
+	EnvironmentID       uuid.UUID
+	EnvironmentSourceID uuid.UUID
+	ChangeID            uuid.UUID
 }
 
 func (b build) Create(ctx context.Context, db storage.Executor, data CreateBuildData) (BuildEntity, error) {
@@ -68,9 +68,6 @@ func (b build) Create(ctx context.Context, db storage.Executor, data CreateBuild
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		EnvironmentID:       data.EnvironmentID,
-		EnvironmentSourceID: data.EnvironmentSourceID,
-		ChangeID:            data.ChangeID,
 		SourceRevision:      data.SourceRevision,
 		BuildMethod:         data.BuildMethod,
 		BuildConfiguration:  data.BuildConfiguration,
@@ -80,6 +77,9 @@ func (b build) Create(ctx context.Context, db storage.Executor, data CreateBuild
 		StartedAt:           data.StartedAt,
 		FinishedAt:          data.FinishedAt,
 		Error:               data.Error,
+		EnvironmentID:       data.EnvironmentID,
+		EnvironmentSourceID: data.EnvironmentSourceID,
+		ChangeID:            data.ChangeID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -96,9 +96,6 @@ func (b build) Create(ctx context.Context, db storage.Executor, data CreateBuild
 type UpdateBuildData struct {
 	ID                  uuid.UUID
 	UpdatedAt           time.Time
-	EnvironmentID       uuid.UUID
-	EnvironmentSourceID uuid.UUID
-	ChangeID            uuid.UUID
 	SourceRevision      string
 	BuildMethod         string
 	BuildConfiguration  json.RawMessage
@@ -108,15 +105,15 @@ type UpdateBuildData struct {
 	StartedAt           sql.NullTime
 	FinishedAt          sql.NullTime
 	Error               sql.NullString
+	EnvironmentID       uuid.UUID
+	EnvironmentSourceID uuid.UUID
+	ChangeID            uuid.UUID
 }
 
 func (b build) Update(ctx context.Context, db storage.Executor, data UpdateBuildData) (BuildEntity, error) {
 	entity := BuildEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
-		EnvironmentID:       data.EnvironmentID,
-		EnvironmentSourceID: data.EnvironmentSourceID,
-		ChangeID:            data.ChangeID,
 		SourceRevision:      data.SourceRevision,
 		BuildMethod:         data.BuildMethod,
 		BuildConfiguration:  data.BuildConfiguration,
@@ -126,6 +123,9 @@ func (b build) Update(ctx context.Context, db storage.Executor, data UpdateBuild
 		StartedAt:           data.StartedAt,
 		FinishedAt:          data.FinishedAt,
 		Error:               data.Error,
+		EnvironmentID:       data.EnvironmentID,
+		EnvironmentSourceID: data.EnvironmentSourceID,
+		ChangeID:            data.ChangeID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -135,9 +135,6 @@ func (b build) Update(ctx context.Context, db storage.Executor, data UpdateBuild
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("environment_id").
-		Column("environment_source_id").
-		Column("change_id").
 		Column("source_revision").
 		Column("build_method").
 		Column("build_configuration").
@@ -147,6 +144,9 @@ func (b build) Update(ctx context.Context, db storage.Executor, data UpdateBuild
 		Column("started_at").
 		Column("finished_at").
 		Column("error").
+		Column("environment_id").
+		Column("environment_source_id").
+		Column("change_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -228,9 +228,6 @@ func (b build) Upsert(ctx context.Context, db storage.Executor, data CreateBuild
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		EnvironmentID:       data.EnvironmentID,
-		EnvironmentSourceID: data.EnvironmentSourceID,
-		ChangeID:            data.ChangeID,
 		SourceRevision:      data.SourceRevision,
 		BuildMethod:         data.BuildMethod,
 		BuildConfiguration:  data.BuildConfiguration,
@@ -240,6 +237,9 @@ func (b build) Upsert(ctx context.Context, db storage.Executor, data CreateBuild
 		StartedAt:           data.StartedAt,
 		FinishedAt:          data.FinishedAt,
 		Error:               data.Error,
+		EnvironmentID:       data.EnvironmentID,
+		EnvironmentSourceID: data.EnvironmentSourceID,
+		ChangeID:            data.ChangeID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -249,9 +249,6 @@ func (b build) Upsert(ctx context.Context, db storage.Executor, data CreateBuild
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("environment_id = excluded.environment_id").
-		Set("environment_source_id = excluded.environment_source_id").
-		Set("change_id = excluded.change_id").
 		Set("source_revision = excluded.source_revision").
 		Set("build_method = excluded.build_method").
 		Set("build_configuration = excluded.build_configuration").
@@ -261,6 +258,9 @@ func (b build) Upsert(ctx context.Context, db storage.Executor, data CreateBuild
 		Set("started_at = excluded.started_at").
 		Set("finished_at = excluded.finished_at").
 		Set("error = excluded.error").
+		Set("environment_id = excluded.environment_id").
+		Set("environment_source_id = excluded.environment_source_id").
+		Set("change_id = excluded.change_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return BuildEntity{}, err

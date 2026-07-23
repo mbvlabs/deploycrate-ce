@@ -20,22 +20,22 @@ type ResourceRestoreFactory struct {
 
 type ResourceRestoreOption func(*ResourceRestoreFactory)
 
-func BuildResourceRestore(changeID uuid.UUID, changeTaskID uuid.UUID, resourceBackupID uuid.UUID, resourceID uuid.UUID, sourceBindingID *uuid.UUID, targetBindingID *uuid.UUID, targetInstallationID *uuid.UUID, opts ...ResourceRestoreOption) models.ResourceRestoreEntity {
+func BuildResourceRestore(changeID uuid.UUID, changeTaskID uuid.UUID, resourceBackupID uuid.UUID, resourceID uuid.UUID, sourceEnvironmentResourceID *uuid.UUID, targetEnvironmentResourceID *uuid.UUID, targetInstallationID *uuid.UUID, opts ...ResourceRestoreOption) models.ResourceRestoreEntity {
 	f := &ResourceRestoreFactory{
 		ResourceRestoreEntity: models.ResourceRestoreEntity{
-			ChangeID:             changeID,
-			ChangeTaskID:         changeTaskID,
-			ResourceBackupID:     resourceBackupID,
-			ResourceID:           resourceID,
-			SourceBindingID:      sourceBindingID,
-			TargetBindingID:      targetBindingID,
-			TargetInstallationID: targetInstallationID,
-			Status:               faker.Word(),
-			RequestedAt:          time.Time{},
-			StartedAt:            sql.NullTime{Time: time.Now(), Valid: true},
-			FinishedAt:           sql.NullTime{Time: time.Now(), Valid: true},
-			VerifiedAt:           sql.NullTime{Time: time.Now(), Valid: true},
-			Error:                sql.NullString{String: faker.Word(), Valid: true},
+			Status:                      faker.Word(),
+			RequestedAt:                 time.Time{},
+			StartedAt:                   sql.NullTime{Time: time.Now(), Valid: true},
+			FinishedAt:                  sql.NullTime{Time: time.Now(), Valid: true},
+			VerifiedAt:                  sql.NullTime{Time: time.Now(), Valid: true},
+			Error:                       sql.NullString{String: faker.Word(), Valid: true},
+			ChangeID:                    changeID,
+			ChangeTaskID:                changeTaskID,
+			ResourceBackupID:            resourceBackupID,
+			ResourceID:                  resourceID,
+			SourceEnvironmentResourceID: sourceEnvironmentResourceID,
+			TargetEnvironmentResourceID: targetEnvironmentResourceID,
+			TargetInstallationID:        targetInstallationID,
 		},
 	}
 
@@ -46,26 +46,26 @@ func BuildResourceRestore(changeID uuid.UUID, changeTaskID uuid.UUID, resourceBa
 	return f.ResourceRestoreEntity
 }
 
-func CreateResourceRestore(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID uuid.UUID, resourceBackupID uuid.UUID, resourceID uuid.UUID, sourceBindingID *uuid.UUID, targetBindingID *uuid.UUID, targetInstallationID *uuid.UUID, opts ...ResourceRestoreOption) (models.ResourceRestoreEntity, error) {
-	built := BuildResourceRestore(changeID, changeTaskID, resourceBackupID, resourceID, sourceBindingID, targetBindingID, targetInstallationID, opts...)
+func CreateResourceRestore(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID uuid.UUID, resourceBackupID uuid.UUID, resourceID uuid.UUID, sourceEnvironmentResourceID *uuid.UUID, targetEnvironmentResourceID *uuid.UUID, targetInstallationID *uuid.UUID, opts ...ResourceRestoreOption) (models.ResourceRestoreEntity, error) {
+	built := BuildResourceRestore(changeID, changeTaskID, resourceBackupID, resourceID, sourceEnvironmentResourceID, targetEnvironmentResourceID, targetInstallationID, opts...)
 
 	entity := models.ResourceRestoreEntity{
-		ID:                   uuid.New(),
-		CreatedAt:            time.Now(),
-		UpdatedAt:            time.Now(),
-		ChangeID:             built.ChangeID,
-		ChangeTaskID:         built.ChangeTaskID,
-		ResourceBackupID:     built.ResourceBackupID,
-		ResourceID:           built.ResourceID,
-		SourceBindingID:      built.SourceBindingID,
-		TargetBindingID:      built.TargetBindingID,
-		TargetInstallationID: built.TargetInstallationID,
-		Status:               built.Status,
-		RequestedAt:          built.RequestedAt,
-		StartedAt:            built.StartedAt,
-		FinishedAt:           built.FinishedAt,
-		VerifiedAt:           built.VerifiedAt,
-		Error:                built.Error,
+		ID:                          uuid.New(),
+		CreatedAt:                   time.Now(),
+		UpdatedAt:                   time.Now(),
+		Status:                      built.Status,
+		RequestedAt:                 built.RequestedAt,
+		StartedAt:                   built.StartedAt,
+		FinishedAt:                  built.FinishedAt,
+		VerifiedAt:                  built.VerifiedAt,
+		Error:                       built.Error,
+		ChangeID:                    built.ChangeID,
+		ChangeTaskID:                built.ChangeTaskID,
+		ResourceBackupID:            built.ResourceBackupID,
+		ResourceID:                  built.ResourceID,
+		SourceEnvironmentResourceID: built.SourceEnvironmentResourceID,
+		TargetEnvironmentResourceID: built.TargetEnvironmentResourceID,
+		TargetInstallationID:        built.TargetInstallationID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -75,11 +75,11 @@ func CreateResourceRestore(ctx context.Context, exec storage.Executor, changeID 
 	return entity, nil
 }
 
-func CreateResourceRestores(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID uuid.UUID, resourceBackupID uuid.UUID, resourceID uuid.UUID, sourceBindingID *uuid.UUID, targetBindingID *uuid.UUID, targetInstallationID *uuid.UUID, count int, opts ...ResourceRestoreOption) ([]models.ResourceRestoreEntity, error) {
+func CreateResourceRestores(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID uuid.UUID, resourceBackupID uuid.UUID, resourceID uuid.UUID, sourceEnvironmentResourceID *uuid.UUID, targetEnvironmentResourceID *uuid.UUID, targetInstallationID *uuid.UUID, count int, opts ...ResourceRestoreOption) ([]models.ResourceRestoreEntity, error) {
 	resourcerestores := make([]models.ResourceRestoreEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateResourceRestore(ctx, exec, changeID, changeTaskID, resourceBackupID, resourceID, sourceBindingID, targetBindingID, targetInstallationID, opts...)
+		entity, err := CreateResourceRestore(ctx, exec, changeID, changeTaskID, resourceBackupID, resourceID, sourceEnvironmentResourceID, targetEnvironmentResourceID, targetInstallationID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resourcerestore %d: %w", i+1, err)
 		}
@@ -87,48 +87,6 @@ func CreateResourceRestores(ctx context.Context, exec storage.Executor, changeID
 	}
 
 	return resourcerestores, nil
-}
-
-func WithResourceRestoresChangeID(value uuid.UUID) ResourceRestoreOption {
-	return func(f *ResourceRestoreFactory) {
-		f.ResourceRestoreEntity.ChangeID = value
-	}
-}
-
-func WithResourceRestoresChangeTaskID(value uuid.UUID) ResourceRestoreOption {
-	return func(f *ResourceRestoreFactory) {
-		f.ResourceRestoreEntity.ChangeTaskID = value
-	}
-}
-
-func WithResourceRestoresResourceBackupID(value uuid.UUID) ResourceRestoreOption {
-	return func(f *ResourceRestoreFactory) {
-		f.ResourceRestoreEntity.ResourceBackupID = value
-	}
-}
-
-func WithResourceRestoresResourceID(value uuid.UUID) ResourceRestoreOption {
-	return func(f *ResourceRestoreFactory) {
-		f.ResourceRestoreEntity.ResourceID = value
-	}
-}
-
-func WithResourceRestoresSourceBindingID(value *uuid.UUID) ResourceRestoreOption {
-	return func(f *ResourceRestoreFactory) {
-		f.ResourceRestoreEntity.SourceBindingID = value
-	}
-}
-
-func WithResourceRestoresTargetBindingID(value *uuid.UUID) ResourceRestoreOption {
-	return func(f *ResourceRestoreFactory) {
-		f.ResourceRestoreEntity.TargetBindingID = value
-	}
-}
-
-func WithResourceRestoresTargetInstallationID(value *uuid.UUID) ResourceRestoreOption {
-	return func(f *ResourceRestoreFactory) {
-		f.ResourceRestoreEntity.TargetInstallationID = value
-	}
 }
 
 func WithResourceRestoresStatus(value string) ResourceRestoreOption {
@@ -164,5 +122,47 @@ func WithResourceRestoresVerifiedAt(value sql.NullTime) ResourceRestoreOption {
 func WithResourceRestoresError(value sql.NullString) ResourceRestoreOption {
 	return func(f *ResourceRestoreFactory) {
 		f.ResourceRestoreEntity.Error = value
+	}
+}
+
+func WithResourceRestoresChangeID(value uuid.UUID) ResourceRestoreOption {
+	return func(f *ResourceRestoreFactory) {
+		f.ResourceRestoreEntity.ChangeID = value
+	}
+}
+
+func WithResourceRestoresChangeTaskID(value uuid.UUID) ResourceRestoreOption {
+	return func(f *ResourceRestoreFactory) {
+		f.ResourceRestoreEntity.ChangeTaskID = value
+	}
+}
+
+func WithResourceRestoresResourceBackupID(value uuid.UUID) ResourceRestoreOption {
+	return func(f *ResourceRestoreFactory) {
+		f.ResourceRestoreEntity.ResourceBackupID = value
+	}
+}
+
+func WithResourceRestoresResourceID(value uuid.UUID) ResourceRestoreOption {
+	return func(f *ResourceRestoreFactory) {
+		f.ResourceRestoreEntity.ResourceID = value
+	}
+}
+
+func WithResourceRestoresSourceEnvironmentResourceID(value *uuid.UUID) ResourceRestoreOption {
+	return func(f *ResourceRestoreFactory) {
+		f.ResourceRestoreEntity.SourceEnvironmentResourceID = value
+	}
+}
+
+func WithResourceRestoresTargetEnvironmentResourceID(value *uuid.UUID) ResourceRestoreOption {
+	return func(f *ResourceRestoreFactory) {
+		f.ResourceRestoreEntity.TargetEnvironmentResourceID = value
+	}
+}
+
+func WithResourceRestoresTargetInstallationID(value *uuid.UUID) ResourceRestoreOption {
+	return func(f *ResourceRestoreFactory) {
+		f.ResourceRestoreEntity.TargetInstallationID = value
 	}
 }

@@ -18,9 +18,6 @@ type ServerNetworkEntity struct {
 	ID               int32           `bun:"id,pk,autoincrement"`
 	CreatedAt        time.Time       `bun:"created_at"`
 	UpdatedAt        time.Time       `bun:"updated_at"`
-	ServerID         uuid.UUID       `bun:"server_id,type:uuid"`
-	PrivateNetworkID uuid.UUID       `bun:"private_network_id,type:uuid"`
-	Address          string          `bun:"address"`
 	Driver           string          `bun:"driver"`
 	ExternalID       sql.NullString  `bun:"external_id"`
 	Configuration    json.RawMessage `bun:"configuration,type:jsonb"`
@@ -29,6 +26,8 @@ type ServerNetworkEntity struct {
 	ObservedAt       sql.NullTime    `bun:"observed_at"`
 	Error            sql.NullString  `bun:"error"`
 	RemovedAt        sql.NullTime    `bun:"removed_at"`
+	ServerID         uuid.UUID       `bun:"server_id,type:uuid"`
+	PrivateNetworkID uuid.UUID       `bun:"private_network_id,type:uuid"`
 }
 
 func (e *ServerNetworkEntity) Validate() error {
@@ -48,9 +47,6 @@ func (sn serverNetwork) Find(ctx context.Context, db storage.Executor, id int32)
 }
 
 type CreateServerNetworkData struct {
-	ServerID         uuid.UUID
-	PrivateNetworkID uuid.UUID
-	Address          string
 	Driver           string
 	ExternalID       sql.NullString
 	Configuration    json.RawMessage
@@ -59,15 +55,14 @@ type CreateServerNetworkData struct {
 	ObservedAt       sql.NullTime
 	Error            sql.NullString
 	RemovedAt        sql.NullTime
+	ServerID         uuid.UUID
+	PrivateNetworkID uuid.UUID
 }
 
 func (sn serverNetwork) Create(ctx context.Context, db storage.Executor, data CreateServerNetworkData) (ServerNetworkEntity, error) {
 	entity := ServerNetworkEntity{
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),
-		ServerID:         data.ServerID,
-		PrivateNetworkID: data.PrivateNetworkID,
-		Address:          data.Address,
 		Driver:           data.Driver,
 		ExternalID:       data.ExternalID,
 		Configuration:    data.Configuration,
@@ -76,6 +71,8 @@ func (sn serverNetwork) Create(ctx context.Context, db storage.Executor, data Cr
 		ObservedAt:       data.ObservedAt,
 		Error:            data.Error,
 		RemovedAt:        data.RemovedAt,
+		ServerID:         data.ServerID,
+		PrivateNetworkID: data.PrivateNetworkID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -92,9 +89,6 @@ func (sn serverNetwork) Create(ctx context.Context, db storage.Executor, data Cr
 type UpdateServerNetworkData struct {
 	ID               int32
 	UpdatedAt        time.Time
-	ServerID         uuid.UUID
-	PrivateNetworkID uuid.UUID
-	Address          string
 	Driver           string
 	ExternalID       sql.NullString
 	Configuration    json.RawMessage
@@ -103,15 +97,14 @@ type UpdateServerNetworkData struct {
 	ObservedAt       sql.NullTime
 	Error            sql.NullString
 	RemovedAt        sql.NullTime
+	ServerID         uuid.UUID
+	PrivateNetworkID uuid.UUID
 }
 
 func (sn serverNetwork) Update(ctx context.Context, db storage.Executor, data UpdateServerNetworkData) (ServerNetworkEntity, error) {
 	entity := ServerNetworkEntity{
 		ID:               data.ID,
 		UpdatedAt:        time.Now(),
-		ServerID:         data.ServerID,
-		PrivateNetworkID: data.PrivateNetworkID,
-		Address:          data.Address,
 		Driver:           data.Driver,
 		ExternalID:       data.ExternalID,
 		Configuration:    data.Configuration,
@@ -120,6 +113,8 @@ func (sn serverNetwork) Update(ctx context.Context, db storage.Executor, data Up
 		ObservedAt:       data.ObservedAt,
 		Error:            data.Error,
 		RemovedAt:        data.RemovedAt,
+		ServerID:         data.ServerID,
+		PrivateNetworkID: data.PrivateNetworkID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -129,9 +124,6 @@ func (sn serverNetwork) Update(ctx context.Context, db storage.Executor, data Up
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("server_id").
-		Column("private_network_id").
-		Column("address").
 		Column("driver").
 		Column("external_id").
 		Column("configuration").
@@ -140,6 +132,8 @@ func (sn serverNetwork) Update(ctx context.Context, db storage.Executor, data Up
 		Column("observed_at").
 		Column("error").
 		Column("removed_at").
+		Column("server_id").
+		Column("private_network_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -220,9 +214,6 @@ func (sn serverNetwork) Upsert(ctx context.Context, db storage.Executor, data Cr
 	entity := ServerNetworkEntity{
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),
-		ServerID:         data.ServerID,
-		PrivateNetworkID: data.PrivateNetworkID,
-		Address:          data.Address,
 		Driver:           data.Driver,
 		ExternalID:       data.ExternalID,
 		Configuration:    data.Configuration,
@@ -231,6 +222,8 @@ func (sn serverNetwork) Upsert(ctx context.Context, db storage.Executor, data Cr
 		ObservedAt:       data.ObservedAt,
 		Error:            data.Error,
 		RemovedAt:        data.RemovedAt,
+		ServerID:         data.ServerID,
+		PrivateNetworkID: data.PrivateNetworkID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -240,9 +233,6 @@ func (sn serverNetwork) Upsert(ctx context.Context, db storage.Executor, data Cr
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("server_id = excluded.server_id").
-		Set("private_network_id = excluded.private_network_id").
-		Set("address = excluded.address").
 		Set("driver = excluded.driver").
 		Set("external_id = excluded.external_id").
 		Set("configuration = excluded.configuration").
@@ -251,6 +241,8 @@ func (sn serverNetwork) Upsert(ctx context.Context, db storage.Executor, data Cr
 		Set("observed_at = excluded.observed_at").
 		Set("error = excluded.error").
 		Set("removed_at = excluded.removed_at").
+		Set("server_id = excluded.server_id").
+		Set("private_network_id = excluded.private_network_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ServerNetworkEntity{}, err

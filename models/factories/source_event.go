@@ -21,10 +21,9 @@ type SourceEventFactory struct {
 
 type SourceEventOption func(*SourceEventFactory)
 
-func BuildSourceEvent(environmentSourceID uuid.UUID, externalID string, opts ...SourceEventOption) models.SourceEventEntity {
+func BuildSourceEvent(externalID string, environmentSourceID uuid.UUID, opts ...SourceEventOption) models.SourceEventEntity {
 	f := &SourceEventFactory{
 		SourceEventEntity: models.SourceEventEntity{
-			EnvironmentSourceID: environmentSourceID,
 			ExternalID:          externalID,
 			Kind:                faker.Word(),
 			SourceRevision:      sql.NullString{String: faker.Word(), Valid: true},
@@ -32,6 +31,7 @@ func BuildSourceEvent(environmentSourceID uuid.UUID, externalID string, opts ...
 			ReceivedAt:          time.Time{},
 			ProcessedAt:         sql.NullTime{Time: time.Now(), Valid: true},
 			Error:               sql.NullString{String: faker.Word(), Valid: true},
+			EnvironmentSourceID: environmentSourceID,
 		},
 	}
 
@@ -42,14 +42,13 @@ func BuildSourceEvent(environmentSourceID uuid.UUID, externalID string, opts ...
 	return f.SourceEventEntity
 }
 
-func CreateSourceEvent(ctx context.Context, exec storage.Executor, environmentSourceID uuid.UUID, externalID string, opts ...SourceEventOption) (models.SourceEventEntity, error) {
-	built := BuildSourceEvent(environmentSourceID, externalID, opts...)
+func CreateSourceEvent(ctx context.Context, exec storage.Executor, externalID string, environmentSourceID uuid.UUID, opts ...SourceEventOption) (models.SourceEventEntity, error) {
+	built := BuildSourceEvent(externalID, environmentSourceID, opts...)
 
 	entity := models.SourceEventEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		EnvironmentSourceID: built.EnvironmentSourceID,
 		ExternalID:          built.ExternalID,
 		Kind:                built.Kind,
 		SourceRevision:      built.SourceRevision,
@@ -57,6 +56,7 @@ func CreateSourceEvent(ctx context.Context, exec storage.Executor, environmentSo
 		ReceivedAt:          built.ReceivedAt,
 		ProcessedAt:         built.ProcessedAt,
 		Error:               built.Error,
+		EnvironmentSourceID: built.EnvironmentSourceID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -66,11 +66,11 @@ func CreateSourceEvent(ctx context.Context, exec storage.Executor, environmentSo
 	return entity, nil
 }
 
-func CreateSourceEvents(ctx context.Context, exec storage.Executor, environmentSourceID uuid.UUID, externalID string, count int, opts ...SourceEventOption) ([]models.SourceEventEntity, error) {
+func CreateSourceEvents(ctx context.Context, exec storage.Executor, externalID string, environmentSourceID uuid.UUID, count int, opts ...SourceEventOption) ([]models.SourceEventEntity, error) {
 	sourceevents := make([]models.SourceEventEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateSourceEvent(ctx, exec, environmentSourceID, externalID, opts...)
+		entity, err := CreateSourceEvent(ctx, exec, externalID, environmentSourceID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create sourceevent %d: %w", i+1, err)
 		}
@@ -78,12 +78,6 @@ func CreateSourceEvents(ctx context.Context, exec storage.Executor, environmentS
 	}
 
 	return sourceevents, nil
-}
-
-func WithSourceEventsEnvironmentSourceID(value uuid.UUID) SourceEventOption {
-	return func(f *SourceEventFactory) {
-		f.SourceEventEntity.EnvironmentSourceID = value
-	}
 }
 
 func WithSourceEventsExternalID(value string) SourceEventOption {
@@ -125,5 +119,11 @@ func WithSourceEventsProcessedAt(value sql.NullTime) SourceEventOption {
 func WithSourceEventsError(value sql.NullString) SourceEventOption {
 	return func(f *SourceEventFactory) {
 		f.SourceEventEntity.Error = value
+	}
+}
+
+func WithSourceEventsEnvironmentSourceID(value uuid.UUID) SourceEventOption {
+	return func(f *SourceEventFactory) {
+		f.SourceEventEntity.EnvironmentSourceID = value
 	}
 }

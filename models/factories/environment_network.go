@@ -23,10 +23,10 @@ type EnvironmentNetworkOption func(*EnvironmentNetworkFactory)
 func BuildEnvironmentNetwork(environmentID uuid.UUID, privateNetworkID uuid.UUID, opts ...EnvironmentNetworkOption) models.EnvironmentNetworkEntity {
 	f := &EnvironmentNetworkFactory{
 		EnvironmentNetworkEntity: models.EnvironmentNetworkEntity{
-			EnvironmentID:    environmentID,
-			PrivateNetworkID: privateNetworkID,
 			Role:             faker.Word(),
 			RemovedAt:        sql.NullTime{Time: time.Now(), Valid: true},
+			EnvironmentID:    environmentID,
+			PrivateNetworkID: privateNetworkID,
 		},
 	}
 
@@ -44,10 +44,10 @@ func CreateEnvironmentNetwork(ctx context.Context, exec storage.Executor, enviro
 		ID:               built.ID,
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),
-		EnvironmentID:    built.EnvironmentID,
-		PrivateNetworkID: built.PrivateNetworkID,
 		Role:             built.Role,
 		RemovedAt:        built.RemovedAt,
+		EnvironmentID:    built.EnvironmentID,
+		PrivateNetworkID: built.PrivateNetworkID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -71,18 +71,6 @@ func CreateEnvironmentNetworks(ctx context.Context, exec storage.Executor, envir
 	return environmentnetworks, nil
 }
 
-func WithEnvironmentNetworksEnvironmentID(value uuid.UUID) EnvironmentNetworkOption {
-	return func(f *EnvironmentNetworkFactory) {
-		f.EnvironmentNetworkEntity.EnvironmentID = value
-	}
-}
-
-func WithEnvironmentNetworksPrivateNetworkID(value uuid.UUID) EnvironmentNetworkOption {
-	return func(f *EnvironmentNetworkFactory) {
-		f.EnvironmentNetworkEntity.PrivateNetworkID = value
-	}
-}
-
 func WithEnvironmentNetworksRole(value string) EnvironmentNetworkOption {
 	return func(f *EnvironmentNetworkFactory) {
 		f.EnvironmentNetworkEntity.Role = value
@@ -92,5 +80,17 @@ func WithEnvironmentNetworksRole(value string) EnvironmentNetworkOption {
 func WithEnvironmentNetworksRemovedAt(value sql.NullTime) EnvironmentNetworkOption {
 	return func(f *EnvironmentNetworkFactory) {
 		f.EnvironmentNetworkEntity.RemovedAt = value
+	}
+}
+
+func WithEnvironmentNetworksEnvironmentID(value uuid.UUID) EnvironmentNetworkOption {
+	return func(f *EnvironmentNetworkFactory) {
+		f.EnvironmentNetworkEntity.EnvironmentID = value
+	}
+}
+
+func WithEnvironmentNetworksPrivateNetworkID(value uuid.UUID) EnvironmentNetworkOption {
+	return func(f *EnvironmentNetworkFactory) {
+		f.EnvironmentNetworkEntity.PrivateNetworkID = value
 	}
 }

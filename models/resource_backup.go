@@ -17,14 +17,9 @@ type ResourceBackupEntity struct {
 	ID                     uuid.UUID      `bun:"id,pk,type:uuid"`
 	CreatedAt              time.Time      `bun:"created_at"`
 	UpdatedAt              time.Time      `bun:"updated_at"`
-	ChangeID               uuid.UUID      `bun:"change_id,type:uuid"`
-	ChangeTaskID           uuid.UUID      `bun:"change_task_id,type:uuid"`
-	BackupPolicyID         uuid.UUID      `bun:"backup_policy_id,type:uuid"`
-	ResourceID             uuid.UUID      `bun:"resource_id,type:uuid"`
-	ResourceBindingID      *uuid.UUID     `bun:"resource_binding_id,type:uuid"`
-	ResourceInstallationID *uuid.UUID     `bun:"resource_installation_id,type:uuid"`
-	BackupDestinationID    uuid.UUID      `bun:"backup_destination_id,type:uuid"`
 	TriggerType            string         `bun:"trigger_type"`
+	Strategy               string         `bun:"strategy"`
+	Driver                 string         `bun:"driver"`
 	Format                 string         `bun:"format"`
 	ObjectKey              string         `bun:"object_key"`
 	Status                 string         `bun:"status"`
@@ -35,6 +30,14 @@ type ResourceBackupEntity struct {
 	Digest                 []byte         `bun:"digest"`
 	VerifiedAt             sql.NullTime   `bun:"verified_at"`
 	Error                  sql.NullString `bun:"error"`
+	ChangeID               uuid.UUID      `bun:"change_id,type:uuid"`
+	ChangeTaskID           uuid.UUID      `bun:"change_task_id,type:uuid"`
+	BackupPolicyID         uuid.UUID      `bun:"backup_policy_id,type:uuid"`
+	ResourceID             uuid.UUID      `bun:"resource_id,type:uuid"`
+	EnvironmentResourceID  *uuid.UUID     `bun:"environment_resource_id,type:uuid"`
+	ResourceInstallationID *uuid.UUID     `bun:"resource_installation_id,type:uuid"`
+	ResourceVolumeID       *uuid.UUID     `bun:"resource_volume_id,type:uuid"`
+	BackupDestinationID    uuid.UUID      `bun:"backup_destination_id,type:uuid"`
 }
 
 func (e *ResourceBackupEntity) Validate() error {
@@ -54,14 +57,9 @@ func (rb resourceBackup) Find(ctx context.Context, db storage.Executor, id uuid.
 }
 
 type CreateResourceBackupData struct {
-	ChangeID               uuid.UUID
-	ChangeTaskID           uuid.UUID
-	BackupPolicyID         uuid.UUID
-	ResourceID             uuid.UUID
-	ResourceBindingID      *uuid.UUID
-	ResourceInstallationID *uuid.UUID
-	BackupDestinationID    uuid.UUID
 	TriggerType            string
+	Strategy               string
+	Driver                 string
 	Format                 string
 	ObjectKey              string
 	Status                 string
@@ -72,6 +70,14 @@ type CreateResourceBackupData struct {
 	Digest                 []byte
 	VerifiedAt             sql.NullTime
 	Error                  sql.NullString
+	ChangeID               uuid.UUID
+	ChangeTaskID           uuid.UUID
+	BackupPolicyID         uuid.UUID
+	ResourceID             uuid.UUID
+	EnvironmentResourceID  *uuid.UUID
+	ResourceInstallationID *uuid.UUID
+	ResourceVolumeID       *uuid.UUID
+	BackupDestinationID    uuid.UUID
 }
 
 func (rb resourceBackup) Create(ctx context.Context, db storage.Executor, data CreateResourceBackupData) (ResourceBackupEntity, error) {
@@ -79,14 +85,9 @@ func (rb resourceBackup) Create(ctx context.Context, db storage.Executor, data C
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),
 		UpdatedAt:              time.Now(),
-		ChangeID:               data.ChangeID,
-		ChangeTaskID:           data.ChangeTaskID,
-		BackupPolicyID:         data.BackupPolicyID,
-		ResourceID:             data.ResourceID,
-		ResourceBindingID:      data.ResourceBindingID,
-		ResourceInstallationID: data.ResourceInstallationID,
-		BackupDestinationID:    data.BackupDestinationID,
 		TriggerType:            data.TriggerType,
+		Strategy:               data.Strategy,
+		Driver:                 data.Driver,
 		Format:                 data.Format,
 		ObjectKey:              data.ObjectKey,
 		Status:                 data.Status,
@@ -97,6 +98,14 @@ func (rb resourceBackup) Create(ctx context.Context, db storage.Executor, data C
 		Digest:                 data.Digest,
 		VerifiedAt:             data.VerifiedAt,
 		Error:                  data.Error,
+		ChangeID:               data.ChangeID,
+		ChangeTaskID:           data.ChangeTaskID,
+		BackupPolicyID:         data.BackupPolicyID,
+		ResourceID:             data.ResourceID,
+		EnvironmentResourceID:  data.EnvironmentResourceID,
+		ResourceInstallationID: data.ResourceInstallationID,
+		ResourceVolumeID:       data.ResourceVolumeID,
+		BackupDestinationID:    data.BackupDestinationID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -113,14 +122,9 @@ func (rb resourceBackup) Create(ctx context.Context, db storage.Executor, data C
 type UpdateResourceBackupData struct {
 	ID                     uuid.UUID
 	UpdatedAt              time.Time
-	ChangeID               uuid.UUID
-	ChangeTaskID           uuid.UUID
-	BackupPolicyID         uuid.UUID
-	ResourceID             uuid.UUID
-	ResourceBindingID      *uuid.UUID
-	ResourceInstallationID *uuid.UUID
-	BackupDestinationID    uuid.UUID
 	TriggerType            string
+	Strategy               string
+	Driver                 string
 	Format                 string
 	ObjectKey              string
 	Status                 string
@@ -131,20 +135,23 @@ type UpdateResourceBackupData struct {
 	Digest                 []byte
 	VerifiedAt             sql.NullTime
 	Error                  sql.NullString
+	ChangeID               uuid.UUID
+	ChangeTaskID           uuid.UUID
+	BackupPolicyID         uuid.UUID
+	ResourceID             uuid.UUID
+	EnvironmentResourceID  *uuid.UUID
+	ResourceInstallationID *uuid.UUID
+	ResourceVolumeID       *uuid.UUID
+	BackupDestinationID    uuid.UUID
 }
 
 func (rb resourceBackup) Update(ctx context.Context, db storage.Executor, data UpdateResourceBackupData) (ResourceBackupEntity, error) {
 	entity := ResourceBackupEntity{
 		ID:                     data.ID,
 		UpdatedAt:              time.Now(),
-		ChangeID:               data.ChangeID,
-		ChangeTaskID:           data.ChangeTaskID,
-		BackupPolicyID:         data.BackupPolicyID,
-		ResourceID:             data.ResourceID,
-		ResourceBindingID:      data.ResourceBindingID,
-		ResourceInstallationID: data.ResourceInstallationID,
-		BackupDestinationID:    data.BackupDestinationID,
 		TriggerType:            data.TriggerType,
+		Strategy:               data.Strategy,
+		Driver:                 data.Driver,
 		Format:                 data.Format,
 		ObjectKey:              data.ObjectKey,
 		Status:                 data.Status,
@@ -155,6 +162,14 @@ func (rb resourceBackup) Update(ctx context.Context, db storage.Executor, data U
 		Digest:                 data.Digest,
 		VerifiedAt:             data.VerifiedAt,
 		Error:                  data.Error,
+		ChangeID:               data.ChangeID,
+		ChangeTaskID:           data.ChangeTaskID,
+		BackupPolicyID:         data.BackupPolicyID,
+		ResourceID:             data.ResourceID,
+		EnvironmentResourceID:  data.EnvironmentResourceID,
+		ResourceInstallationID: data.ResourceInstallationID,
+		ResourceVolumeID:       data.ResourceVolumeID,
+		BackupDestinationID:    data.BackupDestinationID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -164,14 +179,9 @@ func (rb resourceBackup) Update(ctx context.Context, db storage.Executor, data U
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("change_id").
-		Column("change_task_id").
-		Column("backup_policy_id").
-		Column("resource_id").
-		Column("resource_binding_id").
-		Column("resource_installation_id").
-		Column("backup_destination_id").
 		Column("trigger_type").
+		Column("strategy").
+		Column("driver").
 		Column("format").
 		Column("object_key").
 		Column("status").
@@ -182,6 +192,14 @@ func (rb resourceBackup) Update(ctx context.Context, db storage.Executor, data U
 		Column("digest").
 		Column("verified_at").
 		Column("error").
+		Column("change_id").
+		Column("change_task_id").
+		Column("backup_policy_id").
+		Column("resource_id").
+		Column("environment_resource_id").
+		Column("resource_installation_id").
+		Column("resource_volume_id").
+		Column("backup_destination_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -263,14 +281,9 @@ func (rb resourceBackup) Upsert(ctx context.Context, db storage.Executor, data C
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),
 		UpdatedAt:              time.Now(),
-		ChangeID:               data.ChangeID,
-		ChangeTaskID:           data.ChangeTaskID,
-		BackupPolicyID:         data.BackupPolicyID,
-		ResourceID:             data.ResourceID,
-		ResourceBindingID:      data.ResourceBindingID,
-		ResourceInstallationID: data.ResourceInstallationID,
-		BackupDestinationID:    data.BackupDestinationID,
 		TriggerType:            data.TriggerType,
+		Strategy:               data.Strategy,
+		Driver:                 data.Driver,
 		Format:                 data.Format,
 		ObjectKey:              data.ObjectKey,
 		Status:                 data.Status,
@@ -281,6 +294,14 @@ func (rb resourceBackup) Upsert(ctx context.Context, db storage.Executor, data C
 		Digest:                 data.Digest,
 		VerifiedAt:             data.VerifiedAt,
 		Error:                  data.Error,
+		ChangeID:               data.ChangeID,
+		ChangeTaskID:           data.ChangeTaskID,
+		BackupPolicyID:         data.BackupPolicyID,
+		ResourceID:             data.ResourceID,
+		EnvironmentResourceID:  data.EnvironmentResourceID,
+		ResourceInstallationID: data.ResourceInstallationID,
+		ResourceVolumeID:       data.ResourceVolumeID,
+		BackupDestinationID:    data.BackupDestinationID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -290,14 +311,9 @@ func (rb resourceBackup) Upsert(ctx context.Context, db storage.Executor, data C
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("change_id = excluded.change_id").
-		Set("change_task_id = excluded.change_task_id").
-		Set("backup_policy_id = excluded.backup_policy_id").
-		Set("resource_id = excluded.resource_id").
-		Set("resource_binding_id = excluded.resource_binding_id").
-		Set("resource_installation_id = excluded.resource_installation_id").
-		Set("backup_destination_id = excluded.backup_destination_id").
 		Set("trigger_type = excluded.trigger_type").
+		Set("strategy = excluded.strategy").
+		Set("driver = excluded.driver").
 		Set("format = excluded.format").
 		Set("object_key = excluded.object_key").
 		Set("status = excluded.status").
@@ -308,6 +324,14 @@ func (rb resourceBackup) Upsert(ctx context.Context, db storage.Executor, data C
 		Set("digest = excluded.digest").
 		Set("verified_at = excluded.verified_at").
 		Set("error = excluded.error").
+		Set("change_id = excluded.change_id").
+		Set("change_task_id = excluded.change_task_id").
+		Set("backup_policy_id = excluded.backup_policy_id").
+		Set("resource_id = excluded.resource_id").
+		Set("environment_resource_id = excluded.environment_resource_id").
+		Set("resource_installation_id = excluded.resource_installation_id").
+		Set("resource_volume_id = excluded.resource_volume_id").
+		Set("backup_destination_id = excluded.backup_destination_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ResourceBackupEntity{}, err

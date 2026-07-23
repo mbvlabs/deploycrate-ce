@@ -20,18 +20,15 @@ type NetworkAccessRuleFactory struct {
 
 type NetworkAccessRuleOption func(*NetworkAccessRuleFactory)
 
-func BuildNetworkAccessRule(privateNetworkID uuid.UUID, environmentID uuid.UUID, resourceEndpointID uuid.UUID, dependencyID uuid.UUID, opts ...NetworkAccessRuleOption) models.NetworkAccessRuleEntity {
+func BuildNetworkAccessRule(environmentResourceID uuid.UUID, opts ...NetworkAccessRuleOption) models.NetworkAccessRuleEntity {
 	f := &NetworkAccessRuleFactory{
 		NetworkAccessRuleEntity: models.NetworkAccessRuleEntity{
-			PrivateNetworkID:   privateNetworkID,
-			EnvironmentID:      environmentID,
-			ResourceEndpointID: resourceEndpointID,
-			DependencyID:       dependencyID,
-			Protocol:           faker.Word(),
-			DestinationAddress: faker.Word(),
-			DestinationPort:    randomInt(1, 1000, 100),
-			Action:             faker.Word(),
-			ArchivedAt:         sql.NullTime{Time: time.Now(), Valid: true},
+			Protocol:              faker.Word(),
+			DestinationAddress:    faker.Word(),
+			DestinationPort:       randomInt(1, 1000, 100),
+			Action:                faker.Word(),
+			ArchivedAt:            sql.NullTime{Time: time.Now(), Valid: true},
+			EnvironmentResourceID: environmentResourceID,
 		},
 	}
 
@@ -42,22 +39,19 @@ func BuildNetworkAccessRule(privateNetworkID uuid.UUID, environmentID uuid.UUID,
 	return f.NetworkAccessRuleEntity
 }
 
-func CreateNetworkAccessRule(ctx context.Context, exec storage.Executor, privateNetworkID uuid.UUID, environmentID uuid.UUID, resourceEndpointID uuid.UUID, dependencyID uuid.UUID, opts ...NetworkAccessRuleOption) (models.NetworkAccessRuleEntity, error) {
-	built := BuildNetworkAccessRule(privateNetworkID, environmentID, resourceEndpointID, dependencyID, opts...)
+func CreateNetworkAccessRule(ctx context.Context, exec storage.Executor, environmentResourceID uuid.UUID, opts ...NetworkAccessRuleOption) (models.NetworkAccessRuleEntity, error) {
+	built := BuildNetworkAccessRule(environmentResourceID, opts...)
 
 	entity := models.NetworkAccessRuleEntity{
-		ID:                 uuid.New(),
-		CreatedAt:          time.Now(),
-		UpdatedAt:          time.Now(),
-		PrivateNetworkID:   built.PrivateNetworkID,
-		EnvironmentID:      built.EnvironmentID,
-		ResourceEndpointID: built.ResourceEndpointID,
-		DependencyID:       built.DependencyID,
-		Protocol:           built.Protocol,
-		DestinationAddress: built.DestinationAddress,
-		DestinationPort:    built.DestinationPort,
-		Action:             built.Action,
-		ArchivedAt:         built.ArchivedAt,
+		ID:                    uuid.New(),
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
+		Protocol:              built.Protocol,
+		DestinationAddress:    built.DestinationAddress,
+		DestinationPort:       built.DestinationPort,
+		Action:                built.Action,
+		ArchivedAt:            built.ArchivedAt,
+		EnvironmentResourceID: built.EnvironmentResourceID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -67,11 +61,11 @@ func CreateNetworkAccessRule(ctx context.Context, exec storage.Executor, private
 	return entity, nil
 }
 
-func CreateNetworkAccessRules(ctx context.Context, exec storage.Executor, privateNetworkID uuid.UUID, environmentID uuid.UUID, resourceEndpointID uuid.UUID, dependencyID uuid.UUID, count int, opts ...NetworkAccessRuleOption) ([]models.NetworkAccessRuleEntity, error) {
+func CreateNetworkAccessRules(ctx context.Context, exec storage.Executor, environmentResourceID uuid.UUID, count int, opts ...NetworkAccessRuleOption) ([]models.NetworkAccessRuleEntity, error) {
 	networkaccessrules := make([]models.NetworkAccessRuleEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateNetworkAccessRule(ctx, exec, privateNetworkID, environmentID, resourceEndpointID, dependencyID, opts...)
+		entity, err := CreateNetworkAccessRule(ctx, exec, environmentResourceID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create networkaccessrule %d: %w", i+1, err)
 		}
@@ -79,30 +73,6 @@ func CreateNetworkAccessRules(ctx context.Context, exec storage.Executor, privat
 	}
 
 	return networkaccessrules, nil
-}
-
-func WithNetworkAccessRulesPrivateNetworkID(value uuid.UUID) NetworkAccessRuleOption {
-	return func(f *NetworkAccessRuleFactory) {
-		f.NetworkAccessRuleEntity.PrivateNetworkID = value
-	}
-}
-
-func WithNetworkAccessRulesEnvironmentID(value uuid.UUID) NetworkAccessRuleOption {
-	return func(f *NetworkAccessRuleFactory) {
-		f.NetworkAccessRuleEntity.EnvironmentID = value
-	}
-}
-
-func WithNetworkAccessRulesResourceEndpointID(value uuid.UUID) NetworkAccessRuleOption {
-	return func(f *NetworkAccessRuleFactory) {
-		f.NetworkAccessRuleEntity.ResourceEndpointID = value
-	}
-}
-
-func WithNetworkAccessRulesDependencyID(value uuid.UUID) NetworkAccessRuleOption {
-	return func(f *NetworkAccessRuleFactory) {
-		f.NetworkAccessRuleEntity.DependencyID = value
-	}
 }
 
 func WithNetworkAccessRulesProtocol(value string) NetworkAccessRuleOption {
@@ -132,5 +102,11 @@ func WithNetworkAccessRulesAction(value string) NetworkAccessRuleOption {
 func WithNetworkAccessRulesArchivedAt(value sql.NullTime) NetworkAccessRuleOption {
 	return func(f *NetworkAccessRuleFactory) {
 		f.NetworkAccessRuleEntity.ArchivedAt = value
+	}
+}
+
+func WithNetworkAccessRulesEnvironmentResourceID(value uuid.UUID) NetworkAccessRuleOption {
+	return func(f *NetworkAccessRuleFactory) {
+		f.NetworkAccessRuleEntity.EnvironmentResourceID = value
 	}
 }

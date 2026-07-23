@@ -24,9 +24,6 @@ type DeploymentOption func(*DeploymentFactory)
 func BuildDeployment(changeID uuid.UUID, releaseID uuid.UUID, environmentTargetID uuid.UUID, opts ...DeploymentOption) models.DeploymentEntity {
 	f := &DeploymentFactory{
 		DeploymentEntity: models.DeploymentEntity{
-			ChangeID:             changeID,
-			ReleaseID:            releaseID,
-			EnvironmentTargetID:  environmentTargetID,
 			Attempt:              randomInt(1, 1000, 100),
 			Strategy:             json.RawMessage{},
 			RuntimeConfiguration: json.RawMessage{},
@@ -35,6 +32,9 @@ func BuildDeployment(changeID uuid.UUID, releaseID uuid.UUID, environmentTargetI
 			StartedAt:            sql.NullTime{Time: time.Now(), Valid: true},
 			FinishedAt:           sql.NullTime{Time: time.Now(), Valid: true},
 			Error:                sql.NullString{String: faker.Word(), Valid: true},
+			ChangeID:             changeID,
+			ReleaseID:            releaseID,
+			EnvironmentTargetID:  environmentTargetID,
 		},
 	}
 
@@ -52,9 +52,6 @@ func CreateDeployment(ctx context.Context, exec storage.Executor, changeID uuid.
 		ID:                   uuid.New(),
 		CreatedAt:            time.Now(),
 		UpdatedAt:            time.Now(),
-		ChangeID:             built.ChangeID,
-		ReleaseID:            built.ReleaseID,
-		EnvironmentTargetID:  built.EnvironmentTargetID,
 		Attempt:              built.Attempt,
 		Strategy:             built.Strategy,
 		RuntimeConfiguration: built.RuntimeConfiguration,
@@ -63,6 +60,9 @@ func CreateDeployment(ctx context.Context, exec storage.Executor, changeID uuid.
 		StartedAt:            built.StartedAt,
 		FinishedAt:           built.FinishedAt,
 		Error:                built.Error,
+		ChangeID:             built.ChangeID,
+		ReleaseID:            built.ReleaseID,
+		EnvironmentTargetID:  built.EnvironmentTargetID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -84,24 +84,6 @@ func CreateDeployments(ctx context.Context, exec storage.Executor, changeID uuid
 	}
 
 	return deployments, nil
-}
-
-func WithDeploymentsChangeID(value uuid.UUID) DeploymentOption {
-	return func(f *DeploymentFactory) {
-		f.DeploymentEntity.ChangeID = value
-	}
-}
-
-func WithDeploymentsReleaseID(value uuid.UUID) DeploymentOption {
-	return func(f *DeploymentFactory) {
-		f.DeploymentEntity.ReleaseID = value
-	}
-}
-
-func WithDeploymentsEnvironmentTargetID(value uuid.UUID) DeploymentOption {
-	return func(f *DeploymentFactory) {
-		f.DeploymentEntity.EnvironmentTargetID = value
-	}
 }
 
 func WithDeploymentsAttempt(value int32) DeploymentOption {
@@ -149,5 +131,23 @@ func WithDeploymentsFinishedAt(value sql.NullTime) DeploymentOption {
 func WithDeploymentsError(value sql.NullString) DeploymentOption {
 	return func(f *DeploymentFactory) {
 		f.DeploymentEntity.Error = value
+	}
+}
+
+func WithDeploymentsChangeID(value uuid.UUID) DeploymentOption {
+	return func(f *DeploymentFactory) {
+		f.DeploymentEntity.ChangeID = value
+	}
+}
+
+func WithDeploymentsReleaseID(value uuid.UUID) DeploymentOption {
+	return func(f *DeploymentFactory) {
+		f.DeploymentEntity.ReleaseID = value
+	}
+}
+
+func WithDeploymentsEnvironmentTargetID(value uuid.UUID) DeploymentOption {
+	return func(f *DeploymentFactory) {
+		f.DeploymentEntity.EnvironmentTargetID = value
 	}
 }

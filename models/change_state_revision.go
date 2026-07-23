@@ -16,9 +16,9 @@ type ChangeStateRevisionEntity struct {
 	ID                         int32     `bun:"id,pk,autoincrement"`
 	CreatedAt                  time.Time `bun:"created_at"`
 	UpdatedAt                  time.Time `bun:"updated_at"`
+	Role                       string    `bun:"role"`
 	ChangeID                   uuid.UUID `bun:"change_id,type:uuid"`
 	EnvironmentStateRevisionID uuid.UUID `bun:"environment_state_revision_id,type:uuid"`
-	Role                       string    `bun:"role"`
 }
 
 func (e *ChangeStateRevisionEntity) Validate() error {
@@ -38,18 +38,18 @@ func (csr changeStateRevision) Find(ctx context.Context, db storage.Executor, id
 }
 
 type CreateChangeStateRevisionData struct {
+	Role                       string
 	ChangeID                   uuid.UUID
 	EnvironmentStateRevisionID uuid.UUID
-	Role                       string
 }
 
 func (csr changeStateRevision) Create(ctx context.Context, db storage.Executor, data CreateChangeStateRevisionData) (ChangeStateRevisionEntity, error) {
 	entity := ChangeStateRevisionEntity{
 		CreatedAt:                  time.Now(),
 		UpdatedAt:                  time.Now(),
+		Role:                       data.Role,
 		ChangeID:                   data.ChangeID,
 		EnvironmentStateRevisionID: data.EnvironmentStateRevisionID,
-		Role:                       data.Role,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -66,18 +66,18 @@ func (csr changeStateRevision) Create(ctx context.Context, db storage.Executor, 
 type UpdateChangeStateRevisionData struct {
 	ID                         int32
 	UpdatedAt                  time.Time
+	Role                       string
 	ChangeID                   uuid.UUID
 	EnvironmentStateRevisionID uuid.UUID
-	Role                       string
 }
 
 func (csr changeStateRevision) Update(ctx context.Context, db storage.Executor, data UpdateChangeStateRevisionData) (ChangeStateRevisionEntity, error) {
 	entity := ChangeStateRevisionEntity{
 		ID:                         data.ID,
 		UpdatedAt:                  time.Now(),
+		Role:                       data.Role,
 		ChangeID:                   data.ChangeID,
 		EnvironmentStateRevisionID: data.EnvironmentStateRevisionID,
-		Role:                       data.Role,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -87,9 +87,9 @@ func (csr changeStateRevision) Update(ctx context.Context, db storage.Executor, 
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
+		Column("role").
 		Column("change_id").
 		Column("environment_state_revision_id").
-		Column("role").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -170,9 +170,9 @@ func (csr changeStateRevision) Upsert(ctx context.Context, db storage.Executor, 
 	entity := ChangeStateRevisionEntity{
 		CreatedAt:                  time.Now(),
 		UpdatedAt:                  time.Now(),
+		Role:                       data.Role,
 		ChangeID:                   data.ChangeID,
 		EnvironmentStateRevisionID: data.EnvironmentStateRevisionID,
-		Role:                       data.Role,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -182,9 +182,9 @@ func (csr changeStateRevision) Upsert(ctx context.Context, db storage.Executor, 
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
+		Set("role = excluded.role").
 		Set("change_id = excluded.change_id").
 		Set("environment_state_revision_id = excluded.environment_state_revision_id").
-		Set("role = excluded.role").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ChangeStateRevisionEntity{}, err

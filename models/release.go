@@ -17,14 +17,14 @@ type ReleaseEntity struct {
 	ID                  uuid.UUID      `bun:"id,pk,type:uuid"`
 	CreatedAt           time.Time      `bun:"created_at"`
 	UpdatedAt           time.Time      `bun:"updated_at"`
-	EnvironmentID       uuid.UUID      `bun:"environment_id,type:uuid"`
-	EnvironmentSourceID *uuid.UUID     `bun:"environment_source_id,type:uuid"`
-	BuildID             *uuid.UUID     `bun:"build_id,type:uuid"`
-	CreatedByChangeID   uuid.UUID      `bun:"created_by_change_id,type:uuid"`
 	Version             sql.NullString `bun:"version"`
 	SourceRevision      sql.NullString `bun:"source_revision"`
 	ArtifactReference   string         `bun:"artifact_reference"`
 	ArtifactDigest      []byte         `bun:"artifact_digest"`
+	EnvironmentID       uuid.UUID      `bun:"environment_id,type:uuid"`
+	EnvironmentSourceID *uuid.UUID     `bun:"environment_source_id,type:uuid"`
+	BuildID             *uuid.UUID     `bun:"build_id,type:uuid"`
+	CreatedByChangeID   uuid.UUID      `bun:"created_by_change_id,type:uuid"`
 }
 
 func (e *ReleaseEntity) Validate() error {
@@ -44,14 +44,14 @@ func (r release) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (R
 }
 
 type CreateReleaseData struct {
-	EnvironmentID       uuid.UUID
-	EnvironmentSourceID *uuid.UUID
-	BuildID             *uuid.UUID
-	CreatedByChangeID   uuid.UUID
 	Version             sql.NullString
 	SourceRevision      sql.NullString
 	ArtifactReference   string
 	ArtifactDigest      []byte
+	EnvironmentID       uuid.UUID
+	EnvironmentSourceID *uuid.UUID
+	BuildID             *uuid.UUID
+	CreatedByChangeID   uuid.UUID
 }
 
 func (r release) Create(ctx context.Context, db storage.Executor, data CreateReleaseData) (ReleaseEntity, error) {
@@ -59,14 +59,14 @@ func (r release) Create(ctx context.Context, db storage.Executor, data CreateRel
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		EnvironmentID:       data.EnvironmentID,
-		EnvironmentSourceID: data.EnvironmentSourceID,
-		BuildID:             data.BuildID,
-		CreatedByChangeID:   data.CreatedByChangeID,
 		Version:             data.Version,
 		SourceRevision:      data.SourceRevision,
 		ArtifactReference:   data.ArtifactReference,
 		ArtifactDigest:      data.ArtifactDigest,
+		EnvironmentID:       data.EnvironmentID,
+		EnvironmentSourceID: data.EnvironmentSourceID,
+		BuildID:             data.BuildID,
+		CreatedByChangeID:   data.CreatedByChangeID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -83,28 +83,28 @@ func (r release) Create(ctx context.Context, db storage.Executor, data CreateRel
 type UpdateReleaseData struct {
 	ID                  uuid.UUID
 	UpdatedAt           time.Time
-	EnvironmentID       uuid.UUID
-	EnvironmentSourceID *uuid.UUID
-	BuildID             *uuid.UUID
-	CreatedByChangeID   uuid.UUID
 	Version             sql.NullString
 	SourceRevision      sql.NullString
 	ArtifactReference   string
 	ArtifactDigest      []byte
+	EnvironmentID       uuid.UUID
+	EnvironmentSourceID *uuid.UUID
+	BuildID             *uuid.UUID
+	CreatedByChangeID   uuid.UUID
 }
 
 func (r release) Update(ctx context.Context, db storage.Executor, data UpdateReleaseData) (ReleaseEntity, error) {
 	entity := ReleaseEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
-		EnvironmentID:       data.EnvironmentID,
-		EnvironmentSourceID: data.EnvironmentSourceID,
-		BuildID:             data.BuildID,
-		CreatedByChangeID:   data.CreatedByChangeID,
 		Version:             data.Version,
 		SourceRevision:      data.SourceRevision,
 		ArtifactReference:   data.ArtifactReference,
 		ArtifactDigest:      data.ArtifactDigest,
+		EnvironmentID:       data.EnvironmentID,
+		EnvironmentSourceID: data.EnvironmentSourceID,
+		BuildID:             data.BuildID,
+		CreatedByChangeID:   data.CreatedByChangeID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -114,14 +114,14 @@ func (r release) Update(ctx context.Context, db storage.Executor, data UpdateRel
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("environment_id").
-		Column("environment_source_id").
-		Column("build_id").
-		Column("created_by_change_id").
 		Column("version").
 		Column("source_revision").
 		Column("artifact_reference").
 		Column("artifact_digest").
+		Column("environment_id").
+		Column("environment_source_id").
+		Column("build_id").
+		Column("created_by_change_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -203,14 +203,14 @@ func (r release) Upsert(ctx context.Context, db storage.Executor, data CreateRel
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		EnvironmentID:       data.EnvironmentID,
-		EnvironmentSourceID: data.EnvironmentSourceID,
-		BuildID:             data.BuildID,
-		CreatedByChangeID:   data.CreatedByChangeID,
 		Version:             data.Version,
 		SourceRevision:      data.SourceRevision,
 		ArtifactReference:   data.ArtifactReference,
 		ArtifactDigest:      data.ArtifactDigest,
+		EnvironmentID:       data.EnvironmentID,
+		EnvironmentSourceID: data.EnvironmentSourceID,
+		BuildID:             data.BuildID,
+		CreatedByChangeID:   data.CreatedByChangeID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -220,14 +220,14 @@ func (r release) Upsert(ctx context.Context, db storage.Executor, data CreateRel
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("environment_id = excluded.environment_id").
-		Set("environment_source_id = excluded.environment_source_id").
-		Set("build_id = excluded.build_id").
-		Set("created_by_change_id = excluded.created_by_change_id").
 		Set("version = excluded.version").
 		Set("source_revision = excluded.source_revision").
 		Set("artifact_reference = excluded.artifact_reference").
 		Set("artifact_digest = excluded.artifact_digest").
+		Set("environment_id = excluded.environment_id").
+		Set("environment_source_id = excluded.environment_source_id").
+		Set("build_id = excluded.build_id").
+		Set("created_by_change_id = excluded.created_by_change_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ReleaseEntity{}, err

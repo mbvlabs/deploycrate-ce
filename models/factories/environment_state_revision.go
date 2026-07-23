@@ -22,9 +22,9 @@ type EnvironmentStateRevisionOption func(*EnvironmentStateRevisionFactory)
 func BuildEnvironmentStateRevision(environmentID uuid.UUID, changeID uuid.UUID, opts ...EnvironmentStateRevisionOption) models.EnvironmentStateRevisionEntity {
 	f := &EnvironmentStateRevisionFactory{
 		EnvironmentStateRevisionEntity: models.EnvironmentStateRevisionEntity{
+			State:         json.RawMessage{},
 			EnvironmentID: environmentID,
 			ChangeID:      changeID,
-			State:         json.RawMessage{},
 		},
 	}
 
@@ -42,9 +42,9 @@ func CreateEnvironmentStateRevision(ctx context.Context, exec storage.Executor, 
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
+		State:         built.State,
 		EnvironmentID: built.EnvironmentID,
 		ChangeID:      built.ChangeID,
-		State:         built.State,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -68,6 +68,12 @@ func CreateEnvironmentStateRevisions(ctx context.Context, exec storage.Executor,
 	return environmentstaterevisions, nil
 }
 
+func WithEnvironmentStateRevisionsState(value json.RawMessage) EnvironmentStateRevisionOption {
+	return func(f *EnvironmentStateRevisionFactory) {
+		f.EnvironmentStateRevisionEntity.State = value
+	}
+}
+
 func WithEnvironmentStateRevisionsEnvironmentID(value uuid.UUID) EnvironmentStateRevisionOption {
 	return func(f *EnvironmentStateRevisionFactory) {
 		f.EnvironmentStateRevisionEntity.EnvironmentID = value
@@ -77,11 +83,5 @@ func WithEnvironmentStateRevisionsEnvironmentID(value uuid.UUID) EnvironmentStat
 func WithEnvironmentStateRevisionsChangeID(value uuid.UUID) EnvironmentStateRevisionOption {
 	return func(f *EnvironmentStateRevisionFactory) {
 		f.EnvironmentStateRevisionEntity.ChangeID = value
-	}
-}
-
-func WithEnvironmentStateRevisionsState(value json.RawMessage) EnvironmentStateRevisionOption {
-	return func(f *EnvironmentStateRevisionFactory) {
-		f.EnvironmentStateRevisionEntity.State = value
 	}
 }

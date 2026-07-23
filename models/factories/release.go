@@ -23,14 +23,14 @@ type ReleaseOption func(*ReleaseFactory)
 func BuildRelease(environmentID uuid.UUID, environmentSourceID *uuid.UUID, buildID *uuid.UUID, createdByChangeID uuid.UUID, opts ...ReleaseOption) models.ReleaseEntity {
 	f := &ReleaseFactory{
 		ReleaseEntity: models.ReleaseEntity{
-			EnvironmentID:       environmentID,
-			EnvironmentSourceID: environmentSourceID,
-			BuildID:             buildID,
-			CreatedByChangeID:   createdByChangeID,
 			Version:             sql.NullString{String: faker.Word(), Valid: true},
 			SourceRevision:      sql.NullString{String: faker.Word(), Valid: true},
 			ArtifactReference:   faker.Word(),
 			ArtifactDigest:      []byte{},
+			EnvironmentID:       environmentID,
+			EnvironmentSourceID: environmentSourceID,
+			BuildID:             buildID,
+			CreatedByChangeID:   createdByChangeID,
 		},
 	}
 
@@ -48,14 +48,14 @@ func CreateRelease(ctx context.Context, exec storage.Executor, environmentID uui
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		EnvironmentID:       built.EnvironmentID,
-		EnvironmentSourceID: built.EnvironmentSourceID,
-		BuildID:             built.BuildID,
-		CreatedByChangeID:   built.CreatedByChangeID,
 		Version:             built.Version,
 		SourceRevision:      built.SourceRevision,
 		ArtifactReference:   built.ArtifactReference,
 		ArtifactDigest:      built.ArtifactDigest,
+		EnvironmentID:       built.EnvironmentID,
+		EnvironmentSourceID: built.EnvironmentSourceID,
+		BuildID:             built.BuildID,
+		CreatedByChangeID:   built.CreatedByChangeID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -79,30 +79,6 @@ func CreateReleases(ctx context.Context, exec storage.Executor, environmentID uu
 	return releases, nil
 }
 
-func WithReleasesEnvironmentID(value uuid.UUID) ReleaseOption {
-	return func(f *ReleaseFactory) {
-		f.ReleaseEntity.EnvironmentID = value
-	}
-}
-
-func WithReleasesEnvironmentSourceID(value *uuid.UUID) ReleaseOption {
-	return func(f *ReleaseFactory) {
-		f.ReleaseEntity.EnvironmentSourceID = value
-	}
-}
-
-func WithReleasesBuildID(value *uuid.UUID) ReleaseOption {
-	return func(f *ReleaseFactory) {
-		f.ReleaseEntity.BuildID = value
-	}
-}
-
-func WithReleasesCreatedByChangeID(value uuid.UUID) ReleaseOption {
-	return func(f *ReleaseFactory) {
-		f.ReleaseEntity.CreatedByChangeID = value
-	}
-}
-
 func WithReleasesVersion(value sql.NullString) ReleaseOption {
 	return func(f *ReleaseFactory) {
 		f.ReleaseEntity.Version = value
@@ -124,5 +100,29 @@ func WithReleasesArtifactReference(value string) ReleaseOption {
 func WithReleasesArtifactDigest(value []byte) ReleaseOption {
 	return func(f *ReleaseFactory) {
 		f.ReleaseEntity.ArtifactDigest = value
+	}
+}
+
+func WithReleasesEnvironmentID(value uuid.UUID) ReleaseOption {
+	return func(f *ReleaseFactory) {
+		f.ReleaseEntity.EnvironmentID = value
+	}
+}
+
+func WithReleasesEnvironmentSourceID(value *uuid.UUID) ReleaseOption {
+	return func(f *ReleaseFactory) {
+		f.ReleaseEntity.EnvironmentSourceID = value
+	}
+}
+
+func WithReleasesBuildID(value *uuid.UUID) ReleaseOption {
+	return func(f *ReleaseFactory) {
+		f.ReleaseEntity.BuildID = value
+	}
+}
+
+func WithReleasesCreatedByChangeID(value uuid.UUID) ReleaseOption {
+	return func(f *ReleaseFactory) {
+		f.ReleaseEntity.CreatedByChangeID = value
 	}
 }

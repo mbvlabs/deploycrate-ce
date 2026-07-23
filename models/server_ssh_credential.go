@@ -16,11 +16,11 @@ type ServerSSHCredentialEntity struct {
 	ID            int32     `bun:"id,pk,autoincrement"`
 	CreatedAt     time.Time `bun:"created_at"`
 	UpdatedAt     time.Time `bun:"updated_at"`
-	ServerID      uuid.UUID `bun:"server_id,type:uuid"`
 	Username      string    `bun:"username"`
 	Port          int32     `bun:"port"`
 	EncPrivateKey []byte    `bun:"enc_private_key"`
 	KnownHostKey  string    `bun:"known_host_key"`
+	ServerID      uuid.UUID `bun:"server_id,type:uuid"`
 }
 
 func (e *ServerSSHCredentialEntity) Validate() error {
@@ -40,22 +40,22 @@ func (ssshc serverSSHCredential) Find(ctx context.Context, db storage.Executor, 
 }
 
 type CreateServerSSHCredentialData struct {
-	ServerID      uuid.UUID
 	Username      string
 	Port          int32
 	EncPrivateKey []byte
 	KnownHostKey  string
+	ServerID      uuid.UUID
 }
 
 func (ssshc serverSSHCredential) Create(ctx context.Context, db storage.Executor, data CreateServerSSHCredentialData) (ServerSSHCredentialEntity, error) {
 	entity := ServerSSHCredentialEntity{
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
-		ServerID:      data.ServerID,
 		Username:      data.Username,
 		Port:          data.Port,
 		EncPrivateKey: data.EncPrivateKey,
 		KnownHostKey:  data.KnownHostKey,
+		ServerID:      data.ServerID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -72,22 +72,22 @@ func (ssshc serverSSHCredential) Create(ctx context.Context, db storage.Executor
 type UpdateServerSSHCredentialData struct {
 	ID            int32
 	UpdatedAt     time.Time
-	ServerID      uuid.UUID
 	Username      string
 	Port          int32
 	EncPrivateKey []byte
 	KnownHostKey  string
+	ServerID      uuid.UUID
 }
 
 func (ssshc serverSSHCredential) Update(ctx context.Context, db storage.Executor, data UpdateServerSSHCredentialData) (ServerSSHCredentialEntity, error) {
 	entity := ServerSSHCredentialEntity{
 		ID:            data.ID,
 		UpdatedAt:     time.Now(),
-		ServerID:      data.ServerID,
 		Username:      data.Username,
 		Port:          data.Port,
 		EncPrivateKey: data.EncPrivateKey,
 		KnownHostKey:  data.KnownHostKey,
+		ServerID:      data.ServerID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -97,11 +97,11 @@ func (ssshc serverSSHCredential) Update(ctx context.Context, db storage.Executor
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("server_id").
 		Column("username").
 		Column("port").
 		Column("enc_private_key").
 		Column("known_host_key").
+		Column("server_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -182,11 +182,11 @@ func (ssshc serverSSHCredential) Upsert(ctx context.Context, db storage.Executor
 	entity := ServerSSHCredentialEntity{
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
-		ServerID:      data.ServerID,
 		Username:      data.Username,
 		Port:          data.Port,
 		EncPrivateKey: data.EncPrivateKey,
 		KnownHostKey:  data.KnownHostKey,
+		ServerID:      data.ServerID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -196,11 +196,11 @@ func (ssshc serverSSHCredential) Upsert(ctx context.Context, db storage.Executor
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("server_id = excluded.server_id").
 		Set("username = excluded.username").
 		Set("port = excluded.port").
 		Set("enc_private_key = excluded.enc_private_key").
 		Set("known_host_key = excluded.known_host_key").
+		Set("server_id = excluded.server_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ServerSSHCredentialEntity{}, err

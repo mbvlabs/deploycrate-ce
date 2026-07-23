@@ -17,10 +17,10 @@ type EnvironmentDomainEntity struct {
 	ID            uuid.UUID    `bun:"id,pk,type:uuid"`
 	CreatedAt     time.Time    `bun:"created_at"`
 	UpdatedAt     time.Time    `bun:"updated_at"`
-	EnvironmentID uuid.UUID    `bun:"environment_id,type:uuid"`
 	Hostname      string       `bun:"hostname"`
 	IsPrimary     bool         `bun:"is_primary"`
 	ArchivedAt    sql.NullTime `bun:"archived_at"`
+	EnvironmentID uuid.UUID    `bun:"environment_id,type:uuid"`
 }
 
 func (e *EnvironmentDomainEntity) Validate() error {
@@ -40,10 +40,10 @@ func (ed environmentDomain) Find(ctx context.Context, db storage.Executor, id uu
 }
 
 type CreateEnvironmentDomainData struct {
-	EnvironmentID uuid.UUID
 	Hostname      string
 	IsPrimary     bool
 	ArchivedAt    sql.NullTime
+	EnvironmentID uuid.UUID
 }
 
 func (ed environmentDomain) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentDomainData) (EnvironmentDomainEntity, error) {
@@ -51,10 +51,10 @@ func (ed environmentDomain) Create(ctx context.Context, db storage.Executor, dat
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
-		EnvironmentID: data.EnvironmentID,
 		Hostname:      data.Hostname,
 		IsPrimary:     data.IsPrimary,
 		ArchivedAt:    data.ArchivedAt,
+		EnvironmentID: data.EnvironmentID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -71,20 +71,20 @@ func (ed environmentDomain) Create(ctx context.Context, db storage.Executor, dat
 type UpdateEnvironmentDomainData struct {
 	ID            uuid.UUID
 	UpdatedAt     time.Time
-	EnvironmentID uuid.UUID
 	Hostname      string
 	IsPrimary     bool
 	ArchivedAt    sql.NullTime
+	EnvironmentID uuid.UUID
 }
 
 func (ed environmentDomain) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentDomainData) (EnvironmentDomainEntity, error) {
 	entity := EnvironmentDomainEntity{
 		ID:            data.ID,
 		UpdatedAt:     time.Now(),
-		EnvironmentID: data.EnvironmentID,
 		Hostname:      data.Hostname,
 		IsPrimary:     data.IsPrimary,
 		ArchivedAt:    data.ArchivedAt,
+		EnvironmentID: data.EnvironmentID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -94,10 +94,10 @@ func (ed environmentDomain) Update(ctx context.Context, db storage.Executor, dat
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("environment_id").
 		Column("hostname").
 		Column("is_primary").
 		Column("archived_at").
+		Column("environment_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -179,10 +179,10 @@ func (ed environmentDomain) Upsert(ctx context.Context, db storage.Executor, dat
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
-		EnvironmentID: data.EnvironmentID,
 		Hostname:      data.Hostname,
 		IsPrimary:     data.IsPrimary,
 		ArchivedAt:    data.ArchivedAt,
+		EnvironmentID: data.EnvironmentID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -192,10 +192,10 @@ func (ed environmentDomain) Upsert(ctx context.Context, db storage.Executor, dat
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("environment_id = excluded.environment_id").
 		Set("hostname = excluded.hostname").
 		Set("is_primary = excluded.is_primary").
 		Set("archived_at = excluded.archived_at").
+		Set("environment_id = excluded.environment_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return EnvironmentDomainEntity{}, err

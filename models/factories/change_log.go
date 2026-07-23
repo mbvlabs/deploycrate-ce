@@ -24,14 +24,14 @@ type ChangeLogOption func(*ChangeLogFactory)
 func BuildChangeLog(changeID uuid.UUID, changeTaskID *uuid.UUID, changeTaskAttemptID *uuid.UUID, opts ...ChangeLogOption) models.ChangeLogEntity {
 	f := &ChangeLogFactory{
 		ChangeLogEntity: models.ChangeLogEntity{
-			ChangeID:            changeID,
-			ChangeTaskID:        changeTaskID,
-			ChangeTaskAttemptID: changeTaskAttemptID,
 			OccurredAt:          time.Time{},
 			Level:               faker.Word(),
 			Step:                sql.NullString{String: faker.Word(), Valid: true},
 			Message:             faker.Word(),
 			Metadata:            json.RawMessage{},
+			ChangeID:            changeID,
+			ChangeTaskID:        changeTaskID,
+			ChangeTaskAttemptID: changeTaskAttemptID,
 		},
 	}
 
@@ -49,14 +49,14 @@ func CreateChangeLog(ctx context.Context, exec storage.Executor, changeID uuid.U
 		ID:                  built.ID,
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		ChangeID:            built.ChangeID,
-		ChangeTaskID:        built.ChangeTaskID,
-		ChangeTaskAttemptID: built.ChangeTaskAttemptID,
 		OccurredAt:          built.OccurredAt,
 		Level:               built.Level,
 		Step:                built.Step,
 		Message:             built.Message,
 		Metadata:            built.Metadata,
+		ChangeID:            built.ChangeID,
+		ChangeTaskID:        built.ChangeTaskID,
+		ChangeTaskAttemptID: built.ChangeTaskAttemptID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -78,24 +78,6 @@ func CreateChangeLogs(ctx context.Context, exec storage.Executor, changeID uuid.
 	}
 
 	return changelogs, nil
-}
-
-func WithChangeLogsChangeID(value uuid.UUID) ChangeLogOption {
-	return func(f *ChangeLogFactory) {
-		f.ChangeLogEntity.ChangeID = value
-	}
-}
-
-func WithChangeLogsChangeTaskID(value *uuid.UUID) ChangeLogOption {
-	return func(f *ChangeLogFactory) {
-		f.ChangeLogEntity.ChangeTaskID = value
-	}
-}
-
-func WithChangeLogsChangeTaskAttemptID(value *uuid.UUID) ChangeLogOption {
-	return func(f *ChangeLogFactory) {
-		f.ChangeLogEntity.ChangeTaskAttemptID = value
-	}
 }
 
 func WithChangeLogsOccurredAt(value time.Time) ChangeLogOption {
@@ -125,5 +107,23 @@ func WithChangeLogsMessage(value string) ChangeLogOption {
 func WithChangeLogsMetadata(value json.RawMessage) ChangeLogOption {
 	return func(f *ChangeLogFactory) {
 		f.ChangeLogEntity.Metadata = value
+	}
+}
+
+func WithChangeLogsChangeID(value uuid.UUID) ChangeLogOption {
+	return func(f *ChangeLogFactory) {
+		f.ChangeLogEntity.ChangeID = value
+	}
+}
+
+func WithChangeLogsChangeTaskID(value *uuid.UUID) ChangeLogOption {
+	return func(f *ChangeLogFactory) {
+		f.ChangeLogEntity.ChangeTaskID = value
+	}
+}
+
+func WithChangeLogsChangeTaskAttemptID(value *uuid.UUID) ChangeLogOption {
+	return func(f *ChangeLogFactory) {
+		f.ChangeLogEntity.ChangeTaskAttemptID = value
 	}
 }

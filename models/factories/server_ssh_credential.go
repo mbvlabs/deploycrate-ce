@@ -22,11 +22,11 @@ type ServerSSHCredentialOption func(*ServerSSHCredentialFactory)
 func BuildServerSSHCredential(serverID uuid.UUID, opts ...ServerSSHCredentialOption) models.ServerSSHCredentialEntity {
 	f := &ServerSSHCredentialFactory{
 		ServerSSHCredentialEntity: models.ServerSSHCredentialEntity{
-			ServerID:      serverID,
 			Username:      faker.Word(),
 			Port:          randomInt(1, 1000, 100),
 			EncPrivateKey: []byte{},
 			KnownHostKey:  faker.Word(),
+			ServerID:      serverID,
 		},
 	}
 
@@ -44,11 +44,11 @@ func CreateServerSSHCredential(ctx context.Context, exec storage.Executor, serve
 		ID:            built.ID,
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
-		ServerID:      built.ServerID,
 		Username:      built.Username,
 		Port:          built.Port,
 		EncPrivateKey: built.EncPrivateKey,
 		KnownHostKey:  built.KnownHostKey,
+		ServerID:      built.ServerID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -72,12 +72,6 @@ func CreateServerSSHCredentials(ctx context.Context, exec storage.Executor, serv
 	return serversshcredentials, nil
 }
 
-func WithServerSshCredentialsServerID(value uuid.UUID) ServerSSHCredentialOption {
-	return func(f *ServerSSHCredentialFactory) {
-		f.ServerSSHCredentialEntity.ServerID = value
-	}
-}
-
 func WithServerSshCredentialsUsername(value string) ServerSSHCredentialOption {
 	return func(f *ServerSSHCredentialFactory) {
 		f.ServerSSHCredentialEntity.Username = value
@@ -99,5 +93,11 @@ func WithServerSshCredentialsEncPrivateKey(value []byte) ServerSSHCredentialOpti
 func WithServerSshCredentialsKnownHostKey(value string) ServerSSHCredentialOption {
 	return func(f *ServerSSHCredentialFactory) {
 		f.ServerSSHCredentialEntity.KnownHostKey = value
+	}
+}
+
+func WithServerSshCredentialsServerID(value uuid.UUID) ServerSSHCredentialOption {
+	return func(f *ServerSSHCredentialFactory) {
+		f.ServerSSHCredentialEntity.ServerID = value
 	}
 }

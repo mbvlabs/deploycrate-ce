@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE environment_runtime_configurations (
+CREATE TABLE runtime_configurations (
     id SERIAL NOT NULL PRIMARY KEY,
 
     created_at TIMESTAMPTZ NOT NULL,
@@ -21,5 +21,5 @@ CREATE TABLE environment_runtime_configurations (
 
 -- +goose Down
 -- +goose StatementBegin
-DROP TABLE environment_runtime_configurations;
+DROP TABLE runtime_configurations ;
 -- +goose StatementEnd

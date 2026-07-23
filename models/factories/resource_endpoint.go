@@ -24,9 +24,6 @@ type ResourceEndpointOption func(*ResourceEndpointFactory)
 func BuildResourceEndpoint(resourceID uuid.UUID, resourceInstallationID *uuid.UUID, privateNetworkID *uuid.UUID, opts ...ResourceEndpointOption) models.ResourceEndpointEntity {
 	f := &ResourceEndpointFactory{
 		ResourceEndpointEntity: models.ResourceEndpointEntity{
-			ResourceID:             resourceID,
-			ResourceInstallationID: resourceInstallationID,
-			PrivateNetworkID:       privateNetworkID,
 			Name:                   faker.Word(),
 			Role:                   faker.Word(),
 			Address:                faker.Word(),
@@ -35,6 +32,9 @@ func BuildResourceEndpoint(resourceID uuid.UUID, resourceInstallationID *uuid.UU
 			TlsMode:                faker.Word(),
 			Settings:               json.RawMessage{},
 			ArchivedAt:             sql.NullTime{Time: time.Now(), Valid: true},
+			ResourceID:             resourceID,
+			ResourceInstallationID: resourceInstallationID,
+			PrivateNetworkID:       privateNetworkID,
 		},
 	}
 
@@ -52,9 +52,6 @@ func CreateResourceEndpoint(ctx context.Context, exec storage.Executor, resource
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),
 		UpdatedAt:              time.Now(),
-		ResourceID:             built.ResourceID,
-		ResourceInstallationID: built.ResourceInstallationID,
-		PrivateNetworkID:       built.PrivateNetworkID,
 		Name:                   built.Name,
 		Role:                   built.Role,
 		Address:                built.Address,
@@ -63,6 +60,9 @@ func CreateResourceEndpoint(ctx context.Context, exec storage.Executor, resource
 		TlsMode:                built.TlsMode,
 		Settings:               built.Settings,
 		ArchivedAt:             built.ArchivedAt,
+		ResourceID:             built.ResourceID,
+		ResourceInstallationID: built.ResourceInstallationID,
+		PrivateNetworkID:       built.PrivateNetworkID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -84,24 +84,6 @@ func CreateResourceEndpoints(ctx context.Context, exec storage.Executor, resourc
 	}
 
 	return resourceendpoints, nil
-}
-
-func WithResourceEndpointsResourceID(value uuid.UUID) ResourceEndpointOption {
-	return func(f *ResourceEndpointFactory) {
-		f.ResourceEndpointEntity.ResourceID = value
-	}
-}
-
-func WithResourceEndpointsResourceInstallationID(value *uuid.UUID) ResourceEndpointOption {
-	return func(f *ResourceEndpointFactory) {
-		f.ResourceEndpointEntity.ResourceInstallationID = value
-	}
-}
-
-func WithResourceEndpointsPrivateNetworkID(value *uuid.UUID) ResourceEndpointOption {
-	return func(f *ResourceEndpointFactory) {
-		f.ResourceEndpointEntity.PrivateNetworkID = value
-	}
 }
 
 func WithResourceEndpointsName(value string) ResourceEndpointOption {
@@ -149,5 +131,23 @@ func WithResourceEndpointsSettings(value json.RawMessage) ResourceEndpointOption
 func WithResourceEndpointsArchivedAt(value sql.NullTime) ResourceEndpointOption {
 	return func(f *ResourceEndpointFactory) {
 		f.ResourceEndpointEntity.ArchivedAt = value
+	}
+}
+
+func WithResourceEndpointsResourceID(value uuid.UUID) ResourceEndpointOption {
+	return func(f *ResourceEndpointFactory) {
+		f.ResourceEndpointEntity.ResourceID = value
+	}
+}
+
+func WithResourceEndpointsResourceInstallationID(value *uuid.UUID) ResourceEndpointOption {
+	return func(f *ResourceEndpointFactory) {
+		f.ResourceEndpointEntity.ResourceInstallationID = value
+	}
+}
+
+func WithResourceEndpointsPrivateNetworkID(value *uuid.UUID) ResourceEndpointOption {
+	return func(f *ResourceEndpointFactory) {
+		f.ResourceEndpointEntity.PrivateNetworkID = value
 	}
 }

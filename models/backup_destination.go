@@ -18,7 +18,6 @@ type BackupDestinationEntity struct {
 	CreatedAt      time.Time      `bun:"created_at"`
 	UpdatedAt      time.Time      `bun:"updated_at"`
 	Name           string         `bun:"name"`
-	CredentialID   uuid.UUID      `bun:"credential_id,type:uuid"`
 	Provider       string         `bun:"provider"`
 	Endpoint       sql.NullString `bun:"endpoint"`
 	Region         sql.NullString `bun:"region"`
@@ -26,6 +25,7 @@ type BackupDestinationEntity struct {
 	Prefix         sql.NullString `bun:"prefix"`
 	ForcePathStyle bool           `bun:"force_path_style"`
 	ArchivedAt     sql.NullTime   `bun:"archived_at"`
+	CredentialID   uuid.UUID      `bun:"credential_id,type:uuid"`
 }
 
 func (e *BackupDestinationEntity) Validate() error {
@@ -46,7 +46,6 @@ func (bd backupDestination) Find(ctx context.Context, db storage.Executor, id uu
 
 type CreateBackupDestinationData struct {
 	Name           string
-	CredentialID   uuid.UUID
 	Provider       string
 	Endpoint       sql.NullString
 	Region         sql.NullString
@@ -54,6 +53,7 @@ type CreateBackupDestinationData struct {
 	Prefix         sql.NullString
 	ForcePathStyle bool
 	ArchivedAt     sql.NullTime
+	CredentialID   uuid.UUID
 }
 
 func (bd backupDestination) Create(ctx context.Context, db storage.Executor, data CreateBackupDestinationData) (BackupDestinationEntity, error) {
@@ -62,7 +62,6 @@ func (bd backupDestination) Create(ctx context.Context, db storage.Executor, dat
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 		Name:           data.Name,
-		CredentialID:   data.CredentialID,
 		Provider:       data.Provider,
 		Endpoint:       data.Endpoint,
 		Region:         data.Region,
@@ -70,6 +69,7 @@ func (bd backupDestination) Create(ctx context.Context, db storage.Executor, dat
 		Prefix:         data.Prefix,
 		ForcePathStyle: data.ForcePathStyle,
 		ArchivedAt:     data.ArchivedAt,
+		CredentialID:   data.CredentialID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -87,7 +87,6 @@ type UpdateBackupDestinationData struct {
 	ID             uuid.UUID
 	UpdatedAt      time.Time
 	Name           string
-	CredentialID   uuid.UUID
 	Provider       string
 	Endpoint       sql.NullString
 	Region         sql.NullString
@@ -95,6 +94,7 @@ type UpdateBackupDestinationData struct {
 	Prefix         sql.NullString
 	ForcePathStyle bool
 	ArchivedAt     sql.NullTime
+	CredentialID   uuid.UUID
 }
 
 func (bd backupDestination) Update(ctx context.Context, db storage.Executor, data UpdateBackupDestinationData) (BackupDestinationEntity, error) {
@@ -102,7 +102,6 @@ func (bd backupDestination) Update(ctx context.Context, db storage.Executor, dat
 		ID:             data.ID,
 		UpdatedAt:      time.Now(),
 		Name:           data.Name,
-		CredentialID:   data.CredentialID,
 		Provider:       data.Provider,
 		Endpoint:       data.Endpoint,
 		Region:         data.Region,
@@ -110,6 +109,7 @@ func (bd backupDestination) Update(ctx context.Context, db storage.Executor, dat
 		Prefix:         data.Prefix,
 		ForcePathStyle: data.ForcePathStyle,
 		ArchivedAt:     data.ArchivedAt,
+		CredentialID:   data.CredentialID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -120,7 +120,6 @@ func (bd backupDestination) Update(ctx context.Context, db storage.Executor, dat
 		Model(&entity).
 		Column("updated_at").
 		Column("name").
-		Column("credential_id").
 		Column("provider").
 		Column("endpoint").
 		Column("region").
@@ -128,6 +127,7 @@ func (bd backupDestination) Update(ctx context.Context, db storage.Executor, dat
 		Column("prefix").
 		Column("force_path_style").
 		Column("archived_at").
+		Column("credential_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -210,7 +210,6 @@ func (bd backupDestination) Upsert(ctx context.Context, db storage.Executor, dat
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 		Name:           data.Name,
-		CredentialID:   data.CredentialID,
 		Provider:       data.Provider,
 		Endpoint:       data.Endpoint,
 		Region:         data.Region,
@@ -218,6 +217,7 @@ func (bd backupDestination) Upsert(ctx context.Context, db storage.Executor, dat
 		Prefix:         data.Prefix,
 		ForcePathStyle: data.ForcePathStyle,
 		ArchivedAt:     data.ArchivedAt,
+		CredentialID:   data.CredentialID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -228,7 +228,6 @@ func (bd backupDestination) Upsert(ctx context.Context, db storage.Executor, dat
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
 		Set("name = excluded.name").
-		Set("credential_id = excluded.credential_id").
 		Set("provider = excluded.provider").
 		Set("endpoint = excluded.endpoint").
 		Set("region = excluded.region").
@@ -236,6 +235,7 @@ func (bd backupDestination) Upsert(ctx context.Context, db storage.Executor, dat
 		Set("prefix = excluded.prefix").
 		Set("force_path_style = excluded.force_path_style").
 		Set("archived_at = excluded.archived_at").
+		Set("credential_id = excluded.credential_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return BackupDestinationEntity{}, err

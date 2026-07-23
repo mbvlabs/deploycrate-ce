@@ -2,10 +2,8 @@ package models
 
 import (
 	"context"
-	"database/sql"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -14,20 +12,13 @@ import (
 )
 
 type ServerStatusEntity struct {
-	bun.BaseModel       `bun:"table:server_statuses,alias:server_statuses"`
-	ID                  int32           `bun:"id,pk,autoincrement"`
-	CreatedAt           time.Time       `bun:"created_at"`
-	UpdatedAt           time.Time       `bun:"updated_at"`
-	ServerID            uuid.UUID       `bun:"server_id,type:uuid"`
-	State               string          `bun:"state"`
-	OperatingSystem     sql.NullString  `bun:"operating_system"`
-	Distribution        sql.NullString  `bun:"distribution"`
-	DistributionVersion sql.NullString  `bun:"distribution_version"`
-	Architecture        sql.NullString  `bun:"architecture"`
-	PackageManager      sql.NullString  `bun:"package_manager"`
-	InitSystem          sql.NullString  `bun:"init_system"`
-	Capabilities        json.RawMessage `bun:"capabilities,type:jsonb"`
-	ObservedAt          time.Time       `bun:"observed_at"`
+	bun.BaseModel `bun:"table:server_statuses,alias:server_statuses"`
+	ID            int32     `bun:"id,pk,autoincrement"`
+	CreatedAt     time.Time `bun:"created_at"`
+	UpdatedAt     time.Time `bun:"updated_at"`
+	State         string    `bun:"state"`
+	ObservedAt    time.Time `bun:"observed_at"`
+	ServerID      uuid.UUID `bun:"server_id,type:uuid"`
 }
 
 func (e *ServerStatusEntity) Validate() error {
@@ -47,32 +38,18 @@ func (ss serverStatus) Find(ctx context.Context, db storage.Executor, id int32) 
 }
 
 type CreateServerStatusData struct {
-	ServerID            uuid.UUID
-	State               string
-	OperatingSystem     sql.NullString
-	Distribution        sql.NullString
-	DistributionVersion sql.NullString
-	Architecture        sql.NullString
-	PackageManager      sql.NullString
-	InitSystem          sql.NullString
-	Capabilities        json.RawMessage
-	ObservedAt          time.Time
+	State      string
+	ObservedAt time.Time
+	ServerID   uuid.UUID
 }
 
 func (ss serverStatus) Create(ctx context.Context, db storage.Executor, data CreateServerStatusData) (ServerStatusEntity, error) {
 	entity := ServerStatusEntity{
-		CreatedAt:           time.Now(),
-		UpdatedAt:           time.Now(),
-		ServerID:            data.ServerID,
-		State:               data.State,
-		OperatingSystem:     data.OperatingSystem,
-		Distribution:        data.Distribution,
-		DistributionVersion: data.DistributionVersion,
-		Architecture:        data.Architecture,
-		PackageManager:      data.PackageManager,
-		InitSystem:          data.InitSystem,
-		Capabilities:        data.Capabilities,
-		ObservedAt:          data.ObservedAt,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+		State:      data.State,
+		ObservedAt: data.ObservedAt,
+		ServerID:   data.ServerID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -87,34 +64,20 @@ func (ss serverStatus) Create(ctx context.Context, db storage.Executor, data Cre
 }
 
 type UpdateServerStatusData struct {
-	ID                  int32
-	UpdatedAt           time.Time
-	ServerID            uuid.UUID
-	State               string
-	OperatingSystem     sql.NullString
-	Distribution        sql.NullString
-	DistributionVersion sql.NullString
-	Architecture        sql.NullString
-	PackageManager      sql.NullString
-	InitSystem          sql.NullString
-	Capabilities        json.RawMessage
-	ObservedAt          time.Time
+	ID         int32
+	UpdatedAt  time.Time
+	State      string
+	ObservedAt time.Time
+	ServerID   uuid.UUID
 }
 
 func (ss serverStatus) Update(ctx context.Context, db storage.Executor, data UpdateServerStatusData) (ServerStatusEntity, error) {
 	entity := ServerStatusEntity{
-		ID:                  data.ID,
-		UpdatedAt:           time.Now(),
-		ServerID:            data.ServerID,
-		State:               data.State,
-		OperatingSystem:     data.OperatingSystem,
-		Distribution:        data.Distribution,
-		DistributionVersion: data.DistributionVersion,
-		Architecture:        data.Architecture,
-		PackageManager:      data.PackageManager,
-		InitSystem:          data.InitSystem,
-		Capabilities:        data.Capabilities,
-		ObservedAt:          data.ObservedAt,
+		ID:         data.ID,
+		UpdatedAt:  time.Now(),
+		State:      data.State,
+		ObservedAt: data.ObservedAt,
+		ServerID:   data.ServerID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -124,16 +87,9 @@ func (ss serverStatus) Update(ctx context.Context, db storage.Executor, data Upd
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("server_id").
 		Column("state").
-		Column("operating_system").
-		Column("distribution").
-		Column("distribution_version").
-		Column("architecture").
-		Column("package_manager").
-		Column("init_system").
-		Column("capabilities").
 		Column("observed_at").
+		Column("server_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -212,18 +168,11 @@ func (ss serverStatus) Paginate(ctx context.Context, db storage.Executor, page, 
 
 func (ss serverStatus) Upsert(ctx context.Context, db storage.Executor, data CreateServerStatusData) (ServerStatusEntity, error) {
 	entity := ServerStatusEntity{
-		CreatedAt:           time.Now(),
-		UpdatedAt:           time.Now(),
-		ServerID:            data.ServerID,
-		State:               data.State,
-		OperatingSystem:     data.OperatingSystem,
-		Distribution:        data.Distribution,
-		DistributionVersion: data.DistributionVersion,
-		Architecture:        data.Architecture,
-		PackageManager:      data.PackageManager,
-		InitSystem:          data.InitSystem,
-		Capabilities:        data.Capabilities,
-		ObservedAt:          data.ObservedAt,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+		State:      data.State,
+		ObservedAt: data.ObservedAt,
+		ServerID:   data.ServerID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -233,16 +182,9 @@ func (ss serverStatus) Upsert(ctx context.Context, db storage.Executor, data Cre
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("server_id = excluded.server_id").
 		Set("state = excluded.state").
-		Set("operating_system = excluded.operating_system").
-		Set("distribution = excluded.distribution").
-		Set("distribution_version = excluded.distribution_version").
-		Set("architecture = excluded.architecture").
-		Set("package_manager = excluded.package_manager").
-		Set("init_system = excluded.init_system").
-		Set("capabilities = excluded.capabilities").
 		Set("observed_at = excluded.observed_at").
+		Set("server_id = excluded.server_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ServerStatusEntity{}, err

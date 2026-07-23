@@ -13,12 +13,11 @@ import (
 	"github.com/uptrace/bun"
 )
 
-type EnvironmentRuntimeConfigurationEntity struct {
-	bun.BaseModel  `bun:"table:environment_runtime_configurations,alias:environment_runtime_configurations"`
+type RuntimeConfigurationEntity struct {
+	bun.BaseModel  `bun:"table:runtime_configurations,alias:runtime_configurations"`
 	ID             int32           `bun:"id,pk,autoincrement"`
 	CreatedAt      time.Time       `bun:"created_at"`
 	UpdatedAt      time.Time       `bun:"updated_at"`
-	EnvironmentID  uuid.UUID       `bun:"environment_id,type:uuid"`
 	Runtime        string          `bun:"runtime"`
 	Command        sql.NullString  `bun:"command"`
 	Arguments      json.RawMessage `bun:"arguments,type:jsonb"`
@@ -27,26 +26,26 @@ type EnvironmentRuntimeConfigurationEntity struct {
 	ResourceLimits json.RawMessage `bun:"resource_limits,type:jsonb"`
 	RestartPolicy  string          `bun:"restart_policy"`
 	Settings       json.RawMessage `bun:"settings,type:jsonb"`
+	EnvironmentID  uuid.UUID       `bun:"environment_id,type:uuid"`
 }
 
-func (e *EnvironmentRuntimeConfigurationEntity) Validate() error {
+func (e *RuntimeConfigurationEntity) Validate() error {
 	return nil
 }
 
-func (erc environmentRuntimeConfiguration) Find(ctx context.Context, db storage.Executor, id int32) (EnvironmentRuntimeConfigurationEntity, error) {
-	var entity EnvironmentRuntimeConfigurationEntity
+func (rc runtimeConfiguration) Find(ctx context.Context, db storage.Executor, id int32) (RuntimeConfigurationEntity, error) {
+	var entity RuntimeConfigurationEntity
 	if err := db.NewSelect().
 		Model(&entity).
 		Where("id = ?", id).
 		Scan(ctx); err != nil {
-		return EnvironmentRuntimeConfigurationEntity{}, err
+		return RuntimeConfigurationEntity{}, err
 	}
 
 	return entity, nil
 }
 
-type CreateEnvironmentRuntimeConfigurationData struct {
-	EnvironmentID  uuid.UUID
+type CreateRuntimeConfigurationData struct {
 	Runtime        string
 	Command        sql.NullString
 	Arguments      json.RawMessage
@@ -55,13 +54,13 @@ type CreateEnvironmentRuntimeConfigurationData struct {
 	ResourceLimits json.RawMessage
 	RestartPolicy  string
 	Settings       json.RawMessage
+	EnvironmentID  uuid.UUID
 }
 
-func (erc environmentRuntimeConfiguration) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentRuntimeConfigurationData) (EnvironmentRuntimeConfigurationEntity, error) {
-	entity := EnvironmentRuntimeConfigurationEntity{
+func (rc runtimeConfiguration) Create(ctx context.Context, db storage.Executor, data CreateRuntimeConfigurationData) (RuntimeConfigurationEntity, error) {
+	entity := RuntimeConfigurationEntity{
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
-		EnvironmentID:  data.EnvironmentID,
 		Runtime:        data.Runtime,
 		Command:        data.Command,
 		Arguments:      data.Arguments,
@@ -70,23 +69,23 @@ func (erc environmentRuntimeConfiguration) Create(ctx context.Context, db storag
 		ResourceLimits: data.ResourceLimits,
 		RestartPolicy:  data.RestartPolicy,
 		Settings:       data.Settings,
+		EnvironmentID:  data.EnvironmentID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
-		return EnvironmentRuntimeConfigurationEntity{}, errors.Join(ErrDomainValidation, err)
+		return RuntimeConfigurationEntity{}, errors.Join(ErrDomainValidation, err)
 	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
-		return EnvironmentRuntimeConfigurationEntity{}, err
+		return RuntimeConfigurationEntity{}, err
 	}
 
 	return entity, nil
 }
 
-type UpdateEnvironmentRuntimeConfigurationData struct {
+type UpdateRuntimeConfigurationData struct {
 	ID             int32
 	UpdatedAt      time.Time
-	EnvironmentID  uuid.UUID
 	Runtime        string
 	Command        sql.NullString
 	Arguments      json.RawMessage
@@ -95,13 +94,13 @@ type UpdateEnvironmentRuntimeConfigurationData struct {
 	ResourceLimits json.RawMessage
 	RestartPolicy  string
 	Settings       json.RawMessage
+	EnvironmentID  uuid.UUID
 }
 
-func (erc environmentRuntimeConfiguration) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentRuntimeConfigurationData) (EnvironmentRuntimeConfigurationEntity, error) {
-	entity := EnvironmentRuntimeConfigurationEntity{
+func (rc runtimeConfiguration) Update(ctx context.Context, db storage.Executor, data UpdateRuntimeConfigurationData) (RuntimeConfigurationEntity, error) {
+	entity := RuntimeConfigurationEntity{
 		ID:             data.ID,
 		UpdatedAt:      time.Now(),
-		EnvironmentID:  data.EnvironmentID,
 		Runtime:        data.Runtime,
 		Command:        data.Command,
 		Arguments:      data.Arguments,
@@ -110,16 +109,16 @@ func (erc environmentRuntimeConfiguration) Update(ctx context.Context, db storag
 		ResourceLimits: data.ResourceLimits,
 		RestartPolicy:  data.RestartPolicy,
 		Settings:       data.Settings,
+		EnvironmentID:  data.EnvironmentID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
-		return EnvironmentRuntimeConfigurationEntity{}, errors.Join(ErrDomainValidation, err)
+		return RuntimeConfigurationEntity{}, errors.Join(ErrDomainValidation, err)
 	}
 
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("environment_id").
 		Column("runtime").
 		Column("command").
 		Column("arguments").
@@ -128,26 +127,27 @@ func (erc environmentRuntimeConfiguration) Update(ctx context.Context, db storag
 		Column("resource_limits").
 		Column("restart_policy").
 		Column("settings").
+		Column("environment_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
-		return EnvironmentRuntimeConfigurationEntity{}, err
+		return RuntimeConfigurationEntity{}, err
 	}
 
 	return entity, nil
 }
 
-func (erc environmentRuntimeConfiguration) Destroy(ctx context.Context, db storage.Executor, id int32) error {
+func (rc runtimeConfiguration) Destroy(ctx context.Context, db storage.Executor, id int32) error {
 	_, err := db.NewDelete().
-		Model((*EnvironmentRuntimeConfigurationEntity)(nil)).
+		Model((*RuntimeConfigurationEntity)(nil)).
 		Where("id = ?", id).
 		Exec(ctx)
 
 	return err
 }
 
-func (erc environmentRuntimeConfiguration) All(ctx context.Context, db storage.Executor) ([]EnvironmentRuntimeConfigurationEntity, error) {
-	var entities []EnvironmentRuntimeConfigurationEntity
+func (rc runtimeConfiguration) All(ctx context.Context, db storage.Executor) ([]RuntimeConfigurationEntity, error) {
+	var entities []RuntimeConfigurationEntity
 	if err := db.NewSelect().
 		Model(&entities).
 		Scan(ctx); err != nil {
@@ -157,15 +157,15 @@ func (erc environmentRuntimeConfiguration) All(ctx context.Context, db storage.E
 	return entities, nil
 }
 
-type PaginatedEnvironmentRuntimeConfigurations struct {
-	EnvironmentRuntimeConfigurations []EnvironmentRuntimeConfigurationEntity
-	TotalCount                       int64
-	Page                             int64
-	PageSize                         int64
-	TotalPages                       int64
+type PaginatedRuntimeConfigurations struct {
+	RuntimeConfigurations []RuntimeConfigurationEntity
+	TotalCount            int64
+	Page                  int64
+	PageSize              int64
+	TotalPages            int64
 }
 
-func (erc environmentRuntimeConfiguration) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedEnvironmentRuntimeConfigurations, error) {
+func (rc runtimeConfiguration) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedRuntimeConfigurations, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -179,36 +179,35 @@ func (erc environmentRuntimeConfiguration) Paginate(ctx context.Context, db stor
 	offset := (page - 1) * pageSize
 
 	totalCount, err := db.NewSelect().
-		Model(&EnvironmentRuntimeConfigurationEntity{}).Count(ctx)
+		Model(&RuntimeConfigurationEntity{}).Count(ctx)
 	if err != nil {
-		return PaginatedEnvironmentRuntimeConfigurations{}, err
+		return PaginatedRuntimeConfigurations{}, err
 	}
 
-	entities := make([]EnvironmentRuntimeConfigurationEntity, 0, int(pageSize))
+	entities := make([]RuntimeConfigurationEntity, 0, int(pageSize))
 	if err := db.NewSelect().
 		Model(&entities).
 		Limit(int(pageSize)).
 		Offset(int(offset)).
 		Scan(ctx); err != nil {
-		return PaginatedEnvironmentRuntimeConfigurations{}, err
+		return PaginatedRuntimeConfigurations{}, err
 	}
 
 	totalPages := (int64(totalCount) + pageSize - 1) / pageSize
 
-	return PaginatedEnvironmentRuntimeConfigurations{
-		EnvironmentRuntimeConfigurations: entities,
-		TotalCount:                       int64(totalCount),
-		Page:                             page,
-		PageSize:                         pageSize,
-		TotalPages:                       totalPages,
+	return PaginatedRuntimeConfigurations{
+		RuntimeConfigurations: entities,
+		TotalCount:            int64(totalCount),
+		Page:                  page,
+		PageSize:              pageSize,
+		TotalPages:            totalPages,
 	}, nil
 }
 
-func (erc environmentRuntimeConfiguration) Upsert(ctx context.Context, db storage.Executor, data CreateEnvironmentRuntimeConfigurationData) (EnvironmentRuntimeConfigurationEntity, error) {
-	entity := EnvironmentRuntimeConfigurationEntity{
+func (rc runtimeConfiguration) Upsert(ctx context.Context, db storage.Executor, data CreateRuntimeConfigurationData) (RuntimeConfigurationEntity, error) {
+	entity := RuntimeConfigurationEntity{
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
-		EnvironmentID:  data.EnvironmentID,
 		Runtime:        data.Runtime,
 		Command:        data.Command,
 		Arguments:      data.Arguments,
@@ -217,16 +216,16 @@ func (erc environmentRuntimeConfiguration) Upsert(ctx context.Context, db storag
 		ResourceLimits: data.ResourceLimits,
 		RestartPolicy:  data.RestartPolicy,
 		Settings:       data.Settings,
+		EnvironmentID:  data.EnvironmentID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
-		return EnvironmentRuntimeConfigurationEntity{}, errors.Join(ErrDomainValidation, err)
+		return RuntimeConfigurationEntity{}, errors.Join(ErrDomainValidation, err)
 	}
 
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("environment_id = excluded.environment_id").
 		Set("runtime = excluded.runtime").
 		Set("command = excluded.command").
 		Set("arguments = excluded.arguments").
@@ -235,9 +234,10 @@ func (erc environmentRuntimeConfiguration) Upsert(ctx context.Context, db storag
 		Set("resource_limits = excluded.resource_limits").
 		Set("restart_policy = excluded.restart_policy").
 		Set("settings = excluded.settings").
+		Set("environment_id = excluded.environment_id").
 		Returning("*").
 		Scan(ctx); err != nil {
-		return EnvironmentRuntimeConfigurationEntity{}, err
+		return RuntimeConfigurationEntity{}, err
 	}
 
 	return entity, nil

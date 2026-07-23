@@ -22,10 +22,10 @@ type CaddyRouteBackendOption func(*CaddyRouteBackendFactory)
 func BuildCaddyRouteBackend(caddyRouteID uuid.UUID, instanceID uuid.UUID, opts ...CaddyRouteBackendOption) models.CaddyRouteBackendEntity {
 	f := &CaddyRouteBackendFactory{
 		CaddyRouteBackendEntity: models.CaddyRouteBackendEntity{
-			CaddyRouteID: caddyRouteID,
-			InstanceID:   instanceID,
 			Weight:       randomInt(1, 1000, 100),
 			RemovedAt:    sql.NullTime{Time: time.Now(), Valid: true},
+			CaddyRouteID: caddyRouteID,
+			InstanceID:   instanceID,
 		},
 	}
 
@@ -43,10 +43,10 @@ func CreateCaddyRouteBackend(ctx context.Context, exec storage.Executor, caddyRo
 		ID:           built.ID,
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
-		CaddyRouteID: built.CaddyRouteID,
-		InstanceID:   built.InstanceID,
 		Weight:       built.Weight,
 		RemovedAt:    built.RemovedAt,
+		CaddyRouteID: built.CaddyRouteID,
+		InstanceID:   built.InstanceID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -70,18 +70,6 @@ func CreateCaddyRouteBackends(ctx context.Context, exec storage.Executor, caddyR
 	return caddyroutebackends, nil
 }
 
-func WithCaddyRouteBackendsCaddyRouteID(value uuid.UUID) CaddyRouteBackendOption {
-	return func(f *CaddyRouteBackendFactory) {
-		f.CaddyRouteBackendEntity.CaddyRouteID = value
-	}
-}
-
-func WithCaddyRouteBackendsInstanceID(value uuid.UUID) CaddyRouteBackendOption {
-	return func(f *CaddyRouteBackendFactory) {
-		f.CaddyRouteBackendEntity.InstanceID = value
-	}
-}
-
 func WithCaddyRouteBackendsWeight(value int32) CaddyRouteBackendOption {
 	return func(f *CaddyRouteBackendFactory) {
 		f.CaddyRouteBackendEntity.Weight = value
@@ -91,5 +79,17 @@ func WithCaddyRouteBackendsWeight(value int32) CaddyRouteBackendOption {
 func WithCaddyRouteBackendsRemovedAt(value sql.NullTime) CaddyRouteBackendOption {
 	return func(f *CaddyRouteBackendFactory) {
 		f.CaddyRouteBackendEntity.RemovedAt = value
+	}
+}
+
+func WithCaddyRouteBackendsCaddyRouteID(value uuid.UUID) CaddyRouteBackendOption {
+	return func(f *CaddyRouteBackendFactory) {
+		f.CaddyRouteBackendEntity.CaddyRouteID = value
+	}
+}
+
+func WithCaddyRouteBackendsInstanceID(value uuid.UUID) CaddyRouteBackendOption {
+	return func(f *CaddyRouteBackendFactory) {
+		f.CaddyRouteBackendEntity.InstanceID = value
 	}
 }

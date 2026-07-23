@@ -23,11 +23,12 @@ type ResourceOption func(*ResourceFactory)
 func BuildResource(ownerEnvironmentID uuid.UUID, opts ...ResourceOption) models.ResourceEntity {
 	f := &ResourceFactory{
 		ResourceEntity: models.ResourceEntity{
-			OwnerEnvironmentID: ownerEnvironmentID,
 			Name:               faker.Word(),
 			Category:           faker.Word(),
 			Kind:               faker.Word(),
+			SharingScope:       faker.Word(),
 			ArchivedAt:         sql.NullTime{Time: time.Now(), Valid: true},
+			OwnerEnvironmentID: ownerEnvironmentID,
 		},
 	}
 
@@ -45,11 +46,12 @@ func CreateResource(ctx context.Context, exec storage.Executor, ownerEnvironment
 		ID:                 uuid.New(),
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
-		OwnerEnvironmentID: built.OwnerEnvironmentID,
 		Name:               built.Name,
 		Category:           built.Category,
 		Kind:               built.Kind,
+		SharingScope:       built.SharingScope,
 		ArchivedAt:         built.ArchivedAt,
+		OwnerEnvironmentID: built.OwnerEnvironmentID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -73,12 +75,6 @@ func CreateResources(ctx context.Context, exec storage.Executor, ownerEnvironmen
 	return resources, nil
 }
 
-func WithResourcesOwnerEnvironmentID(value uuid.UUID) ResourceOption {
-	return func(f *ResourceFactory) {
-		f.ResourceEntity.OwnerEnvironmentID = value
-	}
-}
-
 func WithResourcesName(value string) ResourceOption {
 	return func(f *ResourceFactory) {
 		f.ResourceEntity.Name = value
@@ -97,8 +93,20 @@ func WithResourcesKind(value string) ResourceOption {
 	}
 }
 
+func WithResourcesSharingScope(value string) ResourceOption {
+	return func(f *ResourceFactory) {
+		f.ResourceEntity.SharingScope = value
+	}
+}
+
 func WithResourcesArchivedAt(value sql.NullTime) ResourceOption {
 	return func(f *ResourceFactory) {
 		f.ResourceEntity.ArchivedAt = value
+	}
+}
+
+func WithResourcesOwnerEnvironmentID(value uuid.UUID) ResourceOption {
+	return func(f *ResourceFactory) {
+		f.ResourceEntity.OwnerEnvironmentID = value
 	}
 }

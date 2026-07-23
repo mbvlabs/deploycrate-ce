@@ -20,15 +20,15 @@ type ChangeItemFactory struct {
 
 type ChangeItemOption func(*ChangeItemFactory)
 
-func BuildChangeItem(changeID uuid.UUID, subjectID uuid.UUID, opts ...ChangeItemOption) models.ChangeItemEntity {
+func BuildChangeItem(subjectID uuid.UUID, changeID uuid.UUID, opts ...ChangeItemOption) models.ChangeItemEntity {
 	f := &ChangeItemFactory{
 		ChangeItemEntity: models.ChangeItemEntity{
-			ChangeID:       changeID,
 			Action:         faker.Word(),
 			SubjectType:    faker.Word(),
 			SubjectID:      subjectID,
 			PreviousValue:  json.RawMessage{},
 			RequestedValue: json.RawMessage{},
+			ChangeID:       changeID,
 		},
 	}
 
@@ -39,19 +39,19 @@ func BuildChangeItem(changeID uuid.UUID, subjectID uuid.UUID, opts ...ChangeItem
 	return f.ChangeItemEntity
 }
 
-func CreateChangeItem(ctx context.Context, exec storage.Executor, changeID uuid.UUID, subjectID uuid.UUID, opts ...ChangeItemOption) (models.ChangeItemEntity, error) {
-	built := BuildChangeItem(changeID, subjectID, opts...)
+func CreateChangeItem(ctx context.Context, exec storage.Executor, subjectID uuid.UUID, changeID uuid.UUID, opts ...ChangeItemOption) (models.ChangeItemEntity, error) {
+	built := BuildChangeItem(subjectID, changeID, opts...)
 
 	entity := models.ChangeItemEntity{
 		ID:             built.ID,
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
-		ChangeID:       built.ChangeID,
 		Action:         built.Action,
 		SubjectType:    built.SubjectType,
 		SubjectID:      built.SubjectID,
 		PreviousValue:  built.PreviousValue,
 		RequestedValue: built.RequestedValue,
+		ChangeID:       built.ChangeID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -61,11 +61,11 @@ func CreateChangeItem(ctx context.Context, exec storage.Executor, changeID uuid.
 	return entity, nil
 }
 
-func CreateChangeItems(ctx context.Context, exec storage.Executor, changeID uuid.UUID, subjectID uuid.UUID, count int, opts ...ChangeItemOption) ([]models.ChangeItemEntity, error) {
+func CreateChangeItems(ctx context.Context, exec storage.Executor, subjectID uuid.UUID, changeID uuid.UUID, count int, opts ...ChangeItemOption) ([]models.ChangeItemEntity, error) {
 	changeitems := make([]models.ChangeItemEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateChangeItem(ctx, exec, changeID, subjectID, opts...)
+		entity, err := CreateChangeItem(ctx, exec, subjectID, changeID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create changeitem %d: %w", i+1, err)
 		}
@@ -73,12 +73,6 @@ func CreateChangeItems(ctx context.Context, exec storage.Executor, changeID uuid
 	}
 
 	return changeitems, nil
-}
-
-func WithChangeItemsChangeID(value uuid.UUID) ChangeItemOption {
-	return func(f *ChangeItemFactory) {
-		f.ChangeItemEntity.ChangeID = value
-	}
 }
 
 func WithChangeItemsAction(value string) ChangeItemOption {
@@ -108,5 +102,11 @@ func WithChangeItemsPreviousValue(value json.RawMessage) ChangeItemOption {
 func WithChangeItemsRequestedValue(value json.RawMessage) ChangeItemOption {
 	return func(f *ChangeItemFactory) {
 		f.ChangeItemEntity.RequestedValue = value
+	}
+}
+
+func WithChangeItemsChangeID(value uuid.UUID) ChangeItemOption {
+	return func(f *ChangeItemFactory) {
+		f.ChangeItemEntity.ChangeID = value
 	}
 }

@@ -17,10 +17,10 @@ type CaddyRouteBackendEntity struct {
 	ID            int32        `bun:"id,pk,autoincrement"`
 	CreatedAt     time.Time    `bun:"created_at"`
 	UpdatedAt     time.Time    `bun:"updated_at"`
-	CaddyRouteID  uuid.UUID    `bun:"caddy_route_id,type:uuid"`
-	InstanceID    uuid.UUID    `bun:"instance_id,type:uuid"`
 	Weight        int32        `bun:"weight"`
 	RemovedAt     sql.NullTime `bun:"removed_at"`
+	CaddyRouteID  uuid.UUID    `bun:"caddy_route_id,type:uuid"`
+	InstanceID    uuid.UUID    `bun:"instance_id,type:uuid"`
 }
 
 func (e *CaddyRouteBackendEntity) Validate() error {
@@ -40,20 +40,20 @@ func (crb caddyRouteBackend) Find(ctx context.Context, db storage.Executor, id i
 }
 
 type CreateCaddyRouteBackendData struct {
-	CaddyRouteID uuid.UUID
-	InstanceID   uuid.UUID
 	Weight       int32
 	RemovedAt    sql.NullTime
+	CaddyRouteID uuid.UUID
+	InstanceID   uuid.UUID
 }
 
 func (crb caddyRouteBackend) Create(ctx context.Context, db storage.Executor, data CreateCaddyRouteBackendData) (CaddyRouteBackendEntity, error) {
 	entity := CaddyRouteBackendEntity{
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
-		CaddyRouteID: data.CaddyRouteID,
-		InstanceID:   data.InstanceID,
 		Weight:       data.Weight,
 		RemovedAt:    data.RemovedAt,
+		CaddyRouteID: data.CaddyRouteID,
+		InstanceID:   data.InstanceID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -70,20 +70,20 @@ func (crb caddyRouteBackend) Create(ctx context.Context, db storage.Executor, da
 type UpdateCaddyRouteBackendData struct {
 	ID           int32
 	UpdatedAt    time.Time
-	CaddyRouteID uuid.UUID
-	InstanceID   uuid.UUID
 	Weight       int32
 	RemovedAt    sql.NullTime
+	CaddyRouteID uuid.UUID
+	InstanceID   uuid.UUID
 }
 
 func (crb caddyRouteBackend) Update(ctx context.Context, db storage.Executor, data UpdateCaddyRouteBackendData) (CaddyRouteBackendEntity, error) {
 	entity := CaddyRouteBackendEntity{
 		ID:           data.ID,
 		UpdatedAt:    time.Now(),
-		CaddyRouteID: data.CaddyRouteID,
-		InstanceID:   data.InstanceID,
 		Weight:       data.Weight,
 		RemovedAt:    data.RemovedAt,
+		CaddyRouteID: data.CaddyRouteID,
+		InstanceID:   data.InstanceID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -93,10 +93,10 @@ func (crb caddyRouteBackend) Update(ctx context.Context, db storage.Executor, da
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("caddy_route_id").
-		Column("instance_id").
 		Column("weight").
 		Column("removed_at").
+		Column("caddy_route_id").
+		Column("instance_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -177,10 +177,10 @@ func (crb caddyRouteBackend) Upsert(ctx context.Context, db storage.Executor, da
 	entity := CaddyRouteBackendEntity{
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
-		CaddyRouteID: data.CaddyRouteID,
-		InstanceID:   data.InstanceID,
 		Weight:       data.Weight,
 		RemovedAt:    data.RemovedAt,
+		CaddyRouteID: data.CaddyRouteID,
+		InstanceID:   data.InstanceID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -190,10 +190,10 @@ func (crb caddyRouteBackend) Upsert(ctx context.Context, db storage.Executor, da
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("caddy_route_id = excluded.caddy_route_id").
-		Set("instance_id = excluded.instance_id").
 		Set("weight = excluded.weight").
 		Set("removed_at = excluded.removed_at").
+		Set("caddy_route_id = excluded.caddy_route_id").
+		Set("instance_id = excluded.instance_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return CaddyRouteBackendEntity{}, err

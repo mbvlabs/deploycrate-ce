@@ -20,16 +20,16 @@ type EnvironmentSecretFactory struct {
 
 type EnvironmentSecretOption func(*EnvironmentSecretFactory)
 
-func BuildEnvironmentSecret(environmentID uuid.UUID, sourceID uuid.UUID, opts ...EnvironmentSecretOption) models.EnvironmentSecretEntity {
+func BuildEnvironmentSecret(sourceID uuid.UUID, environmentID uuid.UUID, opts ...EnvironmentSecretOption) models.EnvironmentSecretEntity {
 	f := &EnvironmentSecretFactory{
 		EnvironmentSecretEntity: models.EnvironmentSecretEntity{
-			EnvironmentID: environmentID,
 			Key:           faker.Word(),
 			EncValue:      []byte{},
 			Digest:        []byte{},
 			SourceType:    faker.Word(),
 			SourceID:      sourceID,
 			ArchivedAt:    sql.NullTime{Time: time.Now(), Valid: true},
+			EnvironmentID: environmentID,
 		},
 	}
 
@@ -40,20 +40,20 @@ func BuildEnvironmentSecret(environmentID uuid.UUID, sourceID uuid.UUID, opts ..
 	return f.EnvironmentSecretEntity
 }
 
-func CreateEnvironmentSecret(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, sourceID uuid.UUID, opts ...EnvironmentSecretOption) (models.EnvironmentSecretEntity, error) {
-	built := BuildEnvironmentSecret(environmentID, sourceID, opts...)
+func CreateEnvironmentSecret(ctx context.Context, exec storage.Executor, sourceID uuid.UUID, environmentID uuid.UUID, opts ...EnvironmentSecretOption) (models.EnvironmentSecretEntity, error) {
+	built := BuildEnvironmentSecret(sourceID, environmentID, opts...)
 
 	entity := models.EnvironmentSecretEntity{
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
-		EnvironmentID: built.EnvironmentID,
 		Key:           built.Key,
 		EncValue:      built.EncValue,
 		Digest:        built.Digest,
 		SourceType:    built.SourceType,
 		SourceID:      built.SourceID,
 		ArchivedAt:    built.ArchivedAt,
+		EnvironmentID: built.EnvironmentID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -63,11 +63,11 @@ func CreateEnvironmentSecret(ctx context.Context, exec storage.Executor, environ
 	return entity, nil
 }
 
-func CreateEnvironmentSecrets(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, sourceID uuid.UUID, count int, opts ...EnvironmentSecretOption) ([]models.EnvironmentSecretEntity, error) {
+func CreateEnvironmentSecrets(ctx context.Context, exec storage.Executor, sourceID uuid.UUID, environmentID uuid.UUID, count int, opts ...EnvironmentSecretOption) ([]models.EnvironmentSecretEntity, error) {
 	environmentsecrets := make([]models.EnvironmentSecretEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateEnvironmentSecret(ctx, exec, environmentID, sourceID, opts...)
+		entity, err := CreateEnvironmentSecret(ctx, exec, sourceID, environmentID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create environmentsecret %d: %w", i+1, err)
 		}
@@ -75,12 +75,6 @@ func CreateEnvironmentSecrets(ctx context.Context, exec storage.Executor, enviro
 	}
 
 	return environmentsecrets, nil
-}
-
-func WithEnvironmentSecretsEnvironmentID(value uuid.UUID) EnvironmentSecretOption {
-	return func(f *EnvironmentSecretFactory) {
-		f.EnvironmentSecretEntity.EnvironmentID = value
-	}
 }
 
 func WithEnvironmentSecretsKey(value string) EnvironmentSecretOption {
@@ -116,5 +110,11 @@ func WithEnvironmentSecretsSourceID(value uuid.UUID) EnvironmentSecretOption {
 func WithEnvironmentSecretsArchivedAt(value sql.NullTime) EnvironmentSecretOption {
 	return func(f *EnvironmentSecretFactory) {
 		f.EnvironmentSecretEntity.ArchivedAt = value
+	}
+}
+
+func WithEnvironmentSecretsEnvironmentID(value uuid.UUID) EnvironmentSecretOption {
+	return func(f *EnvironmentSecretFactory) {
+		f.EnvironmentSecretEntity.EnvironmentID = value
 	}
 }

@@ -24,13 +24,13 @@ type EnvironmentTargetStateOption func(*EnvironmentTargetStateFactory)
 func BuildEnvironmentTargetState(environmentTargetID uuid.UUID, desiredRevisionID *uuid.UUID, applyingRevisionID *uuid.UUID, appliedRevisionID *uuid.UUID, opts ...EnvironmentTargetStateOption) models.EnvironmentTargetStateEntity {
 	f := &EnvironmentTargetStateFactory{
 		EnvironmentTargetStateEntity: models.EnvironmentTargetStateEntity{
+			ObservedState:       json.RawMessage{},
+			State:               faker.Word(),
+			ObservedAt:          sql.NullTime{Time: time.Now(), Valid: true},
 			EnvironmentTargetID: environmentTargetID,
 			DesiredRevisionID:   desiredRevisionID,
 			ApplyingRevisionID:  applyingRevisionID,
 			AppliedRevisionID:   appliedRevisionID,
-			ObservedState:       json.RawMessage{},
-			State:               faker.Word(),
-			ObservedAt:          sql.NullTime{Time: time.Now(), Valid: true},
 		},
 	}
 
@@ -48,13 +48,13 @@ func CreateEnvironmentTargetState(ctx context.Context, exec storage.Executor, en
 		ID:                  built.ID,
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
+		ObservedState:       built.ObservedState,
+		State:               built.State,
+		ObservedAt:          built.ObservedAt,
 		EnvironmentTargetID: built.EnvironmentTargetID,
 		DesiredRevisionID:   built.DesiredRevisionID,
 		ApplyingRevisionID:  built.ApplyingRevisionID,
 		AppliedRevisionID:   built.AppliedRevisionID,
-		ObservedState:       built.ObservedState,
-		State:               built.State,
-		ObservedAt:          built.ObservedAt,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -78,6 +78,24 @@ func CreateEnvironmentTargetStates(ctx context.Context, exec storage.Executor, e
 	return environmenttargetstates, nil
 }
 
+func WithEnvironmentTargetStatesObservedState(value json.RawMessage) EnvironmentTargetStateOption {
+	return func(f *EnvironmentTargetStateFactory) {
+		f.EnvironmentTargetStateEntity.ObservedState = value
+	}
+}
+
+func WithEnvironmentTargetStatesState(value string) EnvironmentTargetStateOption {
+	return func(f *EnvironmentTargetStateFactory) {
+		f.EnvironmentTargetStateEntity.State = value
+	}
+}
+
+func WithEnvironmentTargetStatesObservedAt(value sql.NullTime) EnvironmentTargetStateOption {
+	return func(f *EnvironmentTargetStateFactory) {
+		f.EnvironmentTargetStateEntity.ObservedAt = value
+	}
+}
+
 func WithEnvironmentTargetStatesEnvironmentTargetID(value uuid.UUID) EnvironmentTargetStateOption {
 	return func(f *EnvironmentTargetStateFactory) {
 		f.EnvironmentTargetStateEntity.EnvironmentTargetID = value
@@ -99,23 +117,5 @@ func WithEnvironmentTargetStatesApplyingRevisionID(value *uuid.UUID) Environment
 func WithEnvironmentTargetStatesAppliedRevisionID(value *uuid.UUID) EnvironmentTargetStateOption {
 	return func(f *EnvironmentTargetStateFactory) {
 		f.EnvironmentTargetStateEntity.AppliedRevisionID = value
-	}
-}
-
-func WithEnvironmentTargetStatesObservedState(value json.RawMessage) EnvironmentTargetStateOption {
-	return func(f *EnvironmentTargetStateFactory) {
-		f.EnvironmentTargetStateEntity.ObservedState = value
-	}
-}
-
-func WithEnvironmentTargetStatesState(value string) EnvironmentTargetStateOption {
-	return func(f *EnvironmentTargetStateFactory) {
-		f.EnvironmentTargetStateEntity.State = value
-	}
-}
-
-func WithEnvironmentTargetStatesObservedAt(value sql.NullTime) EnvironmentTargetStateOption {
-	return func(f *EnvironmentTargetStateFactory) {
-		f.EnvironmentTargetStateEntity.ObservedAt = value
 	}
 }

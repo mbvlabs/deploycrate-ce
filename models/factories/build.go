@@ -24,9 +24,6 @@ type BuildOption func(*BuildFactory)
 func BuildBuild(environmentID uuid.UUID, environmentSourceID uuid.UUID, changeID uuid.UUID, opts ...BuildOption) models.BuildEntity {
 	f := &BuildFactory{
 		BuildEntity: models.BuildEntity{
-			EnvironmentID:       environmentID,
-			EnvironmentSourceID: environmentSourceID,
-			ChangeID:            changeID,
 			SourceRevision:      faker.Word(),
 			BuildMethod:         faker.Word(),
 			BuildConfiguration:  json.RawMessage{},
@@ -36,6 +33,9 @@ func BuildBuild(environmentID uuid.UUID, environmentSourceID uuid.UUID, changeID
 			StartedAt:           sql.NullTime{Time: time.Now(), Valid: true},
 			FinishedAt:          sql.NullTime{Time: time.Now(), Valid: true},
 			Error:               sql.NullString{String: faker.Word(), Valid: true},
+			EnvironmentID:       environmentID,
+			EnvironmentSourceID: environmentSourceID,
+			ChangeID:            changeID,
 		},
 	}
 
@@ -53,9 +53,6 @@ func CreateBuild(ctx context.Context, exec storage.Executor, environmentID uuid.
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
-		EnvironmentID:       built.EnvironmentID,
-		EnvironmentSourceID: built.EnvironmentSourceID,
-		ChangeID:            built.ChangeID,
 		SourceRevision:      built.SourceRevision,
 		BuildMethod:         built.BuildMethod,
 		BuildConfiguration:  built.BuildConfiguration,
@@ -65,6 +62,9 @@ func CreateBuild(ctx context.Context, exec storage.Executor, environmentID uuid.
 		StartedAt:           built.StartedAt,
 		FinishedAt:          built.FinishedAt,
 		Error:               built.Error,
+		EnvironmentID:       built.EnvironmentID,
+		EnvironmentSourceID: built.EnvironmentSourceID,
+		ChangeID:            built.ChangeID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -86,24 +86,6 @@ func CreateBuilds(ctx context.Context, exec storage.Executor, environmentID uuid
 	}
 
 	return builds, nil
-}
-
-func WithBuildsEnvironmentID(value uuid.UUID) BuildOption {
-	return func(f *BuildFactory) {
-		f.BuildEntity.EnvironmentID = value
-	}
-}
-
-func WithBuildsEnvironmentSourceID(value uuid.UUID) BuildOption {
-	return func(f *BuildFactory) {
-		f.BuildEntity.EnvironmentSourceID = value
-	}
-}
-
-func WithBuildsChangeID(value uuid.UUID) BuildOption {
-	return func(f *BuildFactory) {
-		f.BuildEntity.ChangeID = value
-	}
 }
 
 func WithBuildsSourceRevision(value string) BuildOption {
@@ -157,5 +139,23 @@ func WithBuildsFinishedAt(value sql.NullTime) BuildOption {
 func WithBuildsError(value sql.NullString) BuildOption {
 	return func(f *BuildFactory) {
 		f.BuildEntity.Error = value
+	}
+}
+
+func WithBuildsEnvironmentID(value uuid.UUID) BuildOption {
+	return func(f *BuildFactory) {
+		f.BuildEntity.EnvironmentID = value
+	}
+}
+
+func WithBuildsEnvironmentSourceID(value uuid.UUID) BuildOption {
+	return func(f *BuildFactory) {
+		f.BuildEntity.EnvironmentSourceID = value
+	}
+}
+
+func WithBuildsChangeID(value uuid.UUID) BuildOption {
+	return func(f *BuildFactory) {
+		f.BuildEntity.ChangeID = value
 	}
 }

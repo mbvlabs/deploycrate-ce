@@ -18,7 +18,6 @@ type ChangeTaskAttemptEntity struct {
 	ID              uuid.UUID       `bun:"id,pk,type:uuid"`
 	CreatedAt       time.Time       `bun:"created_at"`
 	UpdatedAt       time.Time       `bun:"updated_at"`
-	ChangeTaskID    uuid.UUID       `bun:"change_task_id,type:uuid"`
 	Attempt         int32           `bun:"attempt"`
 	Status          string          `bun:"status"`
 	StartedAt       time.Time       `bun:"started_at"`
@@ -26,6 +25,7 @@ type ChangeTaskAttemptEntity struct {
 	FinishedAt      sql.NullTime    `bun:"finished_at"`
 	Result          json.RawMessage `bun:"result,type:jsonb"`
 	Error           sql.NullString  `bun:"error"`
+	ChangeTaskID    uuid.UUID       `bun:"change_task_id,type:uuid"`
 }
 
 func (e *ChangeTaskAttemptEntity) Validate() error {
@@ -45,7 +45,6 @@ func (cta changeTaskAttempt) Find(ctx context.Context, db storage.Executor, id u
 }
 
 type CreateChangeTaskAttemptData struct {
-	ChangeTaskID    uuid.UUID
 	Attempt         int32
 	Status          string
 	StartedAt       time.Time
@@ -53,6 +52,7 @@ type CreateChangeTaskAttemptData struct {
 	FinishedAt      sql.NullTime
 	Result          json.RawMessage
 	Error           sql.NullString
+	ChangeTaskID    uuid.UUID
 }
 
 func (cta changeTaskAttempt) Create(ctx context.Context, db storage.Executor, data CreateChangeTaskAttemptData) (ChangeTaskAttemptEntity, error) {
@@ -60,7 +60,6 @@ func (cta changeTaskAttempt) Create(ctx context.Context, db storage.Executor, da
 		ID:              uuid.New(),
 		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
-		ChangeTaskID:    data.ChangeTaskID,
 		Attempt:         data.Attempt,
 		Status:          data.Status,
 		StartedAt:       data.StartedAt,
@@ -68,6 +67,7 @@ func (cta changeTaskAttempt) Create(ctx context.Context, db storage.Executor, da
 		FinishedAt:      data.FinishedAt,
 		Result:          data.Result,
 		Error:           data.Error,
+		ChangeTaskID:    data.ChangeTaskID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -84,7 +84,6 @@ func (cta changeTaskAttempt) Create(ctx context.Context, db storage.Executor, da
 type UpdateChangeTaskAttemptData struct {
 	ID              uuid.UUID
 	UpdatedAt       time.Time
-	ChangeTaskID    uuid.UUID
 	Attempt         int32
 	Status          string
 	StartedAt       time.Time
@@ -92,13 +91,13 @@ type UpdateChangeTaskAttemptData struct {
 	FinishedAt      sql.NullTime
 	Result          json.RawMessage
 	Error           sql.NullString
+	ChangeTaskID    uuid.UUID
 }
 
 func (cta changeTaskAttempt) Update(ctx context.Context, db storage.Executor, data UpdateChangeTaskAttemptData) (ChangeTaskAttemptEntity, error) {
 	entity := ChangeTaskAttemptEntity{
 		ID:              data.ID,
 		UpdatedAt:       time.Now(),
-		ChangeTaskID:    data.ChangeTaskID,
 		Attempt:         data.Attempt,
 		Status:          data.Status,
 		StartedAt:       data.StartedAt,
@@ -106,6 +105,7 @@ func (cta changeTaskAttempt) Update(ctx context.Context, db storage.Executor, da
 		FinishedAt:      data.FinishedAt,
 		Result:          data.Result,
 		Error:           data.Error,
+		ChangeTaskID:    data.ChangeTaskID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -115,7 +115,6 @@ func (cta changeTaskAttempt) Update(ctx context.Context, db storage.Executor, da
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
-		Column("change_task_id").
 		Column("attempt").
 		Column("status").
 		Column("started_at").
@@ -123,6 +122,7 @@ func (cta changeTaskAttempt) Update(ctx context.Context, db storage.Executor, da
 		Column("finished_at").
 		Column("result").
 		Column("error").
+		Column("change_task_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -204,7 +204,6 @@ func (cta changeTaskAttempt) Upsert(ctx context.Context, db storage.Executor, da
 		ID:              uuid.New(),
 		CreatedAt:       time.Now(),
 		UpdatedAt:       time.Now(),
-		ChangeTaskID:    data.ChangeTaskID,
 		Attempt:         data.Attempt,
 		Status:          data.Status,
 		StartedAt:       data.StartedAt,
@@ -212,6 +211,7 @@ func (cta changeTaskAttempt) Upsert(ctx context.Context, db storage.Executor, da
 		FinishedAt:      data.FinishedAt,
 		Result:          data.Result,
 		Error:           data.Error,
+		ChangeTaskID:    data.ChangeTaskID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -221,7 +221,6 @@ func (cta changeTaskAttempt) Upsert(ctx context.Context, db storage.Executor, da
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
-		Set("change_task_id = excluded.change_task_id").
 		Set("attempt = excluded.attempt").
 		Set("status = excluded.status").
 		Set("started_at = excluded.started_at").
@@ -229,6 +228,7 @@ func (cta changeTaskAttempt) Upsert(ctx context.Context, db storage.Executor, da
 		Set("finished_at = excluded.finished_at").
 		Set("result = excluded.result").
 		Set("error = excluded.error").
+		Set("change_task_id = excluded.change_task_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ChangeTaskAttemptEntity{}, err
