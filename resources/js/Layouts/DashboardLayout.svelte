@@ -1,8 +1,16 @@
 <script lang="ts">
+  import AppWindowIcon from '@lucide/svelte/icons/app-window'
   import ChevronDownIcon from '@lucide/svelte/icons/chevron-down'
+  import DatabaseIcon from '@lucide/svelte/icons/database'
+  import GitBranchIcon from '@lucide/svelte/icons/git-branch'
+  import KeyRoundIcon from '@lucide/svelte/icons/key-round'
   import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard'
   import LogOutIcon from '@lucide/svelte/icons/log-out'
-  import { Link, router } from '@inertiajs/svelte'
+  import NetworkIcon from '@lucide/svelte/icons/network'
+  import ServerIcon from '@lucide/svelte/icons/server'
+  import SettingsIcon from '@lucide/svelte/icons/settings'
+  import ShieldCheckIcon from '@lucide/svelte/icons/shield-check'
+  import { Link, page, router } from '@inertiajs/svelte'
   import type { Snippet } from 'svelte'
 
   import { Button } from '@/Components/ui/button'
@@ -44,15 +52,103 @@
 
     <Sidebar.Content>
       <Sidebar.Group>
-        <Sidebar.GroupLabel>Workspace</Sidebar.GroupLabel>
+        <Sidebar.GroupLabel>Dashboard</Sidebar.GroupLabel>
         <Sidebar.GroupContent>
           <Sidebar.Menu>
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive tooltipContent="Dashboard">
+              <Sidebar.MenuButton isActive={$page.url === routes.homePage()} tooltipContent="Home">
                 {#snippet child({ props })}
                   <Link {...props} href={routes.homePage()}>
                     <LayoutDashboardIcon />
-                    <span>Dashboard</span>
+                    <span>Home</span>
+                  </Link>
+                {/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton disabled tooltipContent="Applications">
+                <AppWindowIcon />
+                <span>Applications</span>
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton disabled tooltipContent="Resources">
+                <DatabaseIcon />
+                <span>Resources</span>
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+          </Sidebar.Menu>
+        </Sidebar.GroupContent>
+      </Sidebar.Group>
+
+      <Sidebar.Group>
+        <Sidebar.GroupLabel>Infrastructure</Sidebar.GroupLabel>
+        <Sidebar.GroupContent>
+          <Sidebar.Menu>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.serverIndex())} tooltipContent="Servers">
+                {#snippet child({ props })}
+                  <Link {...props} href={routes.serverIndex()}>
+                    <ServerIcon />
+                    <span>Servers</span>
+                  </Link>
+                {/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.privateNetworkIndex()) || $page.url.startsWith('/server-network-attachments')} tooltipContent="Networks">
+                {#snippet child({ props })}
+                  <Link {...props} href={routes.privateNetworkIndex()}>
+                    <NetworkIcon />
+                    <span>Networks</span>
+                  </Link>
+                {/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+          </Sidebar.Menu>
+        </Sidebar.GroupContent>
+      </Sidebar.Group>
+
+      <Sidebar.Group>
+        <Sidebar.GroupLabel>Connections</Sidebar.GroupLabel>
+        <Sidebar.GroupContent>
+          <Sidebar.Menu>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton disabled tooltipContent="Provider Credentials">
+                <KeyRoundIcon />
+                <span>Provider Credentials</span>
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton disabled tooltipContent="Repositories">
+                <GitBranchIcon />
+                <span>Repositories</span>
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+          </Sidebar.Menu>
+        </Sidebar.GroupContent>
+      </Sidebar.Group>
+
+      <Sidebar.Group>
+        <Sidebar.GroupLabel>System</Sidebar.GroupLabel>
+        <Sidebar.GroupContent>
+          <Sidebar.Menu>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={$page.url === routes.systemOverview()} tooltipContent="Overview">
+                {#snippet child({ props })}
+                  <Link {...props} href={routes.systemOverview()}>
+                    <ShieldCheckIcon />
+                    <span>Overview</span>
+                  </Link>
+                {/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.selfUpdateSettings())} tooltipContent="Updates">
+                {#snippet child({ props })}
+                  <Link {...props} href={routes.selfUpdateSettings()}>
+                    <SettingsIcon />
+                    <span>Updates</span>
                   </Link>
                 {/snippet}
               </Sidebar.MenuButton>

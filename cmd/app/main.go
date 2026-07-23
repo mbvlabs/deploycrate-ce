@@ -26,7 +26,7 @@ import (
 	"go.uber.org/fx"
 )
 
-var appVersion string
+var appVersion = "dev"
 
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -38,6 +38,7 @@ func main() {
 	app := fx.New(
 		fx.Provide(
 			func() context.Context { return ctx },
+			func() services.CurrentVersion { return services.CurrentVersion(appVersion) },
 			func(cfg config.Config) (email.TransactionalSender, email.MarketingSender) {
 				if config.Env == server.ProdEnvironment {
 					log.Fatal("provide real email sender")

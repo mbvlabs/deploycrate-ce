@@ -12,6 +12,10 @@ import (
 	"github.com/uptrace/bun"
 )
 
+const SystemApplicationSlug = "deploycrate-ce"
+
+var ErrSystemApplicationImmutable = errors.New("the DeployCrate CE system application cannot be modified")
+
 type ApplicationEntity struct {
 	bun.BaseModel `bun:"table:applications,alias:applications"`
 	ID            uuid.UUID    `bun:"id,pk,type:uuid"`
@@ -26,11 +30,41 @@ func (e *ApplicationEntity) Validate() error {
 	return nil
 }
 
+func (e ApplicationEntity) IsSystem() bool {
+	return e.Slug == SystemApplicationSlug
+}
+
 func (a application) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (ApplicationEntity, error) {
 	var entity ApplicationEntity
 	if err := db.NewSelect().
 		Model(&entity).
 		Where("id = ?", id).
+		Where("slug <> ?", SystemApplicationSlug).
+		Scan(ctx); err != nil {
+		return ApplicationEntity{}, err
+	}
+
+	return entity, nil
+}
+
+func (a application) findIncludingSystem(ctx context.Context, db storage.Executor, id uuid.UUID) (ApplicationEntity, error) {
+	var entity ApplicationEntity
+	if err := db.NewSelect().
+		Model(&entity).
+		Where("id = ?", id).
+		Scan(ctx); err != nil {
+		return ApplicationEntity{}, err
+	}
+
+	return entity, nil
+}
+
+func (a application) FindSystem(ctx context.Context, db storage.Executor) (ApplicationEntity, error) {
+	var entity ApplicationEntity
+	if err := db.NewSelect().
+		Model(&entity).
+		Where("slug = ?", SystemApplicationSlug).
+		Limit(1).
 		Scan(ctx); err != nil {
 		return ApplicationEntity{}, err
 	}
@@ -74,6 +108,14 @@ type UpdateApplicationData struct {
 }
 
 func (a application) Update(ctx context.Context, db storage.Executor, data UpdateApplicationData) (ApplicationEntity, error) {
+	existing, err := a.findIncludingSystem(ctx, db, data.ID)
+	if err != nil {
+		return ApplicationEntity{}, err
+	}
+	if existing.IsSystem() || data.Slug == SystemApplicationSlug {
+		return ApplicationEntity{}, ErrSystemApplicationImmutable
+	}
+
 	entity := ApplicationEntity{
 		ID:         data.ID,
 		UpdatedAt:  time.Now(),
@@ -102,7 +144,15 @@ func (a application) Update(ctx context.Context, db storage.Executor, data Updat
 }
 
 func (a application) Destroy(ctx context.Context, db storage.Executor, id uuid.UUID) error {
-	_, err := db.NewDelete().
+	existing, err := a.findIncludingSystem(ctx, db, id)
+	if err != nil {
+		return err
+	}
+	if existing.IsSystem() {
+		return ErrSystemApplicationImmutable
+	}
+
+	_, err = db.NewDelete().
 		Model((*ApplicationEntity)(nil)).
 		Where("id = ?", id).
 		Exec(ctx)
@@ -114,6 +164,7 @@ func (a application) All(ctx context.Context, db storage.Executor) ([]Applicatio
 	var entities []ApplicationEntity
 	if err := db.NewSelect().
 		Model(&entities).
+		Where("slug <> ?", SystemApplicationSlug).
 		Scan(ctx); err != nil {
 		return nil, err
 	}
@@ -143,7 +194,9 @@ func (a application) Paginate(ctx context.Context, db storage.Executor, page, pa
 	offset := (page - 1) * pageSize
 
 	totalCount, err := db.NewSelect().
-		Model(&ApplicationEntity{}).Count(ctx)
+		Model(&ApplicationEntity{}).
+		Where("slug <> ?", SystemApplicationSlug).
+		Count(ctx)
 	if err != nil {
 		return PaginatedApplications{}, err
 	}
@@ -151,6 +204,7 @@ func (a application) Paginate(ctx context.Context, db storage.Executor, page, pa
 	entities := make([]ApplicationEntity, 0, int(pageSize))
 	if err := db.NewSelect().
 		Model(&entities).
+		Where("slug <> ?", SystemApplicationSlug).
 		Limit(int(pageSize)).
 		Offset(int(offset)).
 		Scan(ctx); err != nil {
