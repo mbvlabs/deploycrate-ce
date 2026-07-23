@@ -83,6 +83,9 @@ func Development(ctx context.Context, exec storage.Executor) error {
 		}
 
 		fmt.Printf("Updated development admin user: %s\n", admin.Email)
+		if err := ensureSystemApplication(ctx, exec, time.Now()); err != nil {
+			return err
+		}
 		return nil
 	}
 	if !errors.Is(err, models.ErrNotFound) {
@@ -100,7 +103,7 @@ func Development(ctx context.Context, exec storage.Executor) error {
 	}
 	fmt.Printf("Created development admin user: %s\n", admin.Email)
 
-	return nil
+	return ensureSystemApplication(ctx, exec, time.Now())
 }
 
 func Test(ctx context.Context, exec storage.Executor) error {

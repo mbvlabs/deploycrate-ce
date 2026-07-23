@@ -2,7 +2,9 @@
   import ChevronDownIcon from '@lucide/svelte/icons/chevron-down'
   import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard'
   import LogOutIcon from '@lucide/svelte/icons/log-out'
-  import { Link, router } from '@inertiajs/svelte'
+  import SettingsIcon from '@lucide/svelte/icons/settings'
+  import ShieldCheckIcon from '@lucide/svelte/icons/shield-check'
+  import { Link, page, router } from '@inertiajs/svelte'
   import type { Snippet } from 'svelte'
 
   import { Button } from '@/Components/ui/button'
@@ -53,6 +55,34 @@
                   <Link {...props} href={routes.homePage()}>
                     <LayoutDashboardIcon />
                     <span>Dashboard</span>
+                  </Link>
+                {/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+          </Sidebar.Menu>
+        </Sidebar.GroupContent>
+      </Sidebar.Group>
+
+      <Sidebar.Group>
+        <Sidebar.GroupLabel>System</Sidebar.GroupLabel>
+        <Sidebar.GroupContent>
+          <Sidebar.Menu>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={$page.url === routes.systemOverview()} tooltipContent="Overview">
+                {#snippet child({ props })}
+                  <Link {...props} href={routes.systemOverview()}>
+                    <ShieldCheckIcon />
+                    <span>Overview</span>
+                  </Link>
+                {/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.selfUpdateSettings())} tooltipContent="Updates">
+                {#snippet child({ props })}
+                  <Link {...props} href={routes.selfUpdateSettings()}>
+                    <SettingsIcon />
+                    <span>Updates</span>
                   </Link>
                 {/snippet}
               </Sidebar.MenuButton>

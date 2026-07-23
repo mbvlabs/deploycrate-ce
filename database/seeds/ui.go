@@ -1082,7 +1082,11 @@ func UI(ctx context.Context, exec storage.Executor) error {
 		return fmt.Errorf("create analytics event bus binding credential: %w", err)
 	}
 
-	fmt.Println("Created UI seed data: 3 servers, 3 networks, 3 applications, 3 environments, 4 resources, and 5 dependencies")
+	if err := ensureSystemApplication(ctx, exec, now); err != nil {
+		return err
+	}
+
+	fmt.Println("Created UI seed data: 4 servers, 4 networks, 4 applications, 4 environments, 5 resources, 5 dependencies, including the DeployCrate CE system topology")
 
 	return nil
 }

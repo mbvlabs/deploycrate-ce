@@ -8,7 +8,10 @@ export const routes = {
   passwordEdit: (token: string) => `/users/password/${token}/edit`,
   passwordNew: () => '/users/password/new',
   passwordUpdate: () => '/users/password',
+  selfUpdateSettings: () => '/settings/updates',
+  selfUpdateSettingsCreate: () => '/settings/updates',
   sessionCreate: () => '/users/sign-in',
   sessionDestroy: () => '/users/sign-out',
   sessionNew: () => '/users/sign-in',
+  systemOverview: () => '/system',
 }
