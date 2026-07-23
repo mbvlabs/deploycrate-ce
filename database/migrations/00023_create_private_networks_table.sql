@@ -7,8 +7,6 @@ CREATE TABLE private_networks (
     updated_at TIMESTAMPTZ NOT NULL,
 
     name TEXT NOT NULL,
-    cidr CIDR NOT NULL,
-    scope TEXT NOT NULL,
     archived_at TIMESTAMPTZ,
 
     owner_environment_id UUID REFERENCES environments (id) ON DELETE RESTRICT

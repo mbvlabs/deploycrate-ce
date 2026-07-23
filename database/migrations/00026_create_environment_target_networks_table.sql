@@ -6,7 +6,6 @@ CREATE TABLE environment_target_networks (
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
 
-    address INET NOT NULL,
     driver TEXT NOT NULL,
     external_id TEXT,
     configuration JSONB NOT NULL,
