@@ -125,12 +125,12 @@ func applicationBinaryStep() Step {
 			complete := releaseErr == nil && slotErr == nil && releaseInfo.Mode().IsRegular() && slotInfo.Mode().IsRegular()
 			return CheckResult{Complete: complete, Detail: "release binary and blue slot already installed"}, nil
 		},
-		apply: func(_ context.Context, cfg Config, runtime Runtime, report Reporter) error {
+		apply: func(ctx context.Context, cfg Config, runtime Runtime, report Reporter) error {
 			if runtime.DryRun {
 				report(Event{Kind: EventLog, StepID: "application-binary", Line: "dry run: release binary placement skipped"})
 				return nil
 			}
-			return InstallApplicationReleaseBinary("", cfg.Version)
+			return InstallApplicationReleaseBinary(ctx, "", cfg.Version)
 		},
 	}
 }

@@ -1,6 +1,7 @@
 package setup
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
@@ -127,15 +128,20 @@ func WriteBackupEnvironment(cfg Config) error {
 }
 
 func InstallApplicationBinary(source string) error {
-	return InstallApplicationReleaseBinary(source, "bootstrap")
+	return InstallApplicationReleaseBinary(context.Background(), source, "bootstrap")
 }
 
-func InstallApplicationReleaseBinary(source, version string) error {
+func InstallApplicationReleaseBinary(ctx context.Context, source, version string) error {
 	if source == "" {
 		source = os.Getenv("DEPLOYCRATE_CE_RELEASE_BINARY")
 	}
 	if source == "" {
-		source = "/usr/local/bin/deploycrate-ce"
+		acquired, cleanup, err := acquireDevelopmentApplicationBinary(ctx)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		source = acquired
 	}
 	return installApplicationBinary(source, version)
 }
@@ -144,7 +150,7 @@ func installApplicationBinary(source, version string) error {
 	target := ApplicationReleaseBinaryPath(version)
 	input, err := os.Open(source)
 	if err != nil {
-		return fmt.Errorf("open release binary %s: %w (GitHub/Cloudflare acquisition adapter is pending)", source, err)
+		return fmt.Errorf("open release binary %s: %w", source, err)
 	}
 	defer input.Close()
 

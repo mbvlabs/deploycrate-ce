@@ -3,5 +3,6 @@ node_modules
 bin
 assets/dist
 tmp
+/dist
 deploycrate-ce.db
 .andurel-upgrade-state.json
