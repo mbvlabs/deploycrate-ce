@@ -7,7 +7,6 @@ import (
 	"deploycrate-ce/models"
 	"github.com/google/uuid"
 
-	"github.com/labstack/echo-contrib/v5/session"
 	"github.com/labstack/echo/v5"
 )
 
@@ -29,7 +28,7 @@ type App struct {
 }
 
 func CreateAppSession(c *echo.Context, user models.UserEntity) error {
-	sess, err := session.Get(config.AppCookieSessionName, c)
+	sess, err := getSession(config.AppCookieSessionName, c)
 	if err != nil {
 		return err
 	}
@@ -43,7 +42,7 @@ func CreateAppSession(c *echo.Context, user models.UserEntity) error {
 }
 
 func DestroyAppSession(c *echo.Context) error {
-	sess, err := session.Get(config.AppCookieSessionName, c)
+	sess, err := getSession(config.AppCookieSessionName, c)
 	if err != nil {
 		return err
 	}
@@ -53,7 +52,7 @@ func DestroyAppSession(c *echo.Context) error {
 }
 
 func ExtractFromCookieApp(c *echo.Context) App {
-	sess, err := session.Get(config.AppCookieSessionName, c)
+	sess, err := getSession(config.AppCookieSessionName, c)
 	if err != nil {
 		return App{}
 	}
@@ -77,7 +76,7 @@ func ExtractFromCookieApp(c *echo.Context) App {
 }
 
 func SetReturnTo(c *echo.Context, returnTo string) error {
-	sess, err := session.Get(config.AppCookieSessionName, c)
+	sess, err := getSession(config.AppCookieSessionName, c)
 	if err != nil {
 		return err
 	}
@@ -92,7 +91,7 @@ func SetReturnTo(c *echo.Context, returnTo string) error {
 }
 
 func GetReturnTo(c *echo.Context) string {
-	sess, err := session.Get(config.AppCookieSessionName, c)
+	sess, err := getSession(config.AppCookieSessionName, c)
 	if err != nil {
 		return ""
 	}

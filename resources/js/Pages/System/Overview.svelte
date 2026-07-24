@@ -67,11 +67,11 @@
         <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">System</p>
         <h1 class="mt-3 text-3xl font-semibold tracking-tight">{system.applicationName}</h1>
         <p class="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
-          The control plane is managed as a protected system application. Its deployment topology is visible here but cannot be edited from the applications workspace.
+          The control PLANE is managed as a protected system application. Its deployment topology is visible here but cannot be edited from the applications workspace.
         </p>
       </div>
       <Link
-        href={routes.selfUpdateSettings()}
+        href={routes.systemUpdate()}
         class="inline-flex h-9 shrink-0 items-center justify-center gap-2 border border-border bg-background px-4 text-sm font-medium transition-colors hover:bg-muted"
       >
         Manage updates

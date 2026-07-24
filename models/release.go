@@ -235,3 +235,27 @@ func (r release) Upsert(ctx context.Context, db storage.Executor, data CreateRel
 
 	return entity, nil
 }
+
+func (r release) RecordArtifactDigest(ctx context.Context, db storage.Executor, id uuid.UUID, digest []byte) error {
+	_, err := db.NewUpdate().
+		TableExpr("releases").
+		Set("artifact_digest = ?", digest).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+func (r release) UnresolvedSystemUpdateArtifacts(ctx context.Context, db storage.Executor) ([]string, error) {
+	var paths []string
+	err := db.NewSelect().
+		TableExpr("releases AS release").
+		ColumnExpr("release.artifact_reference").
+		Join("JOIN deployments AS deployment ON deployment.release_id = release.id").
+		Join("JOIN changes AS change ON change.id = deployment.change_id").
+		Where("change.kind = ?", "system_update").
+		Where("change.cause_system = ?", "deploycrate-ce").
+		Where("deployment.status IN (?)", bun.In([]string{"queued", "in_progress"})).
+		Scan(ctx, &paths)
+	return paths, err
+}

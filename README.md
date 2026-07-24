@@ -35,6 +35,9 @@ curl -fsSL https://get-dev.deploycrate.com/install.sh | sudo bash
 
 The development installer verifies the CLI checksum and installs the CLI first. During bootstrap, the CLI downloads and verifies the matching application binary from the same development endpoint. `DEPLOYCRATE_DEVELOPMENT_BASE_URL` can select a compatible mirror. Maintainers publish both development binaries, checksums, and the installer with `just development-assets`; the recipe synchronizes the resulting directory to `dc-ce-dev:deploycrate-development`.
 
+> [!WARNING]
+> Development self-updates currently verify SHA-256 checksums but do not authenticate the checksum metadata. Before this channel is used for production releases, publish signed checksum metadata and pin the accepted signing identity or public key in DeployCrate CE. A checksum by itself does not protect against an attacker replacing both the binary and checksum in the release bucket.
+
 ### Wizard Inputs
 
 The wizard collects and reviews:
@@ -182,7 +185,11 @@ Caddy sends public traffic to the 100-weight slot
 
 DeployCrate queries `systemctl is-active` for both slot services. It refuses to update if both are running, neither is running, or the running service disagrees with the active slot recorded by the 100-weight database backend.
 
-During an update, DeployCrate installs the verified binary in a new immutable release directory, repoints only the inactive slot symlink, starts that slot, and checks its internal health endpoint. It then switches Caddy weights from `100/0` to `0/100`, verifies the public health endpoint, enables the new systemd unit for the next boot, disables the previous unit, and finally stops the previous slot. Any failure before completion restores traffic, service enablement, and the previous inactive-slot symlink.
+Development builds use the fixed `https://get-dev.deploycrate.com/dc-ce-app/deploycrate-ce` object and its `.sha256` file. The updater executes the checksum-verified binary's `version` command to identify the target. Builds named `dev` or `development-*` select this source automatically. Other versions require an explicit Cloudflare R2 base URL in `DEPLOYCRATE_CE_RELEASE_BASE_URL`.
+
+During an update, DeployCrate installs the checksum-verified binary in a new immutable release directory, runs that binary's embedded database migrations, repoints only the inactive slot symlink, starts that slot, and checks its database-backed health endpoint. It then switches Caddy weights from `100/0` to `0/100`, verifies the public health endpoint, and updates systemd boot state. Database checkpoints record each external side effect so a surviving slot can complete a healthy cutover or restore traffic, service enablement, service state, and the previous inactive-slot symlink after interruption. Success is recorded only after the old service is inactive and the persisted topology is committed.
+
+Self-update migrations must follow expand-and-contract compatibility because the previous binary remains available during cutover and database migrations are not automatically reversed.
 
 An operator can inspect the host-side state with:
 

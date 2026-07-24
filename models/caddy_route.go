@@ -235,3 +235,14 @@ func (cr caddyRoute) Upsert(ctx context.Context, db storage.Executor, data Creat
 
 	return entity, nil
 }
+
+func (cr caddyRoute) ActivateRelease(ctx context.Context, db storage.Executor, id, releaseID uuid.UUID, at time.Time) error {
+	_, err := db.NewUpdate().
+		TableExpr("caddy_routes").
+		Set("release_id = ?", releaseID).
+		Set("observed_at = ?", at).
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}

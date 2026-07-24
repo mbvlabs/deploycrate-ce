@@ -17,6 +17,7 @@ import (
 	"deploycrate-ce/email"
 	"deploycrate-ce/internal/inertia"
 	"deploycrate-ce/internal/server"
+	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/queue"
 	"deploycrate-ce/router"
 	"deploycrate-ce/services"
@@ -28,9 +29,17 @@ import (
 var appVersion = "dev"
 
 func main() {
+	if len(os.Args) > 1 {
+		if err := runCommand(context.Background(), os.Args[1:]); err != nil {
+			fmt.Fprintf(os.Stderr, "%s\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if err := inertia.Init("inertia/root.go.html"); err != nil {
+	if err := inertia.Init("inertia/root.go.html", inertia.WithSharedProp("appVersion", appVersion)); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to initialize inertia: %s\n", err)
 		os.Exit(1)
 	}
@@ -73,6 +82,33 @@ func main() {
 	if err := app.Stop(shutdownCtx); err != nil {
 		fmt.Fprintf(os.Stderr, "%s\n", err)
 		os.Exit(1)
+	}
+}
+
+func runCommand(ctx context.Context, arguments []string) error {
+	switch arguments[0] {
+	case "version":
+		if len(arguments) != 1 {
+			return errors.New("usage: deploycrate-ce version")
+		}
+		fmt.Println(appVersion)
+		return nil
+	case "migrate":
+		if len(arguments) != 1 {
+			return errors.New("usage: deploycrate-ce migrate")
+		}
+		cfg := config.NewConfig()
+		db, err := database.NewPostgres(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		if err := storage.RunMigrations(ctx, db.Conn(), database.Migrations, "migrations"); err != nil {
+			return fmt.Errorf("run database migrations: %w", err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown deploycrate-ce command %q", arguments[0])
 	}
 }
 

@@ -26,10 +26,10 @@ export const routes = {
   serverNew: () => '/servers/new',
   serverShow: (id: string) => `/servers/${id}`,
   serverUpdate: (id: string) => `/servers/${id}`,
-  selfUpdateSettings: () => '/settings/updates',
-  selfUpdateSettingsCreate: () => '/settings/updates',
   sessionCreate: () => '/users/sign-in',
   sessionDestroy: () => '/users/sign-out',
   sessionNew: () => '/users/sign-in',
   systemOverview: () => '/system',
+  systemUpdate: () => '/system/update',
+  systemUpdateCreate: () => '/system/update',
 }

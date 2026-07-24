@@ -41,8 +41,8 @@ func (s SelfUpdates) RegisterRoutes(r *router.Router) error {
 
 	_, err = r.AddRoute(echo.Route{
 		Method:  http.MethodGet,
-		Path:    routes.SelfUpdateSettings.Path(),
-		Name:    routes.SelfUpdateSettings.Name(),
+		Path:    routes.SystemUpdate.Path(),
+		Name:    routes.SystemUpdate.Name(),
 		Handler: s.Show,
 		Middlewares: []echo.MiddlewareFunc{
 			middleware.AuthOnly,
@@ -54,8 +54,8 @@ func (s SelfUpdates) RegisterRoutes(r *router.Router) error {
 
 	_, err = r.AddRoute(echo.Route{
 		Method:  http.MethodPost,
-		Path:    routes.SelfUpdateSettingsCreate.Path(),
-		Name:    routes.SelfUpdateSettingsCreate.Name(),
+		Path:    routes.SystemUpdateCreate.Path(),
+		Name:    routes.SystemUpdateCreate.Name(),
 		Handler: s.Create,
 		Middlewares: []echo.MiddlewareFunc{
 			middleware.AuthOnly,
@@ -84,20 +84,12 @@ func (s SelfUpdates) Overview(etx *echo.Context) error {
 }
 
 func (s SelfUpdates) Show(etx *echo.Context) error {
-	release, releaseErr := s.service.Check(etx.Request().Context())
-	releaseError := ""
-	if releaseErr != nil {
-		releaseError = releaseErr.Error()
-		slog.WarnContext(etx.Request().Context(), "failed to check for DeployCrate CE updates", "error", releaseErr)
-	}
-
-	return inertia.Page(etx, "Settings/Updates", inertia.Props{
+	return inertia.Page(etx, "System/Update", inertia.Props{
 		"auth": inertia.Props{
 			"email": cookies.ExtractFromCookieApp(etx).Email,
 		},
-		"release":      release,
-		"releaseError": releaseError,
-		"update":       s.service.Status(),
+		"currentVersion": s.service.CurrentVersion(),
+		"update":         s.service.Status(),
 	})
 }
 
@@ -107,8 +99,6 @@ func (s SelfUpdates) Create(etx *echo.Context) error {
 	switch {
 	case err == nil:
 		err = cookies.AddFlash(etx, cookies.FlashSuccess, "DeployCrate CE update started")
-	case errors.Is(err, services.ErrAlreadyCurrent):
-		err = cookies.AddFlash(etx, cookies.FlashInfo, err.Error())
 	case errors.Is(err, services.ErrUpdateInProgress):
 		err = cookies.AddFlash(etx, cookies.FlashInfo, err.Error())
 	default:
@@ -119,5 +109,5 @@ func (s SelfUpdates) Create(etx *echo.Context) error {
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 
-	return inertia.Redirect(etx, routes.SelfUpdateSettings.URL(), http.StatusSeeOther)
+	return inertia.Redirect(etx, routes.SystemUpdate.URL(), http.StatusSeeOther)
 }

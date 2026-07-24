@@ -252,3 +252,27 @@ func (i instance) Upsert(ctx context.Context, db storage.Executor, data CreateIn
 
 	return entity, nil
 }
+
+func (i instance) ObserveState(ctx context.Context, db storage.Executor, id uuid.UUID, state string, at time.Time) error {
+	_, err := db.NewUpdate().
+		TableExpr("instances").
+		Set("state = ?", state).
+		Set("observed_at = ?", at).
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+func (i instance) FinishSystemUpdate(ctx context.Context, db storage.Executor, id uuid.UUID, state string, removed bool, at time.Time) error {
+	query := db.NewUpdate().
+		TableExpr("instances").
+		Set("state = ?", state).
+		Set("observed_at = ?", at).
+		Set("updated_at = ?", at)
+	if removed {
+		query = query.Set("removed_at = ?", at)
+	}
+	_, err := query.Where("id = ?", id).Exec(ctx)
+	return err
+}

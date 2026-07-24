@@ -249,3 +249,42 @@ func (a application) Upsert(ctx context.Context, db storage.Executor, data Creat
 
 	return entity, nil
 }
+
+type SystemApplicationState struct {
+	ApplicationID        uuid.UUID `bun:"application_id"`
+	EnvironmentID        uuid.UUID `bun:"environment_id"`
+	EnvironmentTargetID  uuid.UUID `bun:"environment_target_id"`
+	CaddyRouteID         uuid.UUID `bun:"caddy_route_id"`
+	CaddyRouteExternalID string    `bun:"caddy_route_external_id"`
+	ActiveInstanceID     uuid.UUID `bun:"active_instance_id"`
+	ActiveInstanceSlot   string    `bun:"active_instance_slot"`
+	ActiveBackendID      int32     `bun:"active_backend_id"`
+	ActiveReleaseID      uuid.UUID `bun:"active_release_id"`
+}
+
+func (a application) FindSystemState(ctx context.Context, db storage.Executor) (SystemApplicationState, error) {
+	var state SystemApplicationState
+	if err := db.NewSelect().
+		TableExpr("applications AS application").
+		ColumnExpr("application.id AS application_id").
+		ColumnExpr("environment.id AS environment_id").
+		ColumnExpr("target.id AS environment_target_id").
+		ColumnExpr("route.id AS caddy_route_id").
+		ColumnExpr("route.external_id AS caddy_route_external_id").
+		ColumnExpr("instance.id AS active_instance_id").
+		ColumnExpr("instance.slot AS active_instance_slot").
+		ColumnExpr("backend.id AS active_backend_id").
+		ColumnExpr("instance.release_id AS active_release_id").
+		Join("JOIN environments AS environment ON environment.application_id = application.id AND environment.archived_at IS NULL").
+		Join("JOIN environment_targets AS target ON target.environment_id = environment.id AND target.detached_at IS NULL").
+		Join("JOIN caddy_routes AS route ON route.environment_target_id = target.id AND route.removed_at IS NULL").
+		Join("JOIN caddy_route_backends AS backend ON backend.caddy_route_id = route.id AND backend.removed_at IS NULL AND backend.weight = 100").
+		Join("JOIN instances AS instance ON instance.id = backend.instance_id AND instance.removed_at IS NULL").
+		Where("application.slug = ?", SystemApplicationSlug).
+		OrderExpr("route.created_at DESC").
+		Limit(1).
+		Scan(ctx, &state); err != nil {
+		return SystemApplicationState{}, err
+	}
+	return state, nil
+}

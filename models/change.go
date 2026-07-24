@@ -324,3 +324,43 @@ func (c change) Upsert(ctx context.Context, db storage.Executor, data CreateChan
 
 	return entity, nil
 }
+
+func (c change) NextSequence(ctx context.Context, db storage.Executor, environmentID uuid.UUID) (int64, error) {
+	var sequence int64
+	err := db.NewSelect().
+		TableExpr("changes").
+		ColumnExpr("COALESCE(MAX(sequence), 0) + 1").
+		Where("environment_id = ?", environmentID).
+		Scan(ctx, &sequence)
+	return sequence, err
+}
+
+func (c change) RecordProgress(ctx context.Context, db storage.Executor, id uuid.UUID, status string, at time.Time) error {
+	_, err := db.NewUpdate().
+		TableExpr("changes").
+		Set("status = ?", status).
+		Set("started_at = COALESCE(started_at, ?)", at).
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+func (c change) FinishSystemUpdate(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	status string,
+	failure sql.NullString,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("changes").
+		Set("status = ?", status).
+		Set("finished_at = ?", at).
+		Set("error = ?", failure).
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"time"
@@ -13,68 +14,38 @@ import (
 	"github.com/google/uuid"
 )
 
-type systemApplicationTopology struct {
-	ApplicationID        uuid.UUID `bun:"application_id"`
-	EnvironmentID        uuid.UUID `bun:"environment_id"`
-	EnvironmentTargetID  uuid.UUID `bun:"environment_target_id"`
-	CaddyRouteID         uuid.UUID `bun:"caddy_route_id"`
-	CaddyRouteExternalID string    `bun:"caddy_route_external_id"`
-	ActiveInstanceID     uuid.UUID `bun:"active_instance_id"`
-	ActiveInstanceSlot   string    `bun:"active_instance_slot"`
-	ActiveBackendID      int32     `bun:"active_backend_id"`
-	ActiveReleaseID      uuid.UUID `bun:"active_release_id"`
-}
+type systemApplicationState = models.SystemApplicationState
 
 type selfUpdateDeployment struct {
-	Topology      systemApplicationTopology
+	SystemState   systemApplicationState
 	ChangeID      uuid.UUID
 	ReleaseID     uuid.UUID
+	Version       string
+	ReleasePath   string
 	DeploymentID  uuid.UUID
 	InstanceID    uuid.UUID
 	BackendID     int32
 	EventSequence int64
 	InactiveSlot  string
+	Checkpoint    models.SystemUpdateCheckpoint
 }
 
-func (s *SelfUpdate) loadSystemTopology(ctx context.Context) (systemApplicationTopology, error) {
-	if _, err := models.Application.FindSystem(ctx, s.db.Executor()); err != nil {
-		return systemApplicationTopology{}, fmt.Errorf("find DeployCrate CE system application: %w", err)
+func (s *SelfUpdate) loadSystemState(ctx context.Context) (systemApplicationState, error) {
+	state, err := models.Application.FindSystemState(ctx, s.db.Executor())
+	if err != nil {
+		return systemApplicationState{}, fmt.Errorf("load DeployCrate CE system state: %w", err)
 	}
-
-	var topology systemApplicationTopology
-	if err := s.db.Executor().NewSelect().
-		TableExpr("applications AS application").
-		ColumnExpr("application.id AS application_id").
-		ColumnExpr("environment.id AS environment_id").
-		ColumnExpr("target.id AS environment_target_id").
-		ColumnExpr("route.id AS caddy_route_id").
-		ColumnExpr("route.external_id AS caddy_route_external_id").
-		ColumnExpr("instance.id AS active_instance_id").
-		ColumnExpr("instance.slot AS active_instance_slot").
-		ColumnExpr("backend.id AS active_backend_id").
-		ColumnExpr("instance.release_id AS active_release_id").
-		Join("JOIN environments AS environment ON environment.application_id = application.id AND environment.archived_at IS NULL").
-		Join("JOIN environment_targets AS target ON target.environment_id = environment.id AND target.detached_at IS NULL").
-		Join("JOIN caddy_routes AS route ON route.environment_target_id = target.id AND route.removed_at IS NULL").
-		Join("JOIN caddy_route_backends AS backend ON backend.caddy_route_id = route.id AND backend.removed_at IS NULL AND backend.weight = 100").
-		Join("JOIN instances AS instance ON instance.id = backend.instance_id AND instance.removed_at IS NULL").
-		Where("application.slug = ?", models.SystemApplicationSlug).
-		OrderExpr("route.created_at DESC").
-		Limit(1).
-		Scan(ctx, &topology); err != nil {
-		return systemApplicationTopology{}, fmt.Errorf("load DeployCrate CE system topology: %w", err)
+	if state.ActiveInstanceSlot != blueInstance && state.ActiveInstanceSlot != greenInstance {
+		return systemApplicationState{}, fmt.Errorf("system state has invalid active slot %q", state.ActiveInstanceSlot)
 	}
-	if topology.ActiveInstanceSlot != blueInstance && topology.ActiveInstanceSlot != greenInstance {
-		return systemApplicationTopology{}, fmt.Errorf("system topology has invalid active slot %q", topology.ActiveInstanceSlot)
-	}
-	return topology, nil
+	return state, nil
 }
 
 func (s *SelfUpdate) createDeploymentRecords(
 	ctx context.Context,
 	actorID uuid.UUID,
 	release updateRelease,
-	topology systemApplicationTopology,
+	systemState systemApplicationState,
 ) (*selfUpdateDeployment, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -87,12 +58,8 @@ func (s *SelfUpdate) createDeploymentRecords(
 		}
 	}()
 
-	var sequence int64
-	if err := tx.NewSelect().
-		TableExpr("changes").
-		ColumnExpr("COALESCE(MAX(sequence), 0) + 1").
-		Where("environment_id = ?", topology.EnvironmentID).
-		Scan(ctx, &sequence); err != nil {
+	sequence, err := models.Change.NextSequence(ctx, tx, systemState.EnvironmentID)
+	if err != nil {
 		return nil, fmt.Errorf("allocate self-update change sequence: %w", err)
 	}
 
@@ -111,7 +78,7 @@ func (s *SelfUpdate) createDeploymentRecords(
 		Status:            "queued",
 		RequestedAt:       now,
 		CommittedAt:       sql.NullTime{Time: now, Valid: true},
-		EnvironmentID:     topology.EnvironmentID,
+		EnvironmentID:     systemState.EnvironmentID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create self-update change: %w", err)
@@ -122,7 +89,7 @@ func (s *SelfUpdate) createDeploymentRecords(
 		Version:           sql.NullString{String: release.Version, Valid: true},
 		ArtifactReference: releasePath,
 		ArtifactDigest:    []byte{},
-		EnvironmentID:     topology.EnvironmentID,
+		EnvironmentID:     systemState.EnvironmentID,
 		CreatedByChangeID: change.ID,
 	})
 	if err != nil {
@@ -134,7 +101,17 @@ func (s *SelfUpdate) createDeploymentRecords(
 		return nil, fmt.Errorf("associate self-update release: %w", err)
 	}
 
-	inactiveSlot := otherInstance(topology.ActiveInstanceSlot)
+	inactiveSlot := otherInstance(systemState.ActiveInstanceSlot)
+	checkpoint := models.SystemUpdateCheckpoint{
+		ServiceTemplate: "deploycrate-ce@.service",
+		ActiveSlot:      systemState.ActiveInstanceSlot,
+		TargetSlot:      inactiveSlot,
+		Phase:           "queued",
+	}
+	runtimeConfiguration, err := json.Marshal(checkpoint)
+	if err != nil {
+		return nil, fmt.Errorf("encode self-update runtime configuration: %w", err)
+	}
 	deployment, err := models.Deployment.Create(ctx, tx, models.CreateDeploymentData{
 		Attempt: 1,
 		Strategy: json.RawMessage(fmt.Sprintf(
@@ -142,16 +119,12 @@ func (s *SelfUpdate) createDeploymentRecords(
 			bluePort,
 			greenPort,
 		)),
-		RuntimeConfiguration: json.RawMessage(fmt.Sprintf(
-			`{"service_template":"deploycrate-ce@.service","active_slot":%q,"target_slot":%q}`,
-			topology.ActiveInstanceSlot,
-			inactiveSlot,
-		)),
-		Status:              "queued",
-		CurrentStep:         sql.NullString{String: "queued", Valid: true},
-		ChangeID:            change.ID,
-		ReleaseID:           releaseEntity.ID,
-		EnvironmentTargetID: topology.EnvironmentTargetID,
+		RuntimeConfiguration: runtimeConfiguration,
+		Status:               "queued",
+		CurrentStep:          sql.NullString{String: "queued", Valid: true},
+		ChangeID:             change.ID,
+		ReleaseID:            releaseEntity.ID,
+		EnvironmentTargetID:  systemState.EnvironmentTargetID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create self-update deployment: %w", err)
@@ -165,13 +138,13 @@ func (s *SelfUpdate) createDeploymentRecords(
 		ObservedAt:          now,
 		DeploymentID:        deployment.ID,
 		ReleaseID:           releaseEntity.ID,
-		EnvironmentTargetID: topology.EnvironmentTargetID,
+		EnvironmentTargetID: systemState.EnvironmentTargetID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create self-update instance: %w", err)
 	}
 	backend, err := models.CaddyRouteBackend.Create(ctx, tx, models.CreateCaddyRouteBackendData{
-		Weight: 0, CaddyRouteID: topology.CaddyRouteID, InstanceID: instance.ID,
+		Weight: 0, CaddyRouteID: systemState.CaddyRouteID, InstanceID: instance.ID,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create self-update Caddy backend: %w", err)
@@ -194,9 +167,56 @@ func (s *SelfUpdate) createDeploymentRecords(
 	}
 	committed = true
 	return &selfUpdateDeployment{
-		Topology: topology, ChangeID: change.ID, ReleaseID: releaseEntity.ID,
+		SystemState: systemState, ChangeID: change.ID, ReleaseID: releaseEntity.ID,
+		Version: release.Version, ReleasePath: releasePath,
 		DeploymentID: deployment.ID, InstanceID: instance.ID, BackendID: backend.ID,
-		EventSequence: 1, InactiveSlot: inactiveSlot,
+		EventSequence: 1, InactiveSlot: inactiveSlot, Checkpoint: checkpoint,
+	}, nil
+}
+
+func (s *SelfUpdate) persistCheckpoint(ctx context.Context, record *selfUpdateDeployment) error {
+	if record == nil {
+		return errors.New("self-update deployment record is missing")
+	}
+	checkpointCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := models.Deployment.SaveSystemUpdateCheckpoint(
+		checkpointCtx,
+		s.db.Executor(),
+		record.DeploymentID,
+		record.Checkpoint,
+	); err != nil {
+		return fmt.Errorf("persist self-update checkpoint: %w", err)
+	}
+	return nil
+}
+
+func (s *SelfUpdate) loadUnresolvedDeployment(ctx context.Context) (*selfUpdateDeployment, error) {
+	persisted, err := models.Deployment.FindUnresolvedSystemUpdate(ctx, s.db.Executor())
+	if err != nil {
+		return nil, fmt.Errorf("load unresolved self-update deployment: %w", err)
+	}
+	if persisted == nil {
+		return nil, nil
+	}
+
+	systemState, err := s.loadSystemState(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var checkpoint models.SystemUpdateCheckpoint
+	if err := json.Unmarshal(persisted.RuntimeConfig, &checkpoint); err != nil {
+		return nil, fmt.Errorf("decode self-update checkpoint: %w", err)
+	}
+	if checkpoint.ActiveSlot != systemState.ActiveInstanceSlot || checkpoint.TargetSlot != persisted.InactiveSlot {
+		return nil, errors.New("unresolved self-update checkpoint does not match the persisted system state")
+	}
+	return &selfUpdateDeployment{
+		SystemState: systemState, ChangeID: persisted.ChangeID, ReleaseID: persisted.ReleaseID,
+		Version: persisted.Version, ReleasePath: persisted.ReleasePath,
+		DeploymentID: persisted.DeploymentID, InstanceID: persisted.InstanceID,
+		BackendID: persisted.BackendID, EventSequence: persisted.EventSequence,
+		InactiveSlot: persisted.InactiveSlot, Checkpoint: checkpoint,
 	}, nil
 }
 
@@ -218,24 +238,11 @@ func (s *SelfUpdate) recordTransition(status SelfUpdateState, step, message stri
 	if status == SelfUpdateInProgress {
 		dbStatus = "in_progress"
 	}
-	if _, err := s.db.Executor().NewUpdate().
-		TableExpr("deployments").
-		Set("status = ?", dbStatus).
-		Set("current_step = ?", step).
-		Set("started_at = COALESCE(started_at, ?)", now).
-		Set("updated_at = ?", now).
-		Where("id = ?", record.DeploymentID).
-		Exec(ctx); err != nil {
+	if err := models.Deployment.RecordProgress(ctx, s.db.Executor(), record.DeploymentID, dbStatus, step, now); err != nil {
 		slogDatabaseTrackingError("update deployment progress", err)
 		return
 	}
-	if _, err := s.db.Executor().NewUpdate().
-		TableExpr("changes").
-		Set("status = ?", dbStatus).
-		Set("started_at = COALESCE(started_at, ?)", now).
-		Set("updated_at = ?", now).
-		Where("id = ?", record.ChangeID).
-		Exec(ctx); err != nil {
+	if err := models.Change.RecordProgress(ctx, s.db.Executor(), record.ChangeID, dbStatus, now); err != nil {
 		slogDatabaseTrackingError("update change progress", err)
 	}
 	if _, err := models.DeploymentEvent.Create(ctx, s.db.Executor(), models.CreateDeploymentEventData{
@@ -255,12 +262,7 @@ func (s *SelfUpdate) recordTransition(status SelfUpdateState, step, message stri
 		instanceState = "serving"
 	}
 	if instanceState != "" {
-		if _, err := s.db.Executor().NewUpdate().TableExpr("instances").
-			Set("state = ?", instanceState).
-			Set("observed_at = ?", now).
-			Set("updated_at = ?", now).
-			Where("id = ?", record.InstanceID).
-			Exec(ctx); err != nil {
+		if err := models.Instance.ObserveState(ctx, s.db.Executor(), record.InstanceID, instanceState, now); err != nil {
 			slogDatabaseTrackingError("update instance progress", err)
 		}
 	}
@@ -273,15 +275,10 @@ func (s *SelfUpdate) recordArtifact(digest []byte) error {
 	if record == nil {
 		return nil
 	}
-	_, err := s.db.Executor().NewUpdate().TableExpr("releases").
-		Set("artifact_digest = ?", digest).
-		Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", record.ReleaseID).
-		Exec(context.Background())
-	return err
+	return models.Release.RecordArtifactDigest(context.Background(), s.db.Executor(), record.ReleaseID, digest)
 }
 
-func (s *SelfUpdate) finishDeployment(succeeded bool, failure error) {
+func (s *SelfUpdate) finishDeployment(succeeded bool, failure error) error {
 	s.mu.Lock()
 	record := s.currentDeployment
 	if record != nil {
@@ -289,15 +286,14 @@ func (s *SelfUpdate) finishDeployment(succeeded bool, failure error) {
 	}
 	s.mu.Unlock()
 	if record == nil {
-		return
+		return nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
-		slogDatabaseTrackingError("begin deployment completion transaction", err)
-		return
+		return fmt.Errorf("begin deployment completion transaction: %w", err)
 	}
 	committed := false
 	defer func() {
@@ -312,26 +308,25 @@ func (s *SelfUpdate) finishDeployment(succeeded bool, failure error) {
 	step := "completed"
 	errorValue := sql.NullString{}
 	message := "Update completed"
+	checkpoint := record.Checkpoint
+	checkpoint.Phase = "completed"
 	if !succeeded {
 		deploymentStatus = "failed"
 		changeStatus = "failed"
 		step = "failed"
-		errorValue = sql.NullString{String: failure.Error(), Valid: true}
-		message = "Update failed: " + failure.Error()
+		checkpoint.Phase = "rolled_back"
+		if failure != nil {
+			errorValue = sql.NullString{String: failure.Error(), Valid: true}
+			message = "Update failed: " + failure.Error()
+		}
 	}
-	if _, err := tx.NewUpdate().TableExpr("deployments").
-		Set("status = ?", deploymentStatus).Set("current_step = ?", step).
-		Set("finished_at = ?", now).Set("error = ?", errorValue).
-		Set("updated_at = ?", now).Where("id = ?", record.DeploymentID).Exec(ctx); err != nil {
-		slogDatabaseTrackingError("finish deployment", err)
-		return
+	if err := models.Deployment.FinishSystemUpdate(
+		ctx, tx, record.DeploymentID, deploymentStatus, step, errorValue, checkpoint, now,
+	); err != nil {
+		return fmt.Errorf("finish deployment: %w", err)
 	}
-	if _, err := tx.NewUpdate().TableExpr("changes").
-		Set("status = ?", changeStatus).Set("finished_at = ?", now).
-		Set("error = ?", errorValue).Set("updated_at = ?", now).
-		Where("id = ?", record.ChangeID).Exec(ctx); err != nil {
-		slogDatabaseTrackingError("finish change", err)
-		return
+	if err := models.Change.FinishSystemUpdate(ctx, tx, record.ChangeID, changeStatus, errorValue, now); err != nil {
+		return fmt.Errorf("finish change: %w", err)
 	}
 	if _, err := models.DeploymentEvent.Create(ctx, tx, models.CreateDeploymentEventData{
 		Sequence: record.EventSequence, EventType: "deployment_status",
@@ -340,61 +335,40 @@ func (s *SelfUpdate) finishDeployment(succeeded bool, failure error) {
 		Metadata: json.RawMessage(`{}`), Error: errorValue, OccurredAt: now,
 		DeploymentID: record.DeploymentID,
 	}); err != nil {
-		slogDatabaseTrackingError("create final deployment event", err)
-		return
+		return fmt.Errorf("create final deployment event: %w", err)
 	}
 
 	if succeeded {
-		if _, err := tx.NewUpdate().TableExpr("instances").
-			Set("state = 'serving'").Set("observed_at = ?", now).Set("updated_at = ?", now).
-			Where("id = ?", record.InstanceID).Exec(ctx); err != nil {
-			slogDatabaseTrackingError("mark updated instance serving", err)
-			return
+		if err := models.Instance.FinishSystemUpdate(ctx, tx, record.InstanceID, "serving", false, now); err != nil {
+			return fmt.Errorf("mark updated instance serving: %w", err)
 		}
-		if _, err := tx.NewUpdate().TableExpr("caddy_route_backends").
-			Set("weight = 100").Set("updated_at = ?", now).
-			Where("id = ?", record.BackendID).Exec(ctx); err != nil {
-			slogDatabaseTrackingError("activate updated Caddy backend", err)
-			return
+		if err := models.CaddyRouteBackend.FinishSystemUpdate(ctx, tx, record.BackendID, 100, false, now); err != nil {
+			return fmt.Errorf("activate updated Caddy backend: %w", err)
 		}
-		if _, err := tx.NewUpdate().TableExpr("instances").
-			Set("state = 'stopped'").Set("removed_at = ?", now).Set("observed_at = ?", now).Set("updated_at = ?", now).
-			Where("id = ?", record.Topology.ActiveInstanceID).Exec(ctx); err != nil {
-			slogDatabaseTrackingError("retire previous instance", err)
-			return
+		if err := models.Instance.FinishSystemUpdate(ctx, tx, record.SystemState.ActiveInstanceID, "stopped", true, now); err != nil {
+			return fmt.Errorf("retire previous instance: %w", err)
 		}
-		if _, err := tx.NewUpdate().TableExpr("caddy_route_backends").
-			Set("weight = 0").Set("removed_at = ?", now).Set("updated_at = ?", now).
-			Where("id = ?", record.Topology.ActiveBackendID).Exec(ctx); err != nil {
-			slogDatabaseTrackingError("retire previous Caddy backend", err)
-			return
+		if err := models.CaddyRouteBackend.FinishSystemUpdate(ctx, tx, record.SystemState.ActiveBackendID, 0, true, now); err != nil {
+			return fmt.Errorf("retire previous Caddy backend: %w", err)
 		}
-		if _, err := tx.NewUpdate().TableExpr("caddy_routes").
-			Set("release_id = ?", record.ReleaseID).Set("observed_at = ?", now).Set("updated_at = ?", now).
-			Where("id = ?", record.Topology.CaddyRouteID).Exec(ctx); err != nil {
-			slogDatabaseTrackingError("update Caddy route release", err)
-			return
+		if err := models.CaddyRoute.ActivateRelease(ctx, tx, record.SystemState.CaddyRouteID, record.ReleaseID, now); err != nil {
+			return fmt.Errorf("update Caddy route release: %w", err)
 		}
 	} else {
-		if _, err := tx.NewUpdate().TableExpr("instances").
-			Set("state = 'failed'").Set("removed_at = ?", now).Set("observed_at = ?", now).Set("updated_at = ?", now).
-			Where("id = ?", record.InstanceID).Exec(ctx); err != nil {
-			slogDatabaseTrackingError("mark failed instance", err)
-			return
+		if err := models.Instance.FinishSystemUpdate(ctx, tx, record.InstanceID, "failed", true, now); err != nil {
+			return fmt.Errorf("mark failed instance: %w", err)
 		}
-		if _, err := tx.NewUpdate().TableExpr("caddy_route_backends").
-			Set("weight = 0").Set("removed_at = ?", now).Set("updated_at = ?", now).
-			Where("id = ?", record.BackendID).Exec(ctx); err != nil {
-			slogDatabaseTrackingError("remove failed Caddy backend", err)
-			return
+		if err := models.CaddyRouteBackend.FinishSystemUpdate(ctx, tx, record.BackendID, 0, true, now); err != nil {
+			return fmt.Errorf("remove failed Caddy backend: %w", err)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		slogDatabaseTrackingError("commit deployment completion", err)
-		return
+		return fmt.Errorf("commit deployment completion: %w", err)
 	}
 	committed = true
+	record.Checkpoint = checkpoint
+	return nil
 }
 
 func slogDatabaseTrackingError(operation string, err error) {

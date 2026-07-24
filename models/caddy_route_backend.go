@@ -201,3 +201,15 @@ func (crb caddyRouteBackend) Upsert(ctx context.Context, db storage.Executor, da
 
 	return entity, nil
 }
+
+func (crb caddyRouteBackend) FinishSystemUpdate(ctx context.Context, db storage.Executor, id int32, weight int32, removed bool, at time.Time) error {
+	query := db.NewUpdate().
+		TableExpr("caddy_route_backends").
+		Set("weight = ?", weight).
+		Set("updated_at = ?", at)
+	if removed {
+		query = query.Set("removed_at = ?", at)
+	}
+	_, err := query.Where("id = ?", id).Exec(ctx)
+	return err
+}

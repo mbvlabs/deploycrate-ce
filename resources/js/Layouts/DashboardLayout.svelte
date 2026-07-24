@@ -20,6 +20,7 @@
   import { routes } from '@/routes'
 
   let { children, email }: { children: Snippet; email: string } = $props()
+  const appVersion = $derived(String($page.props.appVersion ?? 'dev'))
 
   function initialSidebarOpen() {
     if (typeof document === 'undefined') return true
@@ -144,9 +145,9 @@
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.selfUpdateSettings())} tooltipContent="Updates">
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.systemUpdate())} tooltipContent="Updates">
                 {#snippet child({ props })}
-                  <Link {...props} href={routes.selfUpdateSettings()}>
+                  <Link {...props} href={routes.systemUpdate()}>
                     <SettingsIcon />
                     <span>Updates</span>
                   </Link>
@@ -157,6 +158,12 @@
         </Sidebar.GroupContent>
       </Sidebar.Group>
     </Sidebar.Content>
+
+    <Sidebar.Footer class="border-t border-sidebar-border px-4 py-3 group-data-[collapsible=icon]:hidden">
+      <p class="truncate font-mono text-[10px] text-sidebar-foreground/60" title={`version: ${appVersion}`}>
+        version: {appVersion}
+      </p>
+    </Sidebar.Footer>
 
     <Sidebar.Rail />
   </Sidebar.Root>

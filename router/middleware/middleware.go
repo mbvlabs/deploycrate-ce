@@ -113,6 +113,9 @@ func ValidateSession(
 		if isAssetsPath(c.Request().URL.Path) || isAPIPath(c.Request().URL.Path) {
 			return next(c)
 		}
+		if err := cookies.RecoverInvalidSessions(c); err != nil {
+			return err
+		}
 
 		return next(c)
 	}

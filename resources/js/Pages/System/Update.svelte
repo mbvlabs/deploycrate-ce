@@ -2,7 +2,6 @@
   import AlertTriangleIcon from '@lucide/svelte/icons/triangle-alert'
   import CheckCircleIcon from '@lucide/svelte/icons/circle-check'
   import DownloadIcon from '@lucide/svelte/icons/download'
-  import ExternalLinkIcon from '@lucide/svelte/icons/external-link'
   import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle'
   import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw'
   import { router } from '@inertiajs/svelte'
@@ -13,13 +12,6 @@
   import { Separator } from '@/Components/ui/separator'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
-
-  type ReleaseStatus = {
-    currentVersion: string
-    latestVersion: string
-    updateAvailable: boolean
-    releaseUrl: string
-  }
 
   type UpdateEvent = {
     id: string
@@ -41,26 +33,24 @@
 
   let {
     auth,
-    release,
-    releaseError = '',
+    currentVersion,
     update,
   }: {
     auth: { email: string }
-    release: ReleaseStatus
-    releaseError?: string
+    currentVersion: string
     update: UpdateStatus
   } = $props()
 
   let starting = $state(false)
   const running = $derived(update.state === 'queued' || update.state === 'in_progress')
-  const canUpdate = $derived(!releaseError && release.updateAvailable && !running)
+  const canUpdate = $derived(!running)
   const updateEvents = $derived(update.events ?? [])
 
   $effect(() => {
     if (!running) return
 
     const timer = window.setInterval(() => {
-      router.reload({ only: ['release', 'releaseError', 'update'], preserveScroll: true })
+      router.reload({ only: ['appVersion', 'currentVersion', 'update'], preserveScroll: true })
     }, 1000)
 
     return () => window.clearInterval(timer)
@@ -68,7 +58,7 @@
 
   function startUpdate() {
     router.post(
-      routes.selfUpdateSettingsCreate(),
+      routes.systemUpdateCreate(),
       {},
       {
         preserveScroll: true,
@@ -102,20 +92,12 @@
 <DashboardLayout email={auth.email}>
   <div class="space-y-8">
     <section class="max-w-3xl">
-      <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">Settings</p>
+      <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">System</p>
       <h1 class="mt-3 text-3xl font-semibold tracking-tight">DeployCrate CE updates</h1>
       <p class="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
-        Keep this server on the latest verified community edition release. Updates use a blue-green cutover and automatically restore the previous binary if health validation fails.
+        Keep this development server on the current Cloudflare R2 build. Updates use a blue-green cutover and automatically restore the previous binary if health validation fails.
       </p>
     </section>
-
-    {#if releaseError}
-      <Alert.Root variant="destructive">
-        <AlertTriangleIcon />
-        <Alert.Title>Release information is unavailable</Alert.Title>
-        <Alert.Description>{releaseError}</Alert.Description>
-      </Alert.Root>
-    {/if}
 
     {#if update.state === 'failed'}
       <Alert.Root variant="destructive">
@@ -137,52 +119,29 @@
       <Card.Root>
         <Card.Header>
           <Card.Title>Release channel</Card.Title>
-          <Card.Description>Latest stable releases from mbvlabs/deploycrate-ce on GitHub.</Card.Description>
+          <Card.Description>Development builds published to get-dev.deploycrate.com.</Card.Description>
         </Card.Header>
         <Card.Content class="space-y-5">
-          <div class="grid gap-4 sm:grid-cols-2">
-            <div class="border border-border bg-muted/30 p-4">
-              <p class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Installed</p>
-              <p class="mt-2 font-mono text-lg font-semibold">{versionLabel(release.currentVersion)}</p>
-            </div>
-            <div class="border border-border bg-muted/30 p-4">
-              <p class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Latest</p>
-              <p class="mt-2 font-mono text-lg font-semibold">{versionLabel(release.latestVersion)}</p>
-            </div>
+          <div class="border border-border bg-muted/30 p-4">
+            <p class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Installed</p>
+            <p class="mt-2 font-mono text-lg font-semibold">{versionLabel(currentVersion)}</p>
           </div>
-
-          {#if release.releaseUrl}
-            <a
-              class="inline-flex items-center gap-1.5 text-xs font-medium text-primary underline-offset-4 hover:underline"
-              href={release.releaseUrl}
-              target="_blank"
-              rel="noreferrer"
-            >
-              View release on GitHub
-              <ExternalLinkIcon class="size-3.5" />
-            </a>
-          {/if}
         </Card.Content>
         <Card.Footer class="justify-between gap-4 border-t border-border">
           <div class="text-xs text-muted-foreground">
             {#if running}
               Updating: {stepLabel(update.currentStep)}
-            {:else if release.updateAvailable}
-              A newer release is ready to install.
-            {:else if !releaseError}
-              This installation is current.
+            {:else}
+              Download and install the latest development build.
             {/if}
           </div>
           <Button onclick={startUpdate} disabled={!canUpdate || starting}>
             {#if running || starting}
               <LoaderCircleIcon class="animate-spin" />
               Updating
-            {:else if release.updateAvailable}
+            {:else}
               <DownloadIcon />
               Update now
-            {:else}
-              <CheckCircleIcon />
-              Up to date
             {/if}
           </Button>
         </Card.Footer>
@@ -199,7 +158,7 @@
             {/if}
           </Card.Action>
           <Card.Title>Update activity</Card.Title>
-          <Card.Description>Verified deployment and cutover events.</Card.Description>
+          <Card.Description>Deployment and cutover events.</Card.Description>
         </Card.Header>
         <Card.Content>
           {#if updateEvents.length === 0}

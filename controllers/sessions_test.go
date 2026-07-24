@@ -17,6 +17,7 @@ import (
 	"deploycrate-ce/models/factories"
 	"deploycrate-ce/queue"
 	"deploycrate-ce/router/cookies"
+	"deploycrate-ce/router/middleware"
 	"deploycrate-ce/router/routes"
 	"deploycrate-ce/services"
 
@@ -59,6 +60,7 @@ func TestSignIn(t *testing.T) {
 		wantAuthenticated bool
 		wantFlash         string
 		wantErrors        map[string]string
+		staleCookies      bool
 	}{
 		{
 			name:              "verified user",
@@ -70,6 +72,18 @@ func TestSignIn(t *testing.T) {
 			wantLocation:      routes.HomePage.URL(),
 			wantAuthenticated: true,
 			wantFlash:         "Successfully logged in!",
+		},
+		{
+			name:              "verified user with stale session cookies",
+			createUser:        true,
+			verified:          true,
+			providedEmail:     email,
+			providedPassword:  password,
+			wantStatus:        http.StatusSeeOther,
+			wantLocation:      routes.HomePage.URL(),
+			wantAuthenticated: true,
+			wantFlash:         "Successfully logged in!",
+			staleCookies:      true,
 		},
 		{
 			name:             "wrong password",
@@ -122,7 +136,11 @@ func TestSignIn(t *testing.T) {
 
 			store := sessions.NewCookieStore([]byte("01234567890123456789012345678901"))
 			controller := NewSessions(services.NewIdentity(db, queue.InsertOnly{}, cfg))
-			response := submitSignIn(t, store, controller, test.providedEmail, test.providedPassword)
+			var requestCookies []*http.Cookie
+			if test.staleCookies {
+				requestCookies = staleSessionCookies(t)
+			}
+			response := submitSignIn(t, store, controller, test.providedEmail, test.providedPassword, requestCookies)
 
 			if response.Code != test.wantStatus {
 				t.Fatalf("status = %d, want %d; body: %s", response.Code, test.wantStatus, response.Body.String())
@@ -164,7 +182,14 @@ func TestSignIn(t *testing.T) {
 	}
 }
 
-func submitSignIn(t *testing.T, store *sessions.CookieStore, controller Sessions, email, password string) *httptest.ResponseRecorder {
+func submitSignIn(
+	t *testing.T,
+	store *sessions.CookieStore,
+	controller Sessions,
+	email string,
+	password string,
+	requestCookies []*http.Cookie,
+) *httptest.ResponseRecorder {
 	t.Helper()
 
 	body, err := json.Marshal(map[string]string{"email": email, "password": password})
@@ -174,13 +199,41 @@ func submitSignIn(t *testing.T, store *sessions.CookieStore, controller Sessions
 	request := httptest.NewRequest(http.MethodPost, routes.SessionCreate.URL(), strings.NewReader(string(body)))
 	request.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	request.Header.Set("X-Inertia", "true")
+	for _, cookie := range requestCookies {
+		request.AddCookie(cookie)
+	}
 	response := httptest.NewRecorder()
 	ctx := echo.New().NewContext(request, response)
 
-	if err := session.Middleware(store)(controller.Create)(ctx); err != nil {
+	handler := middleware.ValidateSession(controller.Create)
+	if err := session.Middleware(store)(handler)(ctx); err != nil {
 		t.Fatalf("submit sign-in: %v", err)
 	}
 	return response
+}
+
+func staleSessionCookies(t *testing.T) []*http.Cookie {
+	t.Helper()
+
+	store := sessions.NewCookieStore([]byte("abcdefghijklmnopqrstuvwxyzABCDEF"))
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	response := httptest.NewRecorder()
+	ctx := echo.New().NewContext(request, response)
+	handler := func(c *echo.Context) error {
+		sess, err := session.Get(config.AppCookieSessionName, c)
+		if err != nil {
+			return err
+		}
+		sess.Values["stale"] = true
+		if err := sess.Save(c.Request(), c.Response()); err != nil {
+			return err
+		}
+		return cookies.AddFlash(c, cookies.FlashInfo, "stale")
+	}
+	if err := session.Middleware(store)(handler)(ctx); err != nil {
+		t.Fatalf("create stale sessions: %v", err)
+	}
+	return response.Result().Cookies()
 }
 
 func authenticatedFromResponse(t *testing.T, store *sessions.CookieStore, response *httptest.ResponseRecorder) bool {
@@ -210,7 +263,7 @@ func runWithResponseCookies(t *testing.T, store *sessions.CookieStore, response 
 	t.Helper()
 
 	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	for _, cookie := range response.Result().Cookies() {
+	for _, cookie := range latestResponseCookies(response.Result().Cookies()) {
 		request.AddCookie(cookie)
 	}
 	recorder := httptest.NewRecorder()
@@ -218,6 +271,19 @@ func runWithResponseCookies(t *testing.T, store *sessions.CookieStore, response 
 	if err := session.Middleware(store)(handler)(ctx); err != nil {
 		t.Fatalf("read response session: %v", err)
 	}
+}
+
+func latestResponseCookies(cookies []*http.Cookie) []*http.Cookie {
+	latest := make(map[string]*http.Cookie, len(cookies))
+	for _, cookie := range cookies {
+		latest[cookie.Name] = cookie
+	}
+
+	result := make([]*http.Cookie, 0, len(latest))
+	for _, cookie := range latest {
+		result = append(result, cookie)
+	}
+	return result
 }
 
 func signInTestConfig(t *testing.T, pepper string) config.Config {

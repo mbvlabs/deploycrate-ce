@@ -36,5 +36,8 @@ func (a API) RegisterRoutes(r *router.Router) error {
 }
 
 func (a API) Health(etx *echo.Context) error {
+	if err := a.db.Conn().PingContext(etx.Request().Context()); err != nil {
+		return etx.JSON(http.StatusServiceUnavailable, "app database is unavailable")
+	}
 	return etx.JSON(http.StatusOK, "app is healthy and running")
 }
