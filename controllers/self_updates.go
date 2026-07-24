@@ -17,30 +17,16 @@ import (
 
 type SelfUpdates struct {
 	service *services.SelfUpdate
-	health  *services.SystemHealth
 }
 
-func NewSelfUpdates(service *services.SelfUpdate, health *services.SystemHealth) SelfUpdates {
-	return SelfUpdates{service: service, health: health}
+func NewSelfUpdates(service *services.SelfUpdate) SelfUpdates {
+	return SelfUpdates{service: service}
 }
 
 func (s SelfUpdates) RegisterRoutes(r *router.Router) error {
 	errList := []error{}
 
 	_, err := r.AddRoute(echo.Route{
-		Method:  http.MethodGet,
-		Path:    routes.SystemOverview.Path(),
-		Name:    routes.SystemOverview.Name(),
-		Handler: s.Overview,
-		Middlewares: []echo.MiddlewareFunc{
-			middleware.AuthOnly,
-		},
-	})
-	if err != nil {
-		errList = append(errList, err)
-	}
-
-	_, err = r.AddRoute(echo.Route{
 		Method:  http.MethodGet,
 		Path:    routes.SystemUpdate.Path(),
 		Name:    routes.SystemUpdate.Name(),
@@ -67,27 +53,6 @@ func (s SelfUpdates) RegisterRoutes(r *router.Router) error {
 	}
 
 	return errors.Join(errList...)
-}
-
-func (s SelfUpdates) Overview(etx *echo.Context) error {
-	overview, err := s.service.Overview(etx.Request().Context())
-	if err != nil {
-		slog.ErrorContext(
-			etx.Request().Context(),
-			"failed to load DeployCrate CE system overview",
-			"error",
-			err,
-		)
-		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
-	}
-
-	return inertia.Page(etx, "System/Overview", inertia.Props{
-		"auth": inertia.Props{
-			"email": cookies.ExtractFromCookieApp(etx).Email,
-		},
-		"system": overview,
-		"health": s.health.Run(etx.Request().Context()),
-	})
 }
 
 func (s SelfUpdates) Show(etx *echo.Context) error {

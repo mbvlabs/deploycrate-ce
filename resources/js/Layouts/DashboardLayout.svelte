@@ -146,6 +146,36 @@
                 {/snippet}
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={$page.url === routes.systemDeployments()} tooltipContent="Deployments">
+                {#snippet child({ props })}
+                  <Link {...props} href={routes.systemDeployments()}>
+                    <GitBranchIcon />
+                    <span>Deployments</span>
+                  </Link>
+                {/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={$page.url === routes.systemDatabase()} tooltipContent="Database">
+                {#snippet child({ props })}
+                  <Link {...props} href={routes.systemDatabase()}>
+                    <DatabaseIcon />
+                    <span>Database</span>
+                  </Link>
+                {/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={$page.url === routes.systemNetwork()} tooltipContent="Network">
+                {#snippet child({ props })}
+                  <Link {...props} href={routes.systemNetwork()}>
+                    <NetworkIcon />
+                    <span>Network</span>
+                  </Link>
+                {/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
           </Sidebar.Menu>
         </Sidebar.GroupContent>
       </Sidebar.Group>
