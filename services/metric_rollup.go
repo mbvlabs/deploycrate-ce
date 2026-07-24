@@ -54,8 +54,8 @@ func (service MetricRollupService) Collect(ctx context.Context) error {
 	if !service.enabled {
 		return nil
 	}
-	observedAt := service.now().UTC()
-	bucketStart := observedAt.Truncate(time.Minute).Add(-time.Minute)
+	observedAt := service.now().UTC().Truncate(time.Minute)
+	bucketStart := observedAt.Add(-time.Minute)
 	identities, err := models.Application.FindMetricRollupIdentities(ctx, service.db.Executor())
 	if err != nil {
 		return fmt.Errorf("load metric rollup identities: %w", err)

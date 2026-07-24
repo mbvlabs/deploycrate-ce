@@ -4,7 +4,7 @@ A full-stack web application built with [Andurel](https://github.com/mbvlabs/and
 
 ## VPS Bootstrap CLI
 
-This repository contains the interactive `deploycrate` CLI for configuring a fresh Debian 13 VPS as a single-server DeployCrate CE host. Bootstrap is supported for fresh installations and interrupted-installation recovery only. It does not upgrade an existing DeployCrate CE installation.
+This repository contains the interactive `bootstrap` CLI for configuring a fresh Debian 13 VPS as a single-server DeployCrate CE host. Bootstrap is supported for fresh installations and interrupted-installation recovery only. It does not upgrade an existing DeployCrate CE installation.
 
 ### Host Requirements
 
@@ -25,7 +25,7 @@ The released installer is intended to be run as root from an interactive SSH ses
 curl -fsSL https://get.deploycrate.com/ce | sudo bash
 ```
 
-The shell installer downloads the release archive, verifies its SHA-256 checksum, verifies its Sigstore bundle when `cosign` is available, installs `deploycrate` and `deploycrate-ce` under `/usr/local/bin`, and opens the wizard through `/dev/tty`. Without a usable TTY it installs the binaries and prints the command needed to continue. GitHub Releases is the default asset source. `DEPLOYCRATE_VERSION`, `DEPLOYCRATE_RELEASE_REPOSITORY`, and `DEPLOYCRATE_RELEASE_BASE_URL` can select a version or compatible release mirror.
+The shell installer downloads the release archive, verifies its SHA-256 checksum, verifies its Sigstore bundle when `cosign` is available, installs `bootstrap` and `deploycrate-ce` under `/usr/local/bin`, and opens the wizard through `/dev/tty`. Without a usable TTY it installs the binaries and prints the command needed to continue. GitHub Releases is the default asset source. `DEPLOYCRATE_VERSION`, `DEPLOYCRATE_RELEASE_REPOSITORY`, and `DEPLOYCRATE_RELEASE_BASE_URL` can select a version or compatible release mirror.
 
 For the current AMD64 development build:
 
@@ -73,22 +73,22 @@ The health check retries for about one minute. A single-server WireGuard mesh ha
 
 ### Temporary Bootstrap CLI
 
-The `deploycrate` CLI exists only for installation, resume, installer logs, and offline SSH CA recovery. A successful final `CONFIRM` removes `/usr/local/bin/deploycrate` and the redundant `/usr/local/bin/deploycrate-ce` installer payload. Post-install health and update operations are owned by the running application release under `/opt/deploycrate-ce` and are available from the System screens.
+The `bootstrap` CLI exists only for installation, resume, installer logs, and offline SSH CA recovery. A successful final `CONFIRM` removes `/usr/local/bin/bootstrap` and the redundant `/usr/local/bin/deploycrate-ce` installer payload. Post-install health and update operations are owned by the running application release under `/opt/deploycrate-ce` and are available from the System screens.
 
 | Command | Behavior |
 | --- | --- |
-| `sudo deploycrate install` | Opens the wizard for a fresh host. It rejects resumable, completed, or inconsistent installer state. |
-| `sudo deploycrate install --dry-run` | Walks through the complete wizard and setup phases without preflight enforcement, persistent state, host mutation, secret cleanup, or reboot. A TTY is still required. |
-| `sudo deploycrate resume` | Loads the saved configuration, skips steps already marked complete, reruns failed or incomplete steps, and returns to credential handoff. Use this after fixing the reported failure. |
-| `sudo deploycrate resume --dry-run` | Reads an existing resumable configuration and previews every setup phase without mutation. A TTY is still required. |
-| `sudo deploycrate logs` | Prints `/var/lib/deploycrate-ce/install.log`. Script output is redacted using the collected secret values. |
-| `deploycrate version` | Prints the CLI version. `deploycrate --version` and `deploycrate -v` are aliases. |
-| `deploycrate help` | Prints command usage. Running without arguments, `deploycrate --help`, and `deploycrate -h` do the same. |
-| `sudo deploycrate ssh-ca recover --bundle PATH --passphrase-file PATH` | Decrypts and validates a version 1 recovery bundle, checks both fingerprints against the public keys already trusted by SSH, and atomically restores the protected CA directory. |
+| `sudo bootstrap install` | Opens the wizard for a fresh host. It rejects resumable, completed, or inconsistent installer state. |
+| `sudo bootstrap install --dry-run` | Walks through the complete wizard and setup phases without preflight enforcement, persistent state, host mutation, secret cleanup, or reboot. A TTY is still required. |
+| `sudo bootstrap resume` | Loads the saved configuration, skips steps already marked complete, reruns failed or incomplete steps, and returns to credential handoff. Use this after fixing the reported failure. |
+| `sudo bootstrap resume --dry-run` | Reads an existing resumable configuration and previews every setup phase without mutation. A TTY is still required. |
+| `sudo bootstrap logs` | Prints `/var/lib/deploycrate-ce/install.log`. Script output is redacted using the collected secret values. |
+| `bootstrap version` | Prints the CLI version. `bootstrap --version` and `bootstrap -v` are aliases. |
+| `bootstrap help` | Prints command usage. Running without arguments, `bootstrap --help`, and `bootstrap -h` do the same. |
+| `sudo bootstrap ssh-ca recover --bundle PATH --passphrase-file PATH` | Decrypts and validates a version 1 recovery bundle, checks both fingerprints against the public keys already trusted by SSH, and atomically restores the protected CA directory. |
 
 The application System Overview runs live checks for services, listeners, WireGuard state, node-exporter, Prometheus targets, ClickHouse, disk headroom, and agreement between the active systemd slot and PostgreSQL. These checks execute as the `deploycrate` service account and use its non-interactive sudo access where host privileges are required.
 
-Configuration is saved before the first setup phase and each completed step is recorded in `/var/lib/deploycrate-ce/install-state.json`. A non-blocking process lock prevents concurrent installers. If setup fails after configuration is saved, fix the reported problem and run `sudo deploycrate resume`; do not start a second installation. The topology transaction is reused by domain if Caddy reconciliation needs to be retried.
+Configuration is saved before the first setup phase and each completed step is recorded in `/var/lib/deploycrate-ce/install-state.json`. A non-blocking process lock prevents concurrent installers. If setup fails after configuration is saved, fix the reported problem and run `sudo bootstrap resume`; do not start a second installation. The topology transaction is reused by domain if Caddy reconciliation needs to be retried.
 
 If credential verification was recorded but secret cleanup failed, `resume` returns directly to the final handoff. If cleanup succeeded but the reboot command failed, the installation is complete and `resume` is rejected; reboot the host manually.
 
@@ -100,7 +100,7 @@ The live user and host CA private keys are owned by `deploycrate` in `/var/lib/d
 
 OpenSSH server trust reads the user CA file, which may contain overlapping public keys during rotation. OpenSSH client trust uses `/etc/ssh/deploycrate-known-hosts` for host certificates presented by WireGuard addresses matching `10.99.*`; that file can likewise contain both old and new host CA keys during a rotation window.
 
-For accidental CA loss, restore the original bundle with `deploycrate ssh-ca recover`. Suspected compromise is different: generate new CAs, distribute both new public keys alongside the old keys, switch signing to the new CAs, wait for old 30-minute user certificates to expire, and only then remove the old public keys. Do not restore a suspected-compromised CA.
+For accidental CA loss, restore the original bundle with `bootstrap ssh-ca recover`. Suspected compromise is different: generate new CAs, distribute both new public keys alongside the old keys, switch signing to the new CAs, wait for old 30-minute user certificates to expire, and only then remove the old public keys. Do not restore a suspected-compromised CA.
 
 For WireGuard failure, inspect `wg-quick@wg0`, `/etc/wireguard/wg0.conf`, the `10.99.0.1/16` address, UDP 51820, and `wg show wg0` before restarting the unit. For Prometheus failure, run `promtool check config /etc/prometheus/prometheus.yml`, inspect `journalctl -u prometheus`, verify its localhost listener, then check `/api/v1/targets`. ClickHouse metrics are disposable, expire after seven days, and are intentionally not backed up.
 
@@ -181,6 +181,7 @@ When local PostgreSQL is selected, its data is stored in the Docker named volume
 The installer also writes host integration files outside the DeployCrate directories:
 
 - `/etc/systemd/system/deploycrate-ce@.service` defines both application slots.
+- `/etc/systemd/system/deploycrate-renew-ssh-host-certificate.timer` renews the control-plane SSH host certificate monthly.
 - `/etc/wireguard/wg0.conf` is managed by `wg-quick@wg0.service` and contains the live WireGuard interface configuration.
 - `/etc/systemd/system/caddy.service.d/deploycrate-ce.conf` makes Caddy resume its autosaved API configuration after reboot.
 - `/etc/caddy/Caddyfile` enables Caddy's local administration endpoint.

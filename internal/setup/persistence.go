@@ -17,7 +17,7 @@ const (
 	ApplicationEnvPath      = "/etc/deploycrate-ce/app.env"
 	BackupEnvPath           = "/etc/deploycrate-ce/backup.env"
 	DefaultDatabaseCAPath   = "/etc/ssl/certs/deploycrate-ce-postgresql-ca.crt"
-	BootstrapCLIPath        = "/usr/local/bin/deploycrate"
+	BootstrapCLIPath        = "/usr/local/bin/bootstrap"
 	BootstrapAppPayloadPath = "/usr/local/bin/deploycrate-ce"
 	maxDatabaseCAFileSize   = 1024 * 1024
 	finalInstallerSetupStep = "service-health"

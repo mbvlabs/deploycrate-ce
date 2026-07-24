@@ -795,7 +795,7 @@ func (m Model) renderProgress() string {
 		b.WriteString("\n")
 		if m.configSaved {
 			b.WriteString(
-				warnStyle.Render("Fix the reported issue, then run: sudo deploycrate resume"),
+				warnStyle.Render("Fix the reported issue, then run: sudo bootstrap resume"),
 			)
 		} else {
 			b.WriteString(warnStyle.Render("Fix the reported issue, then retry the installation."))

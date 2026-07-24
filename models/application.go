@@ -404,7 +404,7 @@ func (a application) FindSystemOverview(
 		Join("LEFT JOIN environment_networks AS environment_network ON environment_network.environment_id = environment.id AND environment_network.role = 'primary' AND environment_network.removed_at IS NULL").
 		Join("LEFT JOIN private_networks AS network ON network.id = environment_network.private_network_id AND network.archived_at IS NULL").
 		Join("LEFT JOIN server_networks AS server_network ON server_network.server_id = server.id AND server_network.private_network_id = network.id AND server_network.removed_at IS NULL").
-		Join("LEFT JOIN environment_resources AS environment_resource ON environment_resource.environment_id = environment.id AND environment_resource.archived_at IS NULL").
+		Join("LEFT JOIN environment_resources AS environment_resource ON environment_resource.environment_id = environment.id AND environment_resource.alias = 'database' AND environment_resource.archived_at IS NULL").
 		Join("LEFT JOIN resources AS resource ON resource.id = environment_resource.resource_id AND resource.category = 'database' AND resource.archived_at IS NULL").
 		Join("LEFT JOIN resource_endpoints AS endpoint ON endpoint.id = environment_resource.resource_endpoint_id AND endpoint.archived_at IS NULL").
 		Where("application.slug = ?", SystemApplicationSlug).

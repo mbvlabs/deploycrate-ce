@@ -80,7 +80,7 @@
         <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">System</p>
         <h1 class="mt-3 text-3xl font-semibold tracking-tight">{system.applicationName}</h1>
         <p class="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
-          The control PLANE is managed as a protected system application. Its deployment topology is visible here but cannot be edited from the applications workspace.
+          The CONTROL plane is managed as a protected system application. Its deployment topology is visible here but cannot be edited from the applications workspace.
         </p>
       </div>
       <Link

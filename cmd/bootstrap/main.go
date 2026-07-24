@@ -22,7 +22,7 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	if err := run(ctx, os.Args[1:], os.Stdout, os.Stderr); err != nil {
-		fmt.Fprintln(os.Stderr, "deploycrate:", err)
+		fmt.Fprintln(os.Stderr, "bootstrap:", err)
 		os.Exit(1)
 	}
 }
@@ -57,7 +57,7 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 
 func sshCA(args []string, stdout io.Writer) error {
 	if len(args) == 0 || args[0] != "recover" {
-		return errors.New("usage: deploycrate ssh-ca recover --bundle PATH --passphrase-file PATH")
+		return errors.New("usage: bootstrap ssh-ca recover --bundle PATH --passphrase-file PATH")
 	}
 	flags := flag.NewFlagSet("ssh-ca recover", flag.ContinueOnError)
 	bundlePath := flags.String("bundle", "", "path to deploycrate-ssh-ca-recovery-v1.age")
@@ -66,7 +66,7 @@ func sshCA(args []string, stdout io.Writer) error {
 		return err
 	}
 	if *bundlePath == "" || *passphrasePath == "" || flags.NArg() != 0 {
-		return errors.New("usage: deploycrate ssh-ca recover --bundle PATH --passphrase-file PATH")
+		return errors.New("usage: bootstrap ssh-ca recover --bundle PATH --passphrase-file PATH")
 	}
 	passphrase, err := os.ReadFile(*passphrasePath)
 	if err != nil {
@@ -87,7 +87,7 @@ func install(ctx context.Context, args []string) error {
 	}
 	if !isTerminal(os.Stdin) {
 		return errors.New(
-			"interactive installation requires a TTY; run sudo deploycrate install from a terminal",
+			"interactive installation requires a TTY; run sudo bootstrap install from a terminal",
 		)
 	}
 	host, err := setup.Preflight(ctx, *dryRun)
@@ -107,7 +107,7 @@ func install(ctx context.Context, args []string) error {
 		switch status {
 		case setup.InstallationFresh:
 		case setup.InstallationResumable, setup.InstallationCleanupPending:
-			return errors.New("an installation is already configured; run sudo deploycrate resume")
+			return errors.New("an installation is already configured; run sudo bootstrap resume")
 		case setup.InstallationComplete:
 			return errors.New("DeployCrate CE is already installed")
 		default:
@@ -133,7 +133,7 @@ func resume(ctx context.Context, args []string, stdout io.Writer) error {
 	}
 	if !isTerminal(os.Stdin) {
 		return errors.New(
-			"interactive resume requires a TTY; run sudo deploycrate resume from a terminal",
+			"interactive resume requires a TTY; run sudo bootstrap resume from a terminal",
 		)
 	}
 	if _, err := setup.Preflight(ctx, *dryRun); err != nil {
@@ -210,9 +210,9 @@ func printHelp(writer io.Writer) {
 	fmt.Fprintln(writer, `DeployCrate CE server bootstrap
 
 Usage:
-  deploycrate install [--dry-run]
-  deploycrate resume [--dry-run]
-  deploycrate ssh-ca recover --bundle PATH --passphrase-file PATH
-  deploycrate logs
-  deploycrate version`)
+  bootstrap install [--dry-run]
+  bootstrap resume [--dry-run]
+  bootstrap ssh-ca recover --bundle PATH --passphrase-file PATH
+  bootstrap logs
+  bootstrap version`)
 }
