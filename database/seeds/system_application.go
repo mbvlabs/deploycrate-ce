@@ -28,11 +28,17 @@ func ensureSystemApplication(ctx context.Context, exec storage.Executor, now tim
 func createSystemApplication(ctx context.Context, exec storage.Executor, now time.Time) error {
 	appliedAt := sql.NullTime{Time: now, Valid: true}
 
-	server, err := factories.CreateServer(ctx, exec,
+	server, err := factories.CreateServer(
+		ctx,
+		exec,
 		factories.WithServersName("DeployCrate CE Server"),
 		factories.WithServersSlug(models.SystemApplicationSlug),
 		factories.WithServersKind("self_hosted"),
-		factories.WithServersCapabilities(json.RawMessage(`{"runtime":"systemd","proxy":"caddy","deployment_strategies":["blue_green"],"slots":{"blue":8080,"green":8081}}`)),
+		factories.WithServersCapabilities(
+			json.RawMessage(
+				`{"runtime":"systemd","proxy":"caddy","deployment_strategies":["blue_green"],"slots":{"blue":8080,"green":8081}}`,
+			),
+		),
 		factories.WithServersOperatingSystem(sql.NullString{String: "linux", Valid: true}),
 		factories.WithServersDistribution(sql.NullString{String: "ubuntu", Valid: true}),
 		factories.WithServersDistributionVersion(sql.NullString{String: "24.04", Valid: true}),
@@ -130,33 +136,55 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	if err != nil {
 		return fmt.Errorf("create DeployCrate CE database resource: %w", err)
 	}
-	installation, err := factories.CreateResourceInstallation(ctx, exec, resource.ID, server.ID, nil,
+	installation, err := factories.CreateResourceInstallation(
+		ctx,
+		exec,
+		resource.ID,
+		server.ID,
+		nil,
 		factories.WithResourceInstallationsImageReference("postgres:17-alpine"),
 		factories.WithResourceInstallationsImageDigest(sql.NullString{}),
 		factories.WithResourceInstallationsContainerName("deploycrate-ce-postgres"),
 		factories.WithResourceInstallationsRestartPolicy("unless-stopped"),
-		factories.WithResourceInstallationsConfiguration(json.RawMessage(`{"volume":"deploycrate-ce-postgres","bind":"127.0.0.1:5432"}`)),
+		factories.WithResourceInstallationsConfiguration(
+			json.RawMessage(`{"volume":"deploycrate-ce-postgres","bind":"127.0.0.1:5432"}`),
+		),
 		factories.WithResourceInstallationsArchivedAt(sql.NullTime{}),
 	)
 	if err != nil {
 		return fmt.Errorf("create DeployCrate CE database installation: %w", err)
 	}
-	endpoint, err := factories.CreateResourceEndpoint(ctx, exec, resource.ID, &installation.ID, &network.ID,
+	endpoint, err := factories.CreateResourceEndpoint(
+		ctx,
+		exec,
+		resource.ID,
+		&installation.ID,
+		&network.ID,
 		factories.WithResourceEndpointsName("Primary PostgreSQL"),
 		factories.WithResourceEndpointsRole("primary"),
 		factories.WithResourceEndpointsAddress("127.0.0.1"),
 		factories.WithResourceEndpointsPort(5432),
 		factories.WithResourceEndpointsProtocol("postgresql"),
 		factories.WithResourceEndpointsTlsMode("disable"),
-		factories.WithResourceEndpointsSettings(json.RawMessage(`{"database":"deploycrate","external":false}`)),
+		factories.WithResourceEndpointsSettings(
+			json.RawMessage(`{"database":"deploycrate","external":false}`),
+		),
 		factories.WithResourceEndpointsArchivedAt(sql.NullTime{}),
 	)
 	if err != nil {
 		return fmt.Errorf("create DeployCrate CE database endpoint: %w", err)
 	}
-	if _, err := factories.CreateEnvironmentResource(ctx, exec, environment.ID, resource.ID, endpoint.ID, nil,
+	if _, err := factories.CreateEnvironmentResource(
+		ctx,
+		exec,
+		environment.ID,
+		resource.ID,
+		endpoint.ID,
+		nil,
 		factories.WithEnvironmentResourcesAlias("database"),
-		factories.WithEnvironmentResourcesConfiguration(json.RawMessage(`{"credential_source":"app_env","credential_record":"seeded"}`)),
+		factories.WithEnvironmentResourcesConfiguration(
+			json.RawMessage(`{"credential_source":"app_env","credential_record":"seeded"}`),
+		),
 		factories.WithEnvironmentResourcesArchivedAt(sql.NullTime{}),
 	); err != nil {
 		return fmt.Errorf("bind DeployCrate CE database resource: %w", err)
@@ -190,10 +218,18 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	if err != nil {
 		return fmt.Errorf("create DeployCrate CE bootstrap change: %w", err)
 	}
-	release, err := factories.CreateRelease(ctx, exec, environment.ID, nil, nil, change.ID,
+	release, err := factories.CreateRelease(
+		ctx,
+		exec,
+		environment.ID,
+		nil,
+		nil,
+		change.ID,
 		factories.WithReleasesVersion(sql.NullString{String: "1.4.0", Valid: true}),
 		factories.WithReleasesSourceRevision(sql.NullString{String: "seeded", Valid: true}),
-		factories.WithReleasesArtifactReference("/opt/deploycrate-ce/releases/1.4.0/deploycrate-ce"),
+		factories.WithReleasesArtifactReference(
+			"/opt/deploycrate-ce/releases/1.4.0/deploycrate-ce",
+		),
 		factories.WithReleasesArtifactDigest([]byte("0123456789abcdef0123456789abcdef")),
 	)
 	if err != nil {
@@ -202,10 +238,19 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	if _, err := factories.CreateChangeRelease(ctx, exec, change.ID, release.ID); err != nil {
 		return fmt.Errorf("associate DeployCrate CE release: %w", err)
 	}
-	deployment, err := factories.CreateDeployment(ctx, exec, change.ID, release.ID, target.ID,
+	deployment, err := factories.CreateDeployment(
+		ctx,
+		exec,
+		change.ID,
+		release.ID,
+		target.ID,
 		factories.WithDeploymentsAttempt(1),
-		factories.WithDeploymentsStrategy(json.RawMessage(`{"type":"blue_green","slots":{"blue":8080,"green":8081}}`)),
-		factories.WithDeploymentsRuntimeConfiguration(json.RawMessage(`{"service_template":"deploycrate-ce@.service","active_slot":"blue"}`)),
+		factories.WithDeploymentsStrategy(
+			json.RawMessage(`{"type":"blue_green","slots":{"blue":8080,"green":8081}}`),
+		),
+		factories.WithDeploymentsRuntimeConfiguration(
+			json.RawMessage(`{"service_template":"deploycrate-ce@.service","active_slot":"blue"}`),
+		),
 		factories.WithDeploymentsStatus("succeeded"),
 		factories.WithDeploymentsCurrentStep(sql.NullString{String: "health_check", Valid: true}),
 		factories.WithDeploymentsStartedAt(appliedAt),
@@ -215,7 +260,13 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	if err != nil {
 		return fmt.Errorf("create DeployCrate CE deployment: %w", err)
 	}
-	instance, err := factories.CreateInstance(ctx, exec, "deploycrate-ce@blue.service", deployment.ID, release.ID, target.ID,
+	instance, err := factories.CreateInstance(
+		ctx,
+		exec,
+		"deploycrate-ce@blue.service",
+		deployment.ID,
+		release.ID,
+		target.ID,
 		factories.WithInstancesSlot("blue"),
 		factories.WithInstancesReplicaKey("primary"),
 		factories.WithInstancesState("serving"),
@@ -226,7 +277,13 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	if err != nil {
 		return fmt.Errorf("create DeployCrate CE instance: %w", err)
 	}
-	route, err := factories.CreateCaddyRoute(ctx, exec, "deploycrate_ce_deploycrate_localhost", target.ID, domain.ID, release.ID,
+	route, err := factories.CreateCaddyRoute(
+		ctx,
+		exec,
+		"deploycrate_ce_deploycrate_localhost",
+		target.ID,
+		domain.ID,
+		release.ID,
 		factories.WithCaddyRoutesState("applied"),
 		factories.WithCaddyRoutesAppliedAt(appliedAt),
 		factories.WithCaddyRoutesObservedAt(appliedAt),

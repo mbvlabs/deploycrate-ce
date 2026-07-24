@@ -12,7 +12,10 @@ var Module = fx.Module(
 	fx.Provide(
 		NewIdentity,
 		NewSelfUpdate,
+		NewSystemHealth,
 		func() CaddyClient { return caddyclients.New("") },
 		NewCaddyRouteService,
+		NewSSHCAService,
+		NewMetricRollupService,
 	),
 )

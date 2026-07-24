@@ -12,7 +12,9 @@ const (
 	ReleaseChecksumPath       = "/dc-ce-app/deploycrate-ce.sha256"
 )
 
-var ErrReleaseSourceUnavailable = errors.New("self-update is unavailable for this build; set DEPLOYCRATE_CE_RELEASE_BASE_URL to a Cloudflare R2 endpoint")
+var ErrReleaseSourceUnavailable = errors.New(
+	"self-update is unavailable for this build; set DEPLOYCRATE_CE_RELEASE_BASE_URL to a Cloudflare R2 endpoint",
+)
 
 type ReleaseSource struct {
 	BaseURL     string

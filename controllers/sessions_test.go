@@ -129,7 +129,10 @@ func TestSignIn(t *testing.T) {
 				if test.verified {
 					options = append(options, factories.WithValidatedEmail())
 				}
-				if _, err := factories.CreateUser(t.Context(), db.Executor(), options...); err != nil {
+				if _, err := factories.CreateUser(
+					t.Context(),
+					db.Executor(),
+					options...); err != nil {
 					t.Fatalf("create user: %v", err)
 				}
 			}
@@ -140,15 +143,31 @@ func TestSignIn(t *testing.T) {
 			if test.staleCookies {
 				requestCookies = staleSessionCookies(t)
 			}
-			response := submitSignIn(t, store, controller, test.providedEmail, test.providedPassword, requestCookies)
+			response := submitSignIn(
+				t,
+				store,
+				controller,
+				test.providedEmail,
+				test.providedPassword,
+				requestCookies,
+			)
 
 			if response.Code != test.wantStatus {
-				t.Fatalf("status = %d, want %d; body: %s", response.Code, test.wantStatus, response.Body.String())
+				t.Fatalf(
+					"status = %d, want %d; body: %s",
+					response.Code,
+					test.wantStatus,
+					response.Body.String(),
+				)
 			}
 			if location := response.Header().Get("Location"); location != test.wantLocation {
 				t.Fatalf("Location = %q, want %q", location, test.wantLocation)
 			}
-			if authenticated := authenticatedFromResponse(t, store, response); authenticated != test.wantAuthenticated {
+			if authenticated := authenticatedFromResponse(
+				t,
+				store,
+				response,
+			); authenticated != test.wantAuthenticated {
 				t.Fatalf("authenticated = %t, want %t", authenticated, test.wantAuthenticated)
 			}
 
@@ -174,7 +193,12 @@ func TestSignIn(t *testing.T) {
 				}
 				for field, message := range test.wantErrors {
 					if page.Props.Errors[field] != message {
-						t.Fatalf("error for %s = %q, want %q", field, page.Props.Errors[field], message)
+						t.Fatalf(
+							"error for %s = %q, want %q",
+							field,
+							page.Props.Errors[field],
+							message,
+						)
 					}
 				}
 			}
@@ -196,7 +220,11 @@ func submitSignIn(
 	if err != nil {
 		t.Fatalf("encode sign-in request: %v", err)
 	}
-	request := httptest.NewRequest(http.MethodPost, routes.SessionCreate.URL(), strings.NewReader(string(body)))
+	request := httptest.NewRequest(
+		http.MethodPost,
+		routes.SessionCreate.URL(),
+		strings.NewReader(string(body)),
+	)
 	request.Header.Set(echo.HeaderContentType, echo.MIMEApplicationJSON)
 	request.Header.Set("X-Inertia", "true")
 	for _, cookie := range requestCookies {
@@ -236,7 +264,11 @@ func staleSessionCookies(t *testing.T) []*http.Cookie {
 	return response.Result().Cookies()
 }
 
-func authenticatedFromResponse(t *testing.T, store *sessions.CookieStore, response *httptest.ResponseRecorder) bool {
+func authenticatedFromResponse(
+	t *testing.T,
+	store *sessions.CookieStore,
+	response *httptest.ResponseRecorder,
+) bool {
 	t.Helper()
 
 	var authenticated bool
@@ -247,7 +279,11 @@ func authenticatedFromResponse(t *testing.T, store *sessions.CookieStore, respon
 	return authenticated
 }
 
-func flashesFromResponse(t *testing.T, store *sessions.CookieStore, response *httptest.ResponseRecorder) []cookies.FlashMessage {
+func flashesFromResponse(
+	t *testing.T,
+	store *sessions.CookieStore,
+	response *httptest.ResponseRecorder,
+) []cookies.FlashMessage {
 	t.Helper()
 
 	var flashes []cookies.FlashMessage
@@ -259,7 +295,12 @@ func flashesFromResponse(t *testing.T, store *sessions.CookieStore, response *ht
 	return flashes
 }
 
-func runWithResponseCookies(t *testing.T, store *sessions.CookieStore, response *httptest.ResponseRecorder, handler echo.HandlerFunc) {
+func runWithResponseCookies(
+	t *testing.T,
+	store *sessions.CookieStore,
+	response *httptest.ResponseRecorder,
+	handler echo.HandlerFunc,
+) {
 	t.Helper()
 
 	request := httptest.NewRequest(http.MethodGet, "/", nil)

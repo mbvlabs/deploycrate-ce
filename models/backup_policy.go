@@ -37,7 +37,11 @@ func (e *BackupPolicyEntity) Validate() error {
 	return nil
 }
 
-func (bp backupPolicy) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (BackupPolicyEntity, error) {
+func (bp backupPolicy) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (BackupPolicyEntity, error) {
 	var entity BackupPolicyEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -65,7 +69,11 @@ type CreateBackupPolicyData struct {
 	BackupDestinationID   uuid.UUID
 }
 
-func (bp backupPolicy) Create(ctx context.Context, db storage.Executor, data CreateBackupPolicyData) (BackupPolicyEntity, error) {
+func (bp backupPolicy) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateBackupPolicyData,
+) (BackupPolicyEntity, error) {
 	entity := BackupPolicyEntity{
 		ID:                    uuid.New(),
 		CreatedAt:             time.Now(),
@@ -114,7 +122,11 @@ type UpdateBackupPolicyData struct {
 	BackupDestinationID   uuid.UUID
 }
 
-func (bp backupPolicy) Update(ctx context.Context, db storage.Executor, data UpdateBackupPolicyData) (BackupPolicyEntity, error) {
+func (bp backupPolicy) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateBackupPolicyData,
+) (BackupPolicyEntity, error) {
 	entity := BackupPolicyEntity{
 		ID:                    data.ID,
 		UpdatedAt:             time.Now(),
@@ -190,7 +202,11 @@ type PaginatedBackupPolicies struct {
 	TotalPages     int64
 }
 
-func (bp backupPolicy) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedBackupPolicies, error) {
+func (bp backupPolicy) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedBackupPolicies, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -229,7 +245,11 @@ func (bp backupPolicy) Paginate(ctx context.Context, db storage.Executor, page, 
 	}, nil
 }
 
-func (bp backupPolicy) Upsert(ctx context.Context, db storage.Executor, data CreateBackupPolicyData) (BackupPolicyEntity, error) {
+func (bp backupPolicy) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateBackupPolicyData,
+) (BackupPolicyEntity, error) {
 	entity := BackupPolicyEntity{
 		ID:                    uuid.New(),
 		CreatedAt:             time.Now(),

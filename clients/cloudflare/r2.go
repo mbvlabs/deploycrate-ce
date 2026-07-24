@@ -39,7 +39,12 @@ func (r *R2) Download(ctx context.Context, baseURL, objectPath, destination stri
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
-		return fmt.Errorf("download %s: status %d: %s", sourceURL, resp.StatusCode, strings.TrimSpace(string(body)))
+		return fmt.Errorf(
+			"download %s: status %d: %s",
+			sourceURL,
+			resp.StatusCode,
+			strings.TrimSpace(string(body)),
+		)
 	}
 
 	file, err := os.OpenFile(destination, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)

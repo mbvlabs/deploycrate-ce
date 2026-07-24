@@ -69,7 +69,11 @@ type CreateServerData struct {
 	Address             string
 }
 
-func (s server) Create(ctx context.Context, db storage.Executor, data CreateServerData) (ServerEntity, error) {
+func (s server) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateServerData,
+) (ServerEntity, error) {
 	entity := ServerEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
@@ -122,7 +126,11 @@ type UpdateServerData struct {
 	Address             string
 }
 
-func (s server) Update(ctx context.Context, db storage.Executor, data UpdateServerData) (ServerEntity, error) {
+func (s server) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateServerData,
+) (ServerEntity, error) {
 	entity := ServerEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
@@ -202,7 +210,11 @@ type PaginatedServers struct {
 	TotalPages int64
 }
 
-func (s server) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedServers, error) {
+func (s server) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedServers, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -241,7 +253,11 @@ func (s server) Paginate(ctx context.Context, db storage.Executor, page, pageSiz
 	}, nil
 }
 
-func (s server) Upsert(ctx context.Context, db storage.Executor, data CreateServerData) (ServerEntity, error) {
+func (s server) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateServerData,
+) (ServerEntity, error) {
 	entity := ServerEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),

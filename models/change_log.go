@@ -32,7 +32,11 @@ func (e *ChangeLogEntity) Validate() error {
 	return nil
 }
 
-func (cl changeLog) Find(ctx context.Context, db storage.Executor, id int32) (ChangeLogEntity, error) {
+func (cl changeLog) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id int32,
+) (ChangeLogEntity, error) {
 	var entity ChangeLogEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -55,7 +59,11 @@ type CreateChangeLogData struct {
 	ChangeTaskAttemptID *uuid.UUID
 }
 
-func (cl changeLog) Create(ctx context.Context, db storage.Executor, data CreateChangeLogData) (ChangeLogEntity, error) {
+func (cl changeLog) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateChangeLogData,
+) (ChangeLogEntity, error) {
 	entity := ChangeLogEntity{
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
@@ -93,7 +101,11 @@ type UpdateChangeLogData struct {
 	ChangeTaskAttemptID *uuid.UUID
 }
 
-func (cl changeLog) Update(ctx context.Context, db storage.Executor, data UpdateChangeLogData) (ChangeLogEntity, error) {
+func (cl changeLog) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateChangeLogData,
+) (ChangeLogEntity, error) {
 	entity := ChangeLogEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
@@ -159,7 +171,11 @@ type PaginatedChangeLogs struct {
 	TotalPages int64
 }
 
-func (cl changeLog) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedChangeLogs, error) {
+func (cl changeLog) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedChangeLogs, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -198,7 +214,11 @@ func (cl changeLog) Paginate(ctx context.Context, db storage.Executor, page, pag
 	}, nil
 }
 
-func (cl changeLog) Upsert(ctx context.Context, db storage.Executor, data CreateChangeLogData) (ChangeLogEntity, error) {
+func (cl changeLog) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateChangeLogData,
+) (ChangeLogEntity, error) {
 	entity := ChangeLogEntity{
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),

@@ -25,7 +25,11 @@ func (e *ServerStatusEntity) Validate() error {
 	return nil
 }
 
-func (ss serverStatus) Find(ctx context.Context, db storage.Executor, id int32) (ServerStatusEntity, error) {
+func (ss serverStatus) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id int32,
+) (ServerStatusEntity, error) {
 	var entity ServerStatusEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -43,7 +47,11 @@ type CreateServerStatusData struct {
 	ServerID   uuid.UUID
 }
 
-func (ss serverStatus) Create(ctx context.Context, db storage.Executor, data CreateServerStatusData) (ServerStatusEntity, error) {
+func (ss serverStatus) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateServerStatusData,
+) (ServerStatusEntity, error) {
 	entity := ServerStatusEntity{
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
@@ -71,7 +79,11 @@ type UpdateServerStatusData struct {
 	ServerID   uuid.UUID
 }
 
-func (ss serverStatus) Update(ctx context.Context, db storage.Executor, data UpdateServerStatusData) (ServerStatusEntity, error) {
+func (ss serverStatus) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateServerStatusData,
+) (ServerStatusEntity, error) {
 	entity := ServerStatusEntity{
 		ID:         data.ID,
 		UpdatedAt:  time.Now(),
@@ -127,7 +139,11 @@ type PaginatedServerStatuses struct {
 	TotalPages     int64
 }
 
-func (ss serverStatus) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedServerStatuses, error) {
+func (ss serverStatus) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedServerStatuses, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -166,7 +182,11 @@ func (ss serverStatus) Paginate(ctx context.Context, db storage.Executor, page, 
 	}, nil
 }
 
-func (ss serverStatus) Upsert(ctx context.Context, db storage.Executor, data CreateServerStatusData) (ServerStatusEntity, error) {
+func (ss serverStatus) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateServerStatusData,
+) (ServerStatusEntity, error) {
 	entity := ServerStatusEntity{
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),

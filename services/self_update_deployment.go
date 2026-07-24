@@ -36,7 +36,10 @@ func (s *SelfUpdate) loadSystemState(ctx context.Context) (systemApplicationStat
 		return systemApplicationState{}, fmt.Errorf("load DeployCrate CE system state: %w", err)
 	}
 	if state.ActiveInstanceSlot != blueInstance && state.ActiveInstanceSlot != greenInstance {
-		return systemApplicationState{}, fmt.Errorf("system state has invalid active slot %q", state.ActiveInstanceSlot)
+		return systemApplicationState{}, fmt.Errorf(
+			"system state has invalid active slot %q",
+			state.ActiveInstanceSlot,
+		)
 	}
 	return state, nil
 }
@@ -130,11 +133,13 @@ func (s *SelfUpdate) createDeploymentRecords(
 		return nil, fmt.Errorf("create self-update deployment: %w", err)
 	}
 	instance, err := models.Instance.Create(ctx, tx, models.CreateInstanceData{
-		ExternalID:          serviceForInstance(inactiveSlot),
-		Slot:                inactiveSlot,
-		ReplicaKey:          "primary",
-		State:               "queued",
-		Ports:               json.RawMessage(fmt.Sprintf(`{"http":%d}`, portForInstance(inactiveSlot))),
+		ExternalID: serviceForInstance(inactiveSlot),
+		Slot:       inactiveSlot,
+		ReplicaKey: "primary",
+		State:      "queued",
+		Ports: json.RawMessage(
+			fmt.Sprintf(`{"http":%d}`, portForInstance(inactiveSlot)),
+		),
 		ObservedAt:          now,
 		DeploymentID:        deployment.ID,
 		ReleaseID:           releaseEntity.ID,
@@ -208,8 +213,11 @@ func (s *SelfUpdate) loadUnresolvedDeployment(ctx context.Context) (*selfUpdateD
 	if err := json.Unmarshal(persisted.RuntimeConfig, &checkpoint); err != nil {
 		return nil, fmt.Errorf("decode self-update checkpoint: %w", err)
 	}
-	if checkpoint.ActiveSlot != systemState.ActiveInstanceSlot || checkpoint.TargetSlot != persisted.InactiveSlot {
-		return nil, errors.New("unresolved self-update checkpoint does not match the persisted system state")
+	if checkpoint.ActiveSlot != systemState.ActiveInstanceSlot ||
+		checkpoint.TargetSlot != persisted.InactiveSlot {
+		return nil, errors.New(
+			"unresolved self-update checkpoint does not match the persisted system state",
+		)
 	}
 	return &selfUpdateDeployment{
 		SystemState: systemState, ChangeID: persisted.ChangeID, ReleaseID: persisted.ReleaseID,
@@ -238,19 +246,36 @@ func (s *SelfUpdate) recordTransition(status SelfUpdateState, step, message stri
 	if status == SelfUpdateInProgress {
 		dbStatus = "in_progress"
 	}
-	if err := models.Deployment.RecordProgress(ctx, s.db.Executor(), record.DeploymentID, dbStatus, step, now); err != nil {
+	if err := models.Deployment.RecordProgress(
+		ctx,
+		s.db.Executor(),
+		record.DeploymentID,
+		dbStatus,
+		step,
+		now,
+	); err != nil {
 		slogDatabaseTrackingError("update deployment progress", err)
 		return
 	}
-	if err := models.Change.RecordProgress(ctx, s.db.Executor(), record.ChangeID, dbStatus, now); err != nil {
+	if err := models.Change.RecordProgress(
+		ctx,
+		s.db.Executor(),
+		record.ChangeID,
+		dbStatus,
+		now,
+	); err != nil {
 		slogDatabaseTrackingError("update change progress", err)
 	}
-	if _, err := models.DeploymentEvent.Create(ctx, s.db.Executor(), models.CreateDeploymentEventData{
-		Sequence: record.EventSequence, EventType: "deployment_status",
-		Status: sql.NullString{String: dbStatus, Valid: true},
-		Step:   sql.NullString{String: step, Valid: true}, Message: message,
-		Metadata: json.RawMessage(`{}`), OccurredAt: now, DeploymentID: record.DeploymentID,
-	}); err != nil {
+	if _, err := models.DeploymentEvent.Create(
+		ctx,
+		s.db.Executor(),
+		models.CreateDeploymentEventData{
+			Sequence: record.EventSequence, EventType: "deployment_status",
+			Status: sql.NullString{String: dbStatus, Valid: true},
+			Step:   sql.NullString{String: step, Valid: true}, Message: message,
+			Metadata: json.RawMessage(`{}`), OccurredAt: now, DeploymentID: record.DeploymentID,
+		},
+	); err != nil {
 		slogDatabaseTrackingError("create deployment event", err)
 	}
 
@@ -258,11 +283,20 @@ func (s *SelfUpdate) recordTransition(status SelfUpdateState, step, message stri
 	switch step {
 	case "start_inactive_instance", "verify_inactive_instance":
 		instanceState = "starting"
-	case "switch_traffic", "verify_public_path", "update_service_boot_state", "stop_previous_instance":
+	case "switch_traffic",
+		"verify_public_path",
+		"update_service_boot_state",
+		"stop_previous_instance":
 		instanceState = "serving"
 	}
 	if instanceState != "" {
-		if err := models.Instance.ObserveState(ctx, s.db.Executor(), record.InstanceID, instanceState, now); err != nil {
+		if err := models.Instance.ObserveState(
+			ctx,
+			s.db.Executor(),
+			record.InstanceID,
+			instanceState,
+			now,
+		); err != nil {
 			slogDatabaseTrackingError("update instance progress", err)
 		}
 	}
@@ -275,7 +309,12 @@ func (s *SelfUpdate) recordArtifact(digest []byte) error {
 	if record == nil {
 		return nil
 	}
-	return models.Release.RecordArtifactDigest(context.Background(), s.db.Executor(), record.ReleaseID, digest)
+	return models.Release.RecordArtifactDigest(
+		context.Background(),
+		s.db.Executor(),
+		record.ReleaseID,
+		digest,
+	)
 }
 
 func (s *SelfUpdate) finishDeployment(succeeded bool, failure error) error {
@@ -325,7 +364,14 @@ func (s *SelfUpdate) finishDeployment(succeeded bool, failure error) error {
 	); err != nil {
 		return fmt.Errorf("finish deployment: %w", err)
 	}
-	if err := models.Change.FinishSystemUpdate(ctx, tx, record.ChangeID, changeStatus, errorValue, now); err != nil {
+	if err := models.Change.FinishSystemUpdate(
+		ctx,
+		tx,
+		record.ChangeID,
+		changeStatus,
+		errorValue,
+		now,
+	); err != nil {
 		return fmt.Errorf("finish change: %w", err)
 	}
 	if _, err := models.DeploymentEvent.Create(ctx, tx, models.CreateDeploymentEventData{
@@ -339,26 +385,74 @@ func (s *SelfUpdate) finishDeployment(succeeded bool, failure error) error {
 	}
 
 	if succeeded {
-		if err := models.Instance.FinishSystemUpdate(ctx, tx, record.InstanceID, "serving", false, now); err != nil {
+		if err := models.Instance.FinishSystemUpdate(
+			ctx,
+			tx,
+			record.InstanceID,
+			"serving",
+			false,
+			now,
+		); err != nil {
 			return fmt.Errorf("mark updated instance serving: %w", err)
 		}
-		if err := models.CaddyRouteBackend.FinishSystemUpdate(ctx, tx, record.BackendID, 100, false, now); err != nil {
+		if err := models.CaddyRouteBackend.FinishSystemUpdate(
+			ctx,
+			tx,
+			record.BackendID,
+			100,
+			false,
+			now,
+		); err != nil {
 			return fmt.Errorf("activate updated Caddy backend: %w", err)
 		}
-		if err := models.Instance.FinishSystemUpdate(ctx, tx, record.SystemState.ActiveInstanceID, "stopped", true, now); err != nil {
+		if err := models.Instance.FinishSystemUpdate(
+			ctx,
+			tx,
+			record.SystemState.ActiveInstanceID,
+			"stopped",
+			true,
+			now,
+		); err != nil {
 			return fmt.Errorf("retire previous instance: %w", err)
 		}
-		if err := models.CaddyRouteBackend.FinishSystemUpdate(ctx, tx, record.SystemState.ActiveBackendID, 0, true, now); err != nil {
+		if err := models.CaddyRouteBackend.FinishSystemUpdate(
+			ctx,
+			tx,
+			record.SystemState.ActiveBackendID,
+			0,
+			true,
+			now,
+		); err != nil {
 			return fmt.Errorf("retire previous Caddy backend: %w", err)
 		}
-		if err := models.CaddyRoute.ActivateRelease(ctx, tx, record.SystemState.CaddyRouteID, record.ReleaseID, now); err != nil {
+		if err := models.CaddyRoute.ActivateRelease(
+			ctx,
+			tx,
+			record.SystemState.CaddyRouteID,
+			record.ReleaseID,
+			now,
+		); err != nil {
 			return fmt.Errorf("update Caddy route release: %w", err)
 		}
 	} else {
-		if err := models.Instance.FinishSystemUpdate(ctx, tx, record.InstanceID, "failed", true, now); err != nil {
+		if err := models.Instance.FinishSystemUpdate(
+			ctx,
+			tx,
+			record.InstanceID,
+			"failed",
+			true,
+			now,
+		); err != nil {
 			return fmt.Errorf("mark failed instance: %w", err)
 		}
-		if err := models.CaddyRouteBackend.FinishSystemUpdate(ctx, tx, record.BackendID, 0, true, now); err != nil {
+		if err := models.CaddyRouteBackend.FinishSystemUpdate(
+			ctx,
+			tx,
+			record.BackendID,
+			0,
+			true,
+			now,
+		); err != nil {
 			return fmt.Errorf("remove failed Caddy backend: %w", err)
 		}
 	}

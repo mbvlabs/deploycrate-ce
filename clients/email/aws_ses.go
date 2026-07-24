@@ -200,7 +200,11 @@ func (a *AwsSes) SendMarketing(ctx context.Context, payload email.MarketingPaylo
 	return nil
 }
 
-func (a *AwsSes) sendRawEmail(ctx context.Context, payload email.TransactionalPayload, marketingPayload *email.MarketingPayload) error {
+func (a *AwsSes) sendRawEmail(
+	ctx context.Context,
+	payload email.TransactionalPayload,
+	marketingPayload *email.MarketingPayload,
+) error {
 	var buf bytes.Buffer
 	writer := multipart.NewWriter(&buf)
 
@@ -254,8 +258,10 @@ func (a *AwsSes) sendRawEmail(ctx context.Context, payload email.TransactionalPa
 	// Write attachments
 	for _, attachment := range payload.Attachments {
 		part, _ := writer.CreatePart(textproto.MIMEHeader{
-			"Content-Type":              []string{attachment.ContentType},
-			"Content-Disposition":       []string{fmt.Sprintf("attachment; filename=%s", attachment.Name)},
+			"Content-Type": []string{attachment.ContentType},
+			"Content-Disposition": []string{
+				fmt.Sprintf("attachment; filename=%s", attachment.Name),
+			},
 			"Content-Transfer-Encoding": []string{"base64"},
 		})
 		encoded := base64.StdEncoding.EncodeToString(attachment.Content)

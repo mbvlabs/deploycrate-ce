@@ -20,7 +20,16 @@ type ResourceRestoreFactory struct {
 
 type ResourceRestoreOption func(*ResourceRestoreFactory)
 
-func BuildResourceRestore(changeID uuid.UUID, changeTaskID uuid.UUID, resourceBackupID uuid.UUID, resourceID uuid.UUID, sourceEnvironmentResourceID *uuid.UUID, targetEnvironmentResourceID *uuid.UUID, targetInstallationID *uuid.UUID, opts ...ResourceRestoreOption) models.ResourceRestoreEntity {
+func BuildResourceRestore(
+	changeID uuid.UUID,
+	changeTaskID uuid.UUID,
+	resourceBackupID uuid.UUID,
+	resourceID uuid.UUID,
+	sourceEnvironmentResourceID *uuid.UUID,
+	targetEnvironmentResourceID *uuid.UUID,
+	targetInstallationID *uuid.UUID,
+	opts ...ResourceRestoreOption,
+) models.ResourceRestoreEntity {
 	f := &ResourceRestoreFactory{
 		ResourceRestoreEntity: models.ResourceRestoreEntity{
 			Status:                      faker.Word(),
@@ -46,8 +55,27 @@ func BuildResourceRestore(changeID uuid.UUID, changeTaskID uuid.UUID, resourceBa
 	return f.ResourceRestoreEntity
 }
 
-func CreateResourceRestore(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID uuid.UUID, resourceBackupID uuid.UUID, resourceID uuid.UUID, sourceEnvironmentResourceID *uuid.UUID, targetEnvironmentResourceID *uuid.UUID, targetInstallationID *uuid.UUID, opts ...ResourceRestoreOption) (models.ResourceRestoreEntity, error) {
-	built := BuildResourceRestore(changeID, changeTaskID, resourceBackupID, resourceID, sourceEnvironmentResourceID, targetEnvironmentResourceID, targetInstallationID, opts...)
+func CreateResourceRestore(
+	ctx context.Context,
+	exec storage.Executor,
+	changeID uuid.UUID,
+	changeTaskID uuid.UUID,
+	resourceBackupID uuid.UUID,
+	resourceID uuid.UUID,
+	sourceEnvironmentResourceID *uuid.UUID,
+	targetEnvironmentResourceID *uuid.UUID,
+	targetInstallationID *uuid.UUID,
+	opts ...ResourceRestoreOption,
+) (models.ResourceRestoreEntity, error) {
+	built := BuildResourceRestore(
+		changeID,
+		changeTaskID,
+		resourceBackupID,
+		resourceID,
+		sourceEnvironmentResourceID,
+		targetEnvironmentResourceID,
+		targetInstallationID,
+		opts...)
 
 	entity := models.ResourceRestoreEntity{
 		ID:                          uuid.New(),
@@ -75,11 +103,33 @@ func CreateResourceRestore(ctx context.Context, exec storage.Executor, changeID 
 	return entity, nil
 }
 
-func CreateResourceRestores(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID uuid.UUID, resourceBackupID uuid.UUID, resourceID uuid.UUID, sourceEnvironmentResourceID *uuid.UUID, targetEnvironmentResourceID *uuid.UUID, targetInstallationID *uuid.UUID, count int, opts ...ResourceRestoreOption) ([]models.ResourceRestoreEntity, error) {
+func CreateResourceRestores(
+	ctx context.Context,
+	exec storage.Executor,
+	changeID uuid.UUID,
+	changeTaskID uuid.UUID,
+	resourceBackupID uuid.UUID,
+	resourceID uuid.UUID,
+	sourceEnvironmentResourceID *uuid.UUID,
+	targetEnvironmentResourceID *uuid.UUID,
+	targetInstallationID *uuid.UUID,
+	count int,
+	opts ...ResourceRestoreOption,
+) ([]models.ResourceRestoreEntity, error) {
 	resourcerestores := make([]models.ResourceRestoreEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateResourceRestore(ctx, exec, changeID, changeTaskID, resourceBackupID, resourceID, sourceEnvironmentResourceID, targetEnvironmentResourceID, targetInstallationID, opts...)
+		entity, err := CreateResourceRestore(
+			ctx,
+			exec,
+			changeID,
+			changeTaskID,
+			resourceBackupID,
+			resourceID,
+			sourceEnvironmentResourceID,
+			targetEnvironmentResourceID,
+			targetInstallationID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resourcerestore %d: %w", i+1, err)
 		}

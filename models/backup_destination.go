@@ -32,7 +32,11 @@ func (e *BackupDestinationEntity) Validate() error {
 	return nil
 }
 
-func (bd backupDestination) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (BackupDestinationEntity, error) {
+func (bd backupDestination) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (BackupDestinationEntity, error) {
 	var entity BackupDestinationEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -56,7 +60,11 @@ type CreateBackupDestinationData struct {
 	CredentialID   uuid.UUID
 }
 
-func (bd backupDestination) Create(ctx context.Context, db storage.Executor, data CreateBackupDestinationData) (BackupDestinationEntity, error) {
+func (bd backupDestination) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateBackupDestinationData,
+) (BackupDestinationEntity, error) {
 	entity := BackupDestinationEntity{
 		ID:             uuid.New(),
 		CreatedAt:      time.Now(),
@@ -97,7 +105,11 @@ type UpdateBackupDestinationData struct {
 	CredentialID   uuid.UUID
 }
 
-func (bd backupDestination) Update(ctx context.Context, db storage.Executor, data UpdateBackupDestinationData) (BackupDestinationEntity, error) {
+func (bd backupDestination) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateBackupDestinationData,
+) (BackupDestinationEntity, error) {
 	entity := BackupDestinationEntity{
 		ID:             data.ID,
 		UpdatedAt:      time.Now(),
@@ -146,7 +158,10 @@ func (bd backupDestination) Destroy(ctx context.Context, db storage.Executor, id
 	return err
 }
 
-func (bd backupDestination) All(ctx context.Context, db storage.Executor) ([]BackupDestinationEntity, error) {
+func (bd backupDestination) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]BackupDestinationEntity, error) {
 	var entities []BackupDestinationEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -165,7 +180,11 @@ type PaginatedBackupDestinations struct {
 	TotalPages         int64
 }
 
-func (bd backupDestination) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedBackupDestinations, error) {
+func (bd backupDestination) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedBackupDestinations, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -204,7 +223,11 @@ func (bd backupDestination) Paginate(ctx context.Context, db storage.Executor, p
 	}, nil
 }
 
-func (bd backupDestination) Upsert(ctx context.Context, db storage.Executor, data CreateBackupDestinationData) (BackupDestinationEntity, error) {
+func (bd backupDestination) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateBackupDestinationData,
+) (BackupDestinationEntity, error) {
 	entity := BackupDestinationEntity{
 		ID:             uuid.New(),
 		CreatedAt:      time.Now(),

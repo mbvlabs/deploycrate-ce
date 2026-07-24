@@ -35,7 +35,11 @@ func (e *ChangeTaskEntity) Validate() error {
 	return nil
 }
 
-func (ct changeTask) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (ChangeTaskEntity, error) {
+func (ct changeTask) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (ChangeTaskEntity, error) {
 	var entity ChangeTaskEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -62,7 +66,11 @@ type CreateChangeTaskData struct {
 	EnvironmentTargetID *uuid.UUID
 }
 
-func (ct changeTask) Create(ctx context.Context, db storage.Executor, data CreateChangeTaskData) (ChangeTaskEntity, error) {
+func (ct changeTask) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateChangeTaskData,
+) (ChangeTaskEntity, error) {
 	entity := ChangeTaskEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
@@ -109,7 +117,11 @@ type UpdateChangeTaskData struct {
 	EnvironmentTargetID *uuid.UUID
 }
 
-func (ct changeTask) Update(ctx context.Context, db storage.Executor, data UpdateChangeTaskData) (ChangeTaskEntity, error) {
+func (ct changeTask) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateChangeTaskData,
+) (ChangeTaskEntity, error) {
 	entity := ChangeTaskEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
@@ -183,7 +195,11 @@ type PaginatedChangeTasks struct {
 	TotalPages  int64
 }
 
-func (ct changeTask) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedChangeTasks, error) {
+func (ct changeTask) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedChangeTasks, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -222,7 +238,11 @@ func (ct changeTask) Paginate(ctx context.Context, db storage.Executor, page, pa
 	}, nil
 }
 
-func (ct changeTask) Upsert(ctx context.Context, db storage.Executor, data CreateChangeTaskData) (ChangeTaskEntity, error) {
+func (ct changeTask) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateChangeTaskData,
+) (ChangeTaskEntity, error) {
 	entity := ChangeTaskEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),

@@ -10,6 +10,7 @@ import (
 
 	"deploycrate-ce/database/seeds"
 	"deploycrate-ce/internal/storage"
+
 	"github.com/joho/godotenv"
 )
 

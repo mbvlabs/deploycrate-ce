@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${USERNAME:?USERNAME is required}"
+: "${ADMIN_USER:?ADMIN_USER is required}"
+: "${SERVICE_USER:?SERVICE_USER is required}"
 
 os_id=$(. /etc/os-release && printf '%s' "${ID}")
 codename=$(. /etc/os-release && printf '%s' "${VERSION_CODENAME}")
@@ -32,4 +33,5 @@ EOF
 
 systemctl enable --now docker
 systemctl restart docker
-usermod --append --groups docker "${USERNAME}"
+usermod --append --groups docker "${ADMIN_USER}"
+usermod --append --groups docker "${SERVICE_USER}"

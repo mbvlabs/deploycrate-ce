@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -183,11 +184,9 @@ func (client *Client) request(ctx context.Context, method, path string, payload 
 		return err
 	}
 	defer response.Body.Close()
-	for _, status := range allowed {
-		if response.StatusCode == status {
-			_, _ = io.Copy(io.Discard, response.Body)
-			return nil
-		}
+	if slices.Contains(allowed, response.StatusCode) {
+		_, _ = io.Copy(io.Discard, response.Body)
+		return nil
 	}
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, 32*1024))
 	return errors.Join(

@@ -21,7 +21,11 @@ type DeploymentEventFactory struct {
 
 type DeploymentEventOption func(*DeploymentEventFactory)
 
-func BuildDeploymentEvent(deploymentID uuid.UUID, changeTaskAttemptID *uuid.UUID, opts ...DeploymentEventOption) models.DeploymentEventEntity {
+func BuildDeploymentEvent(
+	deploymentID uuid.UUID,
+	changeTaskAttemptID *uuid.UUID,
+	opts ...DeploymentEventOption,
+) models.DeploymentEventEntity {
 	f := &DeploymentEventFactory{
 		DeploymentEventEntity: models.DeploymentEventEntity{
 			Sequence:            randomInt64(1, 1000, 100),
@@ -44,7 +48,13 @@ func BuildDeploymentEvent(deploymentID uuid.UUID, changeTaskAttemptID *uuid.UUID
 	return f.DeploymentEventEntity
 }
 
-func CreateDeploymentEvent(ctx context.Context, exec storage.Executor, deploymentID uuid.UUID, changeTaskAttemptID *uuid.UUID, opts ...DeploymentEventOption) (models.DeploymentEventEntity, error) {
+func CreateDeploymentEvent(
+	ctx context.Context,
+	exec storage.Executor,
+	deploymentID uuid.UUID,
+	changeTaskAttemptID *uuid.UUID,
+	opts ...DeploymentEventOption,
+) (models.DeploymentEventEntity, error) {
 	built := BuildDeploymentEvent(deploymentID, changeTaskAttemptID, opts...)
 
 	entity := models.DeploymentEventEntity{
@@ -70,7 +80,14 @@ func CreateDeploymentEvent(ctx context.Context, exec storage.Executor, deploymen
 	return entity, nil
 }
 
-func CreateDeploymentEvents(ctx context.Context, exec storage.Executor, deploymentID uuid.UUID, changeTaskAttemptID *uuid.UUID, count int, opts ...DeploymentEventOption) ([]models.DeploymentEventEntity, error) {
+func CreateDeploymentEvents(
+	ctx context.Context,
+	exec storage.Executor,
+	deploymentID uuid.UUID,
+	changeTaskAttemptID *uuid.UUID,
+	count int,
+	opts ...DeploymentEventOption,
+) ([]models.DeploymentEventEntity, error) {
 	deploymentevents := make([]models.DeploymentEventEntity, 0, count)
 
 	for i := range count {

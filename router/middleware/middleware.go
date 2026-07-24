@@ -20,7 +20,7 @@ import (
 	echomw "github.com/labstack/echo/v5/middleware"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
-	"go.opentelemetry.io/otel/semconv/v1.26.0"
+	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -314,15 +314,21 @@ func CSRFMiddleware(cfg config.Config, csrfName string) (echo.MiddlewareFunc, er
 				method != http.MethodOptions && method != http.MethodTrace
 
 			if isUnsafe {
-				secFetchSite := strings.ToLower(strings.TrimSpace(c.Request().Header.Get("Sec-Fetch-Site")))
+				secFetchSite := strings.ToLower(
+					strings.TrimSpace(c.Request().Header.Get("Sec-Fetch-Site")),
+				)
 
 				// In header_only mode, reject requests missing Sec-Fetch-Site
 				if headerOnly && (secFetchSite == "" || secFetchSite == "none") {
-					return echo.NewHTTPError(http.StatusForbidden, "CSRF verification failed: missing Sec-Fetch-Site header")
+					return echo.NewHTTPError(
+						http.StatusForbidden,
+						"CSRF verification failed: missing Sec-Fetch-Site header",
+					)
 				}
 
 				// In legacy mode, log when falling back to form token
-				if !headerOnly && secFetchSite != "same-origin" && secFetchSite != "same-site" && secFetchSite != "cross-site" {
+				if !headerOnly && secFetchSite != "same-origin" && secFetchSite != "same-site" &&
+					secFetchSite != "cross-site" {
 					if c.Request().Header.Get("X-CSRF-Token") == "" && c.FormValue("_csrf") != "" {
 						slog.Warn("CSRF check fell back to legacy token")
 					}

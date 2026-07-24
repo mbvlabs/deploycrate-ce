@@ -27,7 +27,11 @@ func (e *EnvironmentDomainEntity) Validate() error {
 	return nil
 }
 
-func (ed environmentDomain) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentDomainEntity, error) {
+func (ed environmentDomain) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (EnvironmentDomainEntity, error) {
 	var entity EnvironmentDomainEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -46,7 +50,11 @@ type CreateEnvironmentDomainData struct {
 	EnvironmentID uuid.UUID
 }
 
-func (ed environmentDomain) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentDomainData) (EnvironmentDomainEntity, error) {
+func (ed environmentDomain) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentDomainData,
+) (EnvironmentDomainEntity, error) {
 	entity := EnvironmentDomainEntity{
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),
@@ -77,7 +85,11 @@ type UpdateEnvironmentDomainData struct {
 	EnvironmentID uuid.UUID
 }
 
-func (ed environmentDomain) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentDomainData) (EnvironmentDomainEntity, error) {
+func (ed environmentDomain) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateEnvironmentDomainData,
+) (EnvironmentDomainEntity, error) {
 	entity := EnvironmentDomainEntity{
 		ID:            data.ID,
 		UpdatedAt:     time.Now(),
@@ -116,7 +128,10 @@ func (ed environmentDomain) Destroy(ctx context.Context, db storage.Executor, id
 	return err
 }
 
-func (ed environmentDomain) All(ctx context.Context, db storage.Executor) ([]EnvironmentDomainEntity, error) {
+func (ed environmentDomain) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]EnvironmentDomainEntity, error) {
 	var entities []EnvironmentDomainEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -135,7 +150,11 @@ type PaginatedEnvironmentDomains struct {
 	TotalPages         int64
 }
 
-func (ed environmentDomain) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedEnvironmentDomains, error) {
+func (ed environmentDomain) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedEnvironmentDomains, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -174,7 +193,11 @@ func (ed environmentDomain) Paginate(ctx context.Context, db storage.Executor, p
 	}, nil
 }
 
-func (ed environmentDomain) Upsert(ctx context.Context, db storage.Executor, data CreateEnvironmentDomainData) (EnvironmentDomainEntity, error) {
+func (ed environmentDomain) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentDomainData,
+) (EnvironmentDomainEntity, error) {
 	entity := EnvironmentDomainEntity{
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),

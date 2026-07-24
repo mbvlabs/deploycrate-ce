@@ -41,7 +41,11 @@ func BuildCredential(opts ...CredentialOption) models.CredentialEntity {
 	return f.CredentialEntity
 }
 
-func CreateCredential(ctx context.Context, exec storage.Executor, opts ...CredentialOption) (models.CredentialEntity, error) {
+func CreateCredential(
+	ctx context.Context,
+	exec storage.Executor,
+	opts ...CredentialOption,
+) (models.CredentialEntity, error) {
 	built := BuildCredential(opts...)
 
 	entity := models.CredentialEntity{
@@ -64,7 +68,12 @@ func CreateCredential(ctx context.Context, exec storage.Executor, opts ...Creden
 	return entity, nil
 }
 
-func CreateCredentials(ctx context.Context, exec storage.Executor, count int, opts ...CredentialOption) ([]models.CredentialEntity, error) {
+func CreateCredentials(
+	ctx context.Context,
+	exec storage.Executor,
+	count int,
+	opts ...CredentialOption,
+) ([]models.CredentialEntity, error) {
 	credentials := make([]models.CredentialEntity, 0, count)
 
 	for i := range count {

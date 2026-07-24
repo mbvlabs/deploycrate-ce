@@ -87,23 +87,15 @@
         <Sidebar.GroupContent>
           <Sidebar.Menu>
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.serverIndex())} tooltipContent="Servers">
-                {#snippet child({ props })}
-                  <Link {...props} href={routes.serverIndex()}>
-                    <ServerIcon />
-                    <span>Servers</span>
-                  </Link>
-                {/snippet}
+              <Sidebar.MenuButton disabled tooltipContent="Servers">
+                <ServerIcon />
+                <span>Servers</span>
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.privateNetworkIndex()) || $page.url.startsWith('/server-network-attachments')} tooltipContent="Networks">
-                {#snippet child({ props })}
-                  <Link {...props} href={routes.privateNetworkIndex()}>
-                    <NetworkIcon />
-                    <span>Networks</span>
-                  </Link>
-                {/snippet}
+              <Sidebar.MenuButton disabled tooltipContent="Networks">
+                <NetworkIcon />
+                <span>Networks</span>
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
           </Sidebar.Menu>

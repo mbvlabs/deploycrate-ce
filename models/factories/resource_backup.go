@@ -20,7 +20,17 @@ type ResourceBackupFactory struct {
 
 type ResourceBackupOption func(*ResourceBackupFactory)
 
-func BuildResourceBackup(changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid.UUID, resourceID uuid.UUID, environmentResourceID *uuid.UUID, resourceInstallationID *uuid.UUID, resourceVolumeID *uuid.UUID, backupDestinationID uuid.UUID, opts ...ResourceBackupOption) models.ResourceBackupEntity {
+func BuildResourceBackup(
+	changeID uuid.UUID,
+	changeTaskID uuid.UUID,
+	backupPolicyID uuid.UUID,
+	resourceID uuid.UUID,
+	environmentResourceID *uuid.UUID,
+	resourceInstallationID *uuid.UUID,
+	resourceVolumeID *uuid.UUID,
+	backupDestinationID uuid.UUID,
+	opts ...ResourceBackupOption,
+) models.ResourceBackupEntity {
 	f := &ResourceBackupFactory{
 		ResourceBackupEntity: models.ResourceBackupEntity{
 			TriggerType:            faker.Word(),
@@ -54,8 +64,29 @@ func BuildResourceBackup(changeID uuid.UUID, changeTaskID uuid.UUID, backupPolic
 	return f.ResourceBackupEntity
 }
 
-func CreateResourceBackup(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid.UUID, resourceID uuid.UUID, environmentResourceID *uuid.UUID, resourceInstallationID *uuid.UUID, resourceVolumeID *uuid.UUID, backupDestinationID uuid.UUID, opts ...ResourceBackupOption) (models.ResourceBackupEntity, error) {
-	built := BuildResourceBackup(changeID, changeTaskID, backupPolicyID, resourceID, environmentResourceID, resourceInstallationID, resourceVolumeID, backupDestinationID, opts...)
+func CreateResourceBackup(
+	ctx context.Context,
+	exec storage.Executor,
+	changeID uuid.UUID,
+	changeTaskID uuid.UUID,
+	backupPolicyID uuid.UUID,
+	resourceID uuid.UUID,
+	environmentResourceID *uuid.UUID,
+	resourceInstallationID *uuid.UUID,
+	resourceVolumeID *uuid.UUID,
+	backupDestinationID uuid.UUID,
+	opts ...ResourceBackupOption,
+) (models.ResourceBackupEntity, error) {
+	built := BuildResourceBackup(
+		changeID,
+		changeTaskID,
+		backupPolicyID,
+		resourceID,
+		environmentResourceID,
+		resourceInstallationID,
+		resourceVolumeID,
+		backupDestinationID,
+		opts...)
 
 	entity := models.ResourceBackupEntity{
 		ID:                     uuid.New(),
@@ -91,11 +122,35 @@ func CreateResourceBackup(ctx context.Context, exec storage.Executor, changeID u
 	return entity, nil
 }
 
-func CreateResourceBackups(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid.UUID, resourceID uuid.UUID, environmentResourceID *uuid.UUID, resourceInstallationID *uuid.UUID, resourceVolumeID *uuid.UUID, backupDestinationID uuid.UUID, count int, opts ...ResourceBackupOption) ([]models.ResourceBackupEntity, error) {
+func CreateResourceBackups(
+	ctx context.Context,
+	exec storage.Executor,
+	changeID uuid.UUID,
+	changeTaskID uuid.UUID,
+	backupPolicyID uuid.UUID,
+	resourceID uuid.UUID,
+	environmentResourceID *uuid.UUID,
+	resourceInstallationID *uuid.UUID,
+	resourceVolumeID *uuid.UUID,
+	backupDestinationID uuid.UUID,
+	count int,
+	opts ...ResourceBackupOption,
+) ([]models.ResourceBackupEntity, error) {
 	resourcebackups := make([]models.ResourceBackupEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateResourceBackup(ctx, exec, changeID, changeTaskID, backupPolicyID, resourceID, environmentResourceID, resourceInstallationID, resourceVolumeID, backupDestinationID, opts...)
+		entity, err := CreateResourceBackup(
+			ctx,
+			exec,
+			changeID,
+			changeTaskID,
+			backupPolicyID,
+			resourceID,
+			environmentResourceID,
+			resourceInstallationID,
+			resourceVolumeID,
+			backupDestinationID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resourcebackup %d: %w", i+1, err)
 		}

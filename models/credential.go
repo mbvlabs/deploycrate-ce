@@ -31,7 +31,11 @@ func (e *CredentialEntity) Validate() error {
 	return nil
 }
 
-func (c credential) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (CredentialEntity, error) {
+func (c credential) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (CredentialEntity, error) {
 	var entity CredentialEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -53,7 +57,11 @@ type CreateCredentialData struct {
 	ArchivedAt sql.NullTime
 }
 
-func (c credential) Create(ctx context.Context, db storage.Executor, data CreateCredentialData) (CredentialEntity, error) {
+func (c credential) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateCredentialData,
+) (CredentialEntity, error) {
 	entity := CredentialEntity{
 		ID:         uuid.New(),
 		CreatedAt:  time.Now(),
@@ -90,7 +98,11 @@ type UpdateCredentialData struct {
 	ArchivedAt sql.NullTime
 }
 
-func (c credential) Update(ctx context.Context, db storage.Executor, data UpdateCredentialData) (CredentialEntity, error) {
+func (c credential) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateCredentialData,
+) (CredentialEntity, error) {
 	entity := CredentialEntity{
 		ID:         data.ID,
 		UpdatedAt:  time.Now(),
@@ -154,7 +166,11 @@ type PaginatedCredentials struct {
 	TotalPages  int64
 }
 
-func (c credential) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedCredentials, error) {
+func (c credential) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedCredentials, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -193,7 +209,11 @@ func (c credential) Paginate(ctx context.Context, db storage.Executor, page, pag
 	}, nil
 }
 
-func (c credential) Upsert(ctx context.Context, db storage.Executor, data CreateCredentialData) (CredentialEntity, error) {
+func (c credential) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateCredentialData,
+) (CredentialEntity, error) {
 	entity := CredentialEntity{
 		ID:         uuid.New(),
 		CreatedAt:  time.Now(),

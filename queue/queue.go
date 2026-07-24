@@ -132,5 +132,6 @@ var Module = fx.Module(
 	fx.Provide(
 		NewInsertOnly,
 		NewProcessor,
+		fx.Annotate(NewMetricRollupPeriodicJob, fx.ResultTags(periodicJobsGroup)),
 	),
 )

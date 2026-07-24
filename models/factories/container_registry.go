@@ -20,7 +20,10 @@ type ContainerRegistryFactory struct {
 
 type ContainerRegistryOption func(*ContainerRegistryFactory)
 
-func BuildContainerRegistry(credentialID uuid.UUID, opts ...ContainerRegistryOption) models.ContainerRegistryEntity {
+func BuildContainerRegistry(
+	credentialID uuid.UUID,
+	opts ...ContainerRegistryOption,
+) models.ContainerRegistryEntity {
 	f := &ContainerRegistryFactory{
 		ContainerRegistryEntity: models.ContainerRegistryEntity{
 			ArchivedAt:   sql.NullTime{Time: time.Now(), Valid: true},
@@ -38,7 +41,12 @@ func BuildContainerRegistry(credentialID uuid.UUID, opts ...ContainerRegistryOpt
 	return f.ContainerRegistryEntity
 }
 
-func CreateContainerRegistry(ctx context.Context, exec storage.Executor, credentialID uuid.UUID, opts ...ContainerRegistryOption) (models.ContainerRegistryEntity, error) {
+func CreateContainerRegistry(
+	ctx context.Context,
+	exec storage.Executor,
+	credentialID uuid.UUID,
+	opts ...ContainerRegistryOption,
+) (models.ContainerRegistryEntity, error) {
 	built := BuildContainerRegistry(credentialID, opts...)
 
 	entity := models.ContainerRegistryEntity{
@@ -59,7 +67,13 @@ func CreateContainerRegistry(ctx context.Context, exec storage.Executor, credent
 	return entity, nil
 }
 
-func CreateContainerRegistrys(ctx context.Context, exec storage.Executor, credentialID uuid.UUID, count int, opts ...ContainerRegistryOption) ([]models.ContainerRegistryEntity, error) {
+func CreateContainerRegistrys(
+	ctx context.Context,
+	exec storage.Executor,
+	credentialID uuid.UUID,
+	count int,
+	opts ...ContainerRegistryOption,
+) ([]models.ContainerRegistryEntity, error) {
 	containerregistrys := make([]models.ContainerRegistryEntity, 0, count)
 
 	for i := range count {

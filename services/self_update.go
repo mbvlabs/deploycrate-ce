@@ -160,12 +160,18 @@ func NewSelfUpdate(
 		releaseRoot:    environmentOr("DEPLOYCRATE_CE_RELEASE_ROOT", defaultReleaseRoot),
 		slotsRoot:      environmentOr("DEPLOYCRATE_CE_SLOTS_ROOT", defaultSlotsRoot),
 		statusPath:     environmentOr("DEPLOYCRATE_CE_UPDATE_STATUS_PATH", defaultStatusPath),
-		caddyAdminURL:  strings.TrimRight(environmentOr("DEPLOYCRATE_CE_CADDY_ADMIN_URL", defaultCaddyAdminURL), "/"),
-		publicHealth:   environmentOr("DEPLOYCRATE_CE_PUBLIC_HEALTH_URL", strings.TrimRight(config.BaseURL, "/")+"/api/health"),
-		client:         httpClient,
-		r2:             cloudflare.NewR2(httpClient),
-		queue:          make(chan updateJob, 1),
-		db:             db,
+		caddyAdminURL: strings.TrimRight(
+			environmentOr("DEPLOYCRATE_CE_CADDY_ADMIN_URL", defaultCaddyAdminURL),
+			"/",
+		),
+		publicHealth: environmentOr(
+			"DEPLOYCRATE_CE_PUBLIC_HEALTH_URL",
+			strings.TrimRight(config.BaseURL, "/")+"/api/health",
+		),
+		client: httpClient,
+		r2:     cloudflare.NewR2(httpClient),
+		queue:  make(chan updateJob, 1),
+		db:     db,
 	}
 	service.loadStatus()
 	if service.status.UpdatedAt.IsZero() {
@@ -287,8 +293,16 @@ func (s *SelfUpdate) reconcileWhenUnlocked(ctx context.Context) {
 	for {
 		lock, err := acquireSelfUpdateLock()
 		if err == nil {
-			if reconcileErr := s.reconcileLocked(ctx); reconcileErr != nil && !errors.Is(reconcileErr, context.Canceled) {
-				slog.ErrorContext(ctx, "failed to reconcile interrupted self-update", "error", reconcileErr)
+			if reconcileErr := s.reconcileLocked(
+				ctx,
+			); reconcileErr != nil &&
+				!errors.Is(reconcileErr, context.Canceled) {
+				slog.ErrorContext(
+					ctx,
+					"failed to reconcile interrupted self-update",
+					"error",
+					reconcileErr,
+				)
 			}
 			lock.release()
 			return
@@ -330,8 +344,13 @@ func (s *SelfUpdate) reconcileLocked(ctx context.Context) error {
 	inspectionErr := errors.Join(targetActiveErr, trafficErr, slotErr, activeBootErr, targetBootErr)
 
 	targetHealthy := false
-	if inspectionErr == nil && targetActive && filepath.Clean(slotTarget) == filepath.Clean(record.ReleasePath) {
-		targetHealthy = s.waitForHealth(ctx, internalHealthURL(targetInstance), 5*time.Second) == nil
+	if inspectionErr == nil && targetActive &&
+		filepath.Clean(slotTarget) == filepath.Clean(record.ReleasePath) {
+		targetHealthy = s.waitForHealth(
+			ctx,
+			internalHealthURL(targetInstance),
+			5*time.Second,
+		) == nil
 	}
 	if targetHealthy && trafficTarget == targetInstance {
 		return s.completeRecoveredUpdate(record)
@@ -353,7 +372,11 @@ func (s *SelfUpdate) completeRecoveredUpdate(record *selfUpdateDeployment) error
 
 	activeInstance := record.SystemState.ActiveInstanceSlot
 	targetInstance := record.InactiveSlot
-	s.transition(SelfUpdateInProgress, "update_service_boot_state", "Finalizing enabled service instance")
+	s.transition(
+		SelfUpdateInProgress,
+		"update_service_boot_state",
+		"Finalizing enabled service instance",
+	)
 	if err := runSystemctl(ctx, "enable", serviceForInstance(targetInstance)); err != nil {
 		return err
 	}
@@ -367,7 +390,11 @@ func (s *SelfUpdate) completeRecoveredUpdate(record *selfUpdateDeployment) error
 	}
 
 	s.transition(SelfUpdateInProgress, "stop_previous_instance", "Stopping previous instance")
-	if err := stopServiceAndWait(ctx, serviceForInstance(activeInstance), 30*time.Second); err != nil {
+	if err := stopServiceAndWait(
+		ctx,
+		serviceForInstance(activeInstance),
+		30*time.Second,
+	); err != nil {
 		return err
 	}
 	running, err := s.runningInstance(ctx)
@@ -397,17 +424,42 @@ func (s *SelfUpdate) rollbackDeployment(record *selfUpdateDeployment) error {
 	activeInstance := record.SystemState.ActiveInstanceSlot
 	targetInstance := record.InactiveSlot
 	var rollbackErr error
-	rollbackErr = errors.Join(rollbackErr, runSystemctl(ctx, "start", serviceForInstance(activeInstance)))
-	rollbackErr = errors.Join(rollbackErr, s.configureTraffic(ctx, record.SystemState.CaddyRouteExternalID, activeInstance))
-	rollbackErr = errors.Join(rollbackErr, runSystemctl(ctx, "enable", serviceForInstance(activeInstance)))
-	rollbackErr = errors.Join(rollbackErr, runSystemctl(ctx, "disable", serviceForInstance(targetInstance)))
-	rollbackErr = errors.Join(rollbackErr, s.restoreSlot(ctx, targetInstance, record.Checkpoint.PreviousSlotTarget))
-	rollbackErr = errors.Join(rollbackErr, stopServiceAndWait(ctx, serviceForInstance(targetInstance), 30*time.Second))
+	rollbackErr = errors.Join(
+		rollbackErr,
+		runSystemctl(ctx, "start", serviceForInstance(activeInstance)),
+	)
+	rollbackErr = errors.Join(
+		rollbackErr,
+		s.configureTraffic(ctx, record.SystemState.CaddyRouteExternalID, activeInstance),
+	)
+	rollbackErr = errors.Join(
+		rollbackErr,
+		runSystemctl(ctx, "enable", serviceForInstance(activeInstance)),
+	)
+	rollbackErr = errors.Join(
+		rollbackErr,
+		runSystemctl(ctx, "disable", serviceForInstance(targetInstance)),
+	)
+	rollbackErr = errors.Join(
+		rollbackErr,
+		s.restoreSlot(ctx, targetInstance, record.Checkpoint.PreviousSlotTarget),
+	)
+	rollbackErr = errors.Join(
+		rollbackErr,
+		stopServiceAndWait(ctx, serviceForInstance(targetInstance), 30*time.Second),
+	)
 
 	running, err := s.runningInstance(ctx)
 	rollbackErr = errors.Join(rollbackErr, err)
 	if err == nil && running != activeInstance {
-		rollbackErr = errors.Join(rollbackErr, fmt.Errorf("expected %s to be the only active slot after rollback, got %s", activeInstance, running))
+		rollbackErr = errors.Join(
+			rollbackErr,
+			fmt.Errorf(
+				"expected %s to be the only active slot after rollback, got %s",
+				activeInstance,
+				running,
+			),
+		)
 	}
 	if rollbackErr != nil {
 		return rollbackErr
@@ -448,11 +500,21 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 	stagedBinary := filepath.Join(workDir, "deploycrate-ce")
 	checksumPath := filepath.Join(workDir, "deploycrate-ce.sha256")
 	s.transition(SelfUpdateInProgress, "download_artifact", "Downloading release artifact")
-	if err := s.r2.Download(ctx, job.source.BaseURL, config.ReleaseApplicationPath, stagedBinary); err != nil {
+	if err := s.r2.Download(
+		ctx,
+		job.source.BaseURL,
+		config.ReleaseApplicationPath,
+		stagedBinary,
+	); err != nil {
 		s.fail("download_artifact", err)
 		return
 	}
-	if err := s.r2.Download(ctx, job.source.BaseURL, config.ReleaseChecksumPath, checksumPath); err != nil {
+	if err := s.r2.Download(
+		ctx,
+		job.source.BaseURL,
+		config.ReleaseChecksumPath,
+		checksumPath,
+	); err != nil {
 		s.fail("download_checksum", err)
 		return
 	}
@@ -472,7 +534,10 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 		return
 	}
 	if job.source.Development && !strings.HasPrefix(stagedVersion, "development-") {
-		s.fail("verify_version", fmt.Errorf("development release reported unexpected version %q", stagedVersion))
+		s.fail(
+			"verify_version",
+			fmt.Errorf("development release reported unexpected version %q", stagedVersion),
+		)
 		return
 	}
 	release := updateRelease{Version: stagedVersion}
@@ -568,7 +633,11 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 	}
 
 	s.transition(SelfUpdateInProgress, "update_slot_link", "Updating inactive slot link")
-	if err := s.replaceSlotLink(ctx, s.slotBinaryPath(inactiveInstance), installedBinary); err != nil {
+	if err := s.replaceSlotLink(
+		ctx,
+		s.slotBinaryPath(inactiveInstance),
+		installedBinary,
+	); err != nil {
 		rollback(err)
 		return
 	}
@@ -579,7 +648,11 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 	}
 
 	s.transition(SelfUpdateInProgress, "prepare_traffic", "Preparing blue-green traffic route")
-	if err := s.configureTraffic(ctx, deployment.SystemState.CaddyRouteExternalID, activeInstance); err != nil {
+	if err := s.configureTraffic(
+		ctx,
+		deployment.SystemState.CaddyRouteExternalID,
+		activeInstance,
+	); err != nil {
 		rollback(err)
 		return
 	}
@@ -601,8 +674,16 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 		return
 	}
 
-	s.transition(SelfUpdateInProgress, "verify_inactive_instance", "Waiting for inactive instance health")
-	if err := s.waitForHealth(ctx, internalHealthURL(inactiveInstance), 30*time.Second); err != nil {
+	s.transition(
+		SelfUpdateInProgress,
+		"verify_inactive_instance",
+		"Waiting for inactive instance health",
+	)
+	if err := s.waitForHealth(
+		ctx,
+		internalHealthURL(inactiveInstance),
+		30*time.Second,
+	); err != nil {
 		rollback(err)
 		return
 	}
@@ -613,7 +694,11 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 	}
 
 	s.transition(SelfUpdateInProgress, "switch_traffic", "Switching traffic to updated instance")
-	if err := s.setTraffic(ctx, deployment.SystemState.CaddyRouteExternalID, inactiveInstance); err != nil {
+	if err := s.setTraffic(
+		ctx,
+		deployment.SystemState.CaddyRouteExternalID,
+		inactiveInstance,
+	); err != nil {
 		rollback(err)
 		return
 	}
@@ -636,7 +721,11 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 		return
 	}
 
-	s.transition(SelfUpdateInProgress, "update_service_boot_state", "Updating enabled service instance")
+	s.transition(
+		SelfUpdateInProgress,
+		"update_service_boot_state",
+		"Updating enabled service instance",
+	)
 	if err := runSystemctl(ctx, "enable", serviceForInstance(inactiveInstance)); err != nil {
 		rollback(err)
 		return
@@ -657,7 +746,13 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 	s.transition(SelfUpdateInProgress, "stop_previous_instance", "Stopping previous instance")
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer stopCancel()
-	if err := runSudo(stopCtx, "systemctl", "stop", "--no-block", serviceForInstance(activeInstance)); err != nil {
+	if err := runSudo(
+		stopCtx,
+		"systemctl",
+		"stop",
+		"--no-block",
+		serviceForInstance(activeInstance),
+	); err != nil {
 		rollback(err)
 		return
 	}
@@ -667,13 +762,24 @@ func (s *SelfUpdate) runningInstance(ctx context.Context) (string, error) {
 	greenActive, greenErr := serviceActive(ctx, greenService)
 	blueActive, blueErr := serviceActive(ctx, blueService)
 	if greenErr != nil || blueErr != nil {
-		return "", fmt.Errorf("%w: expected %s.service and %s.service: %v", ErrBlueGreenNotConfigured, greenService, blueService, errors.Join(greenErr, blueErr))
+		return "", fmt.Errorf(
+			"%w: expected %s and %s: %v",
+			ErrBlueGreenNotConfigured,
+			greenService,
+			blueService,
+			errors.Join(greenErr, blueErr),
+		)
 	}
 	switch {
 	case greenActive && blueActive:
 		return "", errors.New("both DeployCrate CE instances are active before update")
 	case !greenActive && !blueActive:
-		return "", fmt.Errorf("%w: neither %s nor %s is active", ErrBlueGreenNotConfigured, greenService, blueService)
+		return "", fmt.Errorf(
+			"%w: neither %s nor %s is active",
+			ErrBlueGreenNotConfigured,
+			greenService,
+			blueService,
+		)
 	case greenActive:
 		return greenInstance, nil
 	default:
@@ -681,7 +787,10 @@ func (s *SelfUpdate) runningInstance(ctx context.Context) (string, error) {
 	}
 }
 
-func (s *SelfUpdate) installRelease(ctx context.Context, sourcePath, version string) (string, error) {
+func (s *SelfUpdate) installRelease(
+	ctx context.Context,
+	sourcePath, version string,
+) (string, error) {
 	releasePath := s.releaseBinaryPath(version)
 	if err := runSudo(ctx, "install", "-d", "-m", "0755", filepath.Dir(releasePath)); err != nil {
 		return "", fmt.Errorf("create release directory: %w", err)
@@ -804,7 +913,9 @@ func (s *SelfUpdate) trafficTarget(ctx context.Context, routeID string) (string,
 			continue
 		}
 		if weight != 100 || target != "" {
-			return "", errors.New("Caddy self-update route does not have exactly one active upstream")
+			return "", errors.New(
+				"Caddy self-update route does not have exactly one active upstream",
+			)
 		}
 		switch normalizeDial(upstream.Dial) {
 		case fmt.Sprintf("127.0.0.1:%d", greenPort):
@@ -821,7 +932,10 @@ func (s *SelfUpdate) trafficTarget(ctx context.Context, routeID string) (string,
 	return target, nil
 }
 
-func (s *SelfUpdate) readTrafficRoute(ctx context.Context, routeID string) (caddyRoute, string, error) {
+func (s *SelfUpdate) readTrafficRoute(
+	ctx context.Context,
+	routeID string,
+) (caddyRoute, string, error) {
 	routeURL := fmt.Sprintf("%s/id/%s", s.caddyAdminURL, url.PathEscape(routeID))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, routeURL, nil)
 	if err != nil {
@@ -833,7 +947,10 @@ func (s *SelfUpdate) readTrafficRoute(ctx context.Context, routeID string) (cadd
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return caddyRoute{}, "", fmt.Errorf("read Caddy self-update route: status %d", resp.StatusCode)
+		return caddyRoute{}, "", fmt.Errorf(
+			"read Caddy self-update route: status %d",
+			resp.StatusCode,
+		)
 	}
 
 	var route caddyRoute
@@ -850,7 +967,12 @@ func (s *SelfUpdate) readTrafficRoute(ctx context.Context, routeID string) (cadd
 	return route, handlePath, nil
 }
 
-func (s *SelfUpdate) patchTrafficWeights(ctx context.Context, routeID, handlePath string, upstreams []caddyUpstream, targetInstance string) error {
+func (s *SelfUpdate) patchTrafficWeights(
+	ctx context.Context,
+	routeID, handlePath string,
+	upstreams []caddyUpstream,
+	targetInstance string,
+) error {
 	weights := make([]int, len(upstreams))
 	foundGreen := false
 	foundBlue := false
@@ -873,16 +995,32 @@ func (s *SelfUpdate) patchTrafficWeights(ctx context.Context, routeID, handlePat
 	if !foundGreen || !foundBlue {
 		return errors.New("Caddy self-update route must contain green and blue upstreams")
 	}
-	return s.patchCaddyValue(ctx, routeID, handlePath+"/load_balancing/selection_policy/weights", weights, "switch Caddy traffic")
+	return s.patchCaddyValue(
+		ctx,
+		routeID,
+		handlePath+"/load_balancing/selection_policy/weights",
+		weights,
+		"switch Caddy traffic",
+	)
 }
 
-func (s *SelfUpdate) patchCaddyValue(ctx context.Context, routeID, path string, value any, operation string) error {
+func (s *SelfUpdate) patchCaddyValue(
+	ctx context.Context,
+	routeID, path string,
+	value any,
+	operation string,
+) error {
 	body, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
 	patchURL := fmt.Sprintf("%s/id/%s/%s", s.caddyAdminURL, url.PathEscape(routeID), path)
-	patch, err := http.NewRequestWithContext(ctx, http.MethodPatch, patchURL, strings.NewReader(string(body)))
+	patch, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodPatch,
+		patchURL,
+		strings.NewReader(string(body)),
+	)
 	if err != nil {
 		return err
 	}
@@ -894,7 +1032,12 @@ func (s *SelfUpdate) patchCaddyValue(ctx context.Context, routeID, path string, 
 	defer patchResponse.Body.Close()
 	if patchResponse.StatusCode >= http.StatusMultipleChoices {
 		responseBody, _ := io.ReadAll(io.LimitReader(patchResponse.Body, 1024))
-		return fmt.Errorf("%s: status %d: %s", operation, patchResponse.StatusCode, strings.TrimSpace(string(responseBody)))
+		return fmt.Errorf(
+			"%s: status %d: %s",
+			operation,
+			patchResponse.StatusCode,
+			strings.TrimSpace(string(responseBody)),
+		)
 	}
 	return nil
 }
@@ -906,7 +1049,10 @@ func findReverseProxy(handles []caddyHandle, prefix string) (*caddyHandle, strin
 			return &handles[index], path
 		}
 		for routeIndex := range handles[index].Routes {
-			if handle, nestedPath := findReverseProxy(handles[index].Routes[routeIndex].Handle, fmt.Sprintf("%s/routes/%d/handle", path, routeIndex)); handle != nil {
+			if handle, nestedPath := findReverseProxy(
+				handles[index].Routes[routeIndex].Handle,
+				fmt.Sprintf("%s/routes/%d/handle", path, routeIndex),
+			); handle != nil {
 				return handle, nestedPath
 			}
 		}
@@ -914,7 +1060,11 @@ func findReverseProxy(handles []caddyHandle, prefix string) (*caddyHandle, strin
 	return nil, ""
 }
 
-func (s *SelfUpdate) waitForHealth(ctx context.Context, healthURL string, wait time.Duration) error {
+func (s *SelfUpdate) waitForHealth(
+	ctx context.Context,
+	healthURL string,
+	wait time.Duration,
+) error {
 	deadline := time.Now().Add(wait)
 	var lastErr error
 	for {
@@ -955,7 +1105,10 @@ func (s *SelfUpdate) transition(state SelfUpdateState, step, message string) {
 	s.status.CurrentStep = step
 	s.status.Error = ""
 	s.status.UpdatedAt = time.Now()
-	s.status.Events = append(s.status.Events, SelfUpdateEvent{ID: uuid.NewString(), Message: message, OccurredAt: s.status.UpdatedAt})
+	s.status.Events = append(
+		s.status.Events,
+		SelfUpdateEvent{ID: uuid.NewString(), Message: message, OccurredAt: s.status.UpdatedAt},
+	)
 	s.persistStatusLocked()
 	s.mu.Unlock()
 	s.recordTransition(state, step, message)
@@ -984,13 +1137,25 @@ func (s *SelfUpdate) fail(step string, err error) error {
 	s.status.Error = err.Error()
 	s.status.FinishedAt = &now
 	s.status.UpdatedAt = now
-	s.status.Events = append(s.status.Events, SelfUpdateEvent{ID: uuid.NewString(), Message: "Update failed: " + err.Error(), OccurredAt: now})
+	s.status.Events = append(
+		s.status.Events,
+		SelfUpdateEvent{
+			ID:         uuid.NewString(),
+			Message:    "Update failed: " + err.Error(),
+			OccurredAt: now,
+		},
+	)
 	s.persistStatusLocked()
 	s.mu.Unlock()
 	if finalized {
 		pruneCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		if pruneErr := s.pruneReleases(pruneCtx); pruneErr != nil {
-			slog.WarnContext(pruneCtx, "failed to prune orphaned DeployCrate CE releases", "error", pruneErr)
+			slog.WarnContext(
+				pruneCtx,
+				"failed to prune orphaned DeployCrate CE releases",
+				"error",
+				pruneErr,
+			)
 		}
 		cancel()
 	}
@@ -1006,7 +1171,14 @@ func (s *SelfUpdate) reportUnresolvedFailure(step string, err error) {
 	s.status.Error = err.Error()
 	s.status.FinishedAt = &now
 	s.status.UpdatedAt = now
-	s.status.Events = append(s.status.Events, SelfUpdateEvent{ID: uuid.NewString(), Message: "Update recovery is still pending: " + err.Error(), OccurredAt: now})
+	s.status.Events = append(
+		s.status.Events,
+		SelfUpdateEvent{
+			ID:         uuid.NewString(),
+			Message:    "Update recovery is still pending: " + err.Error(),
+			OccurredAt: now,
+		},
+	)
 	s.persistStatusLocked()
 	s.mu.Unlock()
 	slog.Error("DeployCrate CE self-update recovery remains unresolved", "step", step, "error", err)
@@ -1025,7 +1197,10 @@ func (s *SelfUpdate) succeed(version, instance string) error {
 	s.status.Error = ""
 	s.status.FinishedAt = &now
 	s.status.UpdatedAt = now
-	s.status.Events = append(s.status.Events, SelfUpdateEvent{ID: uuid.NewString(), Message: "Update completed", OccurredAt: now})
+	s.status.Events = append(
+		s.status.Events,
+		SelfUpdateEvent{ID: uuid.NewString(), Message: "Update completed", OccurredAt: now},
+	)
 	s.persistStatusLocked()
 	s.mu.Unlock()
 	return nil
@@ -1170,7 +1345,12 @@ func verifyReleaseChecksum(binaryPath, checksumsPath, binaryName string) error {
 	}
 	actual := hex.EncodeToString(hash.Sum(nil))
 	if !strings.EqualFold(expected, actual) {
-		return fmt.Errorf("checksum mismatch for %s: expected %s, got %s", binaryName, expected, actual)
+		return fmt.Errorf(
+			"checksum mismatch for %s: expected %s, got %s",
+			binaryName,
+			expected,
+			actual,
+		)
 	}
 	return nil
 }
@@ -1195,7 +1375,11 @@ func releaseDirectoryName(version string) string {
 	}
 	var builder strings.Builder
 	for _, value := range version {
-		if value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9' || value == '.' || value == '-' || value == '_' {
+		if value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' ||
+			value >= '0' && value <= '9' ||
+			value == '.' ||
+			value == '-' ||
+			value == '_' {
 			builder.WriteRune(value)
 		} else {
 			builder.WriteByte('_')
@@ -1210,11 +1394,18 @@ func releaseDirectoryName(version string) string {
 func binaryVersion(ctx context.Context, binaryPath string) (string, error) {
 	output, err := exec.CommandContext(ctx, binaryPath, "version").CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("read staged binary version: %w: %s", err, strings.TrimSpace(string(output)))
+		return "", fmt.Errorf(
+			"read staged binary version: %w: %s",
+			err,
+			strings.TrimSpace(string(output)),
+		)
 	}
 	version := normalizeVersion(string(output))
 	if version == "" || strings.ContainsAny(version, "\r\n\t ") {
-		return "", fmt.Errorf("staged binary reported invalid version %q", strings.TrimSpace(string(output)))
+		return "", fmt.Errorf(
+			"staged binary reported invalid version %q",
+			strings.TrimSpace(string(output)),
+		)
 	}
 	return version, nil
 }
@@ -1222,14 +1413,20 @@ func binaryVersion(ctx context.Context, binaryPath string) (string, error) {
 func runReleaseCommand(ctx context.Context, binaryPath string, arguments ...string) error {
 	output, err := exec.CommandContext(ctx, binaryPath, arguments...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("run %s %s: %w: %s", binaryPath, strings.Join(arguments, " "), err, strings.TrimSpace(string(output)))
+		return fmt.Errorf(
+			"run %s %s: %w: %s",
+			binaryPath,
+			strings.Join(arguments, " "),
+			err,
+			strings.TrimSpace(string(output)),
+		)
 	}
 	return nil
 }
 
 func serviceActive(ctx context.Context, service string) (bool, error) {
 	command := exec.CommandContext(ctx, "sudo", "-n", "systemctl", "is-active", "--quiet", service)
-	err := command.Run()
+	output, err := command.CombinedOutput()
 	if err == nil {
 		return true, nil
 	}
@@ -1237,7 +1434,12 @@ func serviceActive(ctx context.Context, service string) (bool, error) {
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == 3 {
 		return false, nil
 	}
-	return false, err
+	return false, fmt.Errorf(
+		"inspect active state for %s: %w: %s",
+		service,
+		err,
+		strings.TrimSpace(string(output)),
+	)
 }
 
 func serviceEnabled(ctx context.Context, service string) (bool, error) {
@@ -1291,7 +1493,13 @@ func runSudo(ctx context.Context, command string, args ...string) error {
 	allArgs := append([]string{"-n", command}, args...)
 	output, err := exec.CommandContext(ctx, "sudo", allArgs...).CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("sudo %s %s: %w: %s", command, strings.Join(args, " "), err, strings.TrimSpace(string(output)))
+		return fmt.Errorf(
+			"sudo %s %s: %w: %s",
+			command,
+			strings.Join(args, " "),
+			err,
+			strings.TrimSpace(string(output)),
+		)
 	}
 	return nil
 }

@@ -11,11 +11,11 @@ This repository contains the interactive `deploycrate` CLI for configuring a fre
 A non-dry-run installation must be started as root from an interactive terminal. Preflight accepts Debian 13 on AMD64 or ARM64 and requires:
 
 - `apt-get`, Bash, systemd, and OpenSSH server.
-- At least 512 MB of available memory and 5,120 MB free on the root filesystem.
+- At least 10,240 MB free on the root filesystem. Available memory is reported but does not block installation.
 - Outbound HTTPS access for Debian packages, Docker, Caddy, Buildpacks, and release assets.
 - A public domain pointed at the server, plus any provider-level firewall rules needed for the selected SSH port, TCP ports 80 and 443, and UDP port 51820.
 
-The installer changes SSH access near the end of bootstrap. Root login and password authentication are disabled, and only the `deploycrate` user is allowed. Keep the original SSH session open until the generated handoff command has been verified from a second terminal.
+The installer changes SSH access near the end of bootstrap. Root login and password authentication are disabled, and only the `admin` user is allowed. The separate `deploycrate` service account has a locked password and non-login shell. Keep the original SSH session open until the generated handoff command has been verified from a second terminal.
 
 ### Install a Release
 
@@ -45,31 +45,35 @@ The wizard collects and reviews:
 | Setting | Behavior |
 | --- | --- |
 | Domain and SSH port | The domain is entered without a protocol. The SSH port defaults to `22`. |
-| Operating-system access | The `deploycrate` Linux password must contain at least 12 characters. Supply one SSH public key or leave it blank to generate an Ed25519 key pair for one-time handoff. |
+| Operating-system access | The `admin` password is required and the wizard recommends at least 12 characters without enforcing a minimum length. Every server receives a generated Ed25519 administrator key for one-time handoff. An optional ordinary owner public key is retained independently in `authorized_keys`. |
 | Application administrator | The wizard requires a valid email address and a password of at least 8 characters. The administrator is created or updated and marked verified. |
 | PostgreSQL | Choose a local PostgreSQL 17 Docker container or an external server. External connections support `disable`, `require`, `verify-ca`, and `verify-full`; an optional CA file is copied to a managed path before installation starts. |
 | Backup destination | Optional S3-compatible endpoint, region, bucket, and credentials. The values are stored, but backup execution and S3 connectivity validation are not implemented yet. |
 
-Generated session, encryption, signing, pepper, and local database secrets are not prompted for or printed. Database credentials remain in the protected application environment file until the resource credential encryption contract is implemented.
+Generated session, encryption, signing, pepper, and local database secrets are not prompted for or printed. The age passphrase for the SSH CA recovery bundle is always generated automatically and appears only in the final handoff. Database credentials remain in the protected application environment file until the resource credential encryption contract is implemented.
 
 ### Bootstrap Behavior
 
 After the operator approves the review screen, the CLI saves resumable configuration and runs these phases in order:
 
-1. Installs baseline packages and creates the `deploycrate` user with Docker access and unrestricted passwordless sudo.
-2. Configures persistent journald storage, fail2ban, and a 1 GB `/swapfile` only when the host has no active swap.
-3. Installs WireGuard tools; creates a root-only keypair and `wg0` configuration; assigns `10.99.0.1/16`; listens on UDP `51820`; opens UFW; and enables and verifies `wg-quick@wg0`.
-4. Installs and configures Docker Engine, then installs checksum-verified Buildpacks `pack` 0.40.6 and creates the deploycrate-owned build workspace. It does not pre-pull a builder image.
-5. Starts local PostgreSQL or verifies the external connection, installs the application release, writes protected runtime configuration, applies embedded migrations, creates or updates the administrator, and stores optional backup settings.
-6. Creates blue and green systemd slots on `127.0.0.1:8080` and `127.0.0.1:8081`, but links and starts only the initial blue slot.
-7. Installs checksum-verified Caddy 2.11.4, verifies weighted round-robin support, holds that package version, and verifies the application at `http://127.0.0.1:8080/api/health`.
-8. Records the application, production environment, server, WireGuard network and peer, database resource, bootstrap change, release, deployment, blue instance, domain, Caddy route, and 100-weight blue route backend in PostgreSQL. The WireGuard private key is stored there only after AES-256-GCM encryption.
-9. Initializes Caddy's `srv0` HTTP server when its configuration is empty, then applies the route through the local API. Other Caddy `400` responses remain installation errors. It configures Caddy to resume its autosaved API configuration after reboot, hardens SSH, and enables UFW for the selected SSH port, TCP 80 and 443, and UDP 51820.
-10. Displays the application, SSH, and administrator credentials. Typing `CONFIRM` records the handoff, permanently removes the transient installer secrets file, and reboots the server. The WireGuard private key is not part of this handoff.
+1. Installs baseline packages and creates two operating-system identities. `admin` receives a unique password, the generated key and optional owner key, unrestricted passwordless sudo, and Docker access. `deploycrate` is a locked, non-login service account with unrestricted passwordless sudo and local Docker access so the running application can manage the host. It has no SSH authorization.
+2. Creates separate Ed25519 SSH user and host CAs under `/var/lib/deploycrate/ssh-ca`, signs the control-plane host key, and verifies an age-encrypted recovery bundle using an automatically generated passphrase. SSH certificates authorize only `admin`, while the owner's ordinary public key remains independently available.
+3. Configures persistent journald storage, fail2ban, a 1 GB `/swapfile` only when the host has no active swap, a resource guard, and conservative Docker garbage-collection timers that never prune volumes.
+4. Installs WireGuard tools; creates a root-only keypair and `wg0` configuration; assigns `10.99.0.1/16`; listens on UDP `51820`; opens UFW; and enables and verifies `wg-quick@wg0`.
+5. Installs checksum-verified node-exporter 1.11.1 as a hardened native service bound only to `10.99.0.1:9100`, with UFW access limited to `wg0`.
+6. Installs and configures Docker Engine, starts pinned ClickHouse 25.8.28.1 with a persistent volume, then installs checksum-verified Prometheus 3.13.1 as a localhost-only native service. Prometheus scrapes every 15 seconds and retains raw data for 24 hours. ClickHouse stores one-minute average, maximum, and last rollups for seven days.
+7. Installs checksum-verified Buildpacks `pack` 0.40.6 and creates the deploycrate-owned build workspace. It does not pre-pull a builder image.
+8. Starts local PostgreSQL or verifies the external connection, installs the application release, writes protected runtime configuration, applies embedded migrations, creates or updates the administrator, and stores optional backup settings.
+9. Creates blue and green systemd slots on `127.0.0.1:8080` and `127.0.0.1:8081`, but links and starts only the initial blue slot.
+10. Installs checksum-verified Caddy 2.11.4, records the initial topology, applies the route, and hardens SSH. Direct root login and SSH passwords are disabled; public keys and the installation user CA remain enabled for `admin` only.
+11. Verifies WireGuard, node-exporter, Docker, Caddy, PostgreSQL, Prometheus, ClickHouse, and the active application slot.
+12. Displays credentials, the recovery bundle path and checksum, and its age passphrase. `[ Copy details ]` remains the first focused action. Typing `CONFIRM` acknowledges the off-server recovery copy, removes transient installer secrets and the temporary bootstrap binaries, then reboots.
 
 The health check retries for about one minute. A single-server WireGuard mesh has no handshake until another peer joins.
 
-### CLI Commands and Recovery
+### Temporary Bootstrap CLI
+
+The `deploycrate` CLI exists only for installation, resume, installer logs, and offline SSH CA recovery. A successful final `CONFIRM` removes `/usr/local/bin/deploycrate` and the redundant `/usr/local/bin/deploycrate-ce` installer payload. Post-install health and update operations are owned by the running application release under `/opt/deploycrate-ce` and are available from the System screens.
 
 | Command | Behavior |
 | --- | --- |
@@ -80,23 +84,65 @@ The health check retries for about one minute. A single-server WireGuard mesh ha
 | `sudo deploycrate logs` | Prints `/var/lib/deploycrate-ce/install.log`. Script output is redacted using the collected secret values. |
 | `deploycrate version` | Prints the CLI version. `deploycrate --version` and `deploycrate -v` are aliases. |
 | `deploycrate help` | Prints command usage. Running without arguments, `deploycrate --help`, and `deploycrate -h` do the same. |
-| `sudo deploycrate doctor [--json]` | Accepted command, but currently exits with a not-implemented error. JSON output is not implemented. |
-| `sudo deploycrate backup` | Accepted command, but currently exits with a not-implemented error. |
+| `sudo deploycrate ssh-ca recover --bundle PATH --passphrase-file PATH` | Decrypts and validates a version 1 recovery bundle, checks both fingerprints against the public keys already trusted by SSH, and atomically restores the protected CA directory. |
+
+The application System Overview runs live checks for services, listeners, WireGuard state, node-exporter, Prometheus targets, ClickHouse, disk headroom, and agreement between the active systemd slot and PostgreSQL. These checks execute as the `deploycrate` service account and use its non-interactive sudo access where host privileges are required.
 
 Configuration is saved before the first setup phase and each completed step is recorded in `/var/lib/deploycrate-ce/install-state.json`. A non-blocking process lock prevents concurrent installers. If setup fails after configuration is saved, fix the reported problem and run `sudo deploycrate resume`; do not start a second installation. The topology transaction is reused by domain if Caddy reconciliation needs to be retried.
 
 If credential verification was recorded but secret cleanup failed, `resume` returns directly to the final handoff. If cleanup succeeded but the reboot command failed, the installation is complete and `resume` is rejected; reboot the host manually.
 
-The installer does not create an emergency user. Node-exporter is also not installed: there is no node-exporter binary, systemd unit, port `9100` listener, or bootstrap health check.
+The installer does not create an emergency user. The owner's ordinary administrator key is the recovery path when CA authentication is unavailable.
+
+### SSH CA and Service Recovery
+
+The live user and host CA private keys are owned by `deploycrate` in `/var/lib/deploycrate/ssh-ca` with directory mode `0700` and key mode `0600`. The encrypted `deploycrate-ssh-ca-recovery-v1.age` bundle stays on the control plane for convenience, but the final handoff requires an off-server copy and separately stored passphrase. The passphrase exists only in transient installer state and is removed after `CONFIRM`.
+
+OpenSSH server trust reads the user CA file, which may contain overlapping public keys during rotation. OpenSSH client trust uses `/etc/ssh/deploycrate-known-hosts` for host certificates presented by WireGuard addresses matching `10.99.*`; that file can likewise contain both old and new host CA keys during a rotation window.
+
+For accidental CA loss, restore the original bundle with `deploycrate ssh-ca recover`. Suspected compromise is different: generate new CAs, distribute both new public keys alongside the old keys, switch signing to the new CAs, wait for old 30-minute user certificates to expire, and only then remove the old public keys. Do not restore a suspected-compromised CA.
+
+For WireGuard failure, inspect `wg-quick@wg0`, `/etc/wireguard/wg0.conf`, the `10.99.0.1/16` address, UDP 51820, and `wg show wg0` before restarting the unit. For Prometheus failure, run `promtool check config /etc/prometheus/prometheus.yml`, inspect `journalctl -u prometheus`, verify its localhost listener, then check `/api/v1/targets`. ClickHouse metrics are disposable, expire after seven days, and are intentionally not backed up.
+
+### Upcoming Managed Node Enrollment
+
+Managed node installation is planned but intentionally deferred. DeployCrate CE will not create or provision virtual machines through cloud-provider APIs. The user will provision and own each server with the provider of their choice, then register that existing server through a future Add Node interface or `deploycrate node install` command.
+
+The user will provide the server address, SSH port, root username, private key, and optional key passphrase. DeployCrate will use that access to configure the existing server, not to provision its infrastructure. The setup will verify and pin the SSH host key, create separate `admin` and `deploycrate` accounts, install the required host dependencies, join the server to the WireGuard network, and establish permanent control-plane access to `admin` through an installation SSH user certificate authority. The `deploycrate` service identity will remain local and non-login.
+
+The intended trust transition is:
+
+```text
+User-provisioned server
+        |
+        | temporary root SSH using the user-provided key
+        v
+Automated host setup
+        |
+        +-- create admin user with administrative sudo access
+        +-- create locked, non-login deploycrate service user
+        +-- install and configure WireGuard
+        +-- trust the installation SSH user CA
+        +-- verify CA-authenticated SSH through the WireGuard address
+        `-- deny direct root SSH permanently
+        |
+        v
+Ongoing deployments and maintenance as admin through SSH over WireGuard
+```
+
+The control plane now has the signing and WireGuard state foundations that enrollment will consume. It issues source-restricted, short-lived SSH certificates only for the `admin` principal and renders deterministic full-mesh peer state with 25-second keepalive where NAT requires it. Add Node UI, remote setup, and peer propagation remain deferred.
+
+See [bootstrap_networking_plan.md](bootstrap_networking_plan.md) for the work that can proceed before managed node enrollment is implemented.
 
 ### Installed Host Layout
 
-DeployCrate separates bootstrap commands, immutable application releases, slot pointers, protected configuration, and mutable runtime state. The application service never executes the bootstrap copy in `/usr/local/bin` directly.
+DeployCrate separates temporary bootstrap commands, immutable application releases, slot pointers, protected configuration, and mutable runtime state. Completed installations do not retain either bootstrap binary in `/usr/local/bin`.
 
 ```text
 /usr/local/bin/
-|-- deploycrate                         Bootstrap and recovery CLI
-|-- deploycrate-ce                      Production installer payload
+|-- node_exporter                       WireGuard-only host metrics exporter
+|-- prometheus                          Local raw metrics collector
+|-- promtool                            Prometheus configuration validator
 `-- pack                                Cloud Native Buildpacks CLI
 
 /opt/deploycrate-ce/
@@ -121,8 +167,12 @@ The remaining DeployCrate-managed locations are:
 | `/etc/wireguard/` | Root-only `deploycrate-ce.key`, `deploycrate-ce.pub`, and `wg0.conf` files for the initial mesh peer. |
 | `/var/lib/deploycrate-ce/` | Root-owned installer state, including `install-state.json`, `install.lock`, and the redacted `install.log`. |
 | `/var/lib/deploycrate-ce/runtime/` | Mutable application runtime state owned by the `deploycrate` user, including `self-update.json`. |
+| `/var/lib/deploycrate/ssh-ca/` | Protected user and host CA keypairs plus the verified age recovery bundle. |
+| `/var/lib/prometheus/` | Raw Prometheus data retained for 24 hours. |
 | `/var/lib/deploycrate-builds/` | Build workspace owned by the `deploycrate` user. Builder images and build containers remain Docker-managed. |
-| `/home/deploycrate/.ssh/authorized_keys` | SSH access for the `deploycrate` operating-system user. |
+| `/home/admin/.ssh/authorized_keys` | Generated administrator key and optional ordinary owner key for SSH access as `admin`. |
+
+ClickHouse uses the Docker volume `deploycrate-ce-clickhouse`. Its `metric_rollups` table expires rows after seven days and has no backup policy.
 
 The installer also places the checksum-verified Buildpacks CLI at `/usr/local/bin/pack`. Caddy is installed from the pinned official Debian package at `/usr/bin/caddy` and held at the installer-supported version. Docker Engine and the remaining host packages use their standard Debian package locations.
 
@@ -135,11 +185,13 @@ The installer also writes host integration files outside the DeployCrate directo
 - `/etc/systemd/system/caddy.service.d/deploycrate-ce.conf` makes Caddy resume its autosaved API configuration after reboot.
 - `/etc/caddy/Caddyfile` enables Caddy's local administration endpoint.
 - `/etc/systemd/journald.conf.d/deploycrate-ce.conf`, `/etc/fail2ban/jail.d/deploycrate-ce.conf`, and `/etc/ssh/sshd_config.d/99-deploycrate-ce.conf` configure host logging and SSH protection.
-- `/etc/sudoers.d/deploycrate` grants the documented passwordless sudo access.
+- `/etc/sudoers.d/admin` and `/etc/sudoers.d/deploycrate` grant unrestricted passwordless sudo to the administrator and running application identities respectively. The `deploycrate` account remains locked, non-login, and excluded from SSH.
 - `/etc/docker/daemon.json` configures Docker log rotation.
 - `/swapfile` is created only when the host has no active swap.
 
 ### Post-install Inspection
+
+The authenticated System Overview is the primary post-install inspection surface. It reports live host and service checks from the running application. The commands below are low-level administrator troubleshooting tools, not a DeployCrate management CLI.
 
 Application and Caddy:
 

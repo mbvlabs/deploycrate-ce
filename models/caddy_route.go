@@ -31,7 +31,11 @@ func (e *CaddyRouteEntity) Validate() error {
 	return nil
 }
 
-func (cr caddyRoute) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (CaddyRouteEntity, error) {
+func (cr caddyRoute) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (CaddyRouteEntity, error) {
 	var entity CaddyRouteEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -54,7 +58,11 @@ type CreateCaddyRouteData struct {
 	ReleaseID           uuid.UUID
 }
 
-func (cr caddyRoute) Create(ctx context.Context, db storage.Executor, data CreateCaddyRouteData) (CaddyRouteEntity, error) {
+func (cr caddyRoute) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateCaddyRouteData,
+) (CaddyRouteEntity, error) {
 	entity := CaddyRouteEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
@@ -93,7 +101,11 @@ type UpdateCaddyRouteData struct {
 	ReleaseID           uuid.UUID
 }
 
-func (cr caddyRoute) Update(ctx context.Context, db storage.Executor, data UpdateCaddyRouteData) (CaddyRouteEntity, error) {
+func (cr caddyRoute) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateCaddyRouteData,
+) (CaddyRouteEntity, error) {
 	entity := CaddyRouteEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
@@ -159,7 +171,11 @@ type PaginatedCaddyRoutes struct {
 	TotalPages  int64
 }
 
-func (cr caddyRoute) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedCaddyRoutes, error) {
+func (cr caddyRoute) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedCaddyRoutes, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -198,7 +214,11 @@ func (cr caddyRoute) Paginate(ctx context.Context, db storage.Executor, page, pa
 	}, nil
 }
 
-func (cr caddyRoute) Upsert(ctx context.Context, db storage.Executor, data CreateCaddyRouteData) (CaddyRouteEntity, error) {
+func (cr caddyRoute) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateCaddyRouteData,
+) (CaddyRouteEntity, error) {
 	entity := CaddyRouteEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
@@ -236,7 +256,12 @@ func (cr caddyRoute) Upsert(ctx context.Context, db storage.Executor, data Creat
 	return entity, nil
 }
 
-func (cr caddyRoute) ActivateRelease(ctx context.Context, db storage.Executor, id, releaseID uuid.UUID, at time.Time) error {
+func (cr caddyRoute) ActivateRelease(
+	ctx context.Context,
+	db storage.Executor,
+	id, releaseID uuid.UUID,
+	at time.Time,
+) error {
 	_, err := db.NewUpdate().
 		TableExpr("caddy_routes").
 		Set("release_id = ?", releaseID).

@@ -33,7 +33,11 @@ func (e *RuntimeConfigurationEntity) Validate() error {
 	return nil
 }
 
-func (rc runtimeConfiguration) Find(ctx context.Context, db storage.Executor, id int32) (RuntimeConfigurationEntity, error) {
+func (rc runtimeConfiguration) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id int32,
+) (RuntimeConfigurationEntity, error) {
 	var entity RuntimeConfigurationEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -57,7 +61,11 @@ type CreateRuntimeConfigurationData struct {
 	EnvironmentID  uuid.UUID
 }
 
-func (rc runtimeConfiguration) Create(ctx context.Context, db storage.Executor, data CreateRuntimeConfigurationData) (RuntimeConfigurationEntity, error) {
+func (rc runtimeConfiguration) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateRuntimeConfigurationData,
+) (RuntimeConfigurationEntity, error) {
 	entity := RuntimeConfigurationEntity{
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
@@ -97,7 +105,11 @@ type UpdateRuntimeConfigurationData struct {
 	EnvironmentID  uuid.UUID
 }
 
-func (rc runtimeConfiguration) Update(ctx context.Context, db storage.Executor, data UpdateRuntimeConfigurationData) (RuntimeConfigurationEntity, error) {
+func (rc runtimeConfiguration) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateRuntimeConfigurationData,
+) (RuntimeConfigurationEntity, error) {
 	entity := RuntimeConfigurationEntity{
 		ID:             data.ID,
 		UpdatedAt:      time.Now(),
@@ -146,7 +158,10 @@ func (rc runtimeConfiguration) Destroy(ctx context.Context, db storage.Executor,
 	return err
 }
 
-func (rc runtimeConfiguration) All(ctx context.Context, db storage.Executor) ([]RuntimeConfigurationEntity, error) {
+func (rc runtimeConfiguration) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]RuntimeConfigurationEntity, error) {
 	var entities []RuntimeConfigurationEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -165,7 +180,11 @@ type PaginatedRuntimeConfigurations struct {
 	TotalPages            int64
 }
 
-func (rc runtimeConfiguration) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedRuntimeConfigurations, error) {
+func (rc runtimeConfiguration) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedRuntimeConfigurations, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -204,7 +223,11 @@ func (rc runtimeConfiguration) Paginate(ctx context.Context, db storage.Executor
 	}, nil
 }
 
-func (rc runtimeConfiguration) Upsert(ctx context.Context, db storage.Executor, data CreateRuntimeConfigurationData) (RuntimeConfigurationEntity, error) {
+func (rc runtimeConfiguration) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateRuntimeConfigurationData,
+) (RuntimeConfigurationEntity, error) {
 	entity := RuntimeConfigurationEntity{
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),

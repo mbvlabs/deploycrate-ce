@@ -118,7 +118,11 @@ func (c Confirmations) Create(etx *echo.Context) error {
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 
-	if flashErr := cookies.AddFlash(etx, cookies.FlashSuccess, "Email verified successfully!"); flashErr != nil {
+	if flashErr := cookies.AddFlash(
+		etx,
+		cookies.FlashSuccess,
+		"Email verified successfully!",
+	); flashErr != nil {
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 

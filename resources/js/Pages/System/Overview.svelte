@@ -1,12 +1,14 @@
 <script lang="ts">
   import ActivityIcon from '@lucide/svelte/icons/activity'
   import BoxesIcon from '@lucide/svelte/icons/boxes'
+  import CheckCircleIcon from '@lucide/svelte/icons/circle-check'
   import DatabaseIcon from '@lucide/svelte/icons/database'
   import ExternalLinkIcon from '@lucide/svelte/icons/external-link'
   import GitCommitHorizontalIcon from '@lucide/svelte/icons/git-commit-horizontal'
   import NetworkIcon from '@lucide/svelte/icons/network'
   import ServerIcon from '@lucide/svelte/icons/server'
   import ShieldCheckIcon from '@lucide/svelte/icons/shield-check'
+  import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert'
   import { Link } from '@inertiajs/svelte'
 
   import * as Card from '@/Components/ui/card'
@@ -47,9 +49,20 @@
     observedAt: string
   }
 
-  let { auth, system }: { auth: { email: string }; system: SystemOverview } = $props()
+  type SystemHealth = {
+    ok: boolean
+    checkedAt: string
+    checks: Array<{
+      name: string
+      ok: boolean
+      detail: string
+    }>
+  }
+
+  let { auth, system, health }: { auth: { email: string }; system: SystemOverview; health: SystemHealth } = $props()
 
   const stateLabel = (value: string) => value ? value.replaceAll('_', ' ') : 'Unknown'
+  const checkLabel = (value: string) => stateLabel(value).replace(/\b\w/g, (letter) => letter.toUpperCase())
   const versionLabel = (version: string) => version ? `v${version.replace(/^v/, '')}` : 'Development build'
   const platformLabel = $derived(
     [system.distribution, system.distributionVersion, system.architecture].filter(Boolean).join(' ') || system.operatingSystem || 'Unknown',
@@ -78,6 +91,40 @@
         <ExternalLinkIcon class="size-4" />
       </Link>
     </section>
+
+    <Card.Root class={health.ok ? 'border-success/40' : 'border-destructive/60'}>
+      <Card.Header>
+        <Card.Action>
+          <span class={health.ok ? 'text-success' : 'text-destructive'}>
+            {health.ok ? 'All checks passed' : 'Attention required'}
+          </span>
+        </Card.Action>
+        {#if health.ok}
+          <CheckCircleIcon class="mb-2 size-5 text-success" />
+        {:else}
+          <TriangleAlertIcon class="mb-2 size-5 text-destructive" />
+        {/if}
+        <Card.Title>Live system health</Card.Title>
+        <Card.Description>
+          Checked by the running DeployCrate application at {new Date(health.checkedAt).toLocaleString()}.
+        </Card.Description>
+      </Card.Header>
+      <Card.Content class="grid gap-3 md:grid-cols-2">
+        {#each health.checks as check (check.name)}
+          <div class="flex items-start gap-3 border border-border/70 bg-muted/20 p-3">
+            {#if check.ok}
+              <CheckCircleIcon class="mt-0.5 size-4 shrink-0 text-success" />
+            {:else}
+              <TriangleAlertIcon class="mt-0.5 size-4 shrink-0 text-destructive" />
+            {/if}
+            <div class="min-w-0">
+              <p class="text-sm font-medium">{checkLabel(check.name)}</p>
+              <p class="mt-1 break-words text-xs leading-5 text-muted-foreground">{check.detail}</p>
+            </div>
+          </div>
+        {/each}
+      </Card.Content>
+    </Card.Root>
 
     <section class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4" aria-label="System health">
       <Card.Root>

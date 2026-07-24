@@ -39,7 +39,12 @@ func BuildResource(ownerEnvironmentID uuid.UUID, opts ...ResourceOption) models.
 	return f.ResourceEntity
 }
 
-func CreateResource(ctx context.Context, exec storage.Executor, ownerEnvironmentID uuid.UUID, opts ...ResourceOption) (models.ResourceEntity, error) {
+func CreateResource(
+	ctx context.Context,
+	exec storage.Executor,
+	ownerEnvironmentID uuid.UUID,
+	opts ...ResourceOption,
+) (models.ResourceEntity, error) {
 	built := BuildResource(ownerEnvironmentID, opts...)
 
 	entity := models.ResourceEntity{
@@ -61,7 +66,13 @@ func CreateResource(ctx context.Context, exec storage.Executor, ownerEnvironment
 	return entity, nil
 }
 
-func CreateResources(ctx context.Context, exec storage.Executor, ownerEnvironmentID uuid.UUID, count int, opts ...ResourceOption) ([]models.ResourceEntity, error) {
+func CreateResources(
+	ctx context.Context,
+	exec storage.Executor,
+	ownerEnvironmentID uuid.UUID,
+	count int,
+	opts ...ResourceOption,
+) ([]models.ResourceEntity, error) {
 	resources := make([]models.ResourceEntity, 0, count)
 
 	for i := range count {

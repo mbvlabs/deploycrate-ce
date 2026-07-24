@@ -36,7 +36,11 @@ func (e *ResourceHealthCheckEntity) Validate() error {
 	return nil
 }
 
-func (rhc resourceHealthCheck) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (ResourceHealthCheckEntity, error) {
+func (rhc resourceHealthCheck) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (ResourceHealthCheckEntity, error) {
 	var entity ResourceHealthCheckEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -63,7 +67,11 @@ type CreateResourceHealthCheckData struct {
 	ResourceCredentialID   *uuid.UUID
 }
 
-func (rhc resourceHealthCheck) Create(ctx context.Context, db storage.Executor, data CreateResourceHealthCheckData) (ResourceHealthCheckEntity, error) {
+func (rhc resourceHealthCheck) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceHealthCheckData,
+) (ResourceHealthCheckEntity, error) {
 	entity := ResourceHealthCheckEntity{
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),
@@ -110,7 +118,11 @@ type UpdateResourceHealthCheckData struct {
 	ResourceCredentialID   *uuid.UUID
 }
 
-func (rhc resourceHealthCheck) Update(ctx context.Context, db storage.Executor, data UpdateResourceHealthCheckData) (ResourceHealthCheckEntity, error) {
+func (rhc resourceHealthCheck) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateResourceHealthCheckData,
+) (ResourceHealthCheckEntity, error) {
 	entity := ResourceHealthCheckEntity{
 		ID:                     data.ID,
 		UpdatedAt:              time.Now(),
@@ -156,7 +168,11 @@ func (rhc resourceHealthCheck) Update(ctx context.Context, db storage.Executor, 
 	return entity, nil
 }
 
-func (rhc resourceHealthCheck) Destroy(ctx context.Context, db storage.Executor, id uuid.UUID) error {
+func (rhc resourceHealthCheck) Destroy(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) error {
 	_, err := db.NewDelete().
 		Model((*ResourceHealthCheckEntity)(nil)).
 		Where("id = ?", id).
@@ -165,7 +181,10 @@ func (rhc resourceHealthCheck) Destroy(ctx context.Context, db storage.Executor,
 	return err
 }
 
-func (rhc resourceHealthCheck) All(ctx context.Context, db storage.Executor) ([]ResourceHealthCheckEntity, error) {
+func (rhc resourceHealthCheck) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]ResourceHealthCheckEntity, error) {
 	var entities []ResourceHealthCheckEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -184,7 +203,11 @@ type PaginatedResourceHealthChecks struct {
 	TotalPages           int64
 }
 
-func (rhc resourceHealthCheck) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedResourceHealthChecks, error) {
+func (rhc resourceHealthCheck) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedResourceHealthChecks, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -223,7 +246,11 @@ func (rhc resourceHealthCheck) Paginate(ctx context.Context, db storage.Executor
 	}, nil
 }
 
-func (rhc resourceHealthCheck) Upsert(ctx context.Context, db storage.Executor, data CreateResourceHealthCheckData) (ResourceHealthCheckEntity, error) {
+func (rhc resourceHealthCheck) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceHealthCheckData,
+) (ResourceHealthCheckEntity, error) {
 	entity := ResourceHealthCheckEntity{
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),

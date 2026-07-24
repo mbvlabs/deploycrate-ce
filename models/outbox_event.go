@@ -35,7 +35,11 @@ func (e *OutboxEventEntity) Validate() error {
 	return nil
 }
 
-func (oe outboxEvent) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (OutboxEventEntity, error) {
+func (oe outboxEvent) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (OutboxEventEntity, error) {
 	var entity OutboxEventEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -61,7 +65,11 @@ type CreateOutboxEventData struct {
 	LastError       sql.NullString
 }
 
-func (oe outboxEvent) Create(ctx context.Context, db storage.Executor, data CreateOutboxEventData) (OutboxEventEntity, error) {
+func (oe outboxEvent) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateOutboxEventData,
+) (OutboxEventEntity, error) {
 	entity := OutboxEventEntity{
 		ID:              uuid.New(),
 		CreatedAt:       time.Now(),
@@ -106,7 +114,11 @@ type UpdateOutboxEventData struct {
 	LastError       sql.NullString
 }
 
-func (oe outboxEvent) Update(ctx context.Context, db storage.Executor, data UpdateOutboxEventData) (OutboxEventEntity, error) {
+func (oe outboxEvent) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateOutboxEventData,
+) (OutboxEventEntity, error) {
 	entity := OutboxEventEntity{
 		ID:              data.ID,
 		UpdatedAt:       time.Now(),
@@ -178,7 +190,11 @@ type PaginatedOutboxEvents struct {
 	TotalPages   int64
 }
 
-func (oe outboxEvent) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedOutboxEvents, error) {
+func (oe outboxEvent) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedOutboxEvents, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -217,7 +233,11 @@ func (oe outboxEvent) Paginate(ctx context.Context, db storage.Executor, page, p
 	}, nil
 }
 
-func (oe outboxEvent) Upsert(ctx context.Context, db storage.Executor, data CreateOutboxEventData) (OutboxEventEntity, error) {
+func (oe outboxEvent) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateOutboxEventData,
+) (OutboxEventEntity, error) {
 	entity := OutboxEventEntity{
 		ID:              uuid.New(),
 		CreatedAt:       time.Now(),

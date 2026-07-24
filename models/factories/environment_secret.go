@@ -20,7 +20,11 @@ type EnvironmentSecretFactory struct {
 
 type EnvironmentSecretOption func(*EnvironmentSecretFactory)
 
-func BuildEnvironmentSecret(sourceID uuid.UUID, environmentID uuid.UUID, opts ...EnvironmentSecretOption) models.EnvironmentSecretEntity {
+func BuildEnvironmentSecret(
+	sourceID uuid.UUID,
+	environmentID uuid.UUID,
+	opts ...EnvironmentSecretOption,
+) models.EnvironmentSecretEntity {
 	f := &EnvironmentSecretFactory{
 		EnvironmentSecretEntity: models.EnvironmentSecretEntity{
 			Key:           faker.Word(),
@@ -40,7 +44,13 @@ func BuildEnvironmentSecret(sourceID uuid.UUID, environmentID uuid.UUID, opts ..
 	return f.EnvironmentSecretEntity
 }
 
-func CreateEnvironmentSecret(ctx context.Context, exec storage.Executor, sourceID uuid.UUID, environmentID uuid.UUID, opts ...EnvironmentSecretOption) (models.EnvironmentSecretEntity, error) {
+func CreateEnvironmentSecret(
+	ctx context.Context,
+	exec storage.Executor,
+	sourceID uuid.UUID,
+	environmentID uuid.UUID,
+	opts ...EnvironmentSecretOption,
+) (models.EnvironmentSecretEntity, error) {
 	built := BuildEnvironmentSecret(sourceID, environmentID, opts...)
 
 	entity := models.EnvironmentSecretEntity{
@@ -63,7 +73,14 @@ func CreateEnvironmentSecret(ctx context.Context, exec storage.Executor, sourceI
 	return entity, nil
 }
 
-func CreateEnvironmentSecrets(ctx context.Context, exec storage.Executor, sourceID uuid.UUID, environmentID uuid.UUID, count int, opts ...EnvironmentSecretOption) ([]models.EnvironmentSecretEntity, error) {
+func CreateEnvironmentSecrets(
+	ctx context.Context,
+	exec storage.Executor,
+	sourceID uuid.UUID,
+	environmentID uuid.UUID,
+	count int,
+	opts ...EnvironmentSecretOption,
+) ([]models.EnvironmentSecretEntity, error) {
 	environmentsecrets := make([]models.EnvironmentSecretEntity, 0, count)
 
 	for i := range count {

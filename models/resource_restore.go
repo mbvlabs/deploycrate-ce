@@ -36,7 +36,11 @@ func (e *ResourceRestoreEntity) Validate() error {
 	return nil
 }
 
-func (rr resourceRestore) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (ResourceRestoreEntity, error) {
+func (rr resourceRestore) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (ResourceRestoreEntity, error) {
 	var entity ResourceRestoreEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -64,7 +68,11 @@ type CreateResourceRestoreData struct {
 	TargetInstallationID        *uuid.UUID
 }
 
-func (rr resourceRestore) Create(ctx context.Context, db storage.Executor, data CreateResourceRestoreData) (ResourceRestoreEntity, error) {
+func (rr resourceRestore) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceRestoreData,
+) (ResourceRestoreEntity, error) {
 	entity := ResourceRestoreEntity{
 		ID:                          uuid.New(),
 		CreatedAt:                   time.Now(),
@@ -113,7 +121,11 @@ type UpdateResourceRestoreData struct {
 	TargetInstallationID        *uuid.UUID
 }
 
-func (rr resourceRestore) Update(ctx context.Context, db storage.Executor, data UpdateResourceRestoreData) (ResourceRestoreEntity, error) {
+func (rr resourceRestore) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateResourceRestoreData,
+) (ResourceRestoreEntity, error) {
 	entity := ResourceRestoreEntity{
 		ID:                          data.ID,
 		UpdatedAt:                   time.Now(),
@@ -170,7 +182,10 @@ func (rr resourceRestore) Destroy(ctx context.Context, db storage.Executor, id u
 	return err
 }
 
-func (rr resourceRestore) All(ctx context.Context, db storage.Executor) ([]ResourceRestoreEntity, error) {
+func (rr resourceRestore) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]ResourceRestoreEntity, error) {
 	var entities []ResourceRestoreEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -189,7 +204,11 @@ type PaginatedResourceRestores struct {
 	TotalPages       int64
 }
 
-func (rr resourceRestore) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedResourceRestores, error) {
+func (rr resourceRestore) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedResourceRestores, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -228,7 +247,11 @@ func (rr resourceRestore) Paginate(ctx context.Context, db storage.Executor, pag
 	}, nil
 }
 
-func (rr resourceRestore) Upsert(ctx context.Context, db storage.Executor, data CreateResourceRestoreData) (ResourceRestoreEntity, error) {
+func (rr resourceRestore) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceRestoreData,
+) (ResourceRestoreEntity, error) {
 	entity := ResourceRestoreEntity{
 		ID:                          uuid.New(),
 		CreatedAt:                   time.Now(),

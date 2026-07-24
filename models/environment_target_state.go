@@ -31,7 +31,11 @@ func (e *EnvironmentTargetStateEntity) Validate() error {
 	return nil
 }
 
-func (ets environmentTargetState) Find(ctx context.Context, db storage.Executor, id int32) (EnvironmentTargetStateEntity, error) {
+func (ets environmentTargetState) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id int32,
+) (EnvironmentTargetStateEntity, error) {
 	var entity EnvironmentTargetStateEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -53,7 +57,11 @@ type CreateEnvironmentTargetStateData struct {
 	AppliedRevisionID   *uuid.UUID
 }
 
-func (ets environmentTargetState) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentTargetStateData) (EnvironmentTargetStateEntity, error) {
+func (ets environmentTargetState) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentTargetStateData,
+) (EnvironmentTargetStateEntity, error) {
 	entity := EnvironmentTargetStateEntity{
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
@@ -89,7 +97,11 @@ type UpdateEnvironmentTargetStateData struct {
 	AppliedRevisionID   *uuid.UUID
 }
 
-func (ets environmentTargetState) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentTargetStateData) (EnvironmentTargetStateEntity, error) {
+func (ets environmentTargetState) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateEnvironmentTargetStateData,
+) (EnvironmentTargetStateEntity, error) {
 	entity := EnvironmentTargetStateEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
@@ -125,7 +137,11 @@ func (ets environmentTargetState) Update(ctx context.Context, db storage.Executo
 	return entity, nil
 }
 
-func (ets environmentTargetState) Destroy(ctx context.Context, db storage.Executor, id int32) error {
+func (ets environmentTargetState) Destroy(
+	ctx context.Context,
+	db storage.Executor,
+	id int32,
+) error {
 	_, err := db.NewDelete().
 		Model((*EnvironmentTargetStateEntity)(nil)).
 		Where("id = ?", id).
@@ -134,7 +150,10 @@ func (ets environmentTargetState) Destroy(ctx context.Context, db storage.Execut
 	return err
 }
 
-func (ets environmentTargetState) All(ctx context.Context, db storage.Executor) ([]EnvironmentTargetStateEntity, error) {
+func (ets environmentTargetState) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]EnvironmentTargetStateEntity, error) {
 	var entities []EnvironmentTargetStateEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -153,7 +172,11 @@ type PaginatedEnvironmentTargetStates struct {
 	TotalPages              int64
 }
 
-func (ets environmentTargetState) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedEnvironmentTargetStates, error) {
+func (ets environmentTargetState) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedEnvironmentTargetStates, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -192,7 +215,11 @@ func (ets environmentTargetState) Paginate(ctx context.Context, db storage.Execu
 	}, nil
 }
 
-func (ets environmentTargetState) Upsert(ctx context.Context, db storage.Executor, data CreateEnvironmentTargetStateData) (EnvironmentTargetStateEntity, error) {
+func (ets environmentTargetState) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentTargetStateData,
+) (EnvironmentTargetStateEntity, error) {
 	entity := EnvironmentTargetStateEntity{
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),

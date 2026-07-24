@@ -28,7 +28,11 @@ func (e *ContainerRegistryEntity) Validate() error {
 	return nil
 }
 
-func (cr containerRegistry) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (ContainerRegistryEntity, error) {
+func (cr containerRegistry) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (ContainerRegistryEntity, error) {
 	var entity ContainerRegistryEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -48,7 +52,11 @@ type CreateContainerRegistryData struct {
 	CredentialID uuid.UUID
 }
 
-func (cr containerRegistry) Create(ctx context.Context, db storage.Executor, data CreateContainerRegistryData) (ContainerRegistryEntity, error) {
+func (cr containerRegistry) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateContainerRegistryData,
+) (ContainerRegistryEntity, error) {
 	entity := ContainerRegistryEntity{
 		ID:           uuid.New(),
 		CreatedAt:    time.Now(),
@@ -81,7 +89,11 @@ type UpdateContainerRegistryData struct {
 	CredentialID uuid.UUID
 }
 
-func (cr containerRegistry) Update(ctx context.Context, db storage.Executor, data UpdateContainerRegistryData) (ContainerRegistryEntity, error) {
+func (cr containerRegistry) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateContainerRegistryData,
+) (ContainerRegistryEntity, error) {
 	entity := ContainerRegistryEntity{
 		ID:           data.ID,
 		UpdatedAt:    time.Now(),
@@ -122,7 +134,10 @@ func (cr containerRegistry) Destroy(ctx context.Context, db storage.Executor, id
 	return err
 }
 
-func (cr containerRegistry) All(ctx context.Context, db storage.Executor) ([]ContainerRegistryEntity, error) {
+func (cr containerRegistry) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]ContainerRegistryEntity, error) {
 	var entities []ContainerRegistryEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -141,7 +156,11 @@ type PaginatedContainerRegistries struct {
 	TotalPages          int64
 }
 
-func (cr containerRegistry) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedContainerRegistries, error) {
+func (cr containerRegistry) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedContainerRegistries, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -180,7 +199,11 @@ func (cr containerRegistry) Paginate(ctx context.Context, db storage.Executor, p
 	}, nil
 }
 
-func (cr containerRegistry) Upsert(ctx context.Context, db storage.Executor, data CreateContainerRegistryData) (ContainerRegistryEntity, error) {
+func (cr containerRegistry) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateContainerRegistryData,
+) (ContainerRegistryEntity, error) {
 	entity := ContainerRegistryEntity{
 		ID:           uuid.New(),
 		CreatedAt:    time.Now(),

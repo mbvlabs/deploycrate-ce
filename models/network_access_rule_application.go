@@ -34,7 +34,11 @@ func (e *NetworkAccessRuleApplicationEntity) Validate() error {
 	return nil
 }
 
-func (nara networkAccessRuleApplication) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (NetworkAccessRuleApplicationEntity, error) {
+func (nara networkAccessRuleApplication) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (NetworkAccessRuleApplicationEntity, error) {
 	var entity NetworkAccessRuleApplicationEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -59,7 +63,11 @@ type CreateNetworkAccessRuleApplicationData struct {
 	EnvironmentTargetNetworkID int32
 }
 
-func (nara networkAccessRuleApplication) Create(ctx context.Context, db storage.Executor, data CreateNetworkAccessRuleApplicationData) (NetworkAccessRuleApplicationEntity, error) {
+func (nara networkAccessRuleApplication) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateNetworkAccessRuleApplicationData,
+) (NetworkAccessRuleApplicationEntity, error) {
 	entity := NetworkAccessRuleApplicationEntity{
 		ID:                         uuid.New(),
 		CreatedAt:                  time.Now(),
@@ -102,7 +110,11 @@ type UpdateNetworkAccessRuleApplicationData struct {
 	EnvironmentTargetNetworkID int32
 }
 
-func (nara networkAccessRuleApplication) Update(ctx context.Context, db storage.Executor, data UpdateNetworkAccessRuleApplicationData) (NetworkAccessRuleApplicationEntity, error) {
+func (nara networkAccessRuleApplication) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateNetworkAccessRuleApplicationData,
+) (NetworkAccessRuleApplicationEntity, error) {
 	entity := NetworkAccessRuleApplicationEntity{
 		ID:                         data.ID,
 		UpdatedAt:                  time.Now(),
@@ -144,7 +156,11 @@ func (nara networkAccessRuleApplication) Update(ctx context.Context, db storage.
 	return entity, nil
 }
 
-func (nara networkAccessRuleApplication) Destroy(ctx context.Context, db storage.Executor, id uuid.UUID) error {
+func (nara networkAccessRuleApplication) Destroy(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) error {
 	_, err := db.NewDelete().
 		Model((*NetworkAccessRuleApplicationEntity)(nil)).
 		Where("id = ?", id).
@@ -153,7 +169,10 @@ func (nara networkAccessRuleApplication) Destroy(ctx context.Context, db storage
 	return err
 }
 
-func (nara networkAccessRuleApplication) All(ctx context.Context, db storage.Executor) ([]NetworkAccessRuleApplicationEntity, error) {
+func (nara networkAccessRuleApplication) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]NetworkAccessRuleApplicationEntity, error) {
 	var entities []NetworkAccessRuleApplicationEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -172,7 +191,11 @@ type PaginatedNetworkAccessRuleApplications struct {
 	TotalPages                    int64
 }
 
-func (nara networkAccessRuleApplication) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedNetworkAccessRuleApplications, error) {
+func (nara networkAccessRuleApplication) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedNetworkAccessRuleApplications, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -211,7 +234,11 @@ func (nara networkAccessRuleApplication) Paginate(ctx context.Context, db storag
 	}, nil
 }
 
-func (nara networkAccessRuleApplication) Upsert(ctx context.Context, db storage.Executor, data CreateNetworkAccessRuleApplicationData) (NetworkAccessRuleApplicationEntity, error) {
+func (nara networkAccessRuleApplication) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateNetworkAccessRuleApplicationData,
+) (NetworkAccessRuleApplicationEntity, error) {
 	entity := NetworkAccessRuleApplicationEntity{
 		ID:                         uuid.New(),
 		CreatedAt:                  time.Now(),

@@ -30,7 +30,11 @@ func (e *EnvironmentSecretEntity) Validate() error {
 	return nil
 }
 
-func (es environmentSecret) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentSecretEntity, error) {
+func (es environmentSecret) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (EnvironmentSecretEntity, error) {
 	var entity EnvironmentSecretEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -52,7 +56,11 @@ type CreateEnvironmentSecretData struct {
 	EnvironmentID uuid.UUID
 }
 
-func (es environmentSecret) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentSecretData) (EnvironmentSecretEntity, error) {
+func (es environmentSecret) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentSecretData,
+) (EnvironmentSecretEntity, error) {
 	entity := EnvironmentSecretEntity{
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),
@@ -89,7 +97,11 @@ type UpdateEnvironmentSecretData struct {
 	EnvironmentID uuid.UUID
 }
 
-func (es environmentSecret) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentSecretData) (EnvironmentSecretEntity, error) {
+func (es environmentSecret) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateEnvironmentSecretData,
+) (EnvironmentSecretEntity, error) {
 	entity := EnvironmentSecretEntity{
 		ID:            data.ID,
 		UpdatedAt:     time.Now(),
@@ -134,7 +146,10 @@ func (es environmentSecret) Destroy(ctx context.Context, db storage.Executor, id
 	return err
 }
 
-func (es environmentSecret) All(ctx context.Context, db storage.Executor) ([]EnvironmentSecretEntity, error) {
+func (es environmentSecret) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]EnvironmentSecretEntity, error) {
 	var entities []EnvironmentSecretEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -153,7 +168,11 @@ type PaginatedEnvironmentSecrets struct {
 	TotalPages         int64
 }
 
-func (es environmentSecret) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedEnvironmentSecrets, error) {
+func (es environmentSecret) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedEnvironmentSecrets, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -192,7 +211,11 @@ func (es environmentSecret) Paginate(ctx context.Context, db storage.Executor, p
 	}, nil
 }
 
-func (es environmentSecret) Upsert(ctx context.Context, db storage.Executor, data CreateEnvironmentSecretData) (EnvironmentSecretEntity, error) {
+func (es environmentSecret) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentSecretData,
+) (EnvironmentSecretEntity, error) {
 	entity := EnvironmentSecretEntity{
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),

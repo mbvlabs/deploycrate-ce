@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${USERNAME:?USERNAME is required}"
+: "${ADMIN_USER:?ADMIN_USER is required}"
 : "${SSH_PORT:?SSH_PORT is required}"
 
 install -d -m 0755 /etc/ssh/sshd_config.d
@@ -10,11 +10,13 @@ Port ${SSH_PORT}
 AddressFamily inet
 PermitRootLogin no
 PubkeyAuthentication yes
+TrustedUserCAKeys /etc/ssh/deploycrate-user-ca.pub
+HostCertificate /etc/ssh/ssh_host_ed25519_key-cert.pub
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitEmptyPasswords no
 X11Forwarding no
-AllowUsers ${USERNAME}
+AllowUsers ${ADMIN_USER}
 MaxAuthTries 3
 MaxSessions 4
 ClientAliveInterval 300

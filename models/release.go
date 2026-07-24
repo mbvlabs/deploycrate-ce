@@ -31,7 +31,11 @@ func (e *ReleaseEntity) Validate() error {
 	return nil
 }
 
-func (r release) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (ReleaseEntity, error) {
+func (r release) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (ReleaseEntity, error) {
 	var entity ReleaseEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -54,7 +58,11 @@ type CreateReleaseData struct {
 	CreatedByChangeID   uuid.UUID
 }
 
-func (r release) Create(ctx context.Context, db storage.Executor, data CreateReleaseData) (ReleaseEntity, error) {
+func (r release) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateReleaseData,
+) (ReleaseEntity, error) {
 	entity := ReleaseEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
@@ -93,7 +101,11 @@ type UpdateReleaseData struct {
 	CreatedByChangeID   uuid.UUID
 }
 
-func (r release) Update(ctx context.Context, db storage.Executor, data UpdateReleaseData) (ReleaseEntity, error) {
+func (r release) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateReleaseData,
+) (ReleaseEntity, error) {
 	entity := ReleaseEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
@@ -159,7 +171,11 @@ type PaginatedReleases struct {
 	TotalPages int64
 }
 
-func (r release) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedReleases, error) {
+func (r release) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedReleases, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -198,7 +214,11 @@ func (r release) Paginate(ctx context.Context, db storage.Executor, page, pageSi
 	}, nil
 }
 
-func (r release) Upsert(ctx context.Context, db storage.Executor, data CreateReleaseData) (ReleaseEntity, error) {
+func (r release) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateReleaseData,
+) (ReleaseEntity, error) {
 	entity := ReleaseEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
@@ -236,7 +256,12 @@ func (r release) Upsert(ctx context.Context, db storage.Executor, data CreateRel
 	return entity, nil
 }
 
-func (r release) RecordArtifactDigest(ctx context.Context, db storage.Executor, id uuid.UUID, digest []byte) error {
+func (r release) RecordArtifactDigest(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	digest []byte,
+) error {
 	_, err := db.NewUpdate().
 		TableExpr("releases").
 		Set("artifact_digest = ?", digest).
@@ -246,7 +271,10 @@ func (r release) RecordArtifactDigest(ctx context.Context, db storage.Executor, 
 	return err
 }
 
-func (r release) UnresolvedSystemUpdateArtifacts(ctx context.Context, db storage.Executor) ([]string, error) {
+func (r release) UnresolvedSystemUpdateArtifacts(
+	ctx context.Context,
+	db storage.Executor,
+) ([]string, error) {
 	var paths []string
 	err := db.NewSelect().
 		TableExpr("releases AS release").

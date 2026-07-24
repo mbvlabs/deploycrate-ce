@@ -21,7 +21,12 @@ type DeploymentFactory struct {
 
 type DeploymentOption func(*DeploymentFactory)
 
-func BuildDeployment(changeID uuid.UUID, releaseID uuid.UUID, environmentTargetID uuid.UUID, opts ...DeploymentOption) models.DeploymentEntity {
+func BuildDeployment(
+	changeID uuid.UUID,
+	releaseID uuid.UUID,
+	environmentTargetID uuid.UUID,
+	opts ...DeploymentOption,
+) models.DeploymentEntity {
 	f := &DeploymentFactory{
 		DeploymentEntity: models.DeploymentEntity{
 			Attempt:              randomInt(1, 1000, 100),
@@ -45,7 +50,14 @@ func BuildDeployment(changeID uuid.UUID, releaseID uuid.UUID, environmentTargetI
 	return f.DeploymentEntity
 }
 
-func CreateDeployment(ctx context.Context, exec storage.Executor, changeID uuid.UUID, releaseID uuid.UUID, environmentTargetID uuid.UUID, opts ...DeploymentOption) (models.DeploymentEntity, error) {
+func CreateDeployment(
+	ctx context.Context,
+	exec storage.Executor,
+	changeID uuid.UUID,
+	releaseID uuid.UUID,
+	environmentTargetID uuid.UUID,
+	opts ...DeploymentOption,
+) (models.DeploymentEntity, error) {
 	built := BuildDeployment(changeID, releaseID, environmentTargetID, opts...)
 
 	entity := models.DeploymentEntity{
@@ -72,11 +84,25 @@ func CreateDeployment(ctx context.Context, exec storage.Executor, changeID uuid.
 	return entity, nil
 }
 
-func CreateDeployments(ctx context.Context, exec storage.Executor, changeID uuid.UUID, releaseID uuid.UUID, environmentTargetID uuid.UUID, count int, opts ...DeploymentOption) ([]models.DeploymentEntity, error) {
+func CreateDeployments(
+	ctx context.Context,
+	exec storage.Executor,
+	changeID uuid.UUID,
+	releaseID uuid.UUID,
+	environmentTargetID uuid.UUID,
+	count int,
+	opts ...DeploymentOption,
+) ([]models.DeploymentEntity, error) {
 	deployments := make([]models.DeploymentEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateDeployment(ctx, exec, changeID, releaseID, environmentTargetID, opts...)
+		entity, err := CreateDeployment(
+			ctx,
+			exec,
+			changeID,
+			releaseID,
+			environmentTargetID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create deployment %d: %w", i+1, err)
 		}

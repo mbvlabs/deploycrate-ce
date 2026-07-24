@@ -30,7 +30,10 @@ func NewOtlpTraceExporter(endpoint string, headers map[string]string) *OtlpHttpT
 	}
 }
 
-func NewOtlpTraceExporterInsecure(endpoint string, headers map[string]string) *OtlpHttpTraceExporter {
+func NewOtlpTraceExporterInsecure(
+	endpoint string,
+	headers map[string]string,
+) *OtlpHttpTraceExporter {
 	if endpoint == "" {
 		return nil
 	}
@@ -46,7 +49,10 @@ func (o *OtlpHttpTraceExporter) Name() string {
 	return "otlp-http-traces"
 }
 
-func (o *OtlpHttpTraceExporter) GetSpanExporter(ctx context.Context, res *resource.Resource) (sdktrace.SpanExporter, error) {
+func (o *OtlpHttpTraceExporter) GetSpanExporter(
+	ctx context.Context,
+	res *resource.Resource,
+) (sdktrace.SpanExporter, error) {
 	endpoint := strings.TrimPrefix(o.endpoint, "http://")
 	endpoint = strings.TrimPrefix(endpoint, "https://")
 
@@ -108,7 +114,10 @@ func (n *NoopTraceExporter) Name() string {
 	return "noop-traces"
 }
 
-func (n *NoopTraceExporter) GetSpanExporter(ctx context.Context, res *resource.Resource) (sdktrace.SpanExporter, error) {
+func (n *NoopTraceExporter) GetSpanExporter(
+	ctx context.Context,
+	res *resource.Resource,
+) (sdktrace.SpanExporter, error) {
 	return &noopSpanExporter{}, nil
 }
 

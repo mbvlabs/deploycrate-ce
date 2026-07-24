@@ -21,7 +21,13 @@ type ChangeFactory struct {
 
 type ChangeOption func(*ChangeFactory)
 
-func BuildChange(actorID *uuid.UUID, correlationID uuid.UUID, environmentID uuid.UUID, correctsChangeID *uuid.UUID, opts ...ChangeOption) models.ChangeEntity {
+func BuildChange(
+	actorID *uuid.UUID,
+	correlationID uuid.UUID,
+	environmentID uuid.UUID,
+	correctsChangeID *uuid.UUID,
+	opts ...ChangeOption,
+) models.ChangeEntity {
 	f := &ChangeFactory{
 		ChangeEntity: models.ChangeEntity{
 			Sequence:          randomInt64(1, 1000, 100),
@@ -53,7 +59,15 @@ func BuildChange(actorID *uuid.UUID, correlationID uuid.UUID, environmentID uuid
 	return f.ChangeEntity
 }
 
-func CreateChange(ctx context.Context, exec storage.Executor, actorID *uuid.UUID, correlationID uuid.UUID, environmentID uuid.UUID, correctsChangeID *uuid.UUID, opts ...ChangeOption) (models.ChangeEntity, error) {
+func CreateChange(
+	ctx context.Context,
+	exec storage.Executor,
+	actorID *uuid.UUID,
+	correlationID uuid.UUID,
+	environmentID uuid.UUID,
+	correctsChangeID *uuid.UUID,
+	opts ...ChangeOption,
+) (models.ChangeEntity, error) {
 	built := BuildChange(actorID, correlationID, environmentID, correctsChangeID, opts...)
 
 	entity := models.ChangeEntity{
@@ -88,11 +102,27 @@ func CreateChange(ctx context.Context, exec storage.Executor, actorID *uuid.UUID
 	return entity, nil
 }
 
-func CreateChanges(ctx context.Context, exec storage.Executor, actorID *uuid.UUID, correlationID uuid.UUID, environmentID uuid.UUID, correctsChangeID *uuid.UUID, count int, opts ...ChangeOption) ([]models.ChangeEntity, error) {
+func CreateChanges(
+	ctx context.Context,
+	exec storage.Executor,
+	actorID *uuid.UUID,
+	correlationID uuid.UUID,
+	environmentID uuid.UUID,
+	correctsChangeID *uuid.UUID,
+	count int,
+	opts ...ChangeOption,
+) ([]models.ChangeEntity, error) {
 	changes := make([]models.ChangeEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateChange(ctx, exec, actorID, correlationID, environmentID, correctsChangeID, opts...)
+		entity, err := CreateChange(
+			ctx,
+			exec,
+			actorID,
+			correlationID,
+			environmentID,
+			correctsChangeID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create change %d: %w", i+1, err)
 		}

@@ -39,7 +39,10 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if err := inertia.Init("inertia/root.go.html", inertia.WithSharedProp("appVersion", appVersion)); err != nil {
+	if err := inertia.Init(
+		"inertia/root.go.html",
+		inertia.WithSharedProp("appVersion", appVersion),
+	); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to initialize inertia: %s\n", err)
 		os.Exit(1)
 	}
@@ -47,6 +50,7 @@ func main() {
 		fx.Provide(
 			func() context.Context { return ctx },
 			func() services.CurrentVersion { return services.CurrentVersion(appVersion) },
+			func(service services.MetricRollupService) queue.MetricRollupCollector { return service },
 			func(cfg config.Config) (email.TransactionalSender, email.MarketingSender) {
 				if config.Env == server.ProdEnvironment {
 					return mailclients.NewAwsSes(cfg), mailclients.NewAwsSes(cfg)
@@ -103,7 +107,12 @@ func runCommand(ctx context.Context, arguments []string) error {
 			return err
 		}
 		defer db.Close()
-		if err := storage.RunMigrations(ctx, db.Conn(), database.Migrations, "migrations"); err != nil {
+		if err := storage.RunMigrations(
+			ctx,
+			db.Conn(),
+			database.Migrations,
+			"migrations",
+		); err != nil {
 			return fmt.Errorf("run database migrations: %w", err)
 		}
 		return nil
@@ -157,7 +166,10 @@ func startServer(lc fx.Lifecycle, appCtx context.Context, r *router.Router, cfg 
 				var shutdownErr error
 				for _, shutdowner := range srv.Shutdowners {
 					if err := shutdowner.Shutdown(ctx); err != nil {
-						shutdownErr = errors.Join(shutdownErr, fmt.Errorf("server: shutdown component %T: %w", shutdowner, err))
+						shutdownErr = errors.Join(
+							shutdownErr,
+							fmt.Errorf("server: shutdown component %T: %w", shutdowner, err),
+						)
 					}
 				}
 				return shutdownErr

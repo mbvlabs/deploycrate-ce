@@ -4,6 +4,7 @@ package controllers
 import (
 	"deploycrate-ce/controllers/api"
 	"deploycrate-ce/router"
+
 	"go.uber.org/fx"
 )
 

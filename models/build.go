@@ -63,7 +63,11 @@ type CreateBuildData struct {
 	ChangeID            uuid.UUID
 }
 
-func (b build) Create(ctx context.Context, db storage.Executor, data CreateBuildData) (BuildEntity, error) {
+func (b build) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateBuildData,
+) (BuildEntity, error) {
 	entity := BuildEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
@@ -110,7 +114,11 @@ type UpdateBuildData struct {
 	ChangeID            uuid.UUID
 }
 
-func (b build) Update(ctx context.Context, db storage.Executor, data UpdateBuildData) (BuildEntity, error) {
+func (b build) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateBuildData,
+) (BuildEntity, error) {
 	entity := BuildEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
@@ -184,7 +192,11 @@ type PaginatedBuilds struct {
 	TotalPages int64
 }
 
-func (b build) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedBuilds, error) {
+func (b build) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedBuilds, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -223,7 +235,11 @@ func (b build) Paginate(ctx context.Context, db storage.Executor, page, pageSize
 	}, nil
 }
 
-func (b build) Upsert(ctx context.Context, db storage.Executor, data CreateBuildData) (BuildEntity, error) {
+func (b build) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateBuildData,
+) (BuildEntity, error) {
 	entity := BuildEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),

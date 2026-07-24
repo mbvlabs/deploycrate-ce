@@ -46,12 +46,20 @@ func New(cfg config.Config) (*Telemetry, error) {
 
 	if cfg.Telemetry.OtlpMetricsEndpoint != "" {
 		opts = append(opts, WithMetricExporters(
-			NewOtlpMetricExporter(cfg.Telemetry.OtlpMetricsEndpoint, parseHeaders(cfg.Telemetry.OtlpHeaders))))
+			NewOtlpMetricExporter(
+				cfg.Telemetry.OtlpMetricsEndpoint,
+				parseHeaders(cfg.Telemetry.OtlpHeaders),
+			),
+		))
 	}
 
 	if cfg.Telemetry.OtlpTracesEndpoint != "" {
 		opts = append(opts, WithTraceExporters(
-			NewOtlpTraceExporter(cfg.Telemetry.OtlpTracesEndpoint, parseHeaders(cfg.Telemetry.OtlpHeaders))))
+			NewOtlpTraceExporter(
+				cfg.Telemetry.OtlpTracesEndpoint,
+				parseHeaders(cfg.Telemetry.OtlpHeaders),
+			),
+		))
 	} else {
 		opts = append(opts, WithTraceExporters(NewNoopTraceExporter()))
 	}
@@ -226,7 +234,8 @@ func (t *Telemetry) Shutdown(ctx context.Context) error {
 }
 
 func (t *Telemetry) HealthCheck(ctx context.Context) error {
-	if len(t.config.logExporters) == 0 && len(t.config.metricExporters) == 0 && len(t.config.traceExporters) == 0 {
+	if len(t.config.logExporters) == 0 && len(t.config.metricExporters) == 0 &&
+		len(t.config.traceExporters) == 0 {
 		return fmt.Errorf("no exporters configured")
 	}
 	return nil

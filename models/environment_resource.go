@@ -31,7 +31,11 @@ func (e *EnvironmentResourceEntity) Validate() error {
 	return nil
 }
 
-func (er environmentResource) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentResourceEntity, error) {
+func (er environmentResource) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (EnvironmentResourceEntity, error) {
 	var entity EnvironmentResourceEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -53,7 +57,11 @@ type CreateEnvironmentResourceData struct {
 	ResourceCredentialID *uuid.UUID
 }
 
-func (er environmentResource) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentResourceData) (EnvironmentResourceEntity, error) {
+func (er environmentResource) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentResourceData,
+) (EnvironmentResourceEntity, error) {
 	entity := EnvironmentResourceEntity{
 		ID:                   uuid.New(),
 		CreatedAt:            time.Now(),
@@ -90,7 +98,11 @@ type UpdateEnvironmentResourceData struct {
 	ResourceCredentialID *uuid.UUID
 }
 
-func (er environmentResource) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentResourceData) (EnvironmentResourceEntity, error) {
+func (er environmentResource) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateEnvironmentResourceData,
+) (EnvironmentResourceEntity, error) {
 	entity := EnvironmentResourceEntity{
 		ID:                   data.ID,
 		UpdatedAt:            time.Now(),
@@ -126,7 +138,11 @@ func (er environmentResource) Update(ctx context.Context, db storage.Executor, d
 	return entity, nil
 }
 
-func (er environmentResource) Destroy(ctx context.Context, db storage.Executor, id uuid.UUID) error {
+func (er environmentResource) Destroy(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) error {
 	_, err := db.NewDelete().
 		Model((*EnvironmentResourceEntity)(nil)).
 		Where("id = ?", id).
@@ -135,7 +151,10 @@ func (er environmentResource) Destroy(ctx context.Context, db storage.Executor, 
 	return err
 }
 
-func (er environmentResource) All(ctx context.Context, db storage.Executor) ([]EnvironmentResourceEntity, error) {
+func (er environmentResource) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]EnvironmentResourceEntity, error) {
 	var entities []EnvironmentResourceEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -154,7 +173,11 @@ type PaginatedEnvironmentResources struct {
 	TotalPages           int64
 }
 
-func (er environmentResource) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedEnvironmentResources, error) {
+func (er environmentResource) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedEnvironmentResources, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -193,7 +216,11 @@ func (er environmentResource) Paginate(ctx context.Context, db storage.Executor,
 	}, nil
 }
 
-func (er environmentResource) Upsert(ctx context.Context, db storage.Executor, data CreateEnvironmentResourceData) (EnvironmentResourceEntity, error) {
+func (er environmentResource) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentResourceData,
+) (EnvironmentResourceEntity, error) {
 	entity := EnvironmentResourceEntity{
 		ID:                   uuid.New(),
 		CreatedAt:            time.Now(),

@@ -35,7 +35,11 @@ func (e *DeploymentEntity) Validate() error {
 	return nil
 }
 
-func (d deployment) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (DeploymentEntity, error) {
+func (d deployment) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (DeploymentEntity, error) {
 	var entity DeploymentEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -61,7 +65,11 @@ type CreateDeploymentData struct {
 	EnvironmentTargetID  uuid.UUID
 }
 
-func (d deployment) Create(ctx context.Context, db storage.Executor, data CreateDeploymentData) (DeploymentEntity, error) {
+func (d deployment) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateDeploymentData,
+) (DeploymentEntity, error) {
 	entity := DeploymentEntity{
 		ID:                   uuid.New(),
 		CreatedAt:            time.Now(),
@@ -106,7 +114,11 @@ type UpdateDeploymentData struct {
 	EnvironmentTargetID  uuid.UUID
 }
 
-func (d deployment) Update(ctx context.Context, db storage.Executor, data UpdateDeploymentData) (DeploymentEntity, error) {
+func (d deployment) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateDeploymentData,
+) (DeploymentEntity, error) {
 	entity := DeploymentEntity{
 		ID:                   data.ID,
 		UpdatedAt:            time.Now(),
@@ -178,7 +190,11 @@ type PaginatedDeployments struct {
 	TotalPages  int64
 }
 
-func (d deployment) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedDeployments, error) {
+func (d deployment) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedDeployments, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -217,7 +233,11 @@ func (d deployment) Paginate(ctx context.Context, db storage.Executor, page, pag
 	}, nil
 }
 
-func (d deployment) Upsert(ctx context.Context, db storage.Executor, data CreateDeploymentData) (DeploymentEntity, error) {
+func (d deployment) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateDeploymentData,
+) (DeploymentEntity, error) {
 	entity := DeploymentEntity{
 		ID:                   uuid.New(),
 		CreatedAt:            time.Now(),
@@ -285,7 +305,10 @@ type UnresolvedSystemUpdate struct {
 	EventSequence int64           `bun:"event_sequence"`
 }
 
-func (d deployment) FindUnresolvedSystemUpdate(ctx context.Context, db storage.Executor) (*UnresolvedSystemUpdate, error) {
+func (d deployment) FindUnresolvedSystemUpdate(
+	ctx context.Context,
+	db storage.Executor,
+) (*UnresolvedSystemUpdate, error) {
 	var unresolved UnresolvedSystemUpdate
 	err := db.NewSelect().
 		TableExpr("deployments AS deployment").
@@ -337,7 +360,13 @@ func (d deployment) SaveSystemUpdateCheckpoint(
 	return err
 }
 
-func (d deployment) RecordProgress(ctx context.Context, db storage.Executor, id uuid.UUID, status, step string, at time.Time) error {
+func (d deployment) RecordProgress(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	status, step string,
+	at time.Time,
+) error {
 	_, err := db.NewUpdate().
 		TableExpr("deployments").
 		Set("status = ?", status).

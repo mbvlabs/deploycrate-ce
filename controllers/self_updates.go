@@ -17,10 +17,11 @@ import (
 
 type SelfUpdates struct {
 	service *services.SelfUpdate
+	health  *services.SystemHealth
 }
 
-func NewSelfUpdates(service *services.SelfUpdate) SelfUpdates {
-	return SelfUpdates{service: service}
+func NewSelfUpdates(service *services.SelfUpdate, health *services.SystemHealth) SelfUpdates {
+	return SelfUpdates{service: service, health: health}
 }
 
 func (s SelfUpdates) RegisterRoutes(r *router.Router) error {
@@ -71,7 +72,12 @@ func (s SelfUpdates) RegisterRoutes(r *router.Router) error {
 func (s SelfUpdates) Overview(etx *echo.Context) error {
 	overview, err := s.service.Overview(etx.Request().Context())
 	if err != nil {
-		slog.ErrorContext(etx.Request().Context(), "failed to load DeployCrate CE system overview", "error", err)
+		slog.ErrorContext(
+			etx.Request().Context(),
+			"failed to load DeployCrate CE system overview",
+			"error",
+			err,
+		)
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 
@@ -80,6 +86,7 @@ func (s SelfUpdates) Overview(etx *echo.Context) error {
 			"email": cookies.ExtractFromCookieApp(etx).Email,
 		},
 		"system": overview,
+		"health": s.health.Run(etx.Request().Context()),
 	})
 }
 
@@ -102,7 +109,12 @@ func (s SelfUpdates) Create(etx *echo.Context) error {
 	case errors.Is(err, services.ErrUpdateInProgress):
 		err = cookies.AddFlash(etx, cookies.FlashInfo, err.Error())
 	default:
-		slog.ErrorContext(etx.Request().Context(), "failed to start DeployCrate CE update", "error", err)
+		slog.ErrorContext(
+			etx.Request().Context(),
+			"failed to start DeployCrate CE update",
+			"error",
+			err,
+		)
 		err = cookies.AddFlash(etx, cookies.FlashError, "Failed to start update: "+err.Error())
 	}
 	if err != nil {

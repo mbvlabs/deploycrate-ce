@@ -44,7 +44,11 @@ func (e *ResourceBackupEntity) Validate() error {
 	return nil
 }
 
-func (rb resourceBackup) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (ResourceBackupEntity, error) {
+func (rb resourceBackup) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (ResourceBackupEntity, error) {
 	var entity ResourceBackupEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -80,7 +84,11 @@ type CreateResourceBackupData struct {
 	BackupDestinationID    uuid.UUID
 }
 
-func (rb resourceBackup) Create(ctx context.Context, db storage.Executor, data CreateResourceBackupData) (ResourceBackupEntity, error) {
+func (rb resourceBackup) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceBackupData,
+) (ResourceBackupEntity, error) {
 	entity := ResourceBackupEntity{
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),
@@ -145,7 +153,11 @@ type UpdateResourceBackupData struct {
 	BackupDestinationID    uuid.UUID
 }
 
-func (rb resourceBackup) Update(ctx context.Context, db storage.Executor, data UpdateResourceBackupData) (ResourceBackupEntity, error) {
+func (rb resourceBackup) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateResourceBackupData,
+) (ResourceBackupEntity, error) {
 	entity := ResourceBackupEntity{
 		ID:                     data.ID,
 		UpdatedAt:              time.Now(),
@@ -218,7 +230,10 @@ func (rb resourceBackup) Destroy(ctx context.Context, db storage.Executor, id uu
 	return err
 }
 
-func (rb resourceBackup) All(ctx context.Context, db storage.Executor) ([]ResourceBackupEntity, error) {
+func (rb resourceBackup) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]ResourceBackupEntity, error) {
 	var entities []ResourceBackupEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -237,7 +252,11 @@ type PaginatedResourceBackups struct {
 	TotalPages      int64
 }
 
-func (rb resourceBackup) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedResourceBackups, error) {
+func (rb resourceBackup) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedResourceBackups, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -276,7 +295,11 @@ func (rb resourceBackup) Paginate(ctx context.Context, db storage.Executor, page
 	}, nil
 }
 
-func (rb resourceBackup) Upsert(ctx context.Context, db storage.Executor, data CreateResourceBackupData) (ResourceBackupEntity, error) {
+func (rb resourceBackup) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceBackupData,
+) (ResourceBackupEntity, error) {
 	entity := ResourceBackupEntity{
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),

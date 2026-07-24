@@ -38,30 +38,34 @@ type S3Config struct {
 }
 
 type Secrets struct {
-	LinuxPassword        string `json:"linux_password"`
-	SSHPrivateKey        string `json:"ssh_private_key,omitempty"`
-	AdminPassword        string `json:"admin_password"`
-	DatabasePassword     string `json:"database_password"`
-	SessionKey           string `json:"session_key"`
-	SessionEncryptionKey string `json:"session_encryption_key"`
-	TokenSigningKey      string `json:"token_signing_key"`
-	Pepper               string `json:"pepper"`
-	S3AccessKeyID        string `json:"s3_access_key_id,omitempty"`
-	S3SecretAccessKey    string `json:"s3_secret_access_key,omitempty"`
+	ServerAdminPassword     string `json:"server_admin_password"`
+	SSHPrivateKey           string `json:"ssh_private_key,omitempty"`
+	SSHCARecoveryPassphrase string `json:"ssh_ca_recovery_passphrase"`
+	ClickHousePassword      string `json:"clickhouse_password"`
+	AdminPassword           string `json:"admin_password"`
+	DatabasePassword        string `json:"database_password"`
+	SessionKey              string `json:"session_key"`
+	SessionEncryptionKey    string `json:"session_encryption_key"`
+	TokenSigningKey         string `json:"token_signing_key"`
+	Pepper                  string `json:"pepper"`
+	S3AccessKeyID           string `json:"s3_access_key_id,omitempty"`
+	S3SecretAccessKey       string `json:"s3_secret_access_key,omitempty"`
 }
 
 type Config struct {
-	Version         string         `json:"version"`
-	Domain          string         `json:"domain"`
-	SSHPort         int            `json:"ssh_port"`
-	Timezone        string         `json:"timezone"`
-	LinuxUser       string         `json:"linux_user"`
-	SSHPublicKey    string         `json:"ssh_public_key"`
-	GeneratedSSHKey bool           `json:"generated_ssh_key"`
-	AdminEmail      string         `json:"admin_email"`
-	Database        DatabaseConfig `json:"database"`
-	S3              S3Config       `json:"s3"`
-	Secrets         Secrets        `json:"-"`
+	Version           string         `json:"version"`
+	Domain            string         `json:"domain"`
+	SSHPort           int            `json:"ssh_port"`
+	Timezone          string         `json:"timezone"`
+	AdminUser         string         `json:"admin_user"`
+	ServiceUser       string         `json:"service_user"`
+	SSHPublicKey      string         `json:"ssh_public_key"`
+	OwnerSSHPublicKey string         `json:"owner_ssh_public_key,omitempty"`
+	GeneratedSSHKey   bool           `json:"generated_ssh_key"`
+	AdminEmail        string         `json:"admin_email"`
+	Database          DatabaseConfig `json:"database"`
+	S3                S3Config       `json:"s3"`
+	Secrets           Secrets        `json:"-"`
 }
 
 func NewConfig(version string) (Config, error) {
@@ -81,16 +85,25 @@ func NewConfig(version string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	recoveryPassphrase, err := randomHex(32)
+	if err != nil {
+		return Config{}, err
+	}
+	clickHousePassword, err := randomHex(24)
+	if err != nil {
+		return Config{}, err
+	}
 	pepper, err := randomHex(24)
 	if err != nil {
 		return Config{}, err
 	}
 
 	return Config{
-		Version:   version,
-		SSHPort:   22,
-		Timezone:  "UTC",
-		LinuxUser: "deploycrate",
+		Version:     version,
+		SSHPort:     22,
+		Timezone:    "UTC",
+		AdminUser:   "admin",
+		ServiceUser: "deploycrate",
 		Database: DatabaseConfig{
 			Host:    "127.0.0.1",
 			Port:    5432,
@@ -100,26 +113,36 @@ func NewConfig(version string) (Config, error) {
 		},
 		S3: S3Config{Region: "us-east-1", UsePathStyle: true},
 		Secrets: Secrets{
-			DatabasePassword:     databasePassword,
-			SessionKey:           sessionKey,
-			SessionEncryptionKey: sessionEncryptionKey,
-			TokenSigningKey:      tokenSigningKey,
-			Pepper:               pepper,
+			SSHCARecoveryPassphrase: recoveryPassphrase,
+			ClickHousePassword:      clickHousePassword,
+			DatabasePassword:        databasePassword,
+			SessionKey:              sessionKey,
+			SessionEncryptionKey:    sessionEncryptionKey,
+			TokenSigningKey:         tokenSigningKey,
+			Pepper:                  pepper,
 		},
 	}, nil
 }
 
 func (c Config) Validate() error {
 	var errs []error
-	if c.LinuxUser != "deploycrate" {
-		errs = append(errs, errors.New("Linux user must be deploycrate"))
+	if c.AdminUser != "admin" {
+		errs = append(errs, errors.New("server administrator user must be admin"))
+	}
+	if c.ServiceUser != "deploycrate" {
+		errs = append(errs, errors.New("service user must be deploycrate"))
+	}
+	if c.AdminUser == c.ServiceUser {
+		errs = append(errs, errors.New("server administrator and service users must be different"))
 	}
 	if !validHostname(c.Domain) {
 		errs = append(errs, errors.New("a valid domain without protocol is required"))
 	}
 	for name, value := range map[string]string{
-		"domain": c.Domain, "Linux user": c.LinuxUser, "SSH public key": c.SSHPublicKey,
-		"admin email": c.AdminEmail, "database host": c.Database.Host, "database name": c.Database.Name,
+		"domain": c.Domain, "administrator user": c.AdminUser, "service user": c.ServiceUser,
+		"SSH public key":       c.SSHPublicKey,
+		"owner SSH public key": c.OwnerSSHPublicKey,
+		"admin email":          c.AdminEmail, "database host": c.Database.Host, "database name": c.Database.Name,
 		"database user": c.Database.User,
 	} {
 		if strings.ContainsAny(value, "\r\n\x00") {
@@ -131,20 +154,36 @@ func (c Config) Validate() error {
 	}
 	if strings.TrimSpace(c.SSHPublicKey) == "" {
 		errs = append(errs, errors.New("SSH public key is required"))
+	} else if err := ValidateSSHPublicKey(c.SSHPublicKey); err != nil {
+		errs = append(errs, errors.New("generated SSH public key is invalid"))
+	}
+	if strings.TrimSpace(c.OwnerSSHPublicKey) != "" {
+		if err := ValidateSSHPublicKey(c.OwnerSSHPublicKey); err != nil {
+			errs = append(errs, errors.New("owner SSH public key is invalid"))
+		}
 	}
 	if _, err := mail.ParseAddress(c.AdminEmail); err != nil {
 		errs = append(errs, errors.New("a valid application admin email is required"))
 	}
-	if len(c.Secrets.LinuxPassword) < 12 {
-		errs = append(errs, errors.New("Linux password must be at least 12 characters"))
+	if c.Secrets.ServerAdminPassword == "" {
+		errs = append(errs, errors.New("server administrator password is required"))
 	}
 	if len(c.Secrets.AdminPassword) < 8 {
 		errs = append(errs, errors.New("application admin password must be at least 8 characters"))
 	}
-	if c.Database.Host == "" || c.Database.Port < 1 || c.Database.Name == "" || c.Database.User == "" || c.Secrets.DatabasePassword == "" {
+	if len(c.Secrets.SSHCARecoveryPassphrase) < 32 {
+		errs = append(errs, errors.New("SSH CA recovery passphrase is unavailable"))
+	}
+	if len(c.Secrets.ClickHousePassword) < 24 {
+		errs = append(errs, errors.New("ClickHouse password is unavailable"))
+	}
+	if c.Database.Host == "" || c.Database.Port < 1 || c.Database.Name == "" ||
+		c.Database.User == "" ||
+		c.Secrets.DatabasePassword == "" {
 		errs = append(errs, errors.New("complete database details are required"))
 	}
-	if c.S3.Enabled && (c.S3.Region == "" || c.S3.Bucket == "" || c.Secrets.S3AccessKeyID == "" || c.Secrets.S3SecretAccessKey == "") {
+	if c.S3.Enabled &&
+		(c.S3.Region == "" || c.S3.Bucket == "" || c.Secrets.S3AccessKeyID == "" || c.Secrets.S3SecretAccessKey == "") {
 		errs = append(errs, errors.New("complete S3-compatible storage details are required"))
 	}
 
@@ -169,8 +208,10 @@ func (c Config) DatabaseURL() string {
 
 func (c Config) SecretValues() []string {
 	return []string{
-		c.Secrets.LinuxPassword,
+		c.Secrets.ServerAdminPassword,
 		c.Secrets.SSHPrivateKey,
+		c.Secrets.SSHCARecoveryPassphrase,
+		c.Secrets.ClickHousePassword,
 		c.Secrets.AdminPassword,
 		c.Secrets.DatabasePassword,
 		c.Secrets.SessionKey,
@@ -191,7 +232,13 @@ func ConfigPaths() (string, string, string) {
 	if stateDir == "" {
 		stateDir = DefaultStateDir
 	}
-	return filepath.Join(etcDir, "installer.json"), filepath.Join(etcDir, "installer-secrets.json"), stateDir
+	return filepath.Join(
+			etcDir,
+			"installer.json",
+		), filepath.Join(
+			etcDir,
+			"installer-secrets.json",
+		), stateDir
 }
 
 func validHostname(value string) bool {
@@ -199,7 +246,8 @@ func validHostname(value string) bool {
 		return false
 	}
 	for label := range strings.SplitSeq(value, ".") {
-		if len(label) == 0 || len(label) > 63 || !hostnameCharacter(label[0]) || !hostnameCharacter(label[len(label)-1]) {
+		if len(label) == 0 || len(label) > 63 || !hostnameCharacter(label[0]) ||
+			!hostnameCharacter(label[len(label)-1]) {
 			return false
 		}
 		for index := 1; index < len(label)-1; index++ {
@@ -212,7 +260,8 @@ func validHostname(value string) bool {
 }
 
 func hostnameCharacter(value byte) bool {
-	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9'
+	return value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' ||
+		value >= '0' && value <= '9'
 }
 
 func randomHex(bytes int) (string, error) {

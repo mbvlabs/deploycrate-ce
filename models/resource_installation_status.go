@@ -34,7 +34,11 @@ func (e *ResourceInstallationStatusEntity) Validate() error {
 	return nil
 }
 
-func (ris resourceInstallationStatus) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (ResourceInstallationStatusEntity, error) {
+func (ris resourceInstallationStatus) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (ResourceInstallationStatusEntity, error) {
 	var entity ResourceInstallationStatusEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -60,7 +64,11 @@ type CreateResourceInstallationStatusData struct {
 	ExpiresAt              time.Time
 }
 
-func (ris resourceInstallationStatus) Create(ctx context.Context, db storage.Executor, data CreateResourceInstallationStatusData) (ResourceInstallationStatusEntity, error) {
+func (ris resourceInstallationStatus) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceInstallationStatusData,
+) (ResourceInstallationStatusEntity, error) {
 	entity := ResourceInstallationStatusEntity{
 		ResourceInstallationID: data.ResourceInstallationID,
 		CreatedAt:              time.Now(),
@@ -103,7 +111,11 @@ type UpdateResourceInstallationStatusData struct {
 	ExpiresAt              time.Time
 }
 
-func (ris resourceInstallationStatus) Update(ctx context.Context, db storage.Executor, data UpdateResourceInstallationStatusData) (ResourceInstallationStatusEntity, error) {
+func (ris resourceInstallationStatus) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateResourceInstallationStatusData,
+) (ResourceInstallationStatusEntity, error) {
 	entity := ResourceInstallationStatusEntity{
 		ResourceInstallationID: data.ResourceInstallationID,
 		UpdatedAt:              time.Now(),
@@ -145,7 +157,11 @@ func (ris resourceInstallationStatus) Update(ctx context.Context, db storage.Exe
 	return entity, nil
 }
 
-func (ris resourceInstallationStatus) Destroy(ctx context.Context, db storage.Executor, id uuid.UUID) error {
+func (ris resourceInstallationStatus) Destroy(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) error {
 	_, err := db.NewDelete().
 		Model((*ResourceInstallationStatusEntity)(nil)).
 		Where("resource_installation_id = ?", id).
@@ -154,7 +170,10 @@ func (ris resourceInstallationStatus) Destroy(ctx context.Context, db storage.Ex
 	return err
 }
 
-func (ris resourceInstallationStatus) All(ctx context.Context, db storage.Executor) ([]ResourceInstallationStatusEntity, error) {
+func (ris resourceInstallationStatus) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]ResourceInstallationStatusEntity, error) {
 	var entities []ResourceInstallationStatusEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -173,7 +192,11 @@ type PaginatedResourceInstallationStatuses struct {
 	TotalPages                   int64
 }
 
-func (ris resourceInstallationStatus) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedResourceInstallationStatuses, error) {
+func (ris resourceInstallationStatus) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedResourceInstallationStatuses, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -212,7 +235,11 @@ func (ris resourceInstallationStatus) Paginate(ctx context.Context, db storage.E
 	}, nil
 }
 
-func (ris resourceInstallationStatus) Upsert(ctx context.Context, db storage.Executor, data CreateResourceInstallationStatusData) (ResourceInstallationStatusEntity, error) {
+func (ris resourceInstallationStatus) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceInstallationStatusData,
+) (ResourceInstallationStatusEntity, error) {
 	entity := ResourceInstallationStatusEntity{
 		ResourceInstallationID: data.ResourceInstallationID,
 		CreatedAt:              time.Now(),

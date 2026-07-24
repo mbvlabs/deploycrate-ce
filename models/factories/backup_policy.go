@@ -21,7 +21,13 @@ type BackupPolicyFactory struct {
 
 type BackupPolicyOption func(*BackupPolicyFactory)
 
-func BuildBackupPolicy(resourceID uuid.UUID, environmentResourceID *uuid.UUID, resourceVolumeID *uuid.UUID, backupDestinationID uuid.UUID, opts ...BackupPolicyOption) models.BackupPolicyEntity {
+func BuildBackupPolicy(
+	resourceID uuid.UUID,
+	environmentResourceID *uuid.UUID,
+	resourceVolumeID *uuid.UUID,
+	backupDestinationID uuid.UUID,
+	opts ...BackupPolicyOption,
+) models.BackupPolicyEntity {
 	f := &BackupPolicyFactory{
 		BackupPolicyEntity: models.BackupPolicyEntity{
 			Name:                  faker.Word(),
@@ -47,8 +53,21 @@ func BuildBackupPolicy(resourceID uuid.UUID, environmentResourceID *uuid.UUID, r
 	return f.BackupPolicyEntity
 }
 
-func CreateBackupPolicy(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, environmentResourceID *uuid.UUID, resourceVolumeID *uuid.UUID, backupDestinationID uuid.UUID, opts ...BackupPolicyOption) (models.BackupPolicyEntity, error) {
-	built := BuildBackupPolicy(resourceID, environmentResourceID, resourceVolumeID, backupDestinationID, opts...)
+func CreateBackupPolicy(
+	ctx context.Context,
+	exec storage.Executor,
+	resourceID uuid.UUID,
+	environmentResourceID *uuid.UUID,
+	resourceVolumeID *uuid.UUID,
+	backupDestinationID uuid.UUID,
+	opts ...BackupPolicyOption,
+) (models.BackupPolicyEntity, error) {
+	built := BuildBackupPolicy(
+		resourceID,
+		environmentResourceID,
+		resourceVolumeID,
+		backupDestinationID,
+		opts...)
 
 	entity := models.BackupPolicyEntity{
 		ID:                    uuid.New(),
@@ -76,11 +95,27 @@ func CreateBackupPolicy(ctx context.Context, exec storage.Executor, resourceID u
 	return entity, nil
 }
 
-func CreateBackupPolicys(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, environmentResourceID *uuid.UUID, resourceVolumeID *uuid.UUID, backupDestinationID uuid.UUID, count int, opts ...BackupPolicyOption) ([]models.BackupPolicyEntity, error) {
+func CreateBackupPolicys(
+	ctx context.Context,
+	exec storage.Executor,
+	resourceID uuid.UUID,
+	environmentResourceID *uuid.UUID,
+	resourceVolumeID *uuid.UUID,
+	backupDestinationID uuid.UUID,
+	count int,
+	opts ...BackupPolicyOption,
+) ([]models.BackupPolicyEntity, error) {
 	backuppolicys := make([]models.BackupPolicyEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateBackupPolicy(ctx, exec, resourceID, environmentResourceID, resourceVolumeID, backupDestinationID, opts...)
+		entity, err := CreateBackupPolicy(
+			ctx,
+			exec,
+			resourceID,
+			environmentResourceID,
+			resourceVolumeID,
+			backupDestinationID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create backuppolicy %d: %w", i+1, err)
 		}

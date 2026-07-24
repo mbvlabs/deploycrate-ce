@@ -42,7 +42,11 @@ func (service CaddyRouteService) Reconcile(ctx context.Context, routeID uuid.UUI
 	if route.RemovedAt.Valid {
 		return "", errors.New("cannot reconcile a removed Caddy route")
 	}
-	domain, err := models.EnvironmentDomain.Find(ctx, service.db.Executor(), route.EnvironmentDomainID)
+	domain, err := models.EnvironmentDomain.Find(
+		ctx,
+		service.db.Executor(),
+		route.EnvironmentDomainID,
+	)
 	if err != nil {
 		return "", fmt.Errorf("load Caddy route domain: %w", err)
 	}
@@ -90,9 +94,15 @@ func (service CaddyRouteService) Reconcile(ctx context.Context, routeID uuid.UUI
 	}
 	now := sql.NullTime{Time: time.Now().UTC(), Valid: true}
 	if _, err := models.CaddyRoute.Update(ctx, service.db.Executor(), models.UpdateCaddyRouteData{
-		ID: route.ID, ExternalID: route.ExternalID, State: "applied", AppliedAt: now, ObservedAt: now,
-		RemovedAt: route.RemovedAt, EnvironmentTargetID: route.EnvironmentTargetID,
-		EnvironmentDomainID: route.EnvironmentDomainID, ReleaseID: route.ReleaseID,
+		ID:                  route.ID,
+		ExternalID:          route.ExternalID,
+		State:               "applied",
+		AppliedAt:           now,
+		ObservedAt:          now,
+		RemovedAt:           route.RemovedAt,
+		EnvironmentTargetID: route.EnvironmentTargetID,
+		EnvironmentDomainID: route.EnvironmentDomainID,
+		ReleaseID:           route.ReleaseID,
 	}); err != nil {
 		return "", fmt.Errorf("mark Caddy route applied: %w", err)
 	}
@@ -166,10 +176,15 @@ func (service CaddyRouteService) SwitchTraffic(
 	}
 
 	if _, err := models.CaddyRoute.Update(ctx, tx, models.UpdateCaddyRouteData{
-		ID: route.ID, ExternalID: route.ExternalID, State: "pending",
-		AppliedAt: route.AppliedAt, ObservedAt: route.ObservedAt, RemovedAt: route.RemovedAt,
-		EnvironmentTargetID: route.EnvironmentTargetID, EnvironmentDomainID: route.EnvironmentDomainID,
-		ReleaseID: releaseID,
+		ID:                  route.ID,
+		ExternalID:          route.ExternalID,
+		State:               "pending",
+		AppliedAt:           route.AppliedAt,
+		ObservedAt:          route.ObservedAt,
+		RemovedAt:           route.RemovedAt,
+		EnvironmentTargetID: route.EnvironmentTargetID,
+		EnvironmentDomainID: route.EnvironmentDomainID,
+		ReleaseID:           releaseID,
 	}); err != nil {
 		return fmt.Errorf("mark Caddy route pending: %w", err)
 	}
@@ -308,10 +323,15 @@ func markCaddyRoutePending(
 		releaseID = route.ReleaseID
 	}
 	if _, err := models.CaddyRoute.Update(ctx, exec, models.UpdateCaddyRouteData{
-		ID: route.ID, ExternalID: route.ExternalID, State: "pending",
-		AppliedAt: route.AppliedAt, ObservedAt: route.ObservedAt, RemovedAt: route.RemovedAt,
-		EnvironmentTargetID: route.EnvironmentTargetID, EnvironmentDomainID: route.EnvironmentDomainID,
-		ReleaseID: releaseID,
+		ID:                  route.ID,
+		ExternalID:          route.ExternalID,
+		State:               "pending",
+		AppliedAt:           route.AppliedAt,
+		ObservedAt:          route.ObservedAt,
+		RemovedAt:           route.RemovedAt,
+		EnvironmentTargetID: route.EnvironmentTargetID,
+		EnvironmentDomainID: route.EnvironmentDomainID,
+		ReleaseID:           releaseID,
 	}); err != nil {
 		return fmt.Errorf("mark Caddy route pending: %w", err)
 	}

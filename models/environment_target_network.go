@@ -34,7 +34,11 @@ func (e *EnvironmentTargetNetworkEntity) Validate() error {
 	return nil
 }
 
-func (etn environmentTargetNetwork) Find(ctx context.Context, db storage.Executor, id int32) (EnvironmentTargetNetworkEntity, error) {
+func (etn environmentTargetNetwork) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id int32,
+) (EnvironmentTargetNetworkEntity, error) {
 	var entity EnvironmentTargetNetworkEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -59,7 +63,11 @@ type CreateEnvironmentTargetNetworkData struct {
 	PrivateNetworkID    uuid.UUID
 }
 
-func (etn environmentTargetNetwork) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentTargetNetworkData) (EnvironmentTargetNetworkEntity, error) {
+func (etn environmentTargetNetwork) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentTargetNetworkData,
+) (EnvironmentTargetNetworkEntity, error) {
 	entity := EnvironmentTargetNetworkEntity{
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
@@ -101,7 +109,11 @@ type UpdateEnvironmentTargetNetworkData struct {
 	PrivateNetworkID    uuid.UUID
 }
 
-func (etn environmentTargetNetwork) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentTargetNetworkData) (EnvironmentTargetNetworkEntity, error) {
+func (etn environmentTargetNetwork) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateEnvironmentTargetNetworkData,
+) (EnvironmentTargetNetworkEntity, error) {
 	entity := EnvironmentTargetNetworkEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
@@ -143,7 +155,11 @@ func (etn environmentTargetNetwork) Update(ctx context.Context, db storage.Execu
 	return entity, nil
 }
 
-func (etn environmentTargetNetwork) Destroy(ctx context.Context, db storage.Executor, id int32) error {
+func (etn environmentTargetNetwork) Destroy(
+	ctx context.Context,
+	db storage.Executor,
+	id int32,
+) error {
 	_, err := db.NewDelete().
 		Model((*EnvironmentTargetNetworkEntity)(nil)).
 		Where("id = ?", id).
@@ -152,7 +168,10 @@ func (etn environmentTargetNetwork) Destroy(ctx context.Context, db storage.Exec
 	return err
 }
 
-func (etn environmentTargetNetwork) All(ctx context.Context, db storage.Executor) ([]EnvironmentTargetNetworkEntity, error) {
+func (etn environmentTargetNetwork) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]EnvironmentTargetNetworkEntity, error) {
 	var entities []EnvironmentTargetNetworkEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -171,7 +190,11 @@ type PaginatedEnvironmentTargetNetworks struct {
 	TotalPages                int64
 }
 
-func (etn environmentTargetNetwork) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedEnvironmentTargetNetworks, error) {
+func (etn environmentTargetNetwork) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedEnvironmentTargetNetworks, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -210,7 +233,11 @@ func (etn environmentTargetNetwork) Paginate(ctx context.Context, db storage.Exe
 	}, nil
 }
 
-func (etn environmentTargetNetwork) Upsert(ctx context.Context, db storage.Executor, data CreateEnvironmentTargetNetworkData) (EnvironmentTargetNetworkEntity, error) {
+func (etn environmentTargetNetwork) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentTargetNetworkData,
+) (EnvironmentTargetNetworkEntity, error) {
 	entity := EnvironmentTargetNetworkEntity{
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),

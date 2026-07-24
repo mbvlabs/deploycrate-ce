@@ -57,7 +57,10 @@ func acquireDevelopmentApplicationBinary(ctx context.Context) (string, func(), e
 	if response.StatusCode != http.StatusOK {
 		_ = temporary.Close()
 		cleanup()
-		return "", nil, fmt.Errorf("download development application binary: status %d", response.StatusCode)
+		return "", nil, fmt.Errorf(
+			"download development application binary: status %d",
+			response.StatusCode,
+		)
 	}
 
 	hash := sha256.New()
@@ -79,7 +82,11 @@ func acquireDevelopmentApplicationBinary(ctx context.Context) (string, func(), e
 	return temporaryPath, cleanup, nil
 }
 
-func fetchDevelopmentChecksum(ctx context.Context, client *http.Client, checksumURL string) ([]byte, error) {
+func fetchDevelopmentChecksum(
+	ctx context.Context,
+	client *http.Client,
+	checksumURL string,
+) ([]byte, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, checksumURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create application checksum request: %w", err)
@@ -91,7 +98,10 @@ func fetchDevelopmentChecksum(ctx context.Context, client *http.Client, checksum
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("download development application checksum: status %d", response.StatusCode)
+		return nil, fmt.Errorf(
+			"download development application checksum: status %d",
+			response.StatusCode,
+		)
 	}
 
 	content, err := io.ReadAll(io.LimitReader(response.Body, developmentChecksumLimit+1))
@@ -99,7 +109,10 @@ func fetchDevelopmentChecksum(ctx context.Context, client *http.Client, checksum
 		return nil, fmt.Errorf("read development application checksum: %w", err)
 	}
 	if len(content) > developmentChecksumLimit {
-		return nil, fmt.Errorf("development application checksum exceeds %d bytes", developmentChecksumLimit)
+		return nil, fmt.Errorf(
+			"development application checksum exceeds %d bytes",
+			developmentChecksumLimit,
+		)
 	}
 	fields := strings.Fields(string(content))
 	if len(fields) != 2 || strings.TrimPrefix(fields[1], "*") != "deploycrate-ce" {

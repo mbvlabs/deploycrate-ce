@@ -28,7 +28,11 @@ func (e *ResourceVolumeMountEntity) Validate() error {
 	return nil
 }
 
-func (rvm resourceVolumeMount) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (ResourceVolumeMountEntity, error) {
+func (rvm resourceVolumeMount) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (ResourceVolumeMountEntity, error) {
 	var entity ResourceVolumeMountEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -48,7 +52,11 @@ type CreateResourceVolumeMountData struct {
 	ResourceInstallationID uuid.UUID
 }
 
-func (rvm resourceVolumeMount) Create(ctx context.Context, db storage.Executor, data CreateResourceVolumeMountData) (ResourceVolumeMountEntity, error) {
+func (rvm resourceVolumeMount) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceVolumeMountData,
+) (ResourceVolumeMountEntity, error) {
 	entity := ResourceVolumeMountEntity{
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),
@@ -81,7 +89,11 @@ type UpdateResourceVolumeMountData struct {
 	ResourceInstallationID uuid.UUID
 }
 
-func (rvm resourceVolumeMount) Update(ctx context.Context, db storage.Executor, data UpdateResourceVolumeMountData) (ResourceVolumeMountEntity, error) {
+func (rvm resourceVolumeMount) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateResourceVolumeMountData,
+) (ResourceVolumeMountEntity, error) {
 	entity := ResourceVolumeMountEntity{
 		ID:                     data.ID,
 		UpdatedAt:              time.Now(),
@@ -113,7 +125,11 @@ func (rvm resourceVolumeMount) Update(ctx context.Context, db storage.Executor, 
 	return entity, nil
 }
 
-func (rvm resourceVolumeMount) Destroy(ctx context.Context, db storage.Executor, id uuid.UUID) error {
+func (rvm resourceVolumeMount) Destroy(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) error {
 	_, err := db.NewDelete().
 		Model((*ResourceVolumeMountEntity)(nil)).
 		Where("id = ?", id).
@@ -122,7 +138,10 @@ func (rvm resourceVolumeMount) Destroy(ctx context.Context, db storage.Executor,
 	return err
 }
 
-func (rvm resourceVolumeMount) All(ctx context.Context, db storage.Executor) ([]ResourceVolumeMountEntity, error) {
+func (rvm resourceVolumeMount) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]ResourceVolumeMountEntity, error) {
 	var entities []ResourceVolumeMountEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -141,7 +160,11 @@ type PaginatedResourceVolumeMounts struct {
 	TotalPages           int64
 }
 
-func (rvm resourceVolumeMount) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedResourceVolumeMounts, error) {
+func (rvm resourceVolumeMount) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedResourceVolumeMounts, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -180,7 +203,11 @@ func (rvm resourceVolumeMount) Paginate(ctx context.Context, db storage.Executor
 	}, nil
 }
 
-func (rvm resourceVolumeMount) Upsert(ctx context.Context, db storage.Executor, data CreateResourceVolumeMountData) (ResourceVolumeMountEntity, error) {
+func (rvm resourceVolumeMount) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceVolumeMountData,
+) (ResourceVolumeMountEntity, error) {
 	entity := ResourceVolumeMountEntity{
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),

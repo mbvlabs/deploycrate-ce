@@ -21,7 +21,12 @@ type ResourceEndpointFactory struct {
 
 type ResourceEndpointOption func(*ResourceEndpointFactory)
 
-func BuildResourceEndpoint(resourceID uuid.UUID, resourceInstallationID *uuid.UUID, privateNetworkID *uuid.UUID, opts ...ResourceEndpointOption) models.ResourceEndpointEntity {
+func BuildResourceEndpoint(
+	resourceID uuid.UUID,
+	resourceInstallationID *uuid.UUID,
+	privateNetworkID *uuid.UUID,
+	opts ...ResourceEndpointOption,
+) models.ResourceEndpointEntity {
 	f := &ResourceEndpointFactory{
 		ResourceEndpointEntity: models.ResourceEndpointEntity{
 			Name:                   faker.Word(),
@@ -45,7 +50,14 @@ func BuildResourceEndpoint(resourceID uuid.UUID, resourceInstallationID *uuid.UU
 	return f.ResourceEndpointEntity
 }
 
-func CreateResourceEndpoint(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, resourceInstallationID *uuid.UUID, privateNetworkID *uuid.UUID, opts ...ResourceEndpointOption) (models.ResourceEndpointEntity, error) {
+func CreateResourceEndpoint(
+	ctx context.Context,
+	exec storage.Executor,
+	resourceID uuid.UUID,
+	resourceInstallationID *uuid.UUID,
+	privateNetworkID *uuid.UUID,
+	opts ...ResourceEndpointOption,
+) (models.ResourceEndpointEntity, error) {
 	built := BuildResourceEndpoint(resourceID, resourceInstallationID, privateNetworkID, opts...)
 
 	entity := models.ResourceEndpointEntity{
@@ -72,11 +84,25 @@ func CreateResourceEndpoint(ctx context.Context, exec storage.Executor, resource
 	return entity, nil
 }
 
-func CreateResourceEndpoints(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, resourceInstallationID *uuid.UUID, privateNetworkID *uuid.UUID, count int, opts ...ResourceEndpointOption) ([]models.ResourceEndpointEntity, error) {
+func CreateResourceEndpoints(
+	ctx context.Context,
+	exec storage.Executor,
+	resourceID uuid.UUID,
+	resourceInstallationID *uuid.UUID,
+	privateNetworkID *uuid.UUID,
+	count int,
+	opts ...ResourceEndpointOption,
+) ([]models.ResourceEndpointEntity, error) {
 	resourceendpoints := make([]models.ResourceEndpointEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateResourceEndpoint(ctx, exec, resourceID, resourceInstallationID, privateNetworkID, opts...)
+		entity, err := CreateResourceEndpoint(
+			ctx,
+			exec,
+			resourceID,
+			resourceInstallationID,
+			privateNetworkID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resourceendpoint %d: %w", i+1, err)
 		}

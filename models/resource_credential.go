@@ -32,7 +32,11 @@ func (e *ResourceCredentialEntity) Validate() error {
 	return nil
 }
 
-func (rc resourceCredential) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (ResourceCredentialEntity, error) {
+func (rc resourceCredential) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (ResourceCredentialEntity, error) {
 	var entity ResourceCredentialEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -55,7 +59,11 @@ type CreateResourceCredentialData struct {
 	ResourceInstallationID *uuid.UUID
 }
 
-func (rc resourceCredential) Create(ctx context.Context, db storage.Executor, data CreateResourceCredentialData) (ResourceCredentialEntity, error) {
+func (rc resourceCredential) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceCredentialData,
+) (ResourceCredentialEntity, error) {
 	entity := ResourceCredentialEntity{
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),
@@ -94,7 +102,11 @@ type UpdateResourceCredentialData struct {
 	ResourceInstallationID *uuid.UUID
 }
 
-func (rc resourceCredential) Update(ctx context.Context, db storage.Executor, data UpdateResourceCredentialData) (ResourceCredentialEntity, error) {
+func (rc resourceCredential) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateResourceCredentialData,
+) (ResourceCredentialEntity, error) {
 	entity := ResourceCredentialEntity{
 		ID:                     data.ID,
 		UpdatedAt:              time.Now(),
@@ -141,7 +153,10 @@ func (rc resourceCredential) Destroy(ctx context.Context, db storage.Executor, i
 	return err
 }
 
-func (rc resourceCredential) All(ctx context.Context, db storage.Executor) ([]ResourceCredentialEntity, error) {
+func (rc resourceCredential) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]ResourceCredentialEntity, error) {
 	var entities []ResourceCredentialEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -160,7 +175,11 @@ type PaginatedResourceCredentials struct {
 	TotalPages          int64
 }
 
-func (rc resourceCredential) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedResourceCredentials, error) {
+func (rc resourceCredential) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedResourceCredentials, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -199,7 +218,11 @@ func (rc resourceCredential) Paginate(ctx context.Context, db storage.Executor, 
 	}, nil
 }
 
-func (rc resourceCredential) Upsert(ctx context.Context, db storage.Executor, data CreateResourceCredentialData) (ResourceCredentialEntity, error) {
+func (rc resourceCredential) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceCredentialData,
+) (ResourceCredentialEntity, error) {
 	entity := ResourceCredentialEntity{
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),

@@ -21,7 +21,12 @@ type OutboxEventFactory struct {
 
 type OutboxEventOption func(*OutboxEventFactory)
 
-func BuildOutboxEvent(aggregateID uuid.UUID, correlationID uuid.UUID, causationID uuid.UUID, opts ...OutboxEventOption) models.OutboxEventEntity {
+func BuildOutboxEvent(
+	aggregateID uuid.UUID,
+	correlationID uuid.UUID,
+	causationID uuid.UUID,
+	opts ...OutboxEventOption,
+) models.OutboxEventEntity {
 	f := &OutboxEventFactory{
 		OutboxEventEntity: models.OutboxEventEntity{
 			AggregateType:   faker.Word(),
@@ -45,7 +50,14 @@ func BuildOutboxEvent(aggregateID uuid.UUID, correlationID uuid.UUID, causationI
 	return f.OutboxEventEntity
 }
 
-func CreateOutboxEvent(ctx context.Context, exec storage.Executor, aggregateID uuid.UUID, correlationID uuid.UUID, causationID uuid.UUID, opts ...OutboxEventOption) (models.OutboxEventEntity, error) {
+func CreateOutboxEvent(
+	ctx context.Context,
+	exec storage.Executor,
+	aggregateID uuid.UUID,
+	correlationID uuid.UUID,
+	causationID uuid.UUID,
+	opts ...OutboxEventOption,
+) (models.OutboxEventEntity, error) {
 	built := BuildOutboxEvent(aggregateID, correlationID, causationID, opts...)
 
 	entity := models.OutboxEventEntity{
@@ -72,11 +84,25 @@ func CreateOutboxEvent(ctx context.Context, exec storage.Executor, aggregateID u
 	return entity, nil
 }
 
-func CreateOutboxEvents(ctx context.Context, exec storage.Executor, aggregateID uuid.UUID, correlationID uuid.UUID, causationID uuid.UUID, count int, opts ...OutboxEventOption) ([]models.OutboxEventEntity, error) {
+func CreateOutboxEvents(
+	ctx context.Context,
+	exec storage.Executor,
+	aggregateID uuid.UUID,
+	correlationID uuid.UUID,
+	causationID uuid.UUID,
+	count int,
+	opts ...OutboxEventOption,
+) ([]models.OutboxEventEntity, error) {
 	outboxevents := make([]models.OutboxEventEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateOutboxEvent(ctx, exec, aggregateID, correlationID, causationID, opts...)
+		entity, err := CreateOutboxEvent(
+			ctx,
+			exec,
+			aggregateID,
+			correlationID,
+			causationID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create outboxevent %d: %w", i+1, err)
 		}

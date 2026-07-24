@@ -73,7 +73,10 @@ func NewBootstrapService(db storage.Pool, routes bootstrapRouteService) Bootstra
 	return BootstrapService{db: db, routes: routes}
 }
 
-func (service BootstrapService) Bootstrap(ctx context.Context, input BootstrapInput) (BootstrapResult, error) {
+func (service BootstrapService) Bootstrap(
+	ctx context.Context,
+	input BootstrapInput,
+) (BootstrapResult, error) {
 	if err := validateBootstrapInput(input); err != nil {
 		return BootstrapResult{}, err
 	}
@@ -101,7 +104,10 @@ func (service BootstrapService) VerifyRoute(ctx context.Context, externalID stri
 	return service.routes.Verify(ctx, externalID)
 }
 
-func (service BootstrapService) findExisting(ctx context.Context, domain string) (BootstrapResult, bool, error) {
+func (service BootstrapService) findExisting(
+	ctx context.Context,
+	domain string,
+) (BootstrapResult, bool, error) {
 	type graphRow struct {
 		ApplicationID   uuid.UUID `bun:"application_id"`
 		EnvironmentID   uuid.UUID `bun:"environment_id"`
@@ -153,7 +159,10 @@ func (service BootstrapService) findExisting(ctx context.Context, domain string)
 	}, true, nil
 }
 
-func (service BootstrapService) createGraph(ctx context.Context, input BootstrapInput) (BootstrapResult, error) {
+func (service BootstrapService) createGraph(
+	ctx context.Context,
+	input BootstrapInput,
+) (BootstrapResult, error) {
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return BootstrapResult{}, fmt.Errorf("begin bootstrap topology transaction: %w", err)
@@ -180,17 +189,35 @@ func (service BootstrapService) createGraph(ctx context.Context, input Bootstrap
 	}
 
 	server, err := models.Server.Create(ctx, tx, models.CreateServerData{
-		Name: "DeployCrate CE Server", Slug: "deploycrate-ce", Kind: "self_hosted",
-		Capabilities:        json.RawMessage(fmt.Sprintf(`{"runtime":"systemd","proxy":"caddy","wireguard":true,"deployment_strategies":["blue_green"],"slots":{"blue":%d,"green":%d}}`, bootstrapBluePort, bootstrapGreenPort)),
-		OperatingSystem:     sql.NullString{String: "linux", Valid: true},
-		Distribution:        sql.NullString{String: input.Distribution, Valid: input.Distribution != ""},
-		DistributionVersion: sql.NullString{String: input.DistributionVersion, Valid: input.DistributionVersion != ""},
-		Architecture:        sql.NullString{String: input.Architecture, Valid: input.Architecture != ""},
-		PackageManager:      sql.NullString{String: "apt", Valid: true},
-		InitSystem:          sql.NullString{String: "systemd", Valid: true},
-		Ipv4Address:         "127.0.0.1",
-		Ipv6Address:         "::1",
-		IsConfigured:        true, Address: input.Domain,
+		Name: "DeployCrate CE Server",
+		Slug: "deploycrate-ce",
+		Kind: "self_hosted",
+		Capabilities: json.RawMessage(
+			fmt.Sprintf(
+				`{"runtime":"systemd","proxy":"caddy","wireguard":true,"deployment_strategies":["blue_green"],"slots":{"blue":%d,"green":%d}}`,
+				bootstrapBluePort,
+				bootstrapGreenPort,
+			),
+		),
+		OperatingSystem: sql.NullString{String: "linux", Valid: true},
+		Distribution: sql.NullString{
+			String: input.Distribution,
+			Valid:  input.Distribution != "",
+		},
+		DistributionVersion: sql.NullString{
+			String: input.DistributionVersion,
+			Valid:  input.DistributionVersion != "",
+		},
+		Architecture: sql.NullString{
+			String: input.Architecture,
+			Valid:  input.Architecture != "",
+		},
+		PackageManager: sql.NullString{String: "apt", Valid: true},
+		InitSystem:     sql.NullString{String: "systemd", Valid: true},
+		Ipv4Address:    "127.0.0.1",
+		Ipv6Address:    "::1",
+		IsConfigured:   true,
+		Address:        input.Domain,
 	})
 	if err != nil {
 		return BootstrapResult{}, fmt.Errorf("create bootstrap server: %w", err)
@@ -219,24 +246,44 @@ func (service BootstrapService) createGraph(ctx context.Context, input Bootstrap
 		return BootstrapResult{}, fmt.Errorf("attach bootstrap environment network: %w", err)
 	}
 	applied := sql.NullTime{Time: now, Valid: true}
+	desiredPeers, err := BuildWireGuardDesiredState(nil)
+	if err != nil {
+		return BootstrapResult{}, fmt.Errorf("build initial WireGuard desired state: %w", err)
+	}
 	networkConfiguration, err := json.Marshal(map[string]any{
 		"address": input.WireGuard.PrivateAddress, "cidr": input.WireGuard.NetworkCIDR,
 		"endpoint": input.WireGuard.Endpoint, "interface": input.WireGuard.Interface,
-		"listen_port": input.WireGuard.ListenPort,
+		"listen_port": input.WireGuard.ListenPort, "peer_revision": desiredPeers.Revision,
 	})
 	if err != nil {
 		return BootstrapResult{}, fmt.Errorf("encode bootstrap WireGuard network: %w", err)
 	}
 	if _, err := models.ServerNetwork.Create(ctx, tx, models.CreateServerNetworkData{
-		Driver: "wireguard", ExternalID: sql.NullString{String: input.WireGuard.Interface, Valid: true}, Configuration: networkConfiguration,
-		State: "applied", AppliedAt: applied, ObservedAt: applied, ServerID: server.ID, PrivateNetworkID: network.ID,
+		Driver:           "wireguard",
+		ExternalID:       sql.NullString{String: input.WireGuard.Interface, Valid: true},
+		Configuration:    networkConfiguration,
+		State:            "applied",
+		AppliedAt:        applied,
+		ObservedAt:       applied,
+		ServerID:         server.ID,
+		PrivateNetworkID: network.ID,
 	}); err != nil {
 		return BootstrapResult{}, fmt.Errorf("create bootstrap server network: %w", err)
 	}
-	if _, err := models.EnvironmentTargetNetwork.Create(ctx, tx, models.CreateEnvironmentTargetNetworkData{
-		Driver: "wireguard", ExternalID: sql.NullString{String: input.WireGuard.Interface, Valid: true}, Configuration: networkConfiguration,
-		State: "applied", AppliedAt: applied, ObservedAt: applied, EnvironmentTargetID: target.ID, PrivateNetworkID: network.ID,
-	}); err != nil {
+	if _, err := models.EnvironmentTargetNetwork.Create(
+		ctx,
+		tx,
+		models.CreateEnvironmentTargetNetworkData{
+			Driver:              "wireguard",
+			ExternalID:          sql.NullString{String: input.WireGuard.Interface, Valid: true},
+			Configuration:       networkConfiguration,
+			State:               "applied",
+			AppliedAt:           applied,
+			ObservedAt:          applied,
+			EnvironmentTargetID: target.ID,
+			PrivateNetworkID:    network.ID,
+		},
+	); err != nil {
 		return BootstrapResult{}, fmt.Errorf("create bootstrap target network: %w", err)
 	}
 	peer, err := models.WireGuardPeer.Create(ctx, tx, models.CreateWireGuardPeerData{
@@ -254,7 +301,14 @@ func (service BootstrapService) createGraph(ctx context.Context, input Bootstrap
 		return BootstrapResult{}, fmt.Errorf("create bootstrap WireGuard peer status: %w", err)
 	}
 
-	if err := createBootstrapDatabaseResource(ctx, tx, input, environment.ID, server.ID, network.ID); err != nil {
+	if err := createBootstrapDatabaseResource(
+		ctx,
+		tx,
+		input,
+		environment.ID,
+		server.ID,
+		network.ID,
+	); err != nil {
 		return BootstrapResult{}, err
 	}
 	domain, err := models.EnvironmentDomain.Create(ctx, tx, models.CreateEnvironmentDomainData{
@@ -266,12 +320,21 @@ func (service BootstrapService) createGraph(ctx context.Context, input Bootstrap
 
 	finished := sql.NullTime{Time: now, Valid: true}
 	change, err := models.Change.Create(ctx, tx, models.CreateChangeData{
-		Sequence: 1, Kind: "bootstrap", TriggerType: "installer", ActorType: "system",
-		CauseSystem:    sql.NullString{String: "deploycrate-ce-cli", Valid: true},
-		CauseReference: sql.NullString{String: input.Version, Valid: input.Version != ""},
-		CorrelationID:  uuid.New(), CorrectionContext: json.RawMessage(`{}`),
-		Summary: "Bootstrap DeployCrate CE", Status: "completed", RequestedAt: now,
-		CommittedAt: finished, StartedAt: finished, FinishedAt: finished, EnvironmentID: environment.ID,
+		Sequence:          1,
+		Kind:              "bootstrap",
+		TriggerType:       "installer",
+		ActorType:         "system",
+		CauseSystem:       sql.NullString{String: "deploycrate-ce-cli", Valid: true},
+		CauseReference:    sql.NullString{String: input.Version, Valid: input.Version != ""},
+		CorrelationID:     uuid.New(),
+		CorrectionContext: json.RawMessage(`{}`),
+		Summary:           "Bootstrap DeployCrate CE",
+		Status:            "completed",
+		RequestedAt:       now,
+		CommittedAt:       finished,
+		StartedAt:         finished,
+		FinishedAt:        finished,
+		EnvironmentID:     environment.ID,
 	})
 	if err != nil {
 		return BootstrapResult{}, fmt.Errorf("create bootstrap change: %w", err)
@@ -290,19 +353,38 @@ func (service BootstrapService) createGraph(ctx context.Context, input Bootstrap
 		return BootstrapResult{}, fmt.Errorf("associate bootstrap change and release: %w", err)
 	}
 	deployment, err := models.Deployment.Create(ctx, tx, models.CreateDeploymentData{
-		Attempt:              1,
-		Strategy:             json.RawMessage(fmt.Sprintf(`{"type":"blue_green","slots":{"blue":%d,"green":%d}}`, bootstrapBluePort, bootstrapGreenPort)),
-		RuntimeConfiguration: json.RawMessage(`{"service_template":"deploycrate-ce@.service","active_slot":"blue"}`),
-		Status:               "succeeded", CurrentStep: sql.NullString{String: "health_check", Valid: true},
-		StartedAt: finished, FinishedAt: finished, ChangeID: change.ID, ReleaseID: release.ID, EnvironmentTargetID: target.ID,
+		Attempt: 1,
+		Strategy: json.RawMessage(
+			fmt.Sprintf(
+				`{"type":"blue_green","slots":{"blue":%d,"green":%d}}`,
+				bootstrapBluePort,
+				bootstrapGreenPort,
+			),
+		),
+		RuntimeConfiguration: json.RawMessage(
+			`{"service_template":"deploycrate-ce@.service","active_slot":"blue"}`,
+		),
+		Status:              "succeeded",
+		CurrentStep:         sql.NullString{String: "health_check", Valid: true},
+		StartedAt:           finished,
+		FinishedAt:          finished,
+		ChangeID:            change.ID,
+		ReleaseID:           release.ID,
+		EnvironmentTargetID: target.ID,
 	})
 	if err != nil {
 		return BootstrapResult{}, fmt.Errorf("create bootstrap deployment: %w", err)
 	}
 	instance, err := models.Instance.Create(ctx, tx, models.CreateInstanceData{
-		ExternalID: "deploycrate-ce@blue.service", Slot: "blue", ReplicaKey: "primary", State: "serving",
-		Ports: json.RawMessage(fmt.Sprintf(`{"http":%d}`, bootstrapBluePort)), ObservedAt: now,
-		DeploymentID: deployment.ID, ReleaseID: release.ID, EnvironmentTargetID: target.ID,
+		ExternalID:          "deploycrate-ce@blue.service",
+		Slot:                "blue",
+		ReplicaKey:          "primary",
+		State:               "serving",
+		Ports:               json.RawMessage(fmt.Sprintf(`{"http":%d}`, bootstrapBluePort)),
+		ObservedAt:          now,
+		DeploymentID:        deployment.ID,
+		ReleaseID:           release.ID,
+		EnvironmentTargetID: target.ID,
 	})
 	if err != nil {
 		return BootstrapResult{}, fmt.Errorf("create bootstrap instance: %w", err)
@@ -349,11 +431,20 @@ func createBootstrapDatabaseResource(
 	var installationID *uuid.UUID
 	var endpointNetworkID *uuid.UUID
 	if !input.DatabaseExternal {
-		installation, err := models.ResourceInstallation.Create(ctx, exec, models.CreateResourceInstallationData{
-			ImageReference: "postgres:17-alpine", ContainerName: "deploycrate-ce-postgres", RestartPolicy: "unless-stopped",
-			Configuration: json.RawMessage(`{"volume":"deploycrate-ce-postgres","bind":"127.0.0.1:5432"}`),
-			ResourceID:    resource.ID, ServerID: serverID,
-		})
+		installation, err := models.ResourceInstallation.Create(
+			ctx,
+			exec,
+			models.CreateResourceInstallationData{
+				ImageReference: "postgres:17-alpine",
+				ContainerName:  "deploycrate-ce-postgres",
+				RestartPolicy:  "unless-stopped",
+				Configuration: json.RawMessage(
+					`{"volume":"deploycrate-ce-postgres","bind":"127.0.0.1:5432"}`,
+				),
+				ResourceID: resource.ID,
+				ServerID:   serverID,
+			},
+		)
 		if err != nil {
 			return fmt.Errorf("create bootstrap database installation: %w", err)
 		}
@@ -361,18 +452,34 @@ func createBootstrapDatabaseResource(
 		endpointNetworkID = &networkID
 	}
 	endpoint, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
-		Name: "Primary PostgreSQL", Role: "primary", Address: input.DatabaseHost, Port: int32(input.DatabasePort),
-		Protocol: "postgresql", TlsMode: input.DatabaseSSLMode,
-		Settings:   json.RawMessage(fmt.Sprintf(`{"database":%q,"external":%t}`, input.DatabaseName, input.DatabaseExternal)),
-		ResourceID: resource.ID, ResourceInstallationID: installationID, PrivateNetworkID: endpointNetworkID,
+		Name:     "Primary PostgreSQL",
+		Role:     "primary",
+		Address:  input.DatabaseHost,
+		Port:     int32(input.DatabasePort),
+		Protocol: "postgresql",
+		TlsMode:  input.DatabaseSSLMode,
+		Settings: json.RawMessage(
+			fmt.Sprintf(
+				`{"database":%q,"external":%t}`,
+				input.DatabaseName,
+				input.DatabaseExternal,
+			),
+		),
+		ResourceID:             resource.ID,
+		ResourceInstallationID: installationID,
+		PrivateNetworkID:       endpointNetworkID,
 	})
 	if err != nil {
 		return fmt.Errorf("create bootstrap database endpoint: %w", err)
 	}
 	if _, err := models.EnvironmentResource.Create(ctx, exec, models.CreateEnvironmentResourceData{
-		Alias:         "database",
-		Configuration: json.RawMessage(`{"credential_source":"app_env","credential_record":"pending_encryption_contract"}`),
-		EnvironmentID: environmentID, ResourceID: resource.ID, ResourceEndpointID: endpoint.ID,
+		Alias: "database",
+		Configuration: json.RawMessage(
+			`{"credential_source":"app_env","credential_record":"pending_encryption_contract"}`,
+		),
+		EnvironmentID:      environmentID,
+		ResourceID:         resource.ID,
+		ResourceEndpointID: endpoint.ID,
 	}); err != nil {
 		return fmt.Errorf("bind bootstrap database resource: %w", err)
 	}
@@ -386,10 +493,12 @@ func validateBootstrapInput(input BootstrapInput) error {
 	if strings.TrimSpace(input.ArtifactReference) == "" || len(input.ArtifactDigest) == 0 {
 		return errors.New("bootstrap release artifact and digest are required")
 	}
-	if strings.TrimSpace(input.DatabaseHost) == "" || input.DatabasePort < 1 || input.DatabasePort > 65535 {
+	if strings.TrimSpace(input.DatabaseHost) == "" || input.DatabasePort < 1 ||
+		input.DatabasePort > 65535 {
 		return errors.New("bootstrap database endpoint is invalid")
 	}
-	if strings.TrimSpace(input.WireGuard.Interface) == "" || strings.TrimSpace(input.WireGuard.Endpoint) == "" {
+	if strings.TrimSpace(input.WireGuard.Interface) == "" ||
+		strings.TrimSpace(input.WireGuard.Endpoint) == "" {
 		return errors.New("bootstrap WireGuard interface and endpoint are required")
 	}
 	prefix, err := netip.ParsePrefix(input.WireGuard.NetworkCIDR)

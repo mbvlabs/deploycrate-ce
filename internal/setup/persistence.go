@@ -17,8 +17,10 @@ const (
 	ApplicationEnvPath      = "/etc/deploycrate-ce/app.env"
 	BackupEnvPath           = "/etc/deploycrate-ce/backup.env"
 	DefaultDatabaseCAPath   = "/etc/ssl/certs/deploycrate-ce-postgresql-ca.crt"
+	BootstrapCLIPath        = "/usr/local/bin/deploycrate"
+	BootstrapAppPayloadPath = "/usr/local/bin/deploycrate-ce"
 	maxDatabaseCAFileSize   = 1024 * 1024
-	finalInstallerSetupStep = "ssh-hardening"
+	finalInstallerSetupStep = "service-health"
 )
 
 type InstallationStatus string
@@ -32,7 +34,11 @@ const (
 )
 
 func ApplicationReleaseBinaryPath(version string) string {
-	return filepath.Join("/opt/deploycrate-ce/releases", releaseDirectoryName(version), "deploycrate-ce")
+	return filepath.Join(
+		"/opt/deploycrate-ce/releases",
+		releaseDirectoryName(version),
+		"deploycrate-ce",
+	)
 }
 
 func ApplicationSlotBinaryPath(slot string) string {
@@ -140,7 +146,15 @@ func CompleteCredentialHandoff() error {
 	if err := NewStateStore().MarkCredentialsVerified(); err != nil {
 		return fmt.Errorf("record credential verification: %w", err)
 	}
-	return RemoveTransientSecrets()
+	if err := RemoveTransientSecrets(); err != nil {
+		return err
+	}
+	for _, path := range []string{BootstrapCLIPath, BootstrapAppPayloadPath} {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove temporary bootstrap binary %s: %w", path, err)
+		}
+	}
+	return nil
 }
 
 func persistDatabaseCA(cfg Config) (Config, error) {
@@ -167,7 +181,10 @@ func persistDatabaseCA(cfg Config) (Config, error) {
 		return Config{}, errors.New("database CA certificate is empty")
 	}
 	if info.Size() > maxDatabaseCAFileSize {
-		return Config{}, fmt.Errorf("database CA certificate exceeds %d bytes", maxDatabaseCAFileSize)
+		return Config{}, fmt.Errorf(
+			"database CA certificate exceeds %d bytes",
+			maxDatabaseCAFileSize,
+		)
 	}
 
 	file, err := os.Open(source)
@@ -183,7 +200,10 @@ func persistDatabaseCA(cfg Config) (Config, error) {
 		return Config{}, fmt.Errorf("close database CA certificate: %w", closeErr)
 	}
 	if len(data) > maxDatabaseCAFileSize {
-		return Config{}, fmt.Errorf("database CA certificate exceeds %d bytes", maxDatabaseCAFileSize)
+		return Config{}, fmt.Errorf(
+			"database CA certificate exceeds %d bytes",
+			maxDatabaseCAFileSize,
+		)
 	}
 	if err := writeProtectedFile(target, data, 0o644); err != nil {
 		return Config{}, fmt.Errorf("persist database CA certificate: %w", err)
@@ -229,12 +249,19 @@ func WriteApplicationEnvironment(cfg Config) error {
 		{"SESSION_ENCRYPTION_KEY", cfg.Secrets.SessionEncryptionKey},
 		{"SESSION_MAX_AGE", "604800"},
 		{"TOKEN_SIGNING_KEY", cfg.Secrets.TokenSigningKey},
+		{"SSH_CA_USER_PRINCIPAL", cfg.AdminUser},
 		{"DEPLOYCRATE_CE_UPDATE_STATUS_PATH", "/var/lib/deploycrate-ce/runtime/self-update.json"},
 		{"CORS_ALLOWED_ORIGINS", "https://" + cfg.Domain},
 		{"CSRF_STRATEGY", "header_only"},
 		{"CSRF_TRUSTED_ORIGINS", "https://" + cfg.Domain},
 		{"PEPPER", cfg.Secrets.Pepper},
 		{"PREVIOUS_PEPPERS", ""},
+		{"METRICS_ROLLUP_ENABLED", "true"},
+		{"PROMETHEUS_URL", "http://127.0.0.1:9090"},
+		{"CLICKHOUSE_URL", "http://127.0.0.1:8123"},
+		{"CLICKHOUSE_DATABASE", "deploycrate"},
+		{"CLICKHOUSE_USER", "deploycrate"},
+		{"CLICKHOUSE_PASSWORD", cfg.Secrets.ClickHousePassword},
 		{"AWS_REGION", "us-east-1"},
 		{"AWS_SES_ACCESS_KEY_ID", ""},
 		{"AWS_SES_SECRET_ACCESS_KEY", ""},
@@ -351,7 +378,11 @@ func releaseDirectoryName(version string) string {
 	}
 	var builder strings.Builder
 	for _, value := range version {
-		if value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9' || value == '.' || value == '-' || value == '_' {
+		if value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' ||
+			value >= '0' && value <= '9' ||
+			value == '.' ||
+			value == '-' ||
+			value == '_' {
 			builder.WriteRune(value)
 		} else {
 			builder.WriteByte('_')

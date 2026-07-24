@@ -21,7 +21,11 @@ type ResourceVolumeFactory struct {
 
 type ResourceVolumeOption func(*ResourceVolumeFactory)
 
-func BuildResourceVolume(resourceID uuid.UUID, serverID uuid.UUID, opts ...ResourceVolumeOption) models.ResourceVolumeEntity {
+func BuildResourceVolume(
+	resourceID uuid.UUID,
+	serverID uuid.UUID,
+	opts ...ResourceVolumeOption,
+) models.ResourceVolumeEntity {
 	f := &ResourceVolumeFactory{
 		ResourceVolumeEntity: models.ResourceVolumeEntity{
 			Name:          faker.Word(),
@@ -40,7 +44,13 @@ func BuildResourceVolume(resourceID uuid.UUID, serverID uuid.UUID, opts ...Resou
 	return f.ResourceVolumeEntity
 }
 
-func CreateResourceVolume(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, serverID uuid.UUID, opts ...ResourceVolumeOption) (models.ResourceVolumeEntity, error) {
+func CreateResourceVolume(
+	ctx context.Context,
+	exec storage.Executor,
+	resourceID uuid.UUID,
+	serverID uuid.UUID,
+	opts ...ResourceVolumeOption,
+) (models.ResourceVolumeEntity, error) {
 	built := BuildResourceVolume(resourceID, serverID, opts...)
 
 	entity := models.ResourceVolumeEntity{
@@ -62,7 +72,14 @@ func CreateResourceVolume(ctx context.Context, exec storage.Executor, resourceID
 	return entity, nil
 }
 
-func CreateResourceVolumes(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, serverID uuid.UUID, count int, opts ...ResourceVolumeOption) ([]models.ResourceVolumeEntity, error) {
+func CreateResourceVolumes(
+	ctx context.Context,
+	exec storage.Executor,
+	resourceID uuid.UUID,
+	serverID uuid.UUID,
+	count int,
+	opts ...ResourceVolumeOption,
+) ([]models.ResourceVolumeEntity, error) {
 	resourcevolumes := make([]models.ResourceVolumeEntity, 0, count)
 
 	for i := range count {

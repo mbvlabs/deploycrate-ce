@@ -27,7 +27,11 @@ func (e *EnvironmentNetworkEntity) Validate() error {
 	return nil
 }
 
-func (en environmentNetwork) Find(ctx context.Context, db storage.Executor, id int32) (EnvironmentNetworkEntity, error) {
+func (en environmentNetwork) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id int32,
+) (EnvironmentNetworkEntity, error) {
 	var entity EnvironmentNetworkEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -46,7 +50,11 @@ type CreateEnvironmentNetworkData struct {
 	PrivateNetworkID uuid.UUID
 }
 
-func (en environmentNetwork) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentNetworkData) (EnvironmentNetworkEntity, error) {
+func (en environmentNetwork) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentNetworkData,
+) (EnvironmentNetworkEntity, error) {
 	entity := EnvironmentNetworkEntity{
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),
@@ -76,7 +84,11 @@ type UpdateEnvironmentNetworkData struct {
 	PrivateNetworkID uuid.UUID
 }
 
-func (en environmentNetwork) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentNetworkData) (EnvironmentNetworkEntity, error) {
+func (en environmentNetwork) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateEnvironmentNetworkData,
+) (EnvironmentNetworkEntity, error) {
 	entity := EnvironmentNetworkEntity{
 		ID:               data.ID,
 		UpdatedAt:        time.Now(),
@@ -115,7 +127,10 @@ func (en environmentNetwork) Destroy(ctx context.Context, db storage.Executor, i
 	return err
 }
 
-func (en environmentNetwork) All(ctx context.Context, db storage.Executor) ([]EnvironmentNetworkEntity, error) {
+func (en environmentNetwork) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]EnvironmentNetworkEntity, error) {
 	var entities []EnvironmentNetworkEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -134,7 +149,11 @@ type PaginatedEnvironmentNetworks struct {
 	TotalPages          int64
 }
 
-func (en environmentNetwork) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedEnvironmentNetworks, error) {
+func (en environmentNetwork) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedEnvironmentNetworks, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -173,7 +192,11 @@ func (en environmentNetwork) Paginate(ctx context.Context, db storage.Executor, 
 	}, nil
 }
 
-func (en environmentNetwork) Upsert(ctx context.Context, db storage.Executor, data CreateEnvironmentNetworkData) (EnvironmentNetworkEntity, error) {
+func (en environmentNetwork) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentNetworkData,
+) (EnvironmentNetworkEntity, error) {
 	entity := EnvironmentNetworkEntity{
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),
