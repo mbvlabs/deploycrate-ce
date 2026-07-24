@@ -23,7 +23,7 @@ type ResourceRestoreOption func(*ResourceRestoreFactory)
 func BuildResourceRestore(
 	changeID uuid.UUID,
 	changeTaskID uuid.UUID,
-	resourceBackupID uuid.UUID,
+	backupID uuid.UUID,
 	resourceID uuid.UUID,
 	sourceEnvironmentResourceID *uuid.UUID,
 	targetEnvironmentResourceID *uuid.UUID,
@@ -40,7 +40,7 @@ func BuildResourceRestore(
 			Error:                       sql.NullString{String: faker.Word(), Valid: true},
 			ChangeID:                    changeID,
 			ChangeTaskID:                changeTaskID,
-			ResourceBackupID:            resourceBackupID,
+			BackupID:                    backupID,
 			ResourceID:                  resourceID,
 			SourceEnvironmentResourceID: sourceEnvironmentResourceID,
 			TargetEnvironmentResourceID: targetEnvironmentResourceID,
@@ -60,7 +60,7 @@ func CreateResourceRestore(
 	exec storage.Executor,
 	changeID uuid.UUID,
 	changeTaskID uuid.UUID,
-	resourceBackupID uuid.UUID,
+	backupID uuid.UUID,
 	resourceID uuid.UUID,
 	sourceEnvironmentResourceID *uuid.UUID,
 	targetEnvironmentResourceID *uuid.UUID,
@@ -70,7 +70,7 @@ func CreateResourceRestore(
 	built := BuildResourceRestore(
 		changeID,
 		changeTaskID,
-		resourceBackupID,
+		backupID,
 		resourceID,
 		sourceEnvironmentResourceID,
 		targetEnvironmentResourceID,
@@ -89,7 +89,7 @@ func CreateResourceRestore(
 		Error:                       built.Error,
 		ChangeID:                    built.ChangeID,
 		ChangeTaskID:                built.ChangeTaskID,
-		ResourceBackupID:            built.ResourceBackupID,
+		BackupID:                    built.BackupID,
 		ResourceID:                  built.ResourceID,
 		SourceEnvironmentResourceID: built.SourceEnvironmentResourceID,
 		TargetEnvironmentResourceID: built.TargetEnvironmentResourceID,
@@ -108,7 +108,7 @@ func CreateResourceRestores(
 	exec storage.Executor,
 	changeID uuid.UUID,
 	changeTaskID uuid.UUID,
-	resourceBackupID uuid.UUID,
+	backupID uuid.UUID,
 	resourceID uuid.UUID,
 	sourceEnvironmentResourceID *uuid.UUID,
 	targetEnvironmentResourceID *uuid.UUID,
@@ -124,7 +124,7 @@ func CreateResourceRestores(
 			exec,
 			changeID,
 			changeTaskID,
-			resourceBackupID,
+			backupID,
 			resourceID,
 			sourceEnvironmentResourceID,
 			targetEnvironmentResourceID,
@@ -187,9 +187,9 @@ func WithResourceRestoresChangeTaskID(value uuid.UUID) ResourceRestoreOption {
 	}
 }
 
-func WithResourceRestoresResourceBackupID(value uuid.UUID) ResourceRestoreOption {
+func WithResourceRestoresBackupID(value uuid.UUID) ResourceRestoreOption {
 	return func(f *ResourceRestoreFactory) {
-		f.ResourceRestoreEntity.ResourceBackupID = value
+		f.ResourceRestoreEntity.BackupID = value
 	}
 }
 

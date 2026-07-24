@@ -25,7 +25,7 @@ type ResourceRestoreEntity struct {
 	Error                       sql.NullString `bun:"error"`
 	ChangeID                    uuid.UUID      `bun:"change_id,type:uuid"`
 	ChangeTaskID                uuid.UUID      `bun:"change_task_id,type:uuid"`
-	ResourceBackupID            uuid.UUID      `bun:"resource_backup_id,type:uuid"`
+	BackupID                    uuid.UUID      `bun:"backup_id,type:uuid"`
 	ResourceID                  uuid.UUID      `bun:"resource_id,type:uuid"`
 	SourceEnvironmentResourceID *uuid.UUID     `bun:"source_environment_resource_id,type:uuid"`
 	TargetEnvironmentResourceID *uuid.UUID     `bun:"target_environment_resource_id,type:uuid"`
@@ -61,7 +61,7 @@ type CreateResourceRestoreData struct {
 	Error                       sql.NullString
 	ChangeID                    uuid.UUID
 	ChangeTaskID                uuid.UUID
-	ResourceBackupID            uuid.UUID
+	BackupID                    uuid.UUID
 	ResourceID                  uuid.UUID
 	SourceEnvironmentResourceID *uuid.UUID
 	TargetEnvironmentResourceID *uuid.UUID
@@ -85,7 +85,7 @@ func (rr resourceRestore) Create(
 		Error:                       data.Error,
 		ChangeID:                    data.ChangeID,
 		ChangeTaskID:                data.ChangeTaskID,
-		ResourceBackupID:            data.ResourceBackupID,
+		BackupID:                    data.BackupID,
 		ResourceID:                  data.ResourceID,
 		SourceEnvironmentResourceID: data.SourceEnvironmentResourceID,
 		TargetEnvironmentResourceID: data.TargetEnvironmentResourceID,
@@ -114,7 +114,7 @@ type UpdateResourceRestoreData struct {
 	Error                       sql.NullString
 	ChangeID                    uuid.UUID
 	ChangeTaskID                uuid.UUID
-	ResourceBackupID            uuid.UUID
+	BackupID                    uuid.UUID
 	ResourceID                  uuid.UUID
 	SourceEnvironmentResourceID *uuid.UUID
 	TargetEnvironmentResourceID *uuid.UUID
@@ -137,7 +137,7 @@ func (rr resourceRestore) Update(
 		Error:                       data.Error,
 		ChangeID:                    data.ChangeID,
 		ChangeTaskID:                data.ChangeTaskID,
-		ResourceBackupID:            data.ResourceBackupID,
+		BackupID:                    data.BackupID,
 		ResourceID:                  data.ResourceID,
 		SourceEnvironmentResourceID: data.SourceEnvironmentResourceID,
 		TargetEnvironmentResourceID: data.TargetEnvironmentResourceID,
@@ -159,7 +159,7 @@ func (rr resourceRestore) Update(
 		Column("error").
 		Column("change_id").
 		Column("change_task_id").
-		Column("resource_backup_id").
+		Column("backup_id").
 		Column("resource_id").
 		Column("source_environment_resource_id").
 		Column("target_environment_resource_id").
@@ -264,7 +264,7 @@ func (rr resourceRestore) Upsert(
 		Error:                       data.Error,
 		ChangeID:                    data.ChangeID,
 		ChangeTaskID:                data.ChangeTaskID,
-		ResourceBackupID:            data.ResourceBackupID,
+		BackupID:                    data.BackupID,
 		ResourceID:                  data.ResourceID,
 		SourceEnvironmentResourceID: data.SourceEnvironmentResourceID,
 		TargetEnvironmentResourceID: data.TargetEnvironmentResourceID,
@@ -286,7 +286,7 @@ func (rr resourceRestore) Upsert(
 		Set("error = excluded.error").
 		Set("change_id = excluded.change_id").
 		Set("change_task_id = excluded.change_task_id").
-		Set("resource_backup_id = excluded.resource_backup_id").
+		Set("backup_id = excluded.backup_id").
 		Set("resource_id = excluded.resource_id").
 		Set("source_environment_resource_id = excluded.source_environment_resource_id").
 		Set("target_environment_resource_id = excluded.target_environment_resource_id").

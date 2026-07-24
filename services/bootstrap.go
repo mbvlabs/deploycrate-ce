@@ -36,6 +36,23 @@ type BootstrapInput struct {
 	DatabaseName        string
 	DatabaseSSLMode     string
 	WireGuard           BootstrapWireGuardInput
+	Backup              BootstrapBackupInput
+}
+
+type BootstrapBackupInput struct {
+	Enabled                    bool
+	Provider                   string
+	Endpoint                   string
+	Region                     string
+	Bucket                     string
+	Prefix                     string
+	ForcePathStyle             bool
+	EncryptedCredentialPayload []byte
+	ValidatedAt                time.Time
+	ServerSchedule             string
+	ServerRetention            json.RawMessage
+	DatabaseSchedule           string
+	DatabaseRetention          json.RawMessage
 }
 
 type BootstrapWireGuardInput struct {
@@ -301,13 +318,24 @@ func (service BootstrapService) createGraph(
 		return BootstrapResult{}, fmt.Errorf("create bootstrap WireGuard peer status: %w", err)
 	}
 
-	if err := createBootstrapDatabaseResource(
+	databaseTopology, err := createBootstrapDatabaseResource(
 		ctx,
 		tx,
 		input,
 		environment.ID,
 		server.ID,
 		network.ID,
+	)
+	if err != nil {
+		return BootstrapResult{}, err
+	}
+	if err := createBootstrapBackups(
+		ctx,
+		tx,
+		input,
+		server.ID,
+		databaseTopology,
+		now,
 	); err != nil {
 		return BootstrapResult{}, err
 	}
@@ -414,18 +442,24 @@ func (service BootstrapService) createGraph(
 	}, nil
 }
 
+type bootstrapDatabaseTopology struct {
+	ResourceID            uuid.UUID
+	EnvironmentResourceID uuid.UUID
+	InstallationID        *uuid.UUID
+}
+
 func createBootstrapDatabaseResource(
 	ctx context.Context,
 	exec storage.Executor,
 	input BootstrapInput,
 	environmentID, serverID, networkID uuid.UUID,
-) error {
+) (bootstrapDatabaseTopology, error) {
 	resource, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
 		Name: "DeployCrate CE PostgreSQL", Category: "database", Kind: "postgresql",
 		SharingScope: "environment", OwnerEnvironmentID: environmentID,
 	})
 	if err != nil {
-		return fmt.Errorf("create bootstrap database resource: %w", err)
+		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap database resource: %w", err)
 	}
 
 	var installationID *uuid.UUID
@@ -446,7 +480,7 @@ func createBootstrapDatabaseResource(
 			},
 		)
 		if err != nil {
-			return fmt.Errorf("create bootstrap database installation: %w", err)
+			return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap database installation: %w", err)
 		}
 		installationID = &installation.ID
 		endpointNetworkID = &networkID
@@ -470,9 +504,9 @@ func createBootstrapDatabaseResource(
 		PrivateNetworkID:       endpointNetworkID,
 	})
 	if err != nil {
-		return fmt.Errorf("create bootstrap database endpoint: %w", err)
+		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap database endpoint: %w", err)
 	}
-	if _, err := models.EnvironmentResource.Create(ctx, exec, models.CreateEnvironmentResourceData{
+	binding, err := models.EnvironmentResource.Create(ctx, exec, models.CreateEnvironmentResourceData{
 		Alias: "database",
 		Configuration: json.RawMessage(
 			`{"credential_source":"app_env","credential_record":"pending_encryption_contract"}`,
@@ -480,8 +514,103 @@ func createBootstrapDatabaseResource(
 		EnvironmentID:      environmentID,
 		ResourceID:         resource.ID,
 		ResourceEndpointID: endpoint.ID,
+	})
+	if err != nil {
+		return bootstrapDatabaseTopology{}, fmt.Errorf("bind bootstrap database resource: %w", err)
+	}
+	return bootstrapDatabaseTopology{
+		ResourceID: resource.ID, EnvironmentResourceID: binding.ID, InstallationID: installationID,
+	}, nil
+}
+
+func createBootstrapBackups(
+	ctx context.Context,
+	exec storage.Executor,
+	input BootstrapInput,
+	serverID uuid.UUID,
+	database bootstrapDatabaseTopology,
+	now time.Time,
+) error {
+	if !input.Backup.Enabled {
+		return nil
+	}
+	metadata, err := json.Marshal(map[string]any{
+		"provider":         input.Backup.Provider,
+		"endpoint":         input.Backup.Endpoint,
+		"region":           input.Backup.Region,
+		"bucket":           input.Backup.Bucket,
+		"prefix":           input.Backup.Prefix,
+		"force_path_style": input.Backup.ForcePathStyle,
+	})
+	if err != nil {
+		return err
+	}
+	credential, err := models.Credential.Create(ctx, exec, models.CreateCredentialData{
+		Name:       "Control-plane backup storage",
+		Provider:   "backup_" + input.Backup.Provider,
+		Metadata:   metadata,
+		EncPayload: input.Backup.EncryptedCredentialPayload,
+		VerifiedAt: sql.NullTime{Time: input.Backup.ValidatedAt, Valid: !input.Backup.ValidatedAt.IsZero()},
+	})
+	if err != nil {
+		return fmt.Errorf("create backup credential: %w", err)
+	}
+	destination, err := models.BackupDestination.Create(ctx, exec, models.CreateBackupDestinationData{
+		Name:           "Control-plane backup storage",
+		Provider:       input.Backup.Provider,
+		Endpoint:       sql.NullString{String: input.Backup.Endpoint, Valid: input.Backup.Endpoint != ""},
+		Region:         sql.NullString{String: input.Backup.Region, Valid: input.Backup.Region != ""},
+		Bucket:         input.Backup.Bucket,
+		Prefix:         sql.NullString{String: input.Backup.Prefix, Valid: input.Backup.Prefix != ""},
+		ForcePathStyle: input.Backup.ForcePathStyle,
+		CredentialID:   credential.ID,
+	})
+	if err != nil {
+		return fmt.Errorf("create backup destination: %w", err)
+	}
+	serverNextRun, err := nextBackupRun(input.Backup.ServerSchedule, now)
+	if err != nil {
+		return fmt.Errorf("calculate first server backup: %w", err)
+	}
+	if _, err := models.BackupPolicy.Create(ctx, exec, models.CreateBackupPolicyData{
+		Name:                "Control-plane server state",
+		Schedule:            input.Backup.ServerSchedule,
+		Strategy:            "filesystem",
+		Driver:              "restic",
+		Retention:           input.Backup.ServerRetention,
+		Format:              "restic",
+		Verification:        json.RawMessage(`{"snapshot":true,"manifests":true,"repository_check":"weekly","data_subset_parts":7}`),
+		Settings:            json.RawMessage(`{"source_manifest_version":1,"exclude_manifest_version":1}`),
+		TargetType:          "server",
+		ServerID:            &serverID,
+		NextRunAt:           serverNextRun,
+		BackupDestinationID: destination.ID,
 	}); err != nil {
-		return fmt.Errorf("bind bootstrap database resource: %w", err)
+		return fmt.Errorf("create server backup policy: %w", err)
+	}
+	if input.DatabaseExternal {
+		return nil
+	}
+	databaseNextRun, err := nextBackupRun(input.Backup.DatabaseSchedule, now)
+	if err != nil {
+		return fmt.Errorf("calculate first database backup: %w", err)
+	}
+	if _, err := models.BackupPolicy.Create(ctx, exec, models.CreateBackupPolicyData{
+		Name:                  "Control-plane PostgreSQL",
+		Schedule:              input.Backup.DatabaseSchedule,
+		Strategy:              "logical",
+		Driver:                "postgresql",
+		Retention:             input.Backup.DatabaseRetention,
+		Format:                "tar.age",
+		Verification:          json.RawMessage(`{"every_backup":true,"pg_restore_list":true}`),
+		Settings:              json.RawMessage(`{"exclude_table_data":["river_*"]}`),
+		TargetType:            "resource",
+		ResourceID:            &database.ResourceID,
+		EnvironmentResourceID: &database.EnvironmentResourceID,
+		NextRunAt:             databaseNextRun,
+		BackupDestinationID:   destination.ID,
+	}); err != nil {
+		return fmt.Errorf("create database backup policy: %w", err)
 	}
 	return nil
 }
@@ -515,6 +644,18 @@ func validateBootstrapInput(input BootstrapInput) error {
 	}
 	if len(input.WireGuard.EncryptedPrivateKey) == 0 {
 		return errors.New("bootstrap encrypted WireGuard private key is required")
+	}
+	if input.Backup.Enabled {
+		if input.Backup.Provider == "" || input.Backup.Region == "" ||
+			input.Backup.Bucket == "" || len(input.Backup.EncryptedCredentialPayload) == 0 ||
+			input.Backup.ValidatedAt.IsZero() || input.Backup.ServerSchedule == "" ||
+			len(input.Backup.ServerRetention) == 0 {
+			return errors.New("bootstrap backup configuration is incomplete")
+		}
+		if !input.DatabaseExternal &&
+			(input.Backup.DatabaseSchedule == "" || len(input.Backup.DatabaseRetention) == 0) {
+			return errors.New("bootstrap database backup policy is incomplete")
+		}
 	}
 	if input.WireGuard.ListenPort < 1 || input.WireGuard.ListenPort > 65535 {
 		return errors.New("bootstrap WireGuard listen port is invalid")

@@ -15,12 +15,11 @@ import (
 
 const (
 	ApplicationEnvPath      = "/etc/deploycrate-ce/app.env"
-	BackupEnvPath           = "/etc/deploycrate-ce/backup.env"
 	DefaultDatabaseCAPath   = "/etc/ssl/certs/deploycrate-ce-postgresql-ca.crt"
 	BootstrapCLIPath        = "/usr/local/bin/bootstrap"
 	BootstrapAppPayloadPath = "/usr/local/bin/deploycrate-ce"
 	maxDatabaseCAFileSize   = 1024 * 1024
-	finalInstallerSetupStep = "service-health"
+	finalInstallerSetupStep = "initial-backups-v1"
 )
 
 type InstallationStatus string
@@ -268,21 +267,6 @@ func WriteApplicationEnvironment(cfg Config) error {
 		{"AWS_SES_CONFIGURATION_SET", ""},
 	}
 	return writeProtectedFile(ApplicationEnvPath, []byte(formatEnvironment(values)), 0o600)
-}
-
-func WriteBackupEnvironment(cfg Config) error {
-	if !cfg.S3.Enabled {
-		return nil
-	}
-	values := [][2]string{
-		{"S3_ENDPOINT", cfg.S3.Endpoint},
-		{"S3_REGION", cfg.S3.Region},
-		{"S3_BUCKET", cfg.S3.Bucket},
-		{"S3_ACCESS_KEY_ID", cfg.Secrets.S3AccessKeyID},
-		{"S3_SECRET_ACCESS_KEY", cfg.Secrets.S3SecretAccessKey},
-		{"S3_USE_PATH_STYLE", strconv.FormatBool(cfg.S3.UsePathStyle)},
-	}
-	return writeProtectedFile(BackupEnvPath, []byte(formatEnvironment(values)), 0o600)
 }
 
 func InstallApplicationBinary(source string) error {

@@ -7,6 +7,7 @@ import (
 	"deploycrate-ce/internal/validation"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,7 +29,26 @@ type CredentialEntity struct {
 }
 
 func (e *CredentialEntity) Validate() error {
-	return nil
+	builder := validation.NewBuilder()
+	if e.ID == uuid.Nil {
+		builder.Add("id", "required", "credential ID is required")
+	}
+	if strings.TrimSpace(e.Name) == "" {
+		builder.Add("name", "required", "credential name is required")
+	}
+	if strings.TrimSpace(e.Provider) == "" {
+		builder.Add("provider", "required", "credential provider is required")
+	}
+	if len(e.Metadata) == 0 || !json.Valid(e.Metadata) {
+		builder.Add("metadata", "invalid", "credential metadata must be valid JSON")
+	}
+	if len(e.EncPayload) < 2 {
+		builder.Add("enc_payload", "required", "encrypted credential payload is required")
+	}
+	if e.ArchivedAt.Valid && e.LastUsedAt.Valid && e.LastUsedAt.Time.After(e.ArchivedAt.Time) {
+		builder.Add("last_used_at", "invalid", "archived credentials cannot be used after archival")
+	}
+	return builder.Err()
 }
 
 func (c credential) Find(

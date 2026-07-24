@@ -67,13 +67,45 @@
     }>
   }
 
-  let { auth, system, health }: { auth: { email: string }; system: SystemOverview; health: SystemHealth } = $props()
-  let openSections = $state(['network', 'runtime', 'resource', 'deployments'])
+  type BackupHealthPolicy = {
+    policyId: string
+    targetType: string
+    schedule: string
+    provider: string
+    bucket: string
+    prefix: string
+    lastStatus: string
+    lastError: string
+    lastSuccessfulAt: string | null
+    lastVerifiedAt: string | null
+    lastSizeBytes: number
+    activeOrRetrying: boolean
+  }
+
+  let { auth, system, health, backups }: {
+    auth: { email: string }
+    system: SystemOverview
+    health: SystemHealth
+    backups: BackupHealthPolicy[]
+  } = $props()
+  let openSections = $state(['network', 'runtime', 'resource', 'backups', 'deployments'])
 
   const stateLabel = (value: string) => value ? value.replaceAll('_', ' ') : 'Unknown'
   const checkLabel = (value: string) => stateLabel(value).replace(/\b\w/g, (letter) => letter.toUpperCase())
   const versionLabel = (version: string) => version ? `v${version.replace(/^v/, '')}` : 'Development build'
   const credentialSourceLabel = (source: string) => source === 'app_env' ? 'Application environment' : stateLabel(source)
+  const artifactAge = (value: string | null) => {
+    if (!value) return 'No verified backup'
+    const hours = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 3_600_000))
+    if (hours < 24) return `${hours}h ago`
+    return `${Math.floor(hours / 24)}d ago`
+  }
+  const formatBytes = (value: number) => {
+    if (!value) return 'Unknown'
+    const units = ['B', 'KB', 'MB', 'GB', 'TB']
+    const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1)
+    return `${(value / (1024 ** index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`
+  }
   const platformLabel = $derived(
     [system.distribution, system.distributionVersion, system.architecture].filter(Boolean).join(' ') || system.operatingSystem || 'Unknown',
   )
@@ -371,6 +403,66 @@
             </div>
           {:else}
             <p class="text-sm text-muted-foreground">No active database resource is bound to the system environment.</p>
+          {/if}
+        </Accordion.Content>
+      </Accordion.Item>
+
+      <Accordion.Item value="backups" class="border border-border px-5">
+        <Accordion.Trigger class="py-5 hover:no-underline">
+          <div class="flex w-full items-center justify-between gap-6">
+            <div>
+              <p class="text-sm font-semibold">Backups</p>
+              <p class="mt-1 font-normal text-muted-foreground">Independent server and database recovery artifacts</p>
+            </div>
+            <span class="capitalize text-muted-foreground">
+              {backups.length ? (backups.some((backup) => backup.activeOrRetrying) ? 'Active or retrying' : 'Configured') : 'Not configured'}
+            </span>
+          </div>
+        </Accordion.Trigger>
+        <Accordion.Content class="border-t border-border py-5">
+          {#if backups.length}
+            <div class="grid gap-4 lg:grid-cols-2">
+              {#each backups as backup (backup.policyId)}
+                <div class="border border-border/70 bg-muted/20 p-4">
+                  <div class="flex items-start justify-between gap-4">
+                    <div>
+                      <p class="text-sm font-medium capitalize">{backup.targetType}</p>
+                      <p class="mt-1 font-mono text-xs text-muted-foreground">{backup.schedule}</p>
+                    </div>
+                    <span class={backup.lastStatus === 'failed' || backup.lastStatus === 'verification_failed' ? 'capitalize text-destructive' : 'capitalize text-muted-foreground'}>
+                      {backup.activeOrRetrying ? 'Active or retrying' : stateLabel(backup.lastStatus)}
+                    </span>
+                  </div>
+                  <dl class="mt-4 grid gap-4 sm:grid-cols-2">
+                    <div>
+                      <dt class="text-xs text-muted-foreground">Destination</dt>
+                      <dd class="mt-1 break-all font-mono text-xs">{backup.provider.toUpperCase()} / {backup.bucket}{backup.prefix ? `/${backup.prefix}` : ''}</dd>
+                    </div>
+                    <div>
+                      <dt class="text-xs text-muted-foreground">Artifact age</dt>
+                      <dd class="mt-1 text-sm">{artifactAge(backup.lastVerifiedAt)}</dd>
+                    </div>
+                    <div>
+                      <dt class="text-xs text-muted-foreground">Last successful</dt>
+                      <dd class="mt-1 text-sm">{backup.lastSuccessfulAt ? new Date(backup.lastSuccessfulAt).toLocaleString() : 'Never'}</dd>
+                    </div>
+                    <div>
+                      <dt class="text-xs text-muted-foreground">Last verified</dt>
+                      <dd class="mt-1 text-sm">{backup.lastVerifiedAt ? new Date(backup.lastVerifiedAt).toLocaleString() : 'Never'}</dd>
+                    </div>
+                    <div>
+                      <dt class="text-xs text-muted-foreground">Size</dt>
+                      <dd class="mt-1 text-sm">{formatBytes(backup.lastSizeBytes)}</dd>
+                    </div>
+                  </dl>
+                  {#if backup.lastError}
+                    <p class="mt-4 break-words text-xs leading-5 text-destructive">{backup.lastError}</p>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+          {:else}
+            <p class="text-sm text-muted-foreground">Backups were not configured during bootstrap.</p>
           {/if}
         </Accordion.Content>
       </Accordion.Item>

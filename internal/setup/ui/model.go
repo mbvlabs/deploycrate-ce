@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/mail"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"deploycrate-ce/clients/objectstorage"
 	"deploycrate-ce/internal/setup"
 	"deploycrate-ce/internal/storage"
 )
@@ -30,7 +32,10 @@ const (
 	screenDatabaseChoice
 	screenDatabase
 	screenStorageChoice
+	screenStorageProvider
 	screenStorage
+	screenServerBackupPolicy
+	screenDatabaseBackupPolicy
 	screenValidating
 	screenReview
 	screenRunning
@@ -137,6 +142,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.config.S3.Enabled {
+			m.config.S3.ValidatedAt = time.Now().UTC()
+		}
 		m.screen = screenReview
 		return m, nil
 	case runEventMsg:
@@ -190,7 +198,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.screen == screenHandoff {
 			return m.updateHandoff(msg)
 		}
-		if m.screen == screenDatabaseChoice || m.screen == screenStorageChoice {
+		if m.screen == screenDatabaseChoice || m.screen == screenStorageChoice ||
+			m.screen == screenStorageProvider {
 			return m.updateChoice(key)
 		}
 		if m.screen == screenWelcome || m.screen == screenReview {
@@ -271,8 +280,25 @@ func (m *Model) setScreen(next screen) {
 			newInput("https://s3.example.com or blank for AWS", m.config.S3.Endpoint, false),
 			newInput("Region", m.config.S3.Region, false),
 			newInput("Bucket", m.config.S3.Bucket, false),
+			newInput("Optional object prefix", m.config.S3.Prefix, false),
+			newInput("true or false", strconv.FormatBool(m.config.S3.UsePathStyle), false),
 			newInput("Access key ID", m.config.Secrets.S3AccessKeyID, true),
 			newInput("Secret access key", m.config.Secrets.S3SecretAccessKey, true),
+		}
+	case screenServerBackupPolicy:
+		m.inputs = []textinput.Model{
+			newInput("0 2 * * *", m.config.S3.ServerPolicy.Schedule, false),
+			newInput("7", strconv.Itoa(m.config.S3.ServerPolicy.Retention.KeepDaily), false),
+			newInput("4", strconv.Itoa(m.config.S3.ServerPolicy.Retention.KeepWeekly), false),
+			newInput("6", strconv.Itoa(m.config.S3.ServerPolicy.Retention.KeepMonthly), false),
+		}
+	case screenDatabaseBackupPolicy:
+		m.inputs = []textinput.Model{
+			newInput("0 */6 * * *", m.config.S3.DatabasePolicy.Schedule, false),
+			newInput("12", strconv.Itoa(m.config.S3.DatabasePolicy.Retention.KeepLast), false),
+			newInput("7", strconv.Itoa(m.config.S3.DatabasePolicy.Retention.KeepDaily), false),
+			newInput("4", strconv.Itoa(m.config.S3.DatabasePolicy.Retention.KeepWeekly), false),
+			newInput("6", strconv.Itoa(m.config.S3.DatabasePolicy.Retention.KeepMonthly), false),
 		}
 	}
 	if len(m.inputs) > 0 {
@@ -426,14 +452,59 @@ func (m *Model) commitForm() error {
 		}
 		m.config.Database.TLSCAPath = value(6)
 	case screenStorage:
-		if value(1) == "" || value(2) == "" || value(3) == "" || value(4) == "" {
+		pathStyle, err := strconv.ParseBool(value(4))
+		if err != nil {
+			return errors.New("path-style access must be true or false")
+		}
+		if value(1) == "" || value(2) == "" || value(5) == "" || value(6) == "" {
 			return errors.New("region, bucket, access key, and secret key are required")
 		}
-		m.config.S3.Endpoint, m.config.S3.Region, m.config.S3.Bucket = value(0), value(1), value(2)
-		m.config.Secrets.S3AccessKeyID, m.config.Secrets.S3SecretAccessKey = value(3), value(4)
+		normalized, err := objectstorage.Normalize(objectstorage.Config{
+			Provider: m.config.S3.Provider, Endpoint: value(0), Region: value(1),
+			Bucket: value(2), Prefix: value(3), ForcePathStyle: pathStyle,
+		})
+		if err != nil {
+			return err
+		}
+		m.config.S3.Endpoint, m.config.S3.Region, m.config.S3.Bucket = normalized.Endpoint, normalized.Region, normalized.Bucket
+		m.config.S3.Prefix, m.config.S3.UsePathStyle = normalized.Prefix, normalized.ForcePathStyle
+		m.config.Secrets.S3AccessKeyID, m.config.Secrets.S3SecretAccessKey = value(5), value(6)
+	case screenServerBackupPolicy:
+		retention, err := parseRetention(0, value(1), value(2), value(3))
+		if err != nil {
+			return err
+		}
+		m.config.S3.ServerPolicy = setup.BackupPolicyConfig{Schedule: value(0), Retention: retention}
+	case screenDatabaseBackupPolicy:
+		keepLast, err := strconv.Atoi(value(1))
+		if err != nil || keepLast < 1 {
+			return errors.New("database recent retention must be at least 1")
+		}
+		retention, err := parseRetention(keepLast, value(2), value(3), value(4))
+		if err != nil {
+			return err
+		}
+		m.config.S3.DatabasePolicy = setup.BackupPolicyConfig{Schedule: value(0), Retention: retention}
 	}
 	m.err = nil
 	return nil
+}
+
+func parseRetention(keepLast int, daily, weekly, monthly string) (setup.BackupRetention, error) {
+	values := []string{daily, weekly, monthly}
+	parsed := make([]int, len(values))
+	for index, value := range values {
+		count, err := strconv.Atoi(value)
+		if err != nil || count < 1 {
+			return setup.BackupRetention{}, errors.New(
+				"daily, weekly, and monthly retention must be at least 1",
+			)
+		}
+		parsed[index] = count
+	}
+	return setup.BackupRetention{
+		KeepLast: keepLast, KeepDaily: parsed[0], KeepWeekly: parsed[1], KeepMonthly: parsed[2],
+	}, nil
 }
 
 func (m Model) advanceAfterForm() (tea.Model, tea.Cmd) {
@@ -451,6 +522,15 @@ func (m Model) advanceAfterForm() (tea.Model, tea.Cmd) {
 		m.choice = 0
 		m.inputs = nil
 	case screenStorage:
+		m.setScreen(screenServerBackupPolicy)
+	case screenServerBackupPolicy:
+		if !m.config.Database.External {
+			m.setScreen(screenDatabaseBackupPolicy)
+			return m, textinput.Blink
+		}
+		m.screen = screenValidating
+		return m, tea.Batch(validateRemoteServices(m.config, m.dryRun), m.activity.Tick)
+	case screenDatabaseBackupPolicy:
 		m.screen = screenValidating
 		return m, tea.Batch(validateRemoteServices(m.config, m.dryRun), m.activity.Tick)
 	}
@@ -484,10 +564,21 @@ func (m Model) updateChoice(key string) (tea.Model, tea.Cmd) {
 		m.choice = 0
 		return m, nil
 	}
-	m.config.S3.Enabled = m.choice == 1
-	if m.config.S3.Enabled {
+	if m.screen == screenStorageProvider {
+		m.config.S3.Provider = "s3"
+		if m.choice == 1 {
+			m.config.S3.Provider = "r2"
+			m.config.S3.Region = "auto"
+			m.config.S3.UsePathStyle = true
+		}
 		m.setScreen(screenStorage)
 		return m, textinput.Blink
+	}
+	m.config.S3.Enabled = m.choice == 1
+	if m.config.S3.Enabled {
+		m.screen = screenStorageProvider
+		m.choice = 0
+		return m, nil
 	}
 	m.screen = screenValidating
 	return m, tea.Batch(validateRemoteServices(m.config, m.dryRun), m.activity.Tick)
@@ -495,18 +586,33 @@ func (m Model) updateChoice(key string) (tea.Model, tea.Cmd) {
 
 func validateRemoteServices(cfg setup.Config, dryRun bool) tea.Cmd {
 	return func() tea.Msg {
-		if dryRun || !cfg.Database.External {
+		if dryRun {
 			return validationMsg{}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		db, err := storage.NewPostgres(ctx, cfg.DatabaseURL())
-		if err != nil {
-			return validationMsg{err: fmt.Errorf("external database validation failed: %w", err)}
+		if cfg.Database.External {
+			db, err := storage.NewPostgres(ctx, cfg.DatabaseURL())
+			if err != nil {
+				return validationMsg{err: fmt.Errorf("external database validation failed: %w", err)}
+			}
+			if err := db.Close(); err != nil {
+				return validationMsg{err: fmt.Errorf("close external database validation connection: %w", err)}
+			}
 		}
-		if err := db.Close(); err != nil {
-			return validationMsg{
-				err: fmt.Errorf("close external database validation connection: %w", err),
+		if cfg.S3.Enabled {
+			client, err := objectstorage.New(ctx, objectstorage.Config{
+				Provider: cfg.S3.Provider, Endpoint: cfg.S3.Endpoint, Region: cfg.S3.Region,
+				Bucket: cfg.S3.Bucket, Prefix: cfg.S3.Prefix, ForcePathStyle: cfg.S3.UsePathStyle,
+			}, objectstorage.Credentials{
+				AccessKeyID:     cfg.Secrets.S3AccessKeyID,
+				SecretAccessKey: cfg.Secrets.S3SecretAccessKey,
+			})
+			if err != nil {
+				return validationMsg{err: fmt.Errorf("object storage validation failed: %w", err)}
+			}
+			if err := client.Probe(ctx, cfg.InstallationID); err != nil {
+				return validationMsg{err: fmt.Errorf("object storage validation failed: %w", err)}
 			}
 		}
 		return validationMsg{}
@@ -661,15 +767,37 @@ func (m Model) renderScreen(width int) string {
 			"Configure S3-compatible storage for backups?",
 			[]string{"Not now", "Yes, store destination details"},
 		)
+	case screenStorageProvider:
+		content = m.renderChoice(
+			"Which object storage provider should backups use?",
+			[]string{"Generic S3-compatible storage", "Cloudflare R2"},
+		)
 	case screenStorage:
 		content = m.renderForm(
-			[]string{"Endpoint", "Region", "Bucket", "Access key ID", "Secret access key"},
+			[]string{
+				"Endpoint", "Region", "Bucket", "Prefix", "Path-style access",
+				"Access key ID", "Secret access key",
+			},
+		)
+	case screenServerBackupPolicy:
+		content = m.renderForm(
+			[]string{
+				"Server cron schedule", "Daily recovery points", "Weekly recovery points",
+				"Monthly recovery points",
+			},
+		)
+	case screenDatabaseBackupPolicy:
+		content = m.renderForm(
+			[]string{
+				"Database cron schedule", "Recent recovery points", "Daily recovery points",
+				"Weekly recovery points", "Monthly recovery points",
+			},
 		)
 	case screenValidating:
 		content = m.activity.View() + " " + labelStyle.Render(
 			"Validating configuration",
 		) + "\n\n" + mutedStyle.Render(
-			"Checking external database connectivity. S3 validation is pending the backup adapter.",
+			"Checking database connectivity and object-storage write, head, get, list, and delete capabilities.",
 		)
 	case screenReview:
 		content = m.renderReview()
@@ -729,7 +857,20 @@ func (m Model) renderReview() string {
 	}
 	storage := "Not configured"
 	if m.config.S3.Enabled {
-		storage = fmt.Sprintf("%s / %s", m.config.S3.Region, m.config.S3.Bucket)
+		hostname := "AWS S3"
+		if endpoint, err := url.Parse(m.config.S3.Endpoint); err == nil && endpoint.Hostname() != "" {
+			hostname = endpoint.Hostname()
+		}
+		storage = fmt.Sprintf(
+			"%s via %s, %s / %s",
+			strings.ToUpper(m.config.S3.Provider),
+			hostname,
+			m.config.S3.Region,
+			m.config.S3.Bucket,
+		)
+		if m.config.S3.Prefix != "" {
+			storage += "/" + m.config.S3.Prefix
+		}
 	}
 	rows := []string{
 		labelStyle.Render("Server") + "       https://" + m.config.Domain,
@@ -751,6 +892,27 @@ func (m Model) renderReview() string {
 			rows,
 			labelStyle.Render("Owner SSH key")+" "+setup.SSHFingerprint(m.config.OwnerSSHPublicKey),
 		)
+	}
+	if m.config.S3.Enabled {
+		serverRetention := m.config.S3.ServerPolicy.Retention
+		rows = append(rows, labelStyle.Render("Server backup")+fmt.Sprintf(
+			" %s, %d daily / %d weekly / %d monthly",
+			m.config.S3.ServerPolicy.Schedule,
+			serverRetention.KeepDaily,
+			serverRetention.KeepWeekly,
+			serverRetention.KeepMonthly,
+		))
+		if !m.config.Database.External {
+			databaseRetention := m.config.S3.DatabasePolicy.Retention
+			rows = append(rows, labelStyle.Render("Database backup")+fmt.Sprintf(
+				" %s, %d recent / %d daily / %d weekly / %d monthly",
+				m.config.S3.DatabasePolicy.Schedule,
+				databaseRetention.KeepLast,
+				databaseRetention.KeepDaily,
+				databaseRetention.KeepWeekly,
+				databaseRetention.KeepMonthly,
+			))
+		}
 	}
 	return strings.Join(
 		rows,
@@ -863,6 +1025,14 @@ func (m Model) renderHandoff() string {
 		b.WriteString(labelStyle.Render("Age passphrase") + "    " + m.config.Secrets.SSHCARecoveryPassphrase + "\n")
 		b.WriteString("Copy the bundle off this server and store the passphrase separately.\n")
 	}
+	if m.config.S3.Enabled && !m.credentialsVerified {
+		b.WriteString("\n" + warnStyle.Render("Backup recovery material, shown once") + "\n")
+		b.WriteString(labelStyle.Render("Restic password") + "    " + m.config.Secrets.ResticPassword + "\n")
+		b.WriteString(labelStyle.Render("Age identity") + "       " + m.config.Secrets.AgeIdentity + "\n")
+		b.WriteString(
+			"Store both values off-server. Losing them makes the corresponding backups unusable.\n",
+		)
+	}
 	b.WriteString(labelStyle.Render("App admin") + "       " + m.config.AdminEmail + "\n")
 	b.WriteString(
 		labelStyle.Render("App password") + "     " + m.config.Secrets.AdminPassword + "\n\n",
@@ -921,6 +1091,11 @@ func (m Model) handoffDetails() string {
 		b.WriteString("SSH CA recovery age passphrase: " + m.config.Secrets.SSHCARecoveryPassphrase + "\n")
 		b.WriteString("Store the bundle off-server and keep this passphrase separately.\n")
 	}
+	if m.config.S3.Enabled && !m.credentialsVerified {
+		b.WriteString("\nBackup Restic password: " + m.config.Secrets.ResticPassword + "\n")
+		b.WriteString("Backup age identity: " + m.config.Secrets.AgeIdentity + "\n")
+		b.WriteString("Store both backup recovery values off-server.\n")
+	}
 	b.WriteString("\nApp admin: " + m.config.AdminEmail + "\n")
 	b.WriteString("Admin password: " + m.config.Secrets.AdminPassword + "\n")
 	return b.String()
@@ -928,18 +1103,21 @@ func (m Model) handoffDetails() string {
 
 func (m Model) stepLabel() string {
 	labels := map[screen]string{
-		screenWelcome:        "welcome",
-		screenServer:         "server",
-		screenAccess:         "access",
-		screenAdmin:          "admin",
-		screenDatabaseChoice: "database",
-		screenDatabase:       "database",
-		screenStorageChoice:  "backups",
-		screenStorage:        "backups",
-		screenValidating:     "validation",
-		screenReview:         "review",
-		screenRunning:        "installing",
-		screenHandoff:        "handoff",
+		screenWelcome:              "welcome",
+		screenServer:               "server",
+		screenAccess:               "access",
+		screenAdmin:                "admin",
+		screenDatabaseChoice:       "database",
+		screenDatabase:             "database",
+		screenStorageChoice:        "backups",
+		screenStorageProvider:      "backups",
+		screenStorage:              "backups",
+		screenServerBackupPolicy:   "backup policy",
+		screenDatabaseBackupPolicy: "backup policy",
+		screenValidating:           "validation",
+		screenReview:               "review",
+		screenRunning:              "installing",
+		screenHandoff:              "handoff",
 	}
 	return labels[m.screen]
 }

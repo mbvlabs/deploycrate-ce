@@ -5,8 +5,10 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"time"
 
 	"deploycrate-ce/internal/storage"
+	"deploycrate-ce/queue/jobs"
 
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
@@ -46,9 +48,11 @@ func NewProcessor(params ProcessorParams) (Processor, error) {
 		PeriodicJobs: params.PeriodicJobs,
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault: {MaxWorkers: 100},
+			jobs.BackupQueue:   {MaxWorkers: 1},
 		},
-		Logger:  slog.Default(),
-		Workers: params.Workers,
+		RescueStuckJobsAfter: 13 * time.Hour,
+		Logger:               slog.Default(),
+		Workers:              params.Workers,
 	})
 	if err != nil {
 		return Processor{}, err
@@ -133,5 +137,6 @@ var Module = fx.Module(
 		NewInsertOnly,
 		NewProcessor,
 		fx.Annotate(NewMetricRollupPeriodicJob, fx.ResultTags(periodicJobsGroup)),
+		fx.Annotate(NewBackupSchedulePeriodicJob, fx.ResultTags(periodicJobsGroup)),
 	),
 )

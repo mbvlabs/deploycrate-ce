@@ -3,6 +3,7 @@ package setup
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,9 +13,16 @@ import (
 
 	caddyclients "deploycrate-ce/clients/caddy"
 	"deploycrate-ce/database"
+	"deploycrate-ce/internal/secretcrypto"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
+	appqueue "deploycrate-ce/queue"
+	appjobs "deploycrate-ce/queue/jobs"
 	"deploycrate-ce/services"
+
+	"github.com/google/uuid"
+	"github.com/riverqueue/river"
+	"github.com/uptrace/bun"
 )
 
 type setupStep struct {
@@ -66,6 +74,7 @@ func scriptSetupStep(
 func DefaultSteps() []Step {
 	return []Step{
 		scriptSetupStep("host-packages", "Install baseline host packages", "packages.sh", nil),
+		scriptSetupStep("backup-tools-0-18-1", "Install pinned backup tools and manifests", "backup.sh", nil),
 		scriptSetupStep(
 			"server-users",
 			"Create the administrator and internal service account",
@@ -144,7 +153,6 @@ func DefaultSteps() []Step {
 		applicationConfigStep(),
 		migrationStep(),
 		adminStep(),
-		backupConfigStep(),
 		scriptSetupStep(
 			"application-service-caddy-2-11-4",
 			"Configure blue-green systemd slots and start pinned Caddy",
@@ -179,6 +187,133 @@ func DefaultSteps() []Step {
 				}
 			},
 		),
+		initialBackupsStep(),
+	}
+}
+
+func initialBackupsStep() Step {
+	return setupStep{
+		id:          "initial-backups-v1",
+		description: "Create and verify initial control-plane backups",
+		apply: func(ctx context.Context, cfg Config, runtime Runtime, report Reporter) error {
+			if !cfg.S3.Enabled {
+				report(Event{
+					Kind: EventLog, StepID: "initial-backups-v1", Line: "backups were not selected",
+				})
+				return nil
+			}
+			if runtime.DryRun {
+				report(Event{
+					Kind: EventLog, StepID: "initial-backups-v1",
+					Line: "dry run: initial backup creation skipped",
+				})
+				return nil
+			}
+			db, err := storage.NewPostgres(ctx, cfg.DatabaseURL())
+			if err != nil {
+				return err
+			}
+			defer db.Close()
+			var policyIDs []uuid.UUID
+			if err := db.Executor().NewSelect().
+				TableExpr("backup_policies AS policy").
+				ColumnExpr("policy.id").
+				Where("policy.archived_at IS NULL").
+				OrderExpr("policy.target_type DESC").
+				Scan(ctx, &policyIDs); err != nil {
+				return fmt.Errorf("load initial backup policies: %w", err)
+			}
+			if len(policyIDs) == 0 {
+				return errors.New("backup configuration exists but no active policies were created")
+			}
+			type initialBackupRow struct {
+				ID             uuid.UUID `bun:"id"`
+				BackupPolicyID uuid.UUID `bun:"backup_policy_id"`
+				Status         string    `bun:"status"`
+			}
+			var existing []initialBackupRow
+			if err := db.Executor().NewSelect().
+				TableExpr("backups AS backup").
+				ColumnExpr("DISTINCT ON (backup.backup_policy_id) backup.id, backup.backup_policy_id, backup.status").
+				Where("backup.backup_policy_id IN (?)", bun.In(policyIDs)).
+				Where("backup.trigger_type = ?", "installer").
+				Where("backup.status <> ?", models.BackupStatusPruned).
+				OrderExpr("backup.backup_policy_id, backup.scheduled_at DESC").
+				Scan(ctx, &existing); err != nil {
+				return fmt.Errorf("load existing initial backups: %w", err)
+			}
+			insertOnly, err := appqueue.NewInsertOnly(db, river.NewWorkers())
+			if err != nil {
+				return err
+			}
+			backupIDs := make([]uuid.UUID, 0, len(policyIDs))
+			existingPolicies := make(map[uuid.UUID]bool, len(existing))
+			for _, backup := range existing {
+				backupIDs = append(backupIDs, backup.ID)
+				existingPolicies[backup.BackupPolicyID] = true
+				var job river.JobArgs
+				switch backup.Status {
+				case models.BackupStatusUploaded, models.BackupStatusVerificationFailed:
+					job = appjobs.BackupVerifyArgs{BackupID: backup.ID}
+				case models.BackupStatusVerified:
+					continue
+				default:
+					job = appjobs.BackupExecuteArgs{BackupID: backup.ID}
+				}
+				if _, err := insertOnly.Insert(ctx, job, nil); err != nil {
+					return fmt.Errorf("resume initial backup %s: %w", backup.ID, err)
+				}
+			}
+			missingPolicies := make([]uuid.UUID, 0, len(policyIDs))
+			for _, policyID := range policyIDs {
+				if !existingPolicies[policyID] {
+					missingPolicies = append(missingPolicies, policyID)
+				}
+			}
+			if len(missingPolicies) > 0 {
+				scheduler := services.NewBackupScheduler(
+					db,
+					&insertOnly,
+					services.CurrentVersion(cfg.Version),
+				)
+				inserted, err := scheduler.EnqueueInitial(ctx, missingPolicies)
+				if err != nil {
+					return err
+				}
+				backupIDs = append(backupIDs, inserted...)
+			}
+			deadline := time.Now().Add(2 * time.Hour)
+			for {
+				var verified int
+				if err := db.Executor().NewSelect().
+					TableExpr("backups").
+					ColumnExpr("COUNT(*)").
+					Where("id IN (?)", bun.In(backupIDs)).
+					Where("status = ?", models.BackupStatusVerified).
+					Scan(ctx, &verified); err != nil {
+					return fmt.Errorf("check initial backup verification: %w", err)
+				}
+				if verified == len(backupIDs) {
+					report(Event{
+						Kind: EventLog, StepID: "initial-backups-v1",
+						Line: fmt.Sprintf("%d initial backups verified", verified),
+					})
+					return nil
+				}
+				if time.Now().After(deadline) {
+					return fmt.Errorf(
+						"initial backups did not verify before timeout: %d of %d verified",
+						verified,
+						len(backupIDs),
+					)
+				}
+				select {
+				case <-ctx.Done():
+					return ctx.Err()
+				case <-time.After(5 * time.Second):
+				}
+			}
+		},
 	}
 }
 
@@ -319,6 +454,10 @@ func controlPlaneBootstrapStep() Step {
 
 			routes := services.NewCaddyRouteService(db, caddyclients.New(""))
 			bootstrap := services.NewBootstrapService(db, routes)
+			backupInput, err := encryptedBootstrapBackupInput(cfg)
+			if err != nil {
+				return err
+			}
 			result, err := bootstrap.Bootstrap(ctx, services.BootstrapInput{
 				Domain:  cfg.Domain,
 				Version: cfg.Version,
@@ -334,6 +473,7 @@ func controlPlaneBootstrapStep() Step {
 				DatabasePort:        cfg.Database.Port,
 				DatabaseName:        cfg.Database.Name,
 				DatabaseSSLMode:     cfg.Database.SSLMode,
+				Backup:              backupInput,
 				WireGuard: services.BootstrapWireGuardInput{
 					Interface:           WireGuardInterface,
 					NetworkCIDR:         WireGuardNetworkCIDR,
@@ -376,6 +516,49 @@ func controlPlaneBootstrapStep() Step {
 			return nil
 		},
 	}
+}
+
+func encryptedBootstrapBackupInput(cfg Config) (services.BootstrapBackupInput, error) {
+	if !cfg.S3.Enabled {
+		return services.BootstrapBackupInput{}, nil
+	}
+	payload, err := json.Marshal(services.BackupCredentialPayload{
+		AccessKeyID:     cfg.Secrets.S3AccessKeyID,
+		SecretAccessKey: cfg.Secrets.S3SecretAccessKey,
+		ResticPassword:  cfg.Secrets.ResticPassword,
+		AgeIdentity:     cfg.Secrets.AgeIdentity,
+	})
+	if err != nil {
+		return services.BootstrapBackupInput{}, fmt.Errorf("encode backup credential: %w", err)
+	}
+	defer clear(payload)
+	encrypted, err := secretcrypto.Encrypt(payload, cfg.Secrets.SessionEncryptionKey)
+	if err != nil {
+		return services.BootstrapBackupInput{}, fmt.Errorf("encrypt backup credential: %w", err)
+	}
+	serverRetention, err := json.Marshal(cfg.S3.ServerPolicy.Retention)
+	if err != nil {
+		return services.BootstrapBackupInput{}, err
+	}
+	databaseRetention, err := json.Marshal(cfg.S3.DatabasePolicy.Retention)
+	if err != nil {
+		return services.BootstrapBackupInput{}, err
+	}
+	return services.BootstrapBackupInput{
+		Enabled:                    true,
+		Provider:                   cfg.S3.Provider,
+		Endpoint:                   cfg.S3.Endpoint,
+		Region:                     cfg.S3.Region,
+		Bucket:                     cfg.S3.Bucket,
+		Prefix:                     cfg.S3.Prefix,
+		ForcePathStyle:             cfg.S3.UsePathStyle,
+		EncryptedCredentialPayload: encrypted,
+		ValidatedAt:                cfg.S3.ValidatedAt,
+		ServerSchedule:             cfg.S3.ServerPolicy.Schedule,
+		ServerRetention:            serverRetention,
+		DatabaseSchedule:           cfg.S3.DatabasePolicy.Schedule,
+		DatabaseRetention:          databaseRetention,
+	}, nil
 }
 
 func applicationConfigStep() Step {
@@ -474,35 +657,6 @@ func adminStep() Step {
 				EmailValidatedAt: sql.NullTime{Time: time.Now(), Valid: true},
 			})
 			return err
-		},
-	}
-}
-
-func backupConfigStep() Step {
-	return setupStep{
-		id: "backup-destination", description: "Store S3-compatible backup configuration",
-		apply: func(_ context.Context, cfg Config, runtime Runtime, report Reporter) error {
-			if !cfg.S3.Enabled {
-				report(
-					Event{
-						Kind:   EventLog,
-						StepID: "backup-destination",
-						Line:   "S3-compatible backups were not selected",
-					},
-				)
-				return nil
-			}
-			if runtime.DryRun {
-				report(
-					Event{
-						Kind:   EventLog,
-						StepID: "backup-destination",
-						Line:   "dry run: backup configuration skipped",
-					},
-				)
-				return nil
-			}
-			return WriteBackupEnvironment(cfg)
 		},
 	}
 }

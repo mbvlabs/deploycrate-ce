@@ -67,11 +67,19 @@ func (s System) Overview(etx *echo.Context) error {
 	if err != nil {
 		return s.renderLoadError(etx, "overview", err)
 	}
+	backups, err := models.Backup.FindSystemHealth(
+		etx.Request().Context(),
+		s.db.Executor(),
+	)
+	if err != nil {
+		return s.renderLoadError(etx, "backup health", err)
+	}
 
 	return inertia.Page(etx, "System/Overview", inertia.Props{
-		"auth":   s.authProps(etx),
-		"system": overview,
-		"health": s.health.Run(etx.Request().Context()),
+		"auth":    s.authProps(etx),
+		"system":  overview,
+		"health":  s.health.Run(etx.Request().Context()),
+		"backups": backups,
 	})
 }
 

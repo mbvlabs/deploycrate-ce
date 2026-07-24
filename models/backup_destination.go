@@ -6,6 +6,8 @@ import (
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
 	"errors"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -29,7 +31,51 @@ type BackupDestinationEntity struct {
 }
 
 func (e *BackupDestinationEntity) Validate() error {
-	return nil
+	builder := validation.NewBuilder()
+	if e.ID == uuid.Nil {
+		builder.Add("id", "required", "backup destination ID is required")
+	}
+	if strings.TrimSpace(e.Name) == "" {
+		builder.Add("name", "required", "backup destination name is required")
+	}
+	if e.Provider != "s3" && e.Provider != "r2" {
+		builder.Add("provider", "unsupported", "backup destination provider must be s3 or r2")
+	}
+	if strings.TrimSpace(e.Bucket) == "" {
+		builder.Add("bucket", "required", "backup destination bucket is required")
+	}
+	if e.Provider == "s3" && (!e.Region.Valid || strings.TrimSpace(e.Region.String) == "") {
+		builder.Add("region", "required", "generic S3 destinations require a region")
+	}
+	if e.Provider == "r2" && (!e.Region.Valid || e.Region.String != "auto") {
+		builder.Add("region", "invalid", "Cloudflare R2 region must be auto")
+	}
+	if e.Provider == "r2" && !e.Endpoint.Valid {
+		builder.Add("endpoint", "required", "Cloudflare R2 destinations require an endpoint")
+	}
+	if e.Endpoint.Valid {
+		endpoint, err := url.Parse(strings.TrimSpace(e.Endpoint.String))
+		if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" ||
+			endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+			builder.Add("endpoint", "invalid", "backup destination endpoint must be an absolute HTTPS URL")
+		}
+	}
+	if e.Prefix.Valid {
+		prefix := strings.Trim(e.Prefix.String, "/")
+		if prefix != e.Prefix.String {
+			builder.Add("prefix", "invalid", "backup destination prefix must be normalized")
+		}
+		for segment := range strings.SplitSeq(prefix, "/") {
+			if segment == "" || segment == "." || segment == ".." {
+				builder.Add("prefix", "invalid", "backup destination prefix is unsafe")
+				break
+			}
+		}
+	}
+	if e.CredentialID == uuid.Nil {
+		builder.Add("credential_id", "required", "backup destination credential is required")
+	}
+	return builder.Err()
 }
 
 func (bd backupDestination) Find(

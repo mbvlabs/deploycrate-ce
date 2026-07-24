@@ -12,6 +12,13 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
+
+	"deploycrate-ce/clients/objectstorage"
+
+	"filippo.io/age"
+	"github.com/google/uuid"
+	"github.com/robfig/cron/v3"
 )
 
 const (
@@ -30,11 +37,28 @@ type DatabaseConfig struct {
 }
 
 type S3Config struct {
-	Enabled      bool   `json:"enabled"`
-	Endpoint     string `json:"endpoint,omitempty"`
-	Region       string `json:"region,omitempty"`
-	Bucket       string `json:"bucket,omitempty"`
-	UsePathStyle bool   `json:"use_path_style,omitempty"`
+	Enabled        bool               `json:"enabled"`
+	Provider       string             `json:"provider,omitempty"`
+	Endpoint       string             `json:"endpoint,omitempty"`
+	Region         string             `json:"region,omitempty"`
+	Bucket         string             `json:"bucket,omitempty"`
+	Prefix         string             `json:"prefix,omitempty"`
+	UsePathStyle   bool               `json:"use_path_style,omitempty"`
+	ServerPolicy   BackupPolicyConfig `json:"server_policy"`
+	DatabasePolicy BackupPolicyConfig `json:"database_policy"`
+	ValidatedAt    time.Time          `json:"validated_at"`
+}
+
+type BackupPolicyConfig struct {
+	Schedule  string          `json:"schedule"`
+	Retention BackupRetention `json:"retention"`
+}
+
+type BackupRetention struct {
+	KeepLast    int `json:"keep_last,omitempty"`
+	KeepDaily   int `json:"keep_daily"`
+	KeepWeekly  int `json:"keep_weekly"`
+	KeepMonthly int `json:"keep_monthly"`
 }
 
 type Secrets struct {
@@ -50,9 +74,12 @@ type Secrets struct {
 	Pepper                  string `json:"pepper"`
 	S3AccessKeyID           string `json:"s3_access_key_id,omitempty"`
 	S3SecretAccessKey       string `json:"s3_secret_access_key,omitempty"`
+	ResticPassword          string `json:"restic_password,omitempty"`
+	AgeIdentity             string `json:"age_identity,omitempty"`
 }
 
 type Config struct {
+	InstallationID    string         `json:"installation_id"`
 	Version           string         `json:"version"`
 	Domain            string         `json:"domain"`
 	SSHPort           int            `json:"ssh_port"`
@@ -97,13 +124,22 @@ func NewConfig(version string) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
+	resticPassword, err := randomHex(32)
+	if err != nil {
+		return Config{}, err
+	}
+	ageIdentity, err := age.GenerateX25519Identity()
+	if err != nil {
+		return Config{}, fmt.Errorf("generate backup recovery identity: %w", err)
+	}
 
 	return Config{
-		Version:     version,
-		SSHPort:     22,
-		Timezone:    "UTC",
-		AdminUser:   "admin",
-		ServiceUser: "deploycrate",
+		InstallationID: uuid.NewString(),
+		Version:        version,
+		SSHPort:        22,
+		Timezone:       "UTC",
+		AdminUser:      "admin",
+		ServiceUser:    "deploycrate",
 		Database: DatabaseConfig{
 			Host:    "127.0.0.1",
 			Port:    5432,
@@ -111,7 +147,17 @@ func NewConfig(version string) (Config, error) {
 			User:    "deploycrate",
 			SSLMode: "disable",
 		},
-		S3: S3Config{Region: "us-east-1", UsePathStyle: true},
+		S3: S3Config{
+			Provider: "s3", Region: "us-east-1", UsePathStyle: true,
+			ServerPolicy: BackupPolicyConfig{
+				Schedule:  "0 2 * * *",
+				Retention: BackupRetention{KeepDaily: 7, KeepWeekly: 4, KeepMonthly: 6},
+			},
+			DatabasePolicy: BackupPolicyConfig{
+				Schedule:  "0 */6 * * *",
+				Retention: BackupRetention{KeepLast: 12, KeepDaily: 7, KeepWeekly: 4, KeepMonthly: 6},
+			},
+		},
 		Secrets: Secrets{
 			SSHCARecoveryPassphrase: recoveryPassphrase,
 			ClickHousePassword:      clickHousePassword,
@@ -120,12 +166,17 @@ func NewConfig(version string) (Config, error) {
 			SessionEncryptionKey:    sessionEncryptionKey,
 			TokenSigningKey:         tokenSigningKey,
 			Pepper:                  pepper,
+			ResticPassword:          resticPassword,
+			AgeIdentity:             ageIdentity.String(),
 		},
 	}, nil
 }
 
 func (c Config) Validate() error {
 	var errs []error
+	if _, err := uuid.Parse(c.InstallationID); err != nil {
+		errs = append(errs, errors.New("installation ID is invalid"))
+	}
 	if c.AdminUser != "admin" {
 		errs = append(errs, errors.New("server administrator user must be admin"))
 	}
@@ -183,11 +234,50 @@ func (c Config) Validate() error {
 		errs = append(errs, errors.New("complete database details are required"))
 	}
 	if c.S3.Enabled &&
-		(c.S3.Region == "" || c.S3.Bucket == "" || c.Secrets.S3AccessKeyID == "" || c.Secrets.S3SecretAccessKey == "") {
+		(c.S3.Provider == "" || c.S3.Region == "" || c.S3.Bucket == "" ||
+			c.Secrets.S3AccessKeyID == "" || c.Secrets.S3SecretAccessKey == "" ||
+			c.Secrets.ResticPassword == "" || c.Secrets.AgeIdentity == "" ||
+			c.S3.ServerPolicy.Schedule == "" ||
+			(!c.Database.External && c.S3.DatabasePolicy.Schedule == "")) {
 		errs = append(errs, errors.New("complete S3-compatible storage details are required"))
+	}
+	if c.S3.Enabled {
+		if _, err := objectstorage.Normalize(objectstorage.Config{
+			Provider: c.S3.Provider, Endpoint: c.S3.Endpoint, Region: c.S3.Region,
+			Bucket: c.S3.Bucket, Prefix: c.S3.Prefix, ForcePathStyle: c.S3.UsePathStyle,
+		}); err != nil {
+			errs = append(errs, err)
+		}
+		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+		if _, err := parser.Parse(c.S3.ServerPolicy.Schedule); err != nil {
+			errs = append(errs, errors.New("server backup schedule must be a five-field cron expression"))
+		}
+		if !c.Database.External {
+			if _, err := parser.Parse(c.S3.DatabasePolicy.Schedule); err != nil {
+				errs = append(errs, errors.New("database backup schedule must be a five-field cron expression"))
+			}
+		}
+		if !validBackupRetention(c.S3.ServerPolicy.Retention) {
+			errs = append(errs, errors.New("server backup retention must preserve at least one recovery point"))
+		}
+		if !c.Database.External && !validBackupRetention(c.S3.DatabasePolicy.Retention) {
+			errs = append(errs, errors.New("database backup retention must preserve at least one recovery point"))
+		}
+		if c.S3.ValidatedAt.IsZero() {
+			errs = append(errs, errors.New("object storage capability validation is required"))
+		}
 	}
 
 	return errors.Join(errs...)
+}
+
+func validBackupRetention(retention BackupRetention) bool {
+	if retention.KeepLast < 0 || retention.KeepDaily < 0 ||
+		retention.KeepWeekly < 0 || retention.KeepMonthly < 0 {
+		return false
+	}
+	return retention.KeepLast+retention.KeepDaily+
+		retention.KeepWeekly+retention.KeepMonthly > 0
 }
 
 func (c Config) DatabaseURL() string {
@@ -220,6 +310,8 @@ func (c Config) SecretValues() []string {
 		c.Secrets.Pepper,
 		c.Secrets.S3AccessKeyID,
 		c.Secrets.S3SecretAccessKey,
+		c.Secrets.ResticPassword,
+		c.Secrets.AgeIdentity,
 	}
 }
 

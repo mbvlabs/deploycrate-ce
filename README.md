@@ -48,7 +48,7 @@ The wizard collects and reviews:
 | Operating-system access | The `admin` password is required and the wizard recommends at least 12 characters without enforcing a minimum length. Every server receives a generated Ed25519 administrator key for one-time handoff. An optional ordinary owner public key is retained independently in `authorized_keys`. |
 | Application administrator | The wizard requires a valid email address and a password of at least 8 characters. The administrator is created or updated and marked verified. |
 | PostgreSQL | Choose a local PostgreSQL 17 Docker container or an external server. External connections support `disable`, `require`, `verify-ca`, and `verify-full`; an optional CA file is copied to a managed path before installation starts. |
-| Backup destination | Optional S3-compatible endpoint, region, bucket, and credentials. The values are stored, but backup execution and S3 connectivity validation are not implemented yet. |
+| Backup destination | Optional generic S3-compatible or Cloudflare R2 destination with capability validation, encrypted credentials, Restic server backups, and local PostgreSQL logical backups. |
 
 Generated session, encryption, signing, pepper, and local database secrets are not prompted for or printed. The age passphrase for the SSH CA recovery bundle is always generated automatically and appears only in the final handoff. Database credentials remain in the protected application environment file until the resource credential encryption contract is implemented.
 
@@ -63,7 +63,7 @@ After the operator approves the review screen, the CLI saves resumable configura
 5. Installs checksum-verified node-exporter 1.11.1 as a hardened native service bound only to `10.99.0.1:9100`, with UFW access limited to `wg0`.
 6. Installs and configures Docker Engine, starts pinned ClickHouse 25.8.28.1 with a persistent volume, then installs checksum-verified Prometheus 3.13.1 as a localhost-only native service. Prometheus scrapes every 15 seconds and retains raw data for 24 hours. ClickHouse stores one-minute average, maximum, and last rollups for seven days.
 7. Installs checksum-verified Buildpacks `pack` 0.40.6 and creates the deploycrate-owned build workspace. It does not pre-pull a builder image.
-8. Starts local PostgreSQL or verifies the external connection, installs the application release, writes protected runtime configuration, applies embedded migrations, creates or updates the administrator, and stores optional backup settings.
+8. Starts local PostgreSQL or verifies the external connection, installs the application release, writes protected runtime configuration, applies embedded migrations, creates or updates the administrator, and persists optional encrypted backup policies.
 9. Creates blue and green systemd slots on `127.0.0.1:8080` and `127.0.0.1:8081`, but links and starts only the initial blue slot.
 10. Installs checksum-verified Caddy 2.11.4, records the initial topology, applies the route, and hardens SSH. Direct root login and SSH passwords are disabled; public keys and the installation user CA remain enabled for `admin` only.
 11. Verifies WireGuard, node-exporter, Docker, Caddy, PostgreSQL, Prometheus, ClickHouse, and the active application slot.
@@ -160,7 +160,7 @@ The remaining DeployCrate-managed locations are:
 
 | Location | Contents and ownership |
 | --- | --- |
-| `/etc/deploycrate-ce/` | Root-owned application configuration. `app.env` contains runtime configuration and secrets, `backup.env` contains optional backup destination settings, and `slots/blue.env` plus `slots/green.env` assign ports 8080 and 8081. |
+| `/etc/deploycrate-ce/` | Root-owned application configuration. `app.env` contains runtime configuration and secrets, while `slots/blue.env` and `slots/green.env` assign ports 8080 and 8081. Backup credentials are encrypted in PostgreSQL. |
 | `/etc/deploycrate-ce/installer.json` | Durable non-secret installer configuration used by `resume`. |
 | `/etc/deploycrate-ce/installer-secrets.json` | Transient installer credentials. This file is removed only after the operator types `CONFIRM` at the final handoff. |
 | `/etc/ssl/certs/deploycrate-ce-postgresql-ca.crt` | Managed copy of an external PostgreSQL CA certificate, when one was supplied. It remains readable by the application service. |
