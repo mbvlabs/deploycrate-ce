@@ -27,9 +27,10 @@ type StepState struct {
 }
 
 type State struct {
-	Version   string               `json:"version"`
-	UpdatedAt time.Time            `json:"updated_at"`
-	Steps     map[string]StepState `json:"steps"`
+	Version               string               `json:"version"`
+	UpdatedAt             time.Time            `json:"updated_at"`
+	CredentialsVerifiedAt time.Time            `json:"credentials_verified_at"`
+	Steps                 map[string]StepState `json:"steps"`
 }
 
 type StateStore struct {
@@ -70,4 +71,13 @@ func (s StateStore) Save(state State) error {
 		return fmt.Errorf("encode installer state: %w", err)
 	}
 	return writeProtectedFile(s.path, data, 0o600)
+}
+
+func (s StateStore) MarkCredentialsVerified() error {
+	state, err := s.Load("")
+	if err != nil {
+		return err
+	}
+	state.CredentialsVerifiedAt = time.Now().UTC()
+	return s.Save(state)
 }

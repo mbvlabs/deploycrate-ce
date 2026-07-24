@@ -3,9 +3,11 @@ package services
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -33,6 +35,17 @@ type BootstrapInput struct {
 	DatabasePort        int
 	DatabaseName        string
 	DatabaseSSLMode     string
+	WireGuard           BootstrapWireGuardInput
+}
+
+type BootstrapWireGuardInput struct {
+	Interface           string
+	NetworkCIDR         string
+	PrivateAddress      string
+	PublicKey           string
+	EncryptedPrivateKey []byte
+	Endpoint            string
+	ListenPort          int
 }
 
 type BootstrapResult struct {
@@ -168,7 +181,7 @@ func (service BootstrapService) createGraph(ctx context.Context, input Bootstrap
 
 	server, err := models.Server.Create(ctx, tx, models.CreateServerData{
 		Name: "DeployCrate CE Server", Slug: "deploycrate-ce", Kind: "self_hosted",
-		Capabilities:        json.RawMessage(fmt.Sprintf(`{"runtime":"systemd","proxy":"caddy","deployment_strategies":["blue_green"],"slots":{"blue":%d,"green":%d}}`, bootstrapBluePort, bootstrapGreenPort)),
+		Capabilities:        json.RawMessage(fmt.Sprintf(`{"runtime":"systemd","proxy":"caddy","wireguard":true,"deployment_strategies":["blue_green"],"slots":{"blue":%d,"green":%d}}`, bootstrapBluePort, bootstrapGreenPort)),
 		OperatingSystem:     sql.NullString{String: "linux", Valid: true},
 		Distribution:        sql.NullString{String: input.Distribution, Valid: input.Distribution != ""},
 		DistributionVersion: sql.NullString{String: input.DistributionVersion, Valid: input.DistributionVersion != ""},
@@ -195,7 +208,7 @@ func (service BootstrapService) createGraph(ctx context.Context, input Bootstrap
 	}
 
 	network, err := models.PrivateNetwork.Create(ctx, tx, models.CreatePrivateNetworkData{
-		Name: "DeployCrate CE Host Network", OwnerEnvironmentID: &environment.ID,
+		Name: "DeployCrate CE WireGuard Mesh", OwnerEnvironmentID: &environment.ID,
 	})
 	if err != nil {
 		return BootstrapResult{}, fmt.Errorf("create bootstrap private network: %w", err)
@@ -206,17 +219,39 @@ func (service BootstrapService) createGraph(ctx context.Context, input Bootstrap
 		return BootstrapResult{}, fmt.Errorf("attach bootstrap environment network: %w", err)
 	}
 	applied := sql.NullTime{Time: now, Valid: true}
+	networkConfiguration, err := json.Marshal(map[string]any{
+		"address": input.WireGuard.PrivateAddress, "cidr": input.WireGuard.NetworkCIDR,
+		"endpoint": input.WireGuard.Endpoint, "interface": input.WireGuard.Interface,
+		"listen_port": input.WireGuard.ListenPort,
+	})
+	if err != nil {
+		return BootstrapResult{}, fmt.Errorf("encode bootstrap WireGuard network: %w", err)
+	}
 	if _, err := models.ServerNetwork.Create(ctx, tx, models.CreateServerNetworkData{
-		Driver: "host", ExternalID: sql.NullString{String: "host", Valid: true}, Configuration: json.RawMessage(`{}`),
+		Driver: "wireguard", ExternalID: sql.NullString{String: input.WireGuard.Interface, Valid: true}, Configuration: networkConfiguration,
 		State: "applied", AppliedAt: applied, ObservedAt: applied, ServerID: server.ID, PrivateNetworkID: network.ID,
 	}); err != nil {
 		return BootstrapResult{}, fmt.Errorf("create bootstrap server network: %w", err)
 	}
 	if _, err := models.EnvironmentTargetNetwork.Create(ctx, tx, models.CreateEnvironmentTargetNetworkData{
-		Driver: "host", ExternalID: sql.NullString{String: "host", Valid: true}, Configuration: json.RawMessage(`{}`),
+		Driver: "wireguard", ExternalID: sql.NullString{String: input.WireGuard.Interface, Valid: true}, Configuration: networkConfiguration,
 		State: "applied", AppliedAt: applied, ObservedAt: applied, EnvironmentTargetID: target.ID, PrivateNetworkID: network.ID,
 	}); err != nil {
 		return BootstrapResult{}, fmt.Errorf("create bootstrap target network: %w", err)
+	}
+	peer, err := models.WireGuardPeer.Create(ctx, tx, models.CreateWireGuardPeerData{
+		PublicKey: input.WireGuard.PublicKey, EncPrivateKey: input.WireGuard.EncryptedPrivateKey,
+		PrivateAddress: input.WireGuard.PrivateAddress,
+		Endpoint:       sql.NullString{String: input.WireGuard.Endpoint, Valid: true},
+		ListenPort:     int32(input.WireGuard.ListenPort), ActivatedAt: now, ServerID: server.ID,
+	})
+	if err != nil {
+		return BootstrapResult{}, fmt.Errorf("create bootstrap WireGuard peer: %w", err)
+	}
+	if _, err := models.WireGuardPeerStatus.Create(ctx, tx, models.CreateWireGuardPeerStatusData{
+		State: "ready", ObservedAt: now, WireguardPeerID: peer.ID,
+	}); err != nil {
+		return BootstrapResult{}, fmt.Errorf("create bootstrap WireGuard peer status: %w", err)
 	}
 
 	if err := createBootstrapDatabaseResource(ctx, tx, input, environment.ID, server.ID, network.ID); err != nil {
@@ -353,6 +388,27 @@ func validateBootstrapInput(input BootstrapInput) error {
 	}
 	if strings.TrimSpace(input.DatabaseHost) == "" || input.DatabasePort < 1 || input.DatabasePort > 65535 {
 		return errors.New("bootstrap database endpoint is invalid")
+	}
+	if strings.TrimSpace(input.WireGuard.Interface) == "" || strings.TrimSpace(input.WireGuard.Endpoint) == "" {
+		return errors.New("bootstrap WireGuard interface and endpoint are required")
+	}
+	prefix, err := netip.ParsePrefix(input.WireGuard.NetworkCIDR)
+	if err != nil {
+		return errors.New("bootstrap WireGuard network CIDR is invalid")
+	}
+	address, err := netip.ParseAddr(input.WireGuard.PrivateAddress)
+	if err != nil || !prefix.Contains(address) {
+		return errors.New("bootstrap WireGuard private address is invalid")
+	}
+	publicKey, err := base64.StdEncoding.DecodeString(input.WireGuard.PublicKey)
+	if err != nil || len(publicKey) != 32 {
+		return errors.New("bootstrap WireGuard public key is invalid")
+	}
+	if len(input.WireGuard.EncryptedPrivateKey) == 0 {
+		return errors.New("bootstrap encrypted WireGuard private key is required")
+	}
+	if input.WireGuard.ListenPort < 1 || input.WireGuard.ListenPort > 65535 {
+		return errors.New("bootstrap WireGuard listen port is invalid")
 	}
 	return nil
 }

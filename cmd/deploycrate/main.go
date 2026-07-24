@@ -66,9 +66,6 @@ func install(ctx context.Context, args []string) error {
 	if !isTerminal(os.Stdin) {
 		return errors.New("interactive installation requires a TTY; run sudo deploycrate install from a terminal")
 	}
-	if !*dryRun && setup.HasSavedConfig() {
-		return errors.New("an installation is already configured; run sudo deploycrate resume")
-	}
 	host, err := setup.Preflight(ctx, *dryRun)
 	if err != nil {
 		return err
@@ -78,6 +75,21 @@ func install(ctx context.Context, args []string) error {
 		return err
 	}
 	defer lock.Close()
+	if !*dryRun {
+		status, err := setup.InspectInstallation()
+		if err != nil {
+			return err
+		}
+		switch status {
+		case setup.InstallationFresh:
+		case setup.InstallationResumable, setup.InstallationCleanupPending:
+			return errors.New("an installation is already configured; run sudo deploycrate resume")
+		case setup.InstallationComplete:
+			return errors.New("DeployCrate CE is already installed")
+		default:
+			return errors.New("installer state is inconsistent; inspect /etc/deploycrate-ce and /var/lib/deploycrate-ce before continuing")
+		}
+	}
 
 	cfg, err := setup.NewConfig(version)
 	if err != nil {
@@ -93,6 +105,9 @@ func resume(ctx context.Context, args []string, stdout io.Writer) error {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
+	if !isTerminal(os.Stdin) {
+		return errors.New("interactive resume requires a TTY; run sudo deploycrate resume from a terminal")
+	}
 	if _, err := setup.Preflight(ctx, *dryRun); err != nil {
 		return err
 	}
@@ -101,11 +116,24 @@ func resume(ctx context.Context, args []string, stdout io.Writer) error {
 		return err
 	}
 	defer lock.Close()
+	status, err := setup.InspectInstallation()
+	if err != nil {
+		return err
+	}
+	switch status {
+	case setup.InstallationResumable, setup.InstallationCleanupPending:
+	case setup.InstallationFresh:
+		return errors.New("no saved installation is available to resume")
+	case setup.InstallationComplete:
+		return errors.New("DeployCrate CE installation is already complete")
+	default:
+		return errors.New("installer state is inconsistent; restore the saved installer configuration before resuming")
+	}
 	cfg, err := setup.LoadConfig()
 	if err != nil {
 		return err
 	}
-	return setup.NewRunner(cfg, *dryRun).Execute(ctx, cfg, func(event setup.Event) {
+	if err := setup.NewRunner(cfg, *dryRun).Execute(ctx, cfg, func(event setup.Event) {
 		switch event.Kind {
 		case setup.EventStarted:
 			fmt.Fprintf(stdout, "[%d/%d] %s\n", event.Index, event.Total, event.Description)
@@ -116,7 +144,11 @@ func resume(ctx context.Context, args []string, stdout io.Writer) error {
 		case setup.EventSkipped:
 			fmt.Fprintf(stdout, "[%d/%d] %s: already complete\n", event.Index, event.Total, event.Description)
 		}
-	})
+	}); err != nil {
+		return err
+	}
+	_, err = tea.NewProgram(setupui.NewHandoffModel(cfg, *dryRun, status == setup.InstallationCleanupPending)).Run()
+	return err
 }
 
 func doctor(_ context.Context, args []string, _ io.Writer) error {

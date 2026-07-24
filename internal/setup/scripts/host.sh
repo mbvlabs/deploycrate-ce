@@ -29,7 +29,10 @@ EOF
 systemctl enable --now fail2ban
 systemctl restart fail2ban
 
-if ! swapon --noheadings --raw 2>/dev/null | grep -q .; then
+swapfile_active=false
+if swapon --noheadings --raw 2>/dev/null | awk '{print $1}' | grep -Fxq /swapfile; then
+  swapfile_active=true
+elif ! swapon --noheadings --raw 2>/dev/null | grep -q .; then
   if [ ! -f /swapfile ]; then
     if ! fallocate -l 1G /swapfile; then
       dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none
@@ -38,8 +41,9 @@ if ! swapon --noheadings --raw 2>/dev/null | grep -q .; then
   chmod 0600 /swapfile
   mkswap /swapfile >/dev/null
   swapon /swapfile
+  swapfile_active=true
 fi
 
-if ! grep -q '^/swapfile[[:space:]]' /etc/fstab; then
+if [ "${swapfile_active}" = true ] && ! grep -q '^/swapfile[[:space:]]' /etc/fstab; then
   printf '/swapfile none swap sw 0 0\n' >> /etc/fstab
 fi

@@ -64,6 +64,12 @@ func DefaultSteps() []Step {
 		scriptSetupStep("host-safety", "Configure journald, fail2ban, and swap", "host.sh", func(cfg Config) map[string]string {
 			return map[string]string{"SSH_PORT": fmt.Sprint(cfg.SSHPort)}
 		}),
+		scriptSetupStep("wireguard", "Configure the WireGuard mesh interface", "wireguard.sh", func(Config) map[string]string {
+			return map[string]string{
+				"WG_ADDRESS":     WireGuardPrivateAddress + "/16",
+				"WG_LISTEN_PORT": fmt.Sprint(WireGuardListenPort),
+			}
+		}),
 		scriptSetupStep("docker", "Install and configure Docker Engine", "docker.sh", func(cfg Config) map[string]string {
 			return map[string]string{"USERNAME": cfg.LinuxUser}
 		}),
@@ -76,7 +82,7 @@ func DefaultSteps() []Step {
 		migrationStep(),
 		adminStep(),
 		backupConfigStep(),
-		scriptSetupStep("application-service", "Configure blue-green systemd slots and start Caddy", "service.sh", func(cfg Config) map[string]string {
+		scriptSetupStep("application-service-caddy-2-11-4", "Configure blue-green systemd slots and start pinned Caddy", "service.sh", func(cfg Config) map[string]string {
 			return map[string]string{"USERNAME": cfg.LinuxUser}
 		}),
 		healthStep(),
@@ -152,6 +158,10 @@ func controlPlaneBootstrapStep() Step {
 			if err != nil {
 				return err
 			}
+			wireGuardIdentity, err := LoadWireGuardIdentity(cfg.Secrets.SessionEncryptionKey)
+			if err != nil {
+				return err
+			}
 			db, err := storage.NewPostgres(ctx, cfg.DatabaseURL())
 			if err != nil {
 				return err
@@ -166,6 +176,12 @@ func controlPlaneBootstrapStep() Step {
 				Distribution: metadata["ID"], DistributionVersion: metadata["VERSION_ID"], Architecture: runtime.GOARCH,
 				DatabaseExternal: cfg.Database.External, DatabaseHost: cfg.Database.Host,
 				DatabasePort: cfg.Database.Port, DatabaseName: cfg.Database.Name, DatabaseSSLMode: cfg.Database.SSLMode,
+				WireGuard: services.BootstrapWireGuardInput{
+					Interface: WireGuardInterface, NetworkCIDR: WireGuardNetworkCIDR,
+					PrivateAddress: WireGuardPrivateAddress, PublicKey: wireGuardIdentity.PublicKey,
+					EncryptedPrivateKey: wireGuardIdentity.EncryptedPrivateKey,
+					Endpoint:            cfg.Domain + ":" + fmt.Sprint(WireGuardListenPort), ListenPort: WireGuardListenPort,
+				},
 			})
 			if err != nil {
 				return err

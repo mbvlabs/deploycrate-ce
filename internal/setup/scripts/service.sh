@@ -45,12 +45,45 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF
 
-if ! command -v caddy >/dev/null 2>&1; then
-  curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-  curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt > /etc/apt/sources.list.d/caddy-stable.list
-  DEBIAN_FRONTEND=noninteractive apt-get -o dpkg::lock::timeout=300 update
-  DEBIAN_FRONTEND=noninteractive apt-get -o dpkg::lock::timeout=300 install -y caddy
+readonly CADDY_VERSION="2.11.4"
+readonly CADDY_MODULE="http.reverse_proxy.selection_policies.weighted_round_robin"
+architecture="$(dpkg --print-architecture)"
+case "${architecture}" in
+  amd64)
+    caddy_checksum="c41708ffb4af9bc6d19f7d22a7a034804352a21ecc62e1d3dfe3d58e30b38a3e"
+    ;;
+  arm64)
+    caddy_checksum="aeab2e38bf77a0162611a1703a5e16c09475b000d41f7edaa9337734d16642fd"
+    ;;
+  *)
+    printf 'Unsupported Caddy architecture: %s\n' "${architecture}" >&2
+    exit 1
+    ;;
+esac
+
+installed_caddy_version=""
+if command -v caddy >/dev/null 2>&1; then
+  installed_caddy_version="$(caddy version | awk '{print $1}')"
 fi
+if [ "${installed_caddy_version}" != "v${CADDY_VERSION}" ]; then
+  caddy_package="caddy_${CADDY_VERSION}_linux_${architecture}.deb"
+  caddy_url="https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/${caddy_package}"
+  download_directory="$(mktemp -d)"
+  trap 'rm -rf "${download_directory}"' EXIT
+  curl --fail --silent --show-error --location --retry 3 --output "${download_directory}/${caddy_package}" "${caddy_url}"
+  printf '%s  %s\n' "${caddy_checksum}" "${download_directory}/${caddy_package}" | sha256sum --check --status
+  DEBIAN_FRONTEND=noninteractive apt-get -o dpkg::lock::timeout=300 install -y --allow-downgrades --allow-change-held-packages "${download_directory}/${caddy_package}"
+fi
+
+if [ "$(caddy version | awk '{print $1}')" != "v${CADDY_VERSION}" ]; then
+  printf 'Expected Caddy v%s after installation\n' "${CADDY_VERSION}" >&2
+  exit 1
+fi
+if ! caddy list-modules | grep -Fxq "${CADDY_MODULE}"; then
+  printf 'Installed Caddy v%s does not provide required module %s\n' "${CADDY_VERSION}" "${CADDY_MODULE}" >&2
+  exit 1
+fi
+apt-mark hold caddy >/dev/null
 
 cat > /etc/caddy/Caddyfile <<EOF
 {

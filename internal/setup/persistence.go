@@ -14,8 +14,21 @@ import (
 )
 
 const (
-	ApplicationEnvPath = "/etc/deploycrate-ce/app.env"
-	BackupEnvPath      = "/etc/deploycrate-ce/backup.env"
+	ApplicationEnvPath      = "/etc/deploycrate-ce/app.env"
+	BackupEnvPath           = "/etc/deploycrate-ce/backup.env"
+	DefaultDatabaseCAPath   = "/etc/ssl/certs/deploycrate-ce-postgresql-ca.crt"
+	maxDatabaseCAFileSize   = 1024 * 1024
+	finalInstallerSetupStep = "ssh-hardening"
+)
+
+type InstallationStatus string
+
+const (
+	InstallationFresh          InstallationStatus = "fresh"
+	InstallationResumable      InstallationStatus = "resumable"
+	InstallationCleanupPending InstallationStatus = "cleanup-pending"
+	InstallationComplete       InstallationStatus = "complete"
+	InstallationInconsistent   InstallationStatus = "inconsistent"
 )
 
 func ApplicationReleaseBinaryPath(version string) string {
@@ -26,20 +39,31 @@ func ApplicationSlotBinaryPath(slot string) string {
 	return filepath.Join("/opt/deploycrate-ce/slots", slot, "deploycrate-ce")
 }
 
-func SaveConfig(cfg Config) error {
+func SaveConfig(cfg Config) (Config, error) {
 	configPath, secretPath, _ := ConfigPaths()
-	publicData, err := json.MarshalIndent(cfg, "", "  ")
+	normalized, err := persistDatabaseCA(cfg)
 	if err != nil {
-		return fmt.Errorf("encode installer config: %w", err)
+		return Config{}, err
 	}
-	secretData, err := json.MarshalIndent(cfg.Secrets, "", "  ")
+	publicData, err := json.MarshalIndent(normalized, "", "  ")
 	if err != nil {
-		return fmt.Errorf("encode installer secrets: %w", err)
+		return Config{}, fmt.Errorf("encode installer config: %w", err)
+	}
+	secretData, err := json.MarshalIndent(normalized.Secrets, "", "  ")
+	if err != nil {
+		return Config{}, fmt.Errorf("encode installer secrets: %w", err)
 	}
 	if err := writeProtectedFile(configPath, publicData, 0o600); err != nil {
-		return err
+		return Config{}, err
 	}
-	return writeProtectedFile(secretPath, secretData, 0o600)
+	if err := writeProtectedFile(secretPath, secretData, 0o600); err != nil {
+		removeErr := os.Remove(configPath)
+		if errors.Is(removeErr, os.ErrNotExist) {
+			removeErr = nil
+		}
+		return Config{}, errors.Join(err, removeErr)
+	}
+	return normalized, nil
 }
 
 func LoadConfig() (Config, error) {
@@ -62,11 +86,46 @@ func LoadConfig() (Config, error) {
 	return cfg, nil
 }
 
-func HasSavedConfig() bool {
+func InspectInstallation() (InstallationStatus, error) {
 	configPath, secretPath, _ := ConfigPaths()
-	_, configErr := os.Stat(configPath)
-	_, secretErr := os.Stat(secretPath)
-	return configErr == nil && secretErr == nil
+	configExists, err := fileExists(configPath)
+	if err != nil {
+		return InstallationInconsistent, fmt.Errorf("inspect installer config: %w", err)
+	}
+	secretExists, err := fileExists(secretPath)
+	if err != nil {
+		return InstallationInconsistent, fmt.Errorf("inspect installer secrets: %w", err)
+	}
+	store := NewStateStore()
+	stateExists, err := fileExists(store.Path())
+	if err != nil {
+		return InstallationInconsistent, fmt.Errorf("inspect installer state: %w", err)
+	}
+
+	if !configExists {
+		if !secretExists && !stateExists {
+			return InstallationFresh, nil
+		}
+		return InstallationInconsistent, nil
+	}
+
+	var state State
+	if stateExists {
+		state, err = store.Load("")
+		if err != nil {
+			return InstallationInconsistent, err
+		}
+	}
+	if secretExists {
+		if !state.CredentialsVerifiedAt.IsZero() {
+			return InstallationCleanupPending, nil
+		}
+		return InstallationResumable, nil
+	}
+	if !state.CredentialsVerifiedAt.IsZero() || setupStepCompleted(state, finalInstallerSetupStep) {
+		return InstallationComplete, nil
+	}
+	return InstallationInconsistent, nil
 }
 
 func RemoveTransientSecrets() error {
@@ -75,6 +134,78 @@ func RemoveTransientSecrets() error {
 		return fmt.Errorf("remove installer secrets: %w", err)
 	}
 	return nil
+}
+
+func CompleteCredentialHandoff() error {
+	if err := NewStateStore().MarkCredentialsVerified(); err != nil {
+		return fmt.Errorf("record credential verification: %w", err)
+	}
+	return RemoveTransientSecrets()
+}
+
+func persistDatabaseCA(cfg Config) (Config, error) {
+	source := strings.TrimSpace(cfg.Database.TLSCAPath)
+	if source == "" {
+		return cfg, nil
+	}
+	target := os.Getenv("DEPLOYCRATE_CE_DATABASE_CA_PATH")
+	if target == "" {
+		target = DefaultDatabaseCAPath
+	}
+	if filepath.Clean(source) == filepath.Clean(target) {
+		return cfg, nil
+	}
+
+	info, err := os.Stat(source)
+	if err != nil {
+		return Config{}, fmt.Errorf("inspect database CA certificate: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return Config{}, errors.New("database CA certificate must be a regular file")
+	}
+	if info.Size() == 0 {
+		return Config{}, errors.New("database CA certificate is empty")
+	}
+	if info.Size() > maxDatabaseCAFileSize {
+		return Config{}, fmt.Errorf("database CA certificate exceeds %d bytes", maxDatabaseCAFileSize)
+	}
+
+	file, err := os.Open(source)
+	if err != nil {
+		return Config{}, fmt.Errorf("open database CA certificate: %w", err)
+	}
+	data, readErr := io.ReadAll(io.LimitReader(file, maxDatabaseCAFileSize+1))
+	closeErr := file.Close()
+	if readErr != nil {
+		return Config{}, fmt.Errorf("read database CA certificate: %w", readErr)
+	}
+	if closeErr != nil {
+		return Config{}, fmt.Errorf("close database CA certificate: %w", closeErr)
+	}
+	if len(data) > maxDatabaseCAFileSize {
+		return Config{}, fmt.Errorf("database CA certificate exceeds %d bytes", maxDatabaseCAFileSize)
+	}
+	if err := writeProtectedFile(target, data, 0o644); err != nil {
+		return Config{}, fmt.Errorf("persist database CA certificate: %w", err)
+	}
+	cfg.Database.TLSCAPath = target
+	return cfg, nil
+}
+
+func fileExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
+}
+
+func setupStepCompleted(state State, id string) bool {
+	step, ok := state.Steps[id]
+	return ok && step.Status == StepCompleted
 }
 
 func WriteApplicationEnvironment(cfg Config) error {

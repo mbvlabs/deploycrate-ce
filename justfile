@@ -7,6 +7,7 @@ development-assets:
 
     version="development-$(git describe --always --dirty)"
     output_root="dist/deploycrate-ce-development"
+    remote="dc-ce-dev:deploycrate-development"
     cli_output="${output_root}/dc-ce-cli"
     app_output="${output_root}/dc-ce-app"
 
@@ -31,4 +32,6 @@ development-assets:
     )
     install -m 0644 scripts/install-development.sh "${output_root}/install.sh"
 
-    printf 'Development assets generated in %s\n' "${output_root}"
+    rclone sync "${output_root}" "${remote}"
+
+    printf 'Development assets generated in %s and synced to %s\n' "${output_root}" "${remote}"

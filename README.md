@@ -4,7 +4,20 @@ A full-stack web application built with [Andurel](https://github.com/mbvlabs/and
 
 ## VPS Bootstrap CLI
 
-This repository contains the `deploycrate` Bubble Tea CLI for configuring a Debian 13 VPS as a DeployCrate CE host.
+This repository contains the interactive `deploycrate` CLI for configuring a fresh Debian 13 VPS as a single-server DeployCrate CE host. Bootstrap is supported for fresh installations and interrupted-installation recovery only. It does not upgrade an existing DeployCrate CE installation.
+
+### Host Requirements
+
+A non-dry-run installation must be started as root from an interactive terminal. Preflight accepts Debian 13 on AMD64 or ARM64 and requires:
+
+- `apt-get`, Bash, systemd, and OpenSSH server.
+- At least 512 MB of available memory and 5,120 MB free on the root filesystem.
+- Outbound HTTPS access for Debian packages, Docker, Caddy, Buildpacks, and release assets.
+- A public domain pointed at the server, plus any provider-level firewall rules needed for the selected SSH port, TCP ports 80 and 443, and UDP port 51820.
+
+The installer changes SSH access near the end of bootstrap. Root login and password authentication are disabled, and only the `deploycrate` user is allowed. Keep the original SSH session open until the generated handoff command has been verified from a second terminal.
+
+### Install a Release
 
 The released installer is intended to be run as root from an interactive SSH session:
 
@@ -12,44 +25,177 @@ The released installer is intended to be run as root from an interactive SSH ses
 curl -fsSL https://get.deploycrate.com/ce | sudo bash
 ```
 
-The shell installer downloads the release archive, verifies its SHA-256 checksum, verifies the Sigstore bundle when `cosign` is available, installs both binaries, and opens the interactive setup wizard through `/dev/tty`. GitHub Releases is the default source. `DEPLOYCRATE_RELEASE_BASE_URL` can point at a Cloudflare-hosted directory with the same archive and checksum layout when that endpoint is available.
+The shell installer downloads the release archive, verifies its SHA-256 checksum, verifies its Sigstore bundle when `cosign` is available, installs `deploycrate` and `deploycrate-ce` under `/usr/local/bin`, and opens the wizard through `/dev/tty`. Without a usable TTY it installs the binaries and prints the command needed to continue. GitHub Releases is the default asset source. `DEPLOYCRATE_VERSION`, `DEPLOYCRATE_RELEASE_REPOSITORY`, and `DEPLOYCRATE_RELEASE_BASE_URL` can select a version or compatible release mirror.
 
-The wizard collects the configuration and then:
-
-- A normal `deploycrate` Linux user with SSH access, Docker access, and unrestricted passwordless sudo.
-- Runs embedded, idempotent host setup scripts derived from the DeployCrate provisioning scripts.
-- Installs Docker Engine and either creates a local PostgreSQL 17 container or connects to an externally hosted PostgreSQL database.
-- Installs a pinned and checksum-verified Cloud Native Buildpacks `pack` CLI, Git, and a deploycrate-owned build workspace without pre-pulling a builder image.
-- Applies the embedded database migrations and creates or updates the application administrator.
-- Stores optional S3-compatible backup details in a protected environment file. Backup execution remains pending.
-- Places the release binary in `/opt/deploycrate-ce/releases/<version>/` and activates it through the blue slot.
-- Creates blue and green systemd slots on ports 8080 and 8081, starting only the initial blue slot.
-- Creates the application, production environment, server, network, database resource, bootstrap change, release, deployment, instance, domain, Caddy route, and route backend records.
-- Applies the database-backed route through Caddy's local API and configures Caddy to resume its autosaved API configuration after reboot.
-- Keeps database credentials in the protected application environment file until the resource credential encryption contract is implemented.
-- Writes protected runtime secrets, enables the firewall, and hardens SSH.
-- Requires a final credential handoff and reboot confirmation gate.
-
-The installer does not create an emergency user. The `deploycrate` user has unrestricted passwordless sudo and Docker access by explicit product design.
-
-### CLI Commands
+For the current AMD64 development build:
 
 ```bash
-sudo deploycrate install
-sudo deploycrate resume
-sudo deploycrate doctor
-sudo deploycrate doctor --json
-sudo deploycrate logs
-deploycrate version
+curl -fsSL https://get-dev.deploycrate.com/install.sh | sudo bash
 ```
 
-`resume` continues from persisted step state and `logs` prints the redacted setup log. `doctor` and `backup` remain command stubs.
+The development installer verifies the CLI checksum and installs the CLI first. During bootstrap, the CLI downloads and verifies the matching application binary from the same development endpoint. `DEPLOYCRATE_DEVELOPMENT_BASE_URL` can select a compatible mirror. Maintainers publish both development binaries, checksums, and the installer with `just development-assets`; the recipe synchronizes the resulting directory to `dc-ce-dev:deploycrate-development`.
 
-To walk through the complete flow without changing the host:
+### Wizard Inputs
+
+The wizard collects and reviews:
+
+| Setting | Behavior |
+| --- | --- |
+| Domain and SSH port | The domain is entered without a protocol. The SSH port defaults to `22`. |
+| Operating-system access | The `deploycrate` Linux password must contain at least 12 characters. Supply one SSH public key or leave it blank to generate an Ed25519 key pair for one-time handoff. |
+| Application administrator | The wizard requires a valid email address and a password of at least 8 characters. The administrator is created or updated and marked verified. |
+| PostgreSQL | Choose a local PostgreSQL 17 Docker container or an external server. External connections support `disable`, `require`, `verify-ca`, and `verify-full`; an optional CA file is copied to a managed path before installation starts. |
+| Backup destination | Optional S3-compatible endpoint, region, bucket, and credentials. The values are stored, but backup execution and S3 connectivity validation are not implemented yet. |
+
+Generated session, encryption, signing, pepper, and local database secrets are not prompted for or printed. Database credentials remain in the protected application environment file until the resource credential encryption contract is implemented.
+
+### Bootstrap Behavior
+
+After the operator approves the review screen, the CLI saves resumable configuration and runs these phases in order:
+
+1. Installs baseline packages and creates the `deploycrate` user with Docker access and unrestricted passwordless sudo.
+2. Configures persistent journald storage, fail2ban, and a 1 GB `/swapfile` only when the host has no active swap.
+3. Installs WireGuard tools; creates a root-only keypair and `wg0` configuration; assigns `10.99.0.1/16`; listens on UDP `51820`; opens UFW; and enables and verifies `wg-quick@wg0`.
+4. Installs and configures Docker Engine, then installs checksum-verified Buildpacks `pack` 0.40.6 and creates the deploycrate-owned build workspace. It does not pre-pull a builder image.
+5. Starts local PostgreSQL or verifies the external connection, installs the application release, writes protected runtime configuration, applies embedded migrations, creates or updates the administrator, and stores optional backup settings.
+6. Creates blue and green systemd slots on `127.0.0.1:8080` and `127.0.0.1:8081`, but links and starts only the initial blue slot.
+7. Installs checksum-verified Caddy 2.11.4, verifies weighted round-robin support, holds that package version, and verifies the application at `http://127.0.0.1:8080/api/health`.
+8. Records the application, production environment, server, WireGuard network and peer, database resource, bootstrap change, release, deployment, blue instance, domain, Caddy route, and 100-weight blue route backend in PostgreSQL. The WireGuard private key is stored there only after AES-256-GCM encryption.
+9. Initializes Caddy's `srv0` HTTP server when its configuration is empty, then applies the route through the local API. Other Caddy `400` responses remain installation errors. It configures Caddy to resume its autosaved API configuration after reboot, hardens SSH, and enables UFW for the selected SSH port, TCP 80 and 443, and UDP 51820.
+10. Displays the application, SSH, and administrator credentials. Typing `CONFIRM` records the handoff, permanently removes the transient installer secrets file, and reboots the server. The WireGuard private key is not part of this handoff.
+
+The health check retries for about one minute. A single-server WireGuard mesh has no handshake until another peer joins.
+
+### CLI Commands and Recovery
+
+| Command | Behavior |
+| --- | --- |
+| `sudo deploycrate install` | Opens the wizard for a fresh host. It rejects resumable, completed, or inconsistent installer state. |
+| `sudo deploycrate install --dry-run` | Walks through the complete wizard and setup phases without preflight enforcement, persistent state, host mutation, secret cleanup, or reboot. A TTY is still required. |
+| `sudo deploycrate resume` | Loads the saved configuration, skips steps already marked complete, reruns failed or incomplete steps, and returns to credential handoff. Use this after fixing the reported failure. |
+| `sudo deploycrate resume --dry-run` | Reads an existing resumable configuration and previews every setup phase without mutation. A TTY is still required. |
+| `sudo deploycrate logs` | Prints `/var/lib/deploycrate-ce/install.log`. Script output is redacted using the collected secret values. |
+| `deploycrate version` | Prints the CLI version. `deploycrate --version` and `deploycrate -v` are aliases. |
+| `deploycrate help` | Prints command usage. Running without arguments, `deploycrate --help`, and `deploycrate -h` do the same. |
+| `sudo deploycrate doctor [--json]` | Accepted command, but currently exits with a not-implemented error. JSON output is not implemented. |
+| `sudo deploycrate backup` | Accepted command, but currently exits with a not-implemented error. |
+
+Configuration is saved before the first setup phase and each completed step is recorded in `/var/lib/deploycrate-ce/install-state.json`. A non-blocking process lock prevents concurrent installers. If setup fails after configuration is saved, fix the reported problem and run `sudo deploycrate resume`; do not start a second installation. The topology transaction is reused by domain if Caddy reconciliation needs to be retried.
+
+If credential verification was recorded but secret cleanup failed, `resume` returns directly to the final handoff. If cleanup succeeded but the reboot command failed, the installation is complete and `resume` is rejected; reboot the host manually.
+
+The installer does not create an emergency user. Node-exporter is also not installed: there is no node-exporter binary, systemd unit, port `9100` listener, or bootstrap health check.
+
+### Installed Host Layout
+
+DeployCrate separates bootstrap commands, immutable application releases, slot pointers, protected configuration, and mutable runtime state. The application service never executes the bootstrap copy in `/usr/local/bin` directly.
+
+```text
+/usr/local/bin/
+|-- deploycrate                         Bootstrap and recovery CLI
+|-- deploycrate-ce                      Production installer payload
+`-- pack                                Cloud Native Buildpacks CLI
+
+/opt/deploycrate-ce/
+|-- releases/
+|   `-- <version>/deploycrate-ce        Immutable installed application release
+`-- slots/
+    |-- blue/deploycrate-ce  -> /opt/deploycrate-ce/releases/<blue-version>/deploycrate-ce
+    `-- green/deploycrate-ce -> /opt/deploycrate-ce/releases/<green-version>/deploycrate-ce
+                               Created when the first update is staged
+```
+
+The initial installation creates the blue and green slot directories, installs the selected application release under `/opt/deploycrate-ce/releases/<version>/`, points the blue slot at that release, and starts only `deploycrate-ce@blue.service`. A slot path is an atomic symlink to a release binary. It identifies what that slot will execute, but it does not by itself mean the slot is active.
+
+The remaining DeployCrate-managed locations are:
+
+| Location | Contents and ownership |
+| --- | --- |
+| `/etc/deploycrate-ce/` | Root-owned application configuration. `app.env` contains runtime configuration and secrets, `backup.env` contains optional backup destination settings, and `slots/blue.env` plus `slots/green.env` assign ports 8080 and 8081. |
+| `/etc/deploycrate-ce/installer.json` | Durable non-secret installer configuration used by `resume`. |
+| `/etc/deploycrate-ce/installer-secrets.json` | Transient installer credentials. This file is removed only after the operator types `CONFIRM` at the final handoff. |
+| `/etc/ssl/certs/deploycrate-ce-postgresql-ca.crt` | Managed copy of an external PostgreSQL CA certificate, when one was supplied. It remains readable by the application service. |
+| `/etc/wireguard/` | Root-only `deploycrate-ce.key`, `deploycrate-ce.pub`, and `wg0.conf` files for the initial mesh peer. |
+| `/var/lib/deploycrate-ce/` | Root-owned installer state, including `install-state.json`, `install.lock`, and the redacted `install.log`. |
+| `/var/lib/deploycrate-ce/runtime/` | Mutable application runtime state owned by the `deploycrate` user, including `self-update.json`. |
+| `/var/lib/deploycrate-builds/` | Build workspace owned by the `deploycrate` user. Builder images and build containers remain Docker-managed. |
+| `/home/deploycrate/.ssh/authorized_keys` | SSH access for the `deploycrate` operating-system user. |
+
+The installer also places the checksum-verified Buildpacks CLI at `/usr/local/bin/pack`. Caddy is installed from the pinned official Debian package at `/usr/bin/caddy` and held at the installer-supported version. Docker Engine and the remaining host packages use their standard Debian package locations.
+
+When local PostgreSQL is selected, its data is stored in the Docker named volume `deploycrate-ce-postgres`, mounted at `/var/lib/postgresql/data` inside the `deploycrate-ce-postgres` container. The physical host path belongs to Docker and can be found with `docker volume inspect deploycrate-ce-postgres`.
+
+The installer also writes host integration files outside the DeployCrate directories:
+
+- `/etc/systemd/system/deploycrate-ce@.service` defines both application slots.
+- `/etc/wireguard/wg0.conf` is managed by `wg-quick@wg0.service` and contains the live WireGuard interface configuration.
+- `/etc/systemd/system/caddy.service.d/deploycrate-ce.conf` makes Caddy resume its autosaved API configuration after reboot.
+- `/etc/caddy/Caddyfile` enables Caddy's local administration endpoint.
+- `/etc/systemd/journald.conf.d/deploycrate-ce.conf`, `/etc/fail2ban/jail.d/deploycrate-ce.conf`, and `/etc/ssh/sshd_config.d/99-deploycrate-ce.conf` configure host logging and SSH protection.
+- `/etc/sudoers.d/deploycrate` grants the documented passwordless sudo access.
+- `/etc/docker/daemon.json` configures Docker log rotation.
+- `/swapfile` is created only when the host has no active swap.
+
+### Post-install Inspection
+
+Application and Caddy:
 
 ```bash
-sudo deploycrate install --dry-run
+sudo systemctl status deploycrate-ce@blue.service
+curl -fsS http://127.0.0.1:8080/api/health
+curl -fsS http://127.0.0.1:2019/config/
+curl -fsS http://127.0.0.1:2019/config/apps/http/servers/srv0/routes
 ```
+
+WireGuard:
+
+```bash
+sudo systemctl status wg-quick@wg0
+sudo wg show wg0
+ip address show wg0
+sudo cat /etc/wireguard/deploycrate-ce.pub
+```
+
+Local PostgreSQL:
+
+```bash
+sudo docker exec -it deploycrate-ce-postgres \
+  psql --username deploycrate --dbname deploycrate_ce
+```
+
+### How the Active Slot Is Determined
+
+Blue listens on `127.0.0.1:8080` and green listens on `127.0.0.1:8081`. Before a self-update starts, DeployCrate requires two independent views of the active slot to agree:
+
+```text
+Persisted topology
+backend with weight 100 -> instance.slot: blue or green
+                         |
+                         | must match
+                         v
+Observed host state
+exactly one active systemd unit: deploycrate-ce@blue or deploycrate-ce@green
+                         |
+                         v
+Caddy sends public traffic to the 100-weight slot
+```
+
+DeployCrate queries `systemctl is-active` for both slot services. It refuses to update if both are running, neither is running, or the running service disagrees with the active slot recorded by the 100-weight database backend.
+
+During an update, DeployCrate installs the verified binary in a new immutable release directory, repoints only the inactive slot symlink, starts that slot, and checks its internal health endpoint. It then switches Caddy weights from `100/0` to `0/100`, verifies the public health endpoint, enables the new systemd unit for the next boot, disables the previous unit, and finally stops the previous slot. Any failure before completion restores traffic, service enablement, and the previous inactive-slot symlink.
+
+An operator can inspect the host-side state with:
+
+```bash
+sudo systemctl is-active deploycrate-ce@blue.service
+sudo systemctl is-active deploycrate-ce@green.service
+sudo systemctl is-enabled deploycrate-ce@blue.service
+sudo systemctl is-enabled deploycrate-ce@green.service
+readlink -f /opt/deploycrate-ce/slots/blue/deploycrate-ce
+readlink -f /opt/deploycrate-ce/slots/green/deploycrate-ce
+```
+
+The green `readlink` command has no target until the first update has staged a release into that slot.
 
 ## Project Structure
 

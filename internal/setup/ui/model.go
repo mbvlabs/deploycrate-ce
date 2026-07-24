@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/spinner"
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -41,24 +42,28 @@ type runClosedMsg struct{}
 type validationMsg struct{ err error }
 type rebootMsg struct{ err error }
 
+const installerConfigStepID = "installer-config"
+
 type Model struct {
-	config        setup.Config
-	host          setup.HostInfo
-	dryRun        bool
-	screen        screen
-	inputs        []textinput.Model
-	focus         int
-	choice        int
-	width         int
-	height        int
-	err           error
-	events        []setup.Event
-	eventStream   <-chan setup.Event
-	cancel        context.CancelFunc
-	installDone   bool
-	copied        bool
-	sshVerified   bool
-	rebootStarted bool
+	config              setup.Config
+	host                setup.HostInfo
+	dryRun              bool
+	screen              screen
+	inputs              []textinput.Model
+	focus               int
+	choice              int
+	width               int
+	height              int
+	err                 error
+	events              []setup.Event
+	eventStream         <-chan setup.Event
+	cancel              context.CancelFunc
+	installDone         bool
+	configSaved         bool
+	credentialsVerified bool
+	handoffConfirmation textinput.Model
+	rebootStarted       bool
+	activity            spinner.Model
 }
 
 var (
@@ -81,10 +86,28 @@ var (
 )
 
 func NewModel(cfg setup.Config, host setup.HostInfo, dryRun bool) Model {
-	return Model{config: cfg, host: host, dryRun: dryRun, screen: screenWelcome, width: 88, height: 30}
+	activity := spinner.New(
+		spinner.WithSpinner(spinner.MiniDot),
+		spinner.WithStyle(lipgloss.NewStyle().Foreground(colorPink)),
+	)
+	return Model{config: cfg, host: host, dryRun: dryRun, screen: screenWelcome, width: 88, height: 30, activity: activity}
 }
 
-func (m Model) Init() tea.Cmd { return nil }
+func NewHandoffModel(cfg setup.Config, dryRun, credentialsVerified bool) Model {
+	confirmation := newHandoffConfirmation()
+	return Model{
+		config: cfg, dryRun: dryRun, screen: screenHandoff, width: 88, height: 30,
+		installDone: true, configSaved: !dryRun, credentialsVerified: credentialsVerified,
+		handoffConfirmation: confirmation,
+	}
+}
+
+func (m Model) Init() tea.Cmd {
+	if m.screen == screenHandoff {
+		return textinput.Blink
+	}
+	return nil
+}
 
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := message.(type) {
@@ -105,13 +128,18 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case runEventMsg:
 		m.events = append(m.events, msg.event)
-		if msg.event.Kind == setup.EventFailed {
+		if msg.event.StepID == installerConfigStepID && msg.event.Kind == setup.EventCompleted {
+			m.configSaved = true
+		}
+		if msg.event.Err != nil {
 			m.err = msg.event.Err
 		}
 		if msg.event.Kind == setup.EventFinished && msg.event.Err == nil {
 			m.installDone = true
 			m.screen = screenHandoff
-			return m, nil
+			m.credentialsVerified = false
+			m.handoffConfirmation = newHandoffConfirmation()
+			return m, textinput.Blink
 		}
 		return m, waitForEvent(m.eventStream)
 	case runClosedMsg:
@@ -126,6 +154,13 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, tea.Quit
+	case spinner.TickMsg:
+		if (m.screen != screenRunning && m.screen != screenValidating) || m.err != nil {
+			return m, nil
+		}
+		var command tea.Cmd
+		m.activity, command = m.activity.Update(msg)
+		return m, command
 	case tea.KeyPressMsg:
 		key := msg.String()
 		if key == "ctrl+c" {
@@ -138,7 +173,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.screen == screenHandoff {
-			return m.updateHandoff(key)
+			return m.updateHandoff(msg)
 		}
 		if m.screen == screenDatabaseChoice || m.screen == screenStorageChoice {
 			return m.updateChoice(key)
@@ -174,6 +209,9 @@ func (m Model) View() tea.View {
 			view.Cursor = input.Cursor()
 			break
 		}
+	}
+	if m.screen == screenHandoff && m.handoffConfirmation.Focused() {
+		view.Cursor = m.handoffConfirmation.Cursor()
 	}
 	return view
 }
@@ -243,6 +281,13 @@ func newInput(placeholder, value string, password bool) textinput.Model {
 	styles.Blurred.Prompt = mutedStyle
 	styles.Blurred.Text = mutedStyle
 	input.SetStyles(styles)
+	return input
+}
+
+func newHandoffConfirmation() textinput.Model {
+	input := newInput("CONFIRM", "", false)
+	input.CharLimit = len("CONFIRM")
+	input.Focus()
 	return input
 }
 
@@ -385,7 +430,7 @@ func (m Model) advanceAfterForm() (tea.Model, tea.Cmd) {
 		m.inputs = nil
 	case screenStorage:
 		m.screen = screenValidating
-		return m, validateRemoteServices(m.config, m.dryRun)
+		return m, tea.Batch(validateRemoteServices(m.config, m.dryRun), m.activity.Tick)
 	}
 	return m, textinput.Blink
 }
@@ -416,7 +461,7 @@ func (m Model) updateChoice(key string) (tea.Model, tea.Cmd) {
 		return m, textinput.Blink
 	}
 	m.screen = screenValidating
-	return m, validateRemoteServices(m.config, m.dryRun)
+	return m, tea.Batch(validateRemoteServices(m.config, m.dryRun), m.activity.Tick)
 }
 
 func validateRemoteServices(cfg setup.Config, dryRun bool) tea.Cmd {
@@ -442,28 +487,32 @@ func (m Model) startInstall() (tea.Model, tea.Cmd) {
 		m.err = err
 		return m, nil
 	}
+	m.err = nil
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel = cancel
 	stream := make(chan setup.Event, 8)
 	m.eventStream = stream
 	m.screen = screenRunning
 	m.events = nil
-	runner := setup.NewRunner(m.config, m.dryRun)
-	go func() {
+	go func(cfg setup.Config) {
 		if !m.dryRun {
-			if err := setup.SaveConfig(m.config); err != nil {
-				stream <- setup.Event{Kind: setup.EventFinished, Err: err}
+			normalized, err := setup.SaveConfig(cfg)
+			if err != nil {
+				stream <- setup.Event{Kind: setup.EventFailed, StepID: installerConfigStepID, Description: "Persist installer configuration", Err: err}
 				close(stream)
 				return
 			}
+			cfg = normalized
+			stream <- setup.Event{Kind: setup.EventCompleted, StepID: installerConfigStepID, Description: "Persist installer configuration"}
 		}
-		err := runner.Execute(ctx, m.config, func(event setup.Event) { stream <- event })
+		runner := setup.NewRunner(cfg, m.dryRun)
+		err := runner.Execute(ctx, cfg, func(event setup.Event) { stream <- event })
 		if err != nil {
-			stream <- setup.Event{Kind: setup.EventFinished, Err: err}
+			stream <- setup.Event{Kind: setup.EventFailed, Description: "Installation stopped", Err: err}
 		}
 		close(stream)
-	}()
-	return m, waitForEvent(stream)
+	}(m.config)
+	return m, tea.Batch(waitForEvent(stream), m.activity.Tick)
 }
 
 func waitForEvent(stream <-chan setup.Event) tea.Cmd {
@@ -476,21 +525,23 @@ func waitForEvent(stream <-chan setup.Event) tea.Cmd {
 	}
 }
 
-func (m Model) updateHandoff(key string) (tea.Model, tea.Cmd) {
-	switch key {
-	case "c":
-		m.copied = true
-	case "v":
-		if m.copied {
-			m.sshVerified = true
-		}
-	case "r", "enter":
-		if m.copied && m.sshVerified && !m.rebootStarted {
-			m.rebootStarted = true
-			return m, reboot(m.dryRun)
-		}
+func (m Model) updateHandoff(message tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.rebootStarted {
+		return m, nil
 	}
-	return m, nil
+	if message.String() == "enter" {
+		if strings.TrimSpace(m.handoffConfirmation.Value()) != "CONFIRM" {
+			m.err = errors.New("type CONFIRM exactly to remove transient secrets and reboot")
+			return m, nil
+		}
+		m.err = nil
+		m.rebootStarted = true
+		return m, reboot(m.dryRun)
+	}
+	m.err = nil
+	var command tea.Cmd
+	m.handoffConfirmation, command = m.handoffConfirmation.Update(message)
+	return m, command
 }
 
 func reboot(dryRun bool) tea.Cmd {
@@ -498,7 +549,7 @@ func reboot(dryRun bool) tea.Cmd {
 		if dryRun {
 			return rebootMsg{}
 		}
-		if err := setup.RemoveTransientSecrets(); err != nil {
+		if err := setup.CompleteCredentialHandoff(); err != nil {
 			return rebootMsg{err: err}
 		}
 		return rebootMsg{err: exec.Command("systemctl", "reboot").Run()}
@@ -527,7 +578,7 @@ func (m Model) renderScreen(width int) string {
 	case screenStorage:
 		content = m.renderForm([]string{"Endpoint", "Region", "Bucket", "Access key ID", "Secret access key"})
 	case screenValidating:
-		content = labelStyle.Render("Validating configuration") + "\n\n" + mutedStyle.Render("Checking external database connectivity. S3 validation is pending the backup adapter.")
+		content = m.activity.View() + " " + labelStyle.Render("Validating configuration") + "\n\n" + mutedStyle.Render("Checking external database connectivity. S3 validation is pending the backup adapter.")
 	case screenReview:
 		content = m.renderReview()
 	case screenRunning:
@@ -595,11 +646,14 @@ func (m Model) renderReview() string {
 }
 
 func (m Model) renderProgress() string {
-	if len(m.events) == 0 {
-		return labelStyle.Render("Preparing installation...")
+	var b strings.Builder
+	if m.err == nil {
+		b.WriteString(m.activity.View())
+		b.WriteString(" ")
+		b.WriteString(labelStyle.Render(m.progressStatus()))
+		b.WriteString("\n\n")
 	}
 	start := max(0, len(m.events)-12)
-	var b strings.Builder
 	for _, event := range m.events[start:] {
 		symbol := "·"
 		style := mutedStyle
@@ -624,14 +678,39 @@ func (m Model) renderProgress() string {
 	}
 	if m.err != nil {
 		b.WriteString("\n")
-		b.WriteString(warnStyle.Render("Fix the reported issue, then run: sudo deploycrate resume"))
+		if m.configSaved {
+			b.WriteString(warnStyle.Render("Fix the reported issue, then run: sudo deploycrate resume"))
+		} else {
+			b.WriteString(warnStyle.Render("Fix the reported issue, then retry the installation."))
+		}
 	}
 	return b.String()
 }
 
+func (m Model) progressStatus() string {
+	if len(m.events) == 0 {
+		if m.dryRun {
+			return "Preparing installation..."
+		}
+		return "Saving installer configuration..."
+	}
+	for index := len(m.events) - 1; index >= 0; index-- {
+		event := m.events[index]
+		switch event.Kind {
+		case setup.EventStarted:
+			return event.Description + "..."
+		case setup.EventCompleted, setup.EventSkipped:
+			return "Preparing the next setup step..."
+		case setup.EventFailed:
+			return "Installation stopped"
+		}
+	}
+	return "Installation is running..."
+}
+
 func (m Model) renderHandoff() string {
 	var b strings.Builder
-	b.WriteString(okStyle.Bold(true).Render("Installation complete"))
+	b.WriteString(okStyle.Bold(true).Render("Setup complete. Final confirmation required."))
 	b.WriteString("\n\n")
 	b.WriteString(labelStyle.Render("Application URL") + "  https://" + m.config.Domain + "\n")
 	b.WriteString(labelStyle.Render("Linux user") + "      deploycrate\n")
@@ -644,21 +723,15 @@ func (m Model) renderHandoff() string {
 	}
 	b.WriteString(labelStyle.Render("App admin") + "       " + m.config.AdminEmail + "\n")
 	b.WriteString(labelStyle.Render("Admin password") + "   " + m.config.Secrets.AdminPassword + "\n\n")
-	b.WriteString(statusLine(m.copied, "Press c after copying all credentials") + "\n")
-	b.WriteString(statusLine(m.sshVerified, "Open a second terminal, connect over SSH, then press v") + "\n")
-	if m.copied && m.sshVerified {
-		b.WriteString(warnStyle.Render("Press r to remove transient installer secrets and reboot."))
+	b.WriteString(labelStyle.Render("Final step") + "\n")
+	if m.credentialsVerified {
+		b.WriteString("Your previous confirmation was recorded, but secret cleanup did not finish.\n")
 	} else {
-		b.WriteString(mutedStyle.Render("Reboot remains locked until both confirmations are complete."))
+		b.WriteString("Copy every credential above, then verify the SSH command from a second terminal.\n")
 	}
+	b.WriteString(warnStyle.Render("Type CONFIRM and press enter to permanently remove transient secrets and reboot.") + "\n\n")
+	b.WriteString(m.handoffConfirmation.View())
 	return b.String()
-}
-
-func statusLine(done bool, text string) string {
-	if done {
-		return okStyle.Render("✓ " + text)
-	}
-	return mutedStyle.Render("○ " + text)
 }
 
 func (m Model) stepLabel() string {

@@ -98,15 +98,15 @@ func (client *Client) VerifyRoute(ctx context.Context, id string) error {
 }
 
 func (client *Client) ensureServer(ctx context.Context) error {
-	status, err := client.status(ctx, routesPath)
+	status, body, err := client.status(ctx, routesPath)
 	if err != nil {
 		return fmt.Errorf("caddy: inspect HTTP server: %w", err)
 	}
 	if status == http.StatusOK {
 		return nil
 	}
-	if status != http.StatusNotFound {
-		return fmt.Errorf("caddy: inspect HTTP server: unexpected status %d", status)
+	if status != http.StatusNotFound && !isInvalidTraversal(status, body) {
+		return fmt.Errorf("caddy: inspect HTTP server: unexpected status %d: %s", status, strings.TrimSpace(string(body)))
 	}
 
 	payload, err := json.Marshal(map[string]any{
@@ -131,7 +131,7 @@ func (client *Client) ensureServer(ctx context.Context) error {
 }
 
 func (client *Client) routeExists(ctx context.Context, id string) (bool, error) {
-	status, err := client.status(ctx, "/id/"+url.PathEscape(id))
+	status, body, err := client.status(ctx, "/id/"+url.PathEscape(id))
 	if err != nil {
 		return false, fmt.Errorf("caddy: inspect route %s: %w", id, err)
 	}
@@ -141,22 +141,35 @@ func (client *Client) routeExists(ctx context.Context, id string) (bool, error) 
 	case http.StatusNotFound:
 		return false, nil
 	default:
-		return false, fmt.Errorf("caddy: inspect route %s: unexpected status %d", id, status)
+		return false, fmt.Errorf("caddy: inspect route %s: unexpected status %d: %s", id, status, strings.TrimSpace(string(body)))
 	}
 }
 
-func (client *Client) status(ctx context.Context, path string) (int, error) {
+func (client *Client) status(ctx context.Context, path string) (int, []byte, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+path, nil)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	response, err := client.http.Do(request)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	defer response.Body.Close()
-	_, _ = io.Copy(io.Discard, response.Body)
-	return response.StatusCode, nil
+	body, err := io.ReadAll(io.LimitReader(response.Body, 32*1024))
+	if err != nil {
+		return response.StatusCode, nil, err
+	}
+	return response.StatusCode, body, nil
+}
+
+func isInvalidTraversal(status int, body []byte) bool {
+	if status != http.StatusBadRequest {
+		return false
+	}
+	var response struct {
+		Error string `json:"error"`
+	}
+	return json.Unmarshal(body, &response) == nil && strings.HasPrefix(response.Error, "invalid traversal path at:")
 }
 
 func (client *Client) request(ctx context.Context, method, path string, payload []byte, allowed ...int) error {
