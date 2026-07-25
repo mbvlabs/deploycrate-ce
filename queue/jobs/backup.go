@@ -1,18 +1,27 @@
 package jobs
 
 import (
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 )
 
 const BackupQueue = "backups"
 
-type BackupScheduleTickArgs struct{}
+type BackupScheduleArgs struct {
+	TargetType  string    `json:"target_type" river:"unique"`
+	ScheduledAt time.Time `json:"scheduled_at" river:"unique"`
+}
 
-func (BackupScheduleTickArgs) Kind() string { return "backup_schedule_tick" }
+func (BackupScheduleArgs) Kind() string { return "backup_schedule" }
 
-func (BackupScheduleTickArgs) InsertOpts() river.InsertOpts {
-	return river.InsertOpts{MaxAttempts: 3, UniqueOpts: river.UniqueOpts{ByArgs: true}}
+func (BackupScheduleArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{
+		MaxAttempts: 3,
+		UniqueOpts:  river.UniqueOpts{ByArgs: true},
+		Tags:        []string{"backup", "schedule"},
+	}
 }
 
 type BackupExecuteArgs struct {

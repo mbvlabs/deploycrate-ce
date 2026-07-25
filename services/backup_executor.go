@@ -26,18 +26,24 @@ type BackupCredentialPayload struct {
 }
 
 type BackupScope struct {
-	Backup               models.BackupEntity
-	PolicyRetention      json.RawMessage
-	PolicyVerification   json.RawMessage
-	PolicySettings       json.RawMessage
-	DestinationProvider  string
-	DestinationEndpoint  string
-	DestinationRegion    string
-	DestinationBucket    string
-	DestinationPrefix    string
-	DestinationPathStyle bool
-	CredentialPayload    []byte
-	DatabaseExternal     bool
+	Backup                 models.BackupEntity
+	PolicyRetention        json.RawMessage
+	PolicyVerification     json.RawMessage
+	PolicySettings         json.RawMessage
+	DestinationProvider    string
+	DestinationEndpoint    string
+	DestinationRegion      string
+	DestinationBucket      string
+	DestinationPrefix      string
+	DestinationPathStyle   bool
+	CredentialProvider     string
+	CredentialPayload      []byte
+	BindingResourceID      *uuid.UUID
+	EndpointResourceID     *uuid.UUID
+	EndpointInstallationID *uuid.UUID
+	InstallationResourceID *uuid.UUID
+	ResourceKind           string
+	DatabaseExternal       bool
 }
 
 func (scope BackupScope) ObjectStorageConfig() objectstorage.Config {
@@ -176,11 +182,9 @@ func (service *BackupExecutor) Execute(ctx context.Context, backupID uuid.UUID) 
 	}); err != nil {
 		return fmt.Errorf("record uploaded backup: %w", err)
 	}
-	if _, err := tx.NewUpdate().TableExpr("change_tasks").
-		Set("status = ?", "completed").
-		Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", scope.Backup.ChangeTaskID).
-		Exec(ctx); err != nil {
+	if err := models.ChangeTask.MarkCompleted(
+		ctx, tx, scope.Backup.ChangeTaskID, time.Now().UTC(),
+	); err != nil {
 		return fmt.Errorf("complete backup execution task: %w", err)
 	}
 	if _, err := service.queue.InsertTx(
@@ -240,6 +244,9 @@ func validateBackupScope(scope BackupScope) error {
 	if _, err := objectstorage.Normalize(scope.ObjectStorageConfig()); err != nil {
 		return err
 	}
+	if scope.CredentialProvider != "backup_"+scope.DestinationProvider {
+		return errors.New("backup credential provider does not match its destination")
+	}
 	if !json.Valid(scope.PolicyRetention) || !json.Valid(scope.PolicyVerification) ||
 		!json.Valid(scope.PolicySettings) || len(scope.CredentialPayload) < 2 {
 		return errors.New("backup policy or credential scope is incomplete")
@@ -254,6 +261,17 @@ func validateBackupScope(scope BackupScope) error {
 	if scope.DatabaseExternal {
 		return errors.New("externally managed databases cannot be backed up")
 	}
+	if scope.Backup.ResourceID == nil || scope.Backup.EnvironmentResourceID == nil ||
+		scope.Backup.ResourceInstallationID == nil || scope.BindingResourceID == nil ||
+		scope.EndpointResourceID == nil || scope.EndpointInstallationID == nil ||
+		scope.InstallationResourceID == nil ||
+		*scope.BindingResourceID != *scope.Backup.ResourceID ||
+		*scope.EndpointResourceID != *scope.Backup.ResourceID ||
+		*scope.InstallationResourceID != *scope.Backup.ResourceID ||
+		*scope.EndpointInstallationID != *scope.Backup.ResourceInstallationID ||
+		scope.ResourceKind != "postgresql" {
+		return errors.New("database backup target is not the local PostgreSQL resource")
+	}
 	if scope.Backup.Strategy != "logical" || scope.Backup.Driver != "postgresql" ||
 		scope.Backup.Format != "tar.age" {
 		return errors.New("database backup driver scope is incompatible")
@@ -267,23 +285,10 @@ func markBackupExecutionStarted(
 	backup models.BackupEntity,
 ) error {
 	now := time.Now().UTC()
-	if _, err := db.NewUpdate().TableExpr("changes").
-		Set("status = ?", "running").
-		Set("started_at = COALESCE(started_at, ?)", now).
-		Set("finished_at = NULL").
-		Set("error = NULL").
-		Set("updated_at = ?", now).
-		Where("id = ?", backup.ChangeID).
-		Exec(ctx); err != nil {
+	if err := models.Change.MarkRunning(ctx, db, backup.ChangeID, now); err != nil {
 		return err
 	}
-	_, err := db.NewUpdate().TableExpr("change_tasks").
-		Set("status = ?", "running").
-		Set("attempt_count = attempt_count + 1").
-		Set("updated_at = ?", now).
-		Where("id = ?", backup.ChangeTaskID).
-		Exec(ctx)
-	return err
+	return models.ChangeTask.MarkRunning(ctx, db, backup.ChangeTaskID, now)
 }
 
 func markBackupLifecycleFailed(
@@ -293,11 +298,7 @@ func markBackupLifecycleFailed(
 	operationErr error,
 ) error {
 	now := time.Now().UTC()
-	if _, err := db.NewUpdate().TableExpr("change_tasks").
-		Set("status = ?", "failed").
-		Set("updated_at = ?", now).
-		Where("id = ?", backup.ChangeTaskID).
-		Exec(ctx); err != nil {
+	if err := models.ChangeTask.MarkFailed(ctx, db, backup.ChangeTaskID, now); err != nil {
 		return err
 	}
 	return markBackupChangeFailed(ctx, db, backup, operationErr)
@@ -309,67 +310,26 @@ func markBackupChangeFailed(
 	backup models.BackupEntity,
 	operationErr error,
 ) error {
-	now := time.Now().UTC()
-	_, err := db.NewUpdate().TableExpr("changes").
-		Set("status = ?", "failed").
-		Set("finished_at = ?", now).
-		Set("error = ?", operationErr.Error()).
-		Set("updated_at = ?", now).
-		Where("id = ?", backup.ChangeID).
-		Exec(ctx)
-	return err
+	return models.Change.MarkFailed(
+		ctx, db, backup.ChangeID, operationErr, time.Now().UTC(),
+	)
 }
 
 func (service *BackupExecutor) loadScope(ctx context.Context, backupID uuid.UUID) (BackupScope, error) {
-	type scopeRow struct {
-		models.BackupEntity  `bun:"embed:backup_"`
-		PolicyRetention      json.RawMessage `bun:"policy_retention"`
-		PolicyVerification   json.RawMessage `bun:"policy_verification"`
-		PolicySettings       json.RawMessage `bun:"policy_settings"`
-		DestinationProvider  string          `bun:"destination_provider"`
-		DestinationEndpoint  string          `bun:"destination_endpoint"`
-		DestinationRegion    string          `bun:"destination_region"`
-		DestinationBucket    string          `bun:"destination_bucket"`
-		DestinationPrefix    string          `bun:"destination_prefix"`
-		DestinationPathStyle bool            `bun:"destination_path_style"`
-		CredentialPayload    []byte          `bun:"credential_payload"`
-		DatabaseExternal     bool            `bun:"database_external"`
-	}
-	var row scopeRow
-	if err := service.db.Executor().NewSelect().
-		TableExpr("backups AS backup").
-		ColumnExpr("backup.id AS backup_id, backup.created_at AS backup_created_at, backup.updated_at AS backup_updated_at").
-		ColumnExpr("backup.target_type AS backup_target_type, backup.trigger_type AS backup_trigger_type, backup.scheduled_at AS backup_scheduled_at").
-		ColumnExpr("backup.strategy AS backup_strategy, backup.driver AS backup_driver, backup.format AS backup_format, backup.format_version AS backup_format_version").
-		ColumnExpr("backup.artifact_reference AS backup_artifact_reference, backup.provider_metadata AS backup_provider_metadata, backup.status AS backup_status").
-		ColumnExpr("backup.requested_at AS backup_requested_at, backup.started_at AS backup_started_at, backup.uploaded_at AS backup_uploaded_at").
-		ColumnExpr("backup.finished_at AS backup_finished_at, backup.verified_at AS backup_verified_at, backup.pruned_at AS backup_pruned_at").
-		ColumnExpr("backup.size_bytes AS backup_size_bytes, backup.digest AS backup_digest, backup.producer_version AS backup_producer_version, backup.error AS backup_error").
-		ColumnExpr("backup.change_id AS backup_change_id, backup.change_task_id AS backup_change_task_id, backup.backup_policy_id AS backup_backup_policy_id").
-		ColumnExpr("backup.server_id AS backup_server_id, backup.resource_id AS backup_resource_id, backup.environment_resource_id AS backup_environment_resource_id").
-		ColumnExpr("backup.resource_installation_id AS backup_resource_installation_id, backup.resource_volume_id AS backup_resource_volume_id").
-		ColumnExpr("backup.backup_destination_id AS backup_backup_destination_id").
-		ColumnExpr("policy.retention AS policy_retention, policy.verification AS policy_verification, policy.settings AS policy_settings").
-		ColumnExpr("destination.provider AS destination_provider, COALESCE(destination.endpoint, '') AS destination_endpoint").
-		ColumnExpr("COALESCE(destination.region, '') AS destination_region, destination.bucket AS destination_bucket").
-		ColumnExpr("COALESCE(destination.prefix, '') AS destination_prefix, destination.force_path_style AS destination_path_style").
-		ColumnExpr("credential.enc_payload AS credential_payload").
-		ColumnExpr("COALESCE((endpoint.settings ->> 'external')::boolean, FALSE) AS database_external").
-		Join("JOIN backup_policies AS policy ON policy.id = backup.backup_policy_id AND policy.archived_at IS NULL").
-		Join("JOIN backup_destinations AS destination ON destination.id = backup.backup_destination_id AND destination.archived_at IS NULL").
-		Join("JOIN credentials AS credential ON credential.id = destination.credential_id AND credential.archived_at IS NULL").
-		Join("LEFT JOIN environment_resources AS binding ON binding.id = backup.environment_resource_id").
-		Join("LEFT JOIN resource_endpoints AS endpoint ON endpoint.id = binding.resource_endpoint_id").
-		Where("backup.id = ?", backupID).
-		Scan(ctx, &row); err != nil {
+	row, err := models.Backup.FindExecutionScope(ctx, service.db.Executor(), backupID)
+	if err != nil {
 		return BackupScope{}, fmt.Errorf("load backup scope: %w", err)
 	}
 	return BackupScope{
-		Backup: row.BackupEntity, PolicyRetention: row.PolicyRetention,
+		Backup: row.Backup, PolicyRetention: row.PolicyRetention,
 		PolicyVerification: row.PolicyVerification, PolicySettings: row.PolicySettings,
 		DestinationProvider: row.DestinationProvider, DestinationEndpoint: row.DestinationEndpoint,
 		DestinationRegion: row.DestinationRegion, DestinationBucket: row.DestinationBucket,
 		DestinationPrefix: row.DestinationPrefix, DestinationPathStyle: row.DestinationPathStyle,
-		CredentialPayload: row.CredentialPayload, DatabaseExternal: row.DatabaseExternal,
+		CredentialProvider: row.CredentialProvider, CredentialPayload: row.CredentialPayload,
+		BindingResourceID: row.BindingResourceID, EndpointResourceID: row.EndpointResourceID,
+		EndpointInstallationID: row.EndpointInstallationID,
+		InstallationResourceID: row.InstallationResourceID, ResourceKind: row.ResourceKind,
+		DatabaseExternal: row.DatabaseExternal,
 	}, nil
 }

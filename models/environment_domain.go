@@ -43,6 +43,53 @@ func (ed environmentDomain) Find(
 	return entity, nil
 }
 
+type BootstrapGraphRecord struct {
+	ApplicationID   uuid.UUID `bun:"application_id"`
+	EnvironmentID   uuid.UUID `bun:"environment_id"`
+	ServerID        uuid.UUID `bun:"server_id"`
+	NetworkID       uuid.UUID `bun:"network_id"`
+	ReleaseID       uuid.UUID `bun:"release_id"`
+	InstanceID      uuid.UUID `bun:"instance_id"`
+	CaddyRouteID    uuid.UUID `bun:"caddy_route_id"`
+	ExternalRouteID string    `bun:"external_route_id"`
+}
+
+func (ed environmentDomain) FindBootstrapGraphByHostname(
+	ctx context.Context,
+	db storage.Executor,
+	hostname string,
+) (BootstrapGraphRecord, bool, error) {
+	var row BootstrapGraphRecord
+	err := db.NewSelect().
+		TableExpr("caddy_routes AS route").
+		ColumnExpr("environment.application_id AS application_id").
+		ColumnExpr("environment.id AS environment_id").
+		ColumnExpr("target.server_id AS server_id").
+		ColumnExpr("network.id AS network_id").
+		ColumnExpr("route.release_id AS release_id").
+		ColumnExpr("backend.instance_id AS instance_id").
+		ColumnExpr("route.id AS caddy_route_id").
+		ColumnExpr("route.external_id AS external_route_id").
+		Join("JOIN environment_domains AS domain ON domain.id = route.environment_domain_id").
+		Join("JOIN environments AS environment ON environment.id = domain.environment_id").
+		Join("JOIN environment_targets AS target ON target.id = route.environment_target_id").
+		Join("JOIN caddy_route_backends AS backend ON backend.caddy_route_id = route.id AND backend.removed_at IS NULL").
+		Join("JOIN private_networks AS network ON network.owner_environment_id = environment.id AND network.archived_at IS NULL").
+		Where("domain.hostname = ?", hostname).
+		Where("domain.archived_at IS NULL").
+		Where("route.removed_at IS NULL").
+		OrderExpr("backend.id ASC").
+		Limit(1).
+		Scan(ctx, &row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return BootstrapGraphRecord{}, false, nil
+	}
+	if err != nil {
+		return BootstrapGraphRecord{}, false, err
+	}
+	return row, true, nil
+}
+
 type CreateEnvironmentDomainData struct {
 	Hostname      string
 	IsPrimary     bool

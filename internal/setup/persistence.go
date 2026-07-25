@@ -19,7 +19,7 @@ const (
 	BootstrapCLIPath        = "/usr/local/bin/bootstrap"
 	BootstrapAppPayloadPath = "/usr/local/bin/deploycrate-ce"
 	maxDatabaseCAFileSize   = 1024 * 1024
-	finalInstallerSetupStep = "initial-backups-v1"
+	finalInstallerSetupStep = "service-health"
 )
 
 type InstallationStatus string
@@ -142,6 +142,13 @@ func RemoveTransientSecrets() error {
 }
 
 func CompleteCredentialHandoff() error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return fmt.Errorf("load installer config for backup activation: %w", err)
+	}
+	if err := writeApplicationEnvironment(cfg, cfg.S3.Enabled); err != nil {
+		return fmt.Errorf("activate scheduled backups for next boot: %w", err)
+	}
 	if err := NewStateStore().MarkCredentialsVerified(); err != nil {
 		return fmt.Errorf("record credential verification: %w", err)
 	}
@@ -228,9 +235,14 @@ func setupStepCompleted(state State, id string) bool {
 }
 
 func WriteApplicationEnvironment(cfg Config) error {
+	return writeApplicationEnvironment(cfg, false)
+}
+
+func writeApplicationEnvironment(cfg Config, backupsEnabled bool) error {
 	values := [][2]string{
 		{"ENVIRONMENT", "production"},
 		{"PROJECT_NAME", "deploycrate-ce"},
+		{"INSTALLATION_ID", cfg.InstallationID},
 		{"DOMAIN", cfg.Domain},
 		{"PROTOCOL", "https"},
 		{"DEFAULT_SENDER_SIGNATURE", "noreply@" + cfg.Domain},
@@ -256,6 +268,10 @@ func WriteApplicationEnvironment(cfg Config) error {
 		{"PEPPER", cfg.Secrets.Pepper},
 		{"PREVIOUS_PEPPERS", ""},
 		{"METRICS_ROLLUP_ENABLED", "true"},
+		{"BACKUPS_ENABLED", strconv.FormatBool(backupsEnabled)},
+		{"BACKUP_SERVER_SCHEDULE", cfg.S3.ServerPolicy.Schedule},
+		{"BACKUP_DATABASE_ENABLED", strconv.FormatBool(cfg.S3.Enabled && !cfg.Database.External)},
+		{"BACKUP_DATABASE_SCHEDULE", cfg.S3.DatabasePolicy.Schedule},
 		{"PROMETHEUS_URL", "http://127.0.0.1:9090"},
 		{"CLICKHOUSE_URL", "http://127.0.0.1:8123"},
 		{"CLICKHOUSE_DATABASE", "deploycrate"},

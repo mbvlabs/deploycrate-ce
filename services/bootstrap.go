@@ -41,6 +41,7 @@ type BootstrapInput struct {
 
 type BootstrapBackupInput struct {
 	Enabled                    bool
+	InstallationID             string
 	Provider                   string
 	Endpoint                   string
 	Region                     string
@@ -125,44 +126,14 @@ func (service BootstrapService) findExisting(
 	ctx context.Context,
 	domain string,
 ) (BootstrapResult, bool, error) {
-	type graphRow struct {
-		ApplicationID   uuid.UUID `bun:"application_id"`
-		EnvironmentID   uuid.UUID `bun:"environment_id"`
-		ServerID        uuid.UUID `bun:"server_id"`
-		NetworkID       uuid.UUID `bun:"network_id"`
-		ReleaseID       uuid.UUID `bun:"release_id"`
-		InstanceID      uuid.UUID `bun:"instance_id"`
-		CaddyRouteID    uuid.UUID `bun:"caddy_route_id"`
-		ExternalRouteID string    `bun:"external_route_id"`
-	}
-
-	var row graphRow
-	err := service.db.Executor().NewSelect().
-		TableExpr("caddy_routes AS route").
-		ColumnExpr("environment.application_id AS application_id").
-		ColumnExpr("environment.id AS environment_id").
-		ColumnExpr("target.server_id AS server_id").
-		ColumnExpr("network.id AS network_id").
-		ColumnExpr("route.release_id AS release_id").
-		ColumnExpr("backend.instance_id AS instance_id").
-		ColumnExpr("route.id AS caddy_route_id").
-		ColumnExpr("route.external_id AS external_route_id").
-		Join("JOIN environment_domains AS domain ON domain.id = route.environment_domain_id").
-		Join("JOIN environments AS environment ON environment.id = domain.environment_id").
-		Join("JOIN environment_targets AS target ON target.id = route.environment_target_id").
-		Join("JOIN caddy_route_backends AS backend ON backend.caddy_route_id = route.id AND backend.removed_at IS NULL").
-		Join("JOIN private_networks AS network ON network.owner_environment_id = environment.id AND network.archived_at IS NULL").
-		Where("domain.hostname = ?", domain).
-		Where("domain.archived_at IS NULL").
-		Where("route.removed_at IS NULL").
-		OrderExpr("backend.id ASC").
-		Limit(1).
-		Scan(ctx, &row)
-	if errors.Is(err, sql.ErrNoRows) {
-		return BootstrapResult{}, false, nil
-	}
+	row, found, err := models.EnvironmentDomain.FindBootstrapGraphByHostname(
+		ctx, service.db.Executor(), domain,
+	)
 	if err != nil {
 		return BootstrapResult{}, false, fmt.Errorf("find existing bootstrap topology: %w", err)
+	}
+	if !found {
+		return BootstrapResult{}, false, nil
 	}
 	return BootstrapResult{
 		ApplicationID:   row.ApplicationID,
@@ -535,6 +506,7 @@ func createBootstrapBackups(
 		return nil
 	}
 	metadata, err := json.Marshal(map[string]any{
+		"installation_id":  input.Backup.InstallationID,
 		"provider":         input.Backup.Provider,
 		"endpoint":         input.Backup.Endpoint,
 		"region":           input.Backup.Region,
@@ -568,7 +540,7 @@ func createBootstrapBackups(
 	if err != nil {
 		return fmt.Errorf("create backup destination: %w", err)
 	}
-	serverNextRun, err := nextBackupRun(input.Backup.ServerSchedule, now)
+	serverNextRun, err := models.NextBackupRun(input.Backup.ServerSchedule, now)
 	if err != nil {
 		return fmt.Errorf("calculate first server backup: %w", err)
 	}
@@ -591,7 +563,7 @@ func createBootstrapBackups(
 	if input.DatabaseExternal {
 		return nil
 	}
-	databaseNextRun, err := nextBackupRun(input.Backup.DatabaseSchedule, now)
+	databaseNextRun, err := models.NextBackupRun(input.Backup.DatabaseSchedule, now)
 	if err != nil {
 		return fmt.Errorf("calculate first database backup: %w", err)
 	}
@@ -646,7 +618,7 @@ func validateBootstrapInput(input BootstrapInput) error {
 		return errors.New("bootstrap encrypted WireGuard private key is required")
 	}
 	if input.Backup.Enabled {
-		if input.Backup.Provider == "" || input.Backup.Region == "" ||
+		if input.Backup.InstallationID == "" || input.Backup.Provider == "" || input.Backup.Region == "" ||
 			input.Backup.Bucket == "" || len(input.Backup.EncryptedCredentialPayload) == 0 ||
 			input.Backup.ValidatedAt.IsZero() || input.Backup.ServerSchedule == "" ||
 			len(input.Backup.ServerRetention) == 0 {

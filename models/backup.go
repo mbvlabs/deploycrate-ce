@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -171,6 +172,171 @@ func (backup) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (Back
 		return BackupEntity{}, err
 	}
 	return entity, nil
+}
+
+type BackupExecutionScopeRecord struct {
+	Backup                 BackupEntity    `bun:"embed:backup_"`
+	PolicyRetention        json.RawMessage `bun:"policy_retention"`
+	PolicyVerification     json.RawMessage `bun:"policy_verification"`
+	PolicySettings         json.RawMessage `bun:"policy_settings"`
+	DestinationProvider    string          `bun:"destination_provider"`
+	DestinationEndpoint    string          `bun:"destination_endpoint"`
+	DestinationRegion      string          `bun:"destination_region"`
+	DestinationBucket      string          `bun:"destination_bucket"`
+	DestinationPrefix      string          `bun:"destination_prefix"`
+	DestinationPathStyle   bool            `bun:"destination_path_style"`
+	CredentialProvider     string          `bun:"credential_provider"`
+	CredentialPayload      []byte          `bun:"credential_payload"`
+	BindingResourceID      *uuid.UUID      `bun:"binding_resource_id"`
+	EndpointResourceID     *uuid.UUID      `bun:"endpoint_resource_id"`
+	EndpointInstallationID *uuid.UUID      `bun:"endpoint_installation_id"`
+	InstallationResourceID *uuid.UUID      `bun:"installation_resource_id"`
+	ResourceKind           string          `bun:"resource_kind"`
+	DatabaseExternal       bool            `bun:"database_external"`
+}
+
+func (backup) FindExecutionScope(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (BackupExecutionScopeRecord, error) {
+	var row BackupExecutionScopeRecord
+	if err := db.NewSelect().
+		TableExpr("backups AS backup").
+		ColumnExpr("backup.id AS backup_id, backup.created_at AS backup_created_at, backup.updated_at AS backup_updated_at").
+		ColumnExpr("backup.target_type AS backup_target_type, backup.trigger_type AS backup_trigger_type, backup.scheduled_at AS backup_scheduled_at").
+		ColumnExpr("backup.strategy AS backup_strategy, backup.driver AS backup_driver, backup.format AS backup_format, backup.format_version AS backup_format_version").
+		ColumnExpr("backup.artifact_reference AS backup_artifact_reference, backup.provider_metadata AS backup_provider_metadata, backup.status AS backup_status").
+		ColumnExpr("backup.requested_at AS backup_requested_at, backup.started_at AS backup_started_at, backup.uploaded_at AS backup_uploaded_at").
+		ColumnExpr("backup.finished_at AS backup_finished_at, backup.verified_at AS backup_verified_at, backup.pruned_at AS backup_pruned_at").
+		ColumnExpr("backup.size_bytes AS backup_size_bytes, backup.digest AS backup_digest, backup.producer_version AS backup_producer_version, backup.error AS backup_error").
+		ColumnExpr("backup.change_id AS backup_change_id, backup.change_task_id AS backup_change_task_id, backup.backup_policy_id AS backup_backup_policy_id").
+		ColumnExpr("backup.server_id AS backup_server_id, backup.resource_id AS backup_resource_id, backup.environment_resource_id AS backup_environment_resource_id").
+		ColumnExpr("backup.resource_installation_id AS backup_resource_installation_id, backup.resource_volume_id AS backup_resource_volume_id").
+		ColumnExpr("backup.backup_destination_id AS backup_backup_destination_id").
+		ColumnExpr("policy.retention AS policy_retention, policy.verification AS policy_verification, policy.settings AS policy_settings").
+		ColumnExpr("destination.provider AS destination_provider, COALESCE(destination.endpoint, '') AS destination_endpoint").
+		ColumnExpr("COALESCE(destination.region, '') AS destination_region, destination.bucket AS destination_bucket").
+		ColumnExpr("COALESCE(destination.prefix, '') AS destination_prefix, destination.force_path_style AS destination_path_style").
+		ColumnExpr("credential.provider AS credential_provider, credential.enc_payload AS credential_payload").
+		ColumnExpr("binding.resource_id AS binding_resource_id, endpoint.resource_id AS endpoint_resource_id").
+		ColumnExpr("endpoint.resource_installation_id AS endpoint_installation_id").
+		ColumnExpr("installation.resource_id AS installation_resource_id, COALESCE(resource.kind, '') AS resource_kind").
+		ColumnExpr("COALESCE((endpoint.settings ->> 'external')::boolean, FALSE) AS database_external").
+		Join("JOIN backup_policies AS policy ON policy.id = backup.backup_policy_id AND policy.archived_at IS NULL").
+		Join("JOIN backup_destinations AS destination ON destination.id = backup.backup_destination_id AND destination.archived_at IS NULL").
+		Join("JOIN credentials AS credential ON credential.id = destination.credential_id AND credential.archived_at IS NULL").
+		Join("LEFT JOIN resources AS resource ON resource.id = backup.resource_id AND resource.archived_at IS NULL").
+		Join("LEFT JOIN environment_resources AS binding ON binding.id = backup.environment_resource_id AND binding.archived_at IS NULL").
+		Join("LEFT JOIN resource_endpoints AS endpoint ON endpoint.id = binding.resource_endpoint_id AND endpoint.archived_at IS NULL").
+		Join("LEFT JOIN resource_installations AS installation ON installation.id = endpoint.resource_installation_id AND installation.archived_at IS NULL").
+		Where("backup.id = ?", id).
+		Scan(ctx, &row); err != nil {
+		return BackupExecutionScopeRecord{}, err
+	}
+	return row, nil
+}
+
+func (backup) FindVerifiedByPolicy(
+	ctx context.Context,
+	db storage.Executor,
+	policyID uuid.UUID,
+) ([]BackupEntity, error) {
+	var backups []BackupEntity
+	if err := db.NewSelect().
+		Model(&backups).
+		Where("backups.backup_policy_id = ?", policyID).
+		Where("backups.status = ?", BackupStatusVerified).
+		OrderExpr("backups.scheduled_at DESC").
+		Scan(ctx, &backups); err != nil {
+		return nil, err
+	}
+	return backups, nil
+}
+
+type InitialBackupRecord struct {
+	ID             uuid.UUID `bun:"id"`
+	BackupPolicyID uuid.UUID `bun:"backup_policy_id"`
+	Status         string    `bun:"status"`
+}
+
+func (backup) FindLatestInstallerByPolicies(
+	ctx context.Context,
+	db storage.Executor,
+	policyIDs []uuid.UUID,
+) ([]InitialBackupRecord, error) {
+	if len(policyIDs) == 0 {
+		return nil, nil
+	}
+	var records []InitialBackupRecord
+	if err := db.NewSelect().
+		TableExpr("backups AS backup").
+		ColumnExpr("DISTINCT ON (backup.backup_policy_id) backup.id, backup.backup_policy_id, backup.status").
+		Where("backup.backup_policy_id IN (?)", bun.In(policyIDs)).
+		Where("backup.trigger_type = ?", "installer").
+		Where("backup.status <> ?", BackupStatusPruned).
+		OrderExpr("backup.backup_policy_id, backup.scheduled_at DESC").
+		Scan(ctx, &records); err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
+func (backup) CountVerified(
+	ctx context.Context,
+	db storage.Executor,
+	ids []uuid.UUID,
+) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	return db.NewSelect().
+		Model((*BackupEntity)(nil)).
+		Where("id IN (?)", bun.In(ids)).
+		Where("status = ?", BackupStatusVerified).
+		Count(ctx)
+}
+
+func SelectBackupsToPrune(
+	backups []BackupEntity,
+	retention BackupRetentionPolicy,
+) []BackupEntity {
+	if len(backups) <= 1 {
+		return nil
+	}
+	keep := map[uuid.UUID]bool{backups[0].ID: true}
+	for index := 0; index < min(retention.KeepLast, len(backups)); index++ {
+		keep[backups[index].ID] = true
+	}
+	daily := map[string]bool{}
+	weekly := map[string]bool{}
+	monthly := map[string]bool{}
+	for _, candidate := range backups {
+		date := candidate.ScheduledAt.UTC()
+		dayKey := date.Format("2006-01-02")
+		year, week := date.ISOWeek()
+		weekKey := fmt.Sprintf("%04d-%02d", year, week)
+		monthKey := date.Format("2006-01")
+		if len(daily) < retention.KeepDaily && !daily[dayKey] {
+			daily[dayKey] = true
+			keep[candidate.ID] = true
+		}
+		if len(weekly) < retention.KeepWeekly && !weekly[weekKey] {
+			weekly[weekKey] = true
+			keep[candidate.ID] = true
+		}
+		if len(monthly) < retention.KeepMonthly && !monthly[monthKey] {
+			monthly[monthKey] = true
+			keep[candidate.ID] = true
+		}
+	}
+	prune := make([]BackupEntity, 0, len(backups))
+	for _, candidate := range backups[1:] {
+		if !keep[candidate.ID] {
+			prune = append(prune, candidate)
+		}
+	}
+	return prune
 }
 
 func (backup) Claim(ctx context.Context, db storage.Executor, id uuid.UUID) (bool, error) {

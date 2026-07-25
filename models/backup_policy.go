@@ -15,28 +15,30 @@ import (
 	"github.com/uptrace/bun"
 )
 
+type BackupPolicyNullTime = sql.NullTime
+
 type BackupPolicyEntity struct {
 	bun.BaseModel         `bun:"table:backup_policies,alias:backup_policies"`
-	ID                    uuid.UUID       `bun:"id,pk,type:uuid"`
-	CreatedAt             time.Time       `bun:"created_at"`
-	UpdatedAt             time.Time       `bun:"updated_at"`
-	Name                  string          `bun:"name"`
-	Schedule              string          `bun:"schedule"`
-	Strategy              string          `bun:"strategy"`
-	Driver                string          `bun:"driver"`
-	Retention             json.RawMessage `bun:"retention,type:jsonb"`
-	Format                string          `bun:"format"`
-	Verification          json.RawMessage `bun:"verification,type:jsonb"`
-	Settings              json.RawMessage `bun:"settings,type:jsonb"`
-	ArchivedAt            sql.NullTime    `bun:"archived_at"`
-	TargetType            string          `bun:"target_type"`
-	ServerID              *uuid.UUID      `bun:"server_id,type:uuid"`
-	ResourceID            *uuid.UUID      `bun:"resource_id,type:uuid"`
-	EnvironmentResourceID *uuid.UUID      `bun:"environment_resource_id,type:uuid"`
-	ResourceVolumeID      *uuid.UUID      `bun:"resource_volume_id,type:uuid"`
-	NextRunAt             time.Time       `bun:"next_run_at"`
-	LastScheduledAt       sql.NullTime    `bun:"last_scheduled_at"`
-	BackupDestinationID   uuid.UUID       `bun:"backup_destination_id,type:uuid"`
+	ID                    uuid.UUID            `bun:"id,pk,type:uuid"`
+	CreatedAt             time.Time            `bun:"created_at"`
+	UpdatedAt             time.Time            `bun:"updated_at"`
+	Name                  string               `bun:"name"`
+	Schedule              string               `bun:"schedule"`
+	Strategy              string               `bun:"strategy"`
+	Driver                string               `bun:"driver"`
+	Retention             json.RawMessage      `bun:"retention,type:jsonb"`
+	Format                string               `bun:"format"`
+	Verification          json.RawMessage      `bun:"verification,type:jsonb"`
+	Settings              json.RawMessage      `bun:"settings,type:jsonb"`
+	ArchivedAt            BackupPolicyNullTime `bun:"archived_at"`
+	TargetType            string               `bun:"target_type"`
+	ServerID              *uuid.UUID           `bun:"server_id,type:uuid"`
+	ResourceID            *uuid.UUID           `bun:"resource_id,type:uuid"`
+	EnvironmentResourceID *uuid.UUID           `bun:"environment_resource_id,type:uuid"`
+	ResourceVolumeID      *uuid.UUID           `bun:"resource_volume_id,type:uuid"`
+	NextRunAt             time.Time            `bun:"next_run_at"`
+	LastScheduledAt       BackupPolicyNullTime `bun:"last_scheduled_at"`
+	BackupDestinationID   uuid.UUID            `bun:"backup_destination_id,type:uuid"`
 }
 
 func (e *BackupPolicyEntity) Validate() error {
@@ -98,12 +100,7 @@ func validJSONObject(value json.RawMessage) bool {
 }
 
 func validRetentionDocument(value json.RawMessage) bool {
-	var retention struct {
-		KeepLast    int `json:"keep_last"`
-		KeepDaily   int `json:"keep_daily"`
-		KeepWeekly  int `json:"keep_weekly"`
-		KeepMonthly int `json:"keep_monthly"`
-	}
+	var retention BackupRetentionPolicy
 	if json.Unmarshal(value, &retention) != nil {
 		return false
 	}
@@ -112,6 +109,102 @@ func validRetentionDocument(value json.RawMessage) bool {
 		return false
 	}
 	return retention.KeepLast+retention.KeepDaily+retention.KeepWeekly+retention.KeepMonthly > 0
+}
+
+type BackupRetentionPolicy struct {
+	KeepLast    int `json:"keep_last"`
+	KeepDaily   int `json:"keep_daily"`
+	KeepWeekly  int `json:"keep_weekly"`
+	KeepMonthly int `json:"keep_monthly"`
+}
+
+func (e BackupPolicyEntity) RetentionPolicy() (BackupRetentionPolicy, error) {
+	var retention BackupRetentionPolicy
+	if err := json.Unmarshal(e.Retention, &retention); err != nil {
+		return BackupRetentionPolicy{}, err
+	}
+	if !validRetentionDocument(e.Retention) {
+		return BackupRetentionPolicy{}, errors.New("backup retention policy is invalid")
+	}
+	return retention, nil
+}
+
+func NextBackupRun(expression string, after time.Time) (time.Time, error) {
+	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+	schedule, err := parser.Parse(expression)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return schedule.Next(after), nil
+}
+
+type ScheduledBackupPolicy struct {
+	ID                     uuid.UUID  `bun:"id"`
+	Schedule               string     `bun:"schedule"`
+	Strategy               string     `bun:"strategy"`
+	Driver                 string     `bun:"driver"`
+	Format                 string     `bun:"format"`
+	TargetType             string     `bun:"target_type"`
+	ServerID               *uuid.UUID `bun:"server_id"`
+	ResourceID             *uuid.UUID `bun:"resource_id"`
+	EnvironmentResourceID  *uuid.UUID `bun:"environment_resource_id"`
+	ResourceVolumeID       *uuid.UUID `bun:"resource_volume_id"`
+	ResourceInstallationID *uuid.UUID `bun:"resource_installation_id"`
+	BackupDestinationID    uuid.UUID  `bun:"backup_destination_id"`
+	NextRunAt              time.Time  `bun:"next_run_at"`
+	EnvironmentID          uuid.UUID  `bun:"environment_id"`
+}
+
+func scheduledBackupPoliciesQuery(db storage.Executor) *bun.SelectQuery {
+	return db.NewSelect().
+		TableExpr("backup_policies AS policy").
+		ColumnExpr("policy.id, policy.schedule, policy.strategy, policy.driver, policy.format").
+		ColumnExpr("policy.target_type, policy.server_id, policy.resource_id").
+		ColumnExpr("policy.environment_resource_id, policy.resource_volume_id").
+		ColumnExpr("policy.backup_destination_id, policy.next_run_at").
+		ColumnExpr("endpoint.resource_installation_id AS resource_installation_id").
+		ColumnExpr("COALESCE(server_target.environment_id, resource_binding.environment_id) AS environment_id").
+		Join("LEFT JOIN LATERAL (SELECT environment_id FROM environment_targets WHERE server_id = policy.server_id AND detached_at IS NULL ORDER BY attached_at DESC LIMIT 1) AS server_target ON TRUE").
+		Join("LEFT JOIN environment_resources AS resource_binding ON resource_binding.id = policy.environment_resource_id AND resource_binding.archived_at IS NULL").
+		Join("LEFT JOIN resource_endpoints AS endpoint ON endpoint.id = resource_binding.resource_endpoint_id AND endpoint.archived_at IS NULL").
+		Where("policy.archived_at IS NULL")
+}
+
+func (bp backupPolicy) FindForInstallationTargetUpdate(
+	ctx context.Context,
+	db storage.Executor,
+	installationID, targetType, legacyPolicyName string,
+) (ScheduledBackupPolicy, error) {
+	var policy ScheduledBackupPolicy
+	if err := scheduledBackupPoliciesQuery(db).
+		Join("JOIN backup_destinations AS destination ON destination.id = policy.backup_destination_id AND destination.archived_at IS NULL").
+		Join("JOIN credentials AS credential ON credential.id = destination.credential_id AND credential.archived_at IS NULL").
+		Where("(credential.metadata ->> 'installation_id' = ? OR (COALESCE(credential.metadata ->> 'installation_id', '') = '' AND policy.name = ?))", installationID, legacyPolicyName).
+		Where("policy.target_type = ?", targetType).
+		OrderExpr("CASE WHEN credential.metadata ->> 'installation_id' = ? THEN 0 ELSE 1 END", installationID).
+		OrderExpr("policy.created_at ASC").
+		Limit(1).
+		For("UPDATE OF policy").
+		Scan(ctx, &policy); err != nil {
+		return ScheduledBackupPolicy{}, err
+	}
+	return policy, nil
+}
+
+func (bp backupPolicy) AdvanceSchedule(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	lastRun, nextRun, updatedAt time.Time,
+) error {
+	_, err := db.NewUpdate().
+		Model((*BackupPolicyEntity)(nil)).
+		Set("last_scheduled_at = ?", lastRun).
+		Set("next_run_at = ?", nextRun).
+		Set("updated_at = ?", updatedAt).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
 }
 
 func (bp backupPolicy) Find(

@@ -50,12 +50,8 @@ func main() {
 		fx.Provide(
 			func() context.Context { return ctx },
 			func() services.CurrentVersion { return services.CurrentVersion(appVersion) },
-			func(insert queue.InsertOnly) storage.InsertQueue { return &insert },
+			func() queue.CurrentVersion { return queue.CurrentVersion(appVersion) },
 			func(service services.MetricRollupService) queue.MetricRollupCollector { return service },
-			func(service *services.BackupScheduler) queue.BackupScheduleService { return service },
-			func(service *services.BackupExecutor) queue.BackupExecutionService { return service },
-			func(service *services.BackupVerifier) queue.BackupVerificationService { return service },
-			func(service *services.BackupRetention) queue.BackupRetentionService { return service },
 			func(cfg config.Config) (email.TransactionalSender, email.MarketingSender) {
 				if config.Env == server.ProdEnvironment {
 					return mailclients.NewAwsSes(cfg), mailclients.NewAwsSes(cfg)

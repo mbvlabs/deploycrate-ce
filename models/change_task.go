@@ -51,6 +51,52 @@ func (ct changeTask) Find(
 	return entity, nil
 }
 
+func (ct changeTask) MarkRunning(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("change_tasks").
+		Set("status = ?", "running").
+		Set("attempt_count = attempt_count + 1").
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+func (ct changeTask) MarkCompleted(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("change_tasks").
+		Set("status = ?", "completed").
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+func (ct changeTask) MarkFailed(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("change_tasks").
+		Set("status = ?", "failed").
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
 type CreateChangeTaskData struct {
 	Kind                string
 	SubjectType         string

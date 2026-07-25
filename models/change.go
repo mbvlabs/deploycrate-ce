@@ -372,6 +372,59 @@ func (c change) RecordProgress(
 	return err
 }
 
+func (c change) MarkRunning(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("changes").
+		Set("status = ?", "running").
+		Set("started_at = COALESCE(started_at, ?)", at).
+		Set("finished_at = NULL").
+		Set("error = NULL").
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+func (c change) MarkCompleted(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("changes").
+		Set("status = ?", "completed").
+		Set("finished_at = ?", at).
+		Set("error = NULL").
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+func (c change) MarkFailed(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	operationErr error,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("changes").
+		Set("status = ?", "failed").
+		Set("finished_at = ?", at).
+		Set("error = ?", operationErr.Error()).
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
 func (c change) FinishSystemUpdate(
 	ctx context.Context,
 	db storage.Executor,

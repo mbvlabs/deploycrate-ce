@@ -184,6 +184,24 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		var command tea.Cmd
 		m.activity, command = m.activity.Update(msg)
 		return m, command
+	case tea.PasteMsg:
+		if m.screen == screenRunning || m.screen == screenValidating {
+			return m, nil
+		}
+		if m.screen == screenHandoff {
+			if m.handoffFocus != 1 {
+				return m, nil
+			}
+			var command tea.Cmd
+			m.handoffConfirmation, command = m.handoffConfirmation.Update(msg)
+			return m, command
+		}
+		if m.focus < 0 || m.focus >= len(m.inputs) {
+			return m, nil
+		}
+		var command tea.Cmd
+		m.inputs[m.focus], command = m.inputs[m.focus].Update(msg)
+		return m, command
 	case tea.KeyPressMsg:
 		key := msg.String()
 		if key == "ctrl+c" {

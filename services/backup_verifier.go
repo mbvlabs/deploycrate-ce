@@ -111,13 +111,7 @@ func (service *BackupVerifier) Verify(ctx context.Context, backupID uuid.UUID) e
 		return fmt.Errorf("record verified backup: %w", err)
 	}
 	now := time.Now().UTC()
-	if _, err := tx.NewUpdate().TableExpr("changes").
-		Set("status = ?", "completed").
-		Set("finished_at = ?", now).
-		Set("error = NULL").
-		Set("updated_at = ?", now).
-		Where("id = ?", scope.Backup.ChangeID).
-		Exec(ctx); err != nil {
+	if err := models.Change.MarkCompleted(ctx, tx, scope.Backup.ChangeID, now); err != nil {
 		return fmt.Errorf("complete backup change: %w", err)
 	}
 	if _, err := service.queue.InsertTx(
@@ -197,6 +191,7 @@ func verifyServerBackup(
 	snapshot, found, err := findResticSnapshot(
 		ctx,
 		environment,
+		scope.DestinationPathStyle,
 		"backup-id:"+scope.Backup.ID.String(),
 	)
 	if err != nil {
@@ -216,14 +211,16 @@ func verifyServerBackup(
 			return fmt.Errorf("Restic snapshot is missing immutable tag %q", expected)
 		}
 	}
-	output, err := runRestic(ctx, environment, "ls", "--json", snapshot.ID)
+	output, err := runRestic(
+		ctx, environment, scope.DestinationPathStyle, "ls", "--json", snapshot.ID,
+	)
 	if err != nil {
 		return fmt.Errorf("list Restic snapshot: %w", err)
 	}
 	requiredPaths := []string{
 		"/etc/deploycrate-ce",
 		"/var/lib/deploycrate-ce",
-		"/var/lib/deploycrate-ce/recovery-manifests/" + scope.Backup.ID.String() + ".json",
+		backupRecoveryManifestDirectory + "/" + scope.Backup.ID.String() + ".json",
 	}
 	foundPaths := map[string]bool{}
 	for line := range strings.SplitSeq(string(output), "\n") {
@@ -264,7 +261,9 @@ func verifyServerBackup(
 		checkRequired = true
 	}
 	if checkRequired {
-		if _, err := runRestic(ctx, environment, checkArguments...); err != nil {
+		if _, err := runRestic(
+			ctx, environment, scope.DestinationPathStyle, checkArguments...,
+		); err != nil {
 			return fmt.Errorf("check Restic repository: %w", err)
 		}
 	}

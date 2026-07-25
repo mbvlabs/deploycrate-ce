@@ -2,7 +2,6 @@ package factories
 
 import (
 	"context"
-	"database/sql"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
 	"encoding/json"
@@ -31,14 +30,14 @@ func BuildBackupPolicy(serverID *uuid.UUID, resourceID *uuid.UUID, environmentRe
 			Format:                faker.Word(),
 			Verification:          json.RawMessage{},
 			Settings:              json.RawMessage{},
-			ArchivedAt:            sql.NullTime{Time: time.Now(), Valid: true},
+			ArchivedAt:            BackupPolicyNullTime{},
 			TargetType:            faker.Word(),
 			ServerID:              serverID,
 			ResourceID:            resourceID,
 			EnvironmentResourceID: environmentResourceID,
 			ResourceVolumeID:      resourceVolumeID,
 			NextRunAt:             time.Time{},
-			LastScheduledAt:       sql.NullTime{Time: time.Now(), Valid: true},
+			LastScheduledAt:       BackupPolicyNullTime{},
 			BackupDestinationID:   backupDestinationID,
 		},
 	}
@@ -86,7 +85,7 @@ func CreateBackupPolicy(ctx context.Context, exec storage.Executor, serverID *uu
 func CreateBackupPolicys(ctx context.Context, exec storage.Executor, serverID *uuid.UUID, resourceID *uuid.UUID, environmentResourceID *uuid.UUID, resourceVolumeID *uuid.UUID, backupDestinationID uuid.UUID, count int, opts ...BackupPolicyOption) ([]models.BackupPolicyEntity, error) {
 	backuppolicys := make([]models.BackupPolicyEntity, 0, count)
 
-	for i := range count {
+	for i := 0; i < count; i++ {
 		entity, err := CreateBackupPolicy(ctx, exec, serverID, resourceID, environmentResourceID, resourceVolumeID, backupDestinationID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create backuppolicy %d: %w", i+1, err)
@@ -145,7 +144,7 @@ func WithBackupPoliciesSettings(value json.RawMessage) BackupPolicyOption {
 	}
 }
 
-func WithBackupPoliciesArchivedAt(value sql.NullTime) BackupPolicyOption {
+func WithBackupPoliciesArchivedAt(value BackupPolicyNullTime) BackupPolicyOption {
 	return func(f *BackupPolicyFactory) {
 		f.BackupPolicyEntity.ArchivedAt = value
 	}
@@ -187,7 +186,7 @@ func WithBackupPoliciesNextRunAt(value time.Time) BackupPolicyOption {
 	}
 }
 
-func WithBackupPoliciesLastScheduledAt(value sql.NullTime) BackupPolicyOption {
+func WithBackupPoliciesLastScheduledAt(value BackupPolicyNullTime) BackupPolicyOption {
 	return func(f *BackupPolicyFactory) {
 		f.BackupPolicyEntity.LastScheduledAt = value
 	}

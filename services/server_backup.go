@@ -17,9 +17,10 @@ import (
 )
 
 const (
-	resticExecutable       = "/usr/local/bin/restic"
-	backupSourcesManifest  = "/usr/local/share/deploycrate-ce/backup-sources-v1"
-	backupExcludesManifest = "/usr/local/share/deploycrate-ce/backup-excludes-v1"
+	resticExecutable                = "/usr/local/bin/restic"
+	backupSourcesManifest           = "/usr/local/share/deploycrate-ce/backup-sources-v1"
+	backupExcludesManifest          = "/usr/local/share/deploycrate-ce/backup-excludes-v1"
+	backupRecoveryManifestDirectory = "/var/lib/deploycrate-ce/runtime/recovery-manifests"
 )
 
 type ServerBackup struct{}
@@ -47,16 +48,20 @@ func (service *ServerBackup) Run(
 	environment := resticEnvironment(scope, credential, repository)
 	tag := "backup-id:" + scope.Backup.ID.String()
 
-	snapshot, found, lookupErr := findResticSnapshot(ctx, environment, tag)
+	snapshot, found, lookupErr := findResticSnapshot(
+		ctx, environment, scope.DestinationPathStyle, tag,
+	)
 	if lookupErr != nil {
-		if _, initErr := runRestic(ctx, environment, "init"); initErr != nil {
+		if _, initErr := runRestic(ctx, environment, scope.DestinationPathStyle, "init"); initErr != nil {
 			return BackupArtifact{}, fmt.Errorf(
 				"open or initialize Restic repository: %w",
 				errors.Join(lookupErr, initErr),
 			)
 		}
 	} else if found {
-		return existingServerBackupArtifact(ctx, environment, snapshot)
+		return existingServerBackupArtifact(
+			ctx, environment, scope.DestinationPathStyle, snapshot,
+		)
 	}
 	recoveryManifest, cleanupManifest, err := createServerRecoveryManifest(ctx, scope)
 	if err != nil {
@@ -83,7 +88,7 @@ func (service *ServerBackup) Run(
 	for _, immutableTag := range tags {
 		arguments = append(arguments, "--tag", immutableTag)
 	}
-	output, err := runRestic(ctx, environment, arguments...)
+	output, err := runRestic(ctx, environment, scope.DestinationPathStyle, arguments...)
 	if err != nil {
 		return BackupArtifact{}, fmt.Errorf("create Restic server backup: %w", err)
 	}
@@ -116,9 +121,12 @@ func (service *ServerBackup) Run(
 func existingServerBackupArtifact(
 	ctx context.Context,
 	environment []string,
+	forcePathStyle bool,
 	snapshot resticSnapshot,
 ) (BackupArtifact, error) {
-	output, err := runRestic(ctx, environment, "stats", "--mode", "raw-data", "--json", snapshot.ID)
+	output, err := runRestic(
+		ctx, environment, forcePathStyle, "stats", "--mode", "raw-data", "--json", snapshot.ID,
+	)
 	if err != nil {
 		return BackupArtifact{}, fmt.Errorf("inspect existing Restic snapshot: %w", err)
 	}
@@ -135,11 +143,10 @@ func createServerRecoveryManifest(
 	ctx context.Context,
 	scope BackupScope,
 ) (string, func(), error) {
-	directory := "/var/lib/deploycrate-ce/recovery-manifests"
-	if err := os.MkdirAll(directory, 0o700); err != nil {
+	if err := os.MkdirAll(backupRecoveryManifestDirectory, 0o700); err != nil {
 		return "", func() {}, err
 	}
-	manifestPath := path.Join(directory, scope.Backup.ID.String()+".json")
+	manifestPath := path.Join(backupRecoveryManifestDirectory, scope.Backup.ID.String()+".json")
 	commandOutput := func(executable string, arguments ...string) string {
 		output, err := exec.CommandContext(ctx, executable, arguments...).Output()
 		if err != nil {
@@ -183,9 +190,12 @@ func createServerRecoveryManifest(
 func findResticSnapshot(
 	ctx context.Context,
 	environment []string,
+	forcePathStyle bool,
 	tag string,
 ) (resticSnapshot, bool, error) {
-	output, err := runRestic(ctx, environment, "snapshots", "--json", "--tag", tag)
+	output, err := runRestic(
+		ctx, environment, forcePathStyle, "snapshots", "--json", "--tag", tag,
+	)
 	if err != nil {
 		return resticSnapshot{}, false, err
 	}
@@ -243,8 +253,23 @@ func resticEnvironment(
 	}
 }
 
-func runRestic(ctx context.Context, environment []string, arguments ...string) ([]byte, error) {
-	command := exec.CommandContext(ctx, "/usr/bin/sudo", append([]string{"-n", "-E", resticExecutable}, arguments...)...)
+func runRestic(
+	ctx context.Context,
+	environment []string,
+	forcePathStyle bool,
+	arguments ...string,
+) ([]byte, error) {
+	bucketLookup := "dns"
+	if forcePathStyle {
+		bucketLookup = "path"
+	}
+	resticArguments := []string{"-o", "s3.bucket-lookup=" + bucketLookup}
+	resticArguments = append(resticArguments, arguments...)
+	command := exec.CommandContext(
+		ctx,
+		"/usr/bin/sudo",
+		append([]string{"-n", "-E", resticExecutable}, resticArguments...)...,
+	)
 	command.Env = environment
 	output, err := command.CombinedOutput()
 	if err != nil {

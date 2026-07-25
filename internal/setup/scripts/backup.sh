@@ -51,6 +51,7 @@ fi
 
 install -d -o root -g root -m 0755 /usr/local/share/deploycrate-ce
 install -d -o deploycrate -g deploycrate -m 0700 /var/lib/deploycrate-ce/runtime/backups
+install -d -o deploycrate -g deploycrate -m 0700 /var/lib/deploycrate-ce/runtime/recovery-manifests
 
 temporary_sources="$(mktemp)"
 temporary_excludes="$(mktemp)"

@@ -30,35 +30,23 @@ func NewBackupRetention(
 	return &BackupRetention{db: db, config: configuration, executor: executor}
 }
 
-type retentionDocument struct {
-	KeepLast    int `json:"keep_last"`
-	KeepDaily   int `json:"keep_daily"`
-	KeepWeekly  int `json:"keep_weekly"`
-	KeepMonthly int `json:"keep_monthly"`
-}
-
 func (service *BackupRetention) Apply(ctx context.Context, policyID uuid.UUID) error {
-	var backups []models.BackupEntity
 	policy, err := models.BackupPolicy.Find(ctx, service.db.Executor(), policyID)
 	if err != nil {
 		return fmt.Errorf("load backup retention policy: %w", err)
 	}
-	if err := service.db.Executor().NewSelect().
-		Model(&backups).
-		Where("backups.backup_policy_id = ?", policyID).
-		Where("backups.status = ?", models.BackupStatusVerified).
-		OrderExpr("backups.scheduled_at DESC").
-		Scan(ctx, &backups); err != nil {
+	backups, err := models.Backup.FindVerifiedByPolicy(ctx, service.db.Executor(), policyID)
+	if err != nil {
 		return fmt.Errorf("load verified backups for retention: %w", err)
 	}
 	if len(backups) <= 1 {
 		return nil
 	}
-	var document retentionDocument
-	if err := json.Unmarshal(policy.Retention, &document); err != nil {
+	document, err := policy.RetentionPolicy()
+	if err != nil {
 		return fmt.Errorf("decode backup retention policy: %w", err)
 	}
-	prune := selectBackupsToPrune(backups, document)
+	prune := models.SelectBackupsToPrune(backups, document)
 	if len(prune) == 0 {
 		return nil
 	}
@@ -91,6 +79,7 @@ func (service *BackupRetention) Apply(ctx context.Context, policyID uuid.UUID) e
 			snapshot, found, err := findResticSnapshot(
 				ctx,
 				resticEnvironment(scope, credential, repository),
+				scope.DestinationPathStyle,
 				"backup-id:"+candidate.ID.String(),
 			)
 			if err != nil {
@@ -106,7 +95,12 @@ func (service *BackupRetention) Apply(ctx context.Context, policyID uuid.UUID) e
 		}
 		if len(remotePrune) > 0 {
 			arguments = append(arguments, "--prune")
-			if _, err := runRestic(ctx, resticEnvironment(scope, credential, repository), arguments...); err != nil {
+			if _, err := runRestic(
+				ctx,
+				resticEnvironment(scope, credential, repository),
+				scope.DestinationPathStyle,
+				arguments...,
+			); err != nil {
 				return fmt.Errorf("prune Restic backups: %w", err)
 			}
 		}
@@ -142,43 +136,4 @@ func (service *BackupRetention) Apply(ctx context.Context, policyID uuid.UUID) e
 		"pruned_artifacts", len(prune),
 	)
 	return nil
-}
-
-func selectBackupsToPrune(
-	backups []models.BackupEntity,
-	document retentionDocument,
-) []models.BackupEntity {
-	keep := map[uuid.UUID]bool{backups[0].ID: true}
-	for index := 0; index < min(document.KeepLast, len(backups)); index++ {
-		keep[backups[index].ID] = true
-	}
-	daily := map[string]bool{}
-	weekly := map[string]bool{}
-	monthly := map[string]bool{}
-	for _, backup := range backups {
-		date := backup.ScheduledAt.UTC()
-		dayKey := date.Format("2006-01-02")
-		year, week := date.ISOWeek()
-		weekKey := fmt.Sprintf("%04d-%02d", year, week)
-		monthKey := date.Format("2006-01")
-		if len(daily) < document.KeepDaily && !daily[dayKey] {
-			daily[dayKey] = true
-			keep[backup.ID] = true
-		}
-		if len(weekly) < document.KeepWeekly && !weekly[weekKey] {
-			weekly[weekKey] = true
-			keep[backup.ID] = true
-		}
-		if len(monthly) < document.KeepMonthly && !monthly[monthKey] {
-			monthly[monthKey] = true
-			keep[backup.ID] = true
-		}
-	}
-	prune := make([]models.BackupEntity, 0, len(backups))
-	for _, backup := range backups[1:] {
-		if !keep[backup.ID] {
-			prune = append(prune, backup)
-		}
-	}
-	return prune
 }

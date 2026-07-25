@@ -45,6 +45,28 @@ func (e *CredentialEntity) Validate() error {
 	if len(e.EncPayload) < 2 {
 		builder.Add("enc_payload", "required", "encrypted credential payload is required")
 	}
+	if strings.HasPrefix(e.Provider, "backup_") {
+		if e.Provider != "backup_s3" && e.Provider != "backup_r2" {
+			builder.Add("provider", "unsupported", "backup credential provider must be backup_s3 or backup_r2")
+		}
+		var metadata struct {
+			InstallationID string `json:"installation_id"`
+			Provider       string `json:"provider"`
+			Endpoint       string `json:"endpoint"`
+			Region         string `json:"region"`
+			Bucket         string `json:"bucket"`
+		}
+		if json.Unmarshal(e.Metadata, &metadata) != nil ||
+			strings.TrimSpace(metadata.InstallationID) == "" ||
+			metadata.Provider != strings.TrimPrefix(e.Provider, "backup_") ||
+			strings.TrimSpace(metadata.Region) == "" || strings.TrimSpace(metadata.Bucket) == "" ||
+			(metadata.Provider == "r2" && strings.TrimSpace(metadata.Endpoint) == "") {
+			builder.Add("metadata", "invalid", "backup credential metadata is incomplete or incompatible")
+		}
+	}
+	if e.ArchivedAt.Valid && e.VerifiedAt.Valid && e.VerifiedAt.Time.After(e.ArchivedAt.Time) {
+		builder.Add("verified_at", "invalid", "archived credentials cannot be verified after archival")
+	}
 	if e.ArchivedAt.Valid && e.LastUsedAt.Valid && e.LastUsedAt.Time.After(e.ArchivedAt.Time) {
 		builder.Add("last_used_at", "invalid", "archived credentials cannot be used after archival")
 	}

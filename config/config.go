@@ -75,6 +75,7 @@ type Config struct {
 	Auth      auth
 	SSHCA     SSHCA
 	Metrics   Metrics
+	Backups   Backups
 }
 
 func NewConfig() Config {
@@ -87,6 +88,7 @@ func NewConfig() Config {
 		Auth:      newAuthConfig(),
 		SSHCA:     newSSHCAConfig(),
 		Metrics:   newMetricsConfig(),
+		Backups:   newBackupsConfig(),
 	}
 }
 
