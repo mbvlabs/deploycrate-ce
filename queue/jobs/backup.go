@@ -10,8 +10,8 @@ import (
 const BackupQueue = "backups"
 
 type BackupScheduleArgs struct {
-	TargetType  string    `json:"target_type" river:"unique"`
-	ScheduledAt time.Time `json:"scheduled_at" river:"unique"`
+	BackupPolicyID uuid.UUID `json:"backup_policy_id" river:"unique"`
+	ScheduledAt    time.Time `json:"scheduled_at" river:"unique"`
 }
 
 func (BackupScheduleArgs) Kind() string { return "backup_schedule" }
@@ -22,6 +22,12 @@ func (BackupScheduleArgs) InsertOpts() river.InsertOpts {
 		UniqueOpts:  river.UniqueOpts{ByArgs: true},
 		Tags:        []string{"backup", "schedule"},
 	}
+}
+
+func BackupScheduleInsertOpts(scheduledAt time.Time) *river.InsertOpts {
+	opts := BackupScheduleArgs{}.InsertOpts()
+	opts.ScheduledAt = scheduledAt
+	return &opts
 }
 
 type BackupExecuteArgs struct {

@@ -50,7 +50,6 @@ func main() {
 		fx.Provide(
 			func() context.Context { return ctx },
 			func() services.CurrentVersion { return services.CurrentVersion(appVersion) },
-			func() queue.CurrentVersion { return queue.CurrentVersion(appVersion) },
 			func(service services.MetricRollupService) queue.MetricRollupCollector { return service },
 			func(cfg config.Config) (email.TransactionalSender, email.MarketingSender) {
 				if config.Env == server.ProdEnvironment {
@@ -117,6 +116,25 @@ func runCommand(ctx context.Context, arguments []string) error {
 			return fmt.Errorf("run database migrations: %w", err)
 		}
 		return nil
+	case "backups":
+		if len(arguments) != 2 || arguments[1] != "activate" {
+			return errors.New("usage: deploycrate-ce backups activate")
+		}
+		cfg := config.NewConfig()
+		db, err := database.NewPostgres(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		activated, err := services.NewBackupPolicyActivator(db).Activate(
+			ctx,
+			cfg.App.InstallationID,
+		)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("activated %d backup policies\n", activated)
+		return nil
 	default:
 		return fmt.Errorf("unknown deploycrate-ce command %q", arguments[0])
 	}
@@ -125,7 +143,10 @@ func runCommand(ctx context.Context, arguments []string) error {
 func startQueueProcessor(lc fx.Lifecycle, appCtx context.Context, p queue.Processor) {
 	var done <-chan struct{}
 	lc.Append(fx.Hook{
-		OnStart: func(context.Context) error {
+		OnStart: func(ctx context.Context) error {
+			if err := p.Seed(ctx); err != nil {
+				return fmt.Errorf("seed backup schedules: %w", err)
+			}
 			done = startInBackground(appCtx, "queue processor", p.Start)
 			return nil
 		},

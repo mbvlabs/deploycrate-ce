@@ -31,6 +31,7 @@ func BuildBackupPolicy(serverID *uuid.UUID, resourceID *uuid.UUID, environmentRe
 			Verification:          json.RawMessage{},
 			Settings:              json.RawMessage{},
 			ArchivedAt:            BackupPolicyNullTime{},
+			ActivatedAt:           BackupPolicyNullTime{},
 			TargetType:            faker.Word(),
 			ServerID:              serverID,
 			ResourceID:            resourceID,
@@ -65,6 +66,7 @@ func CreateBackupPolicy(ctx context.Context, exec storage.Executor, serverID *uu
 		Verification:          built.Verification,
 		Settings:              built.Settings,
 		ArchivedAt:            built.ArchivedAt,
+		ActivatedAt:           built.ActivatedAt,
 		TargetType:            built.TargetType,
 		ServerID:              built.ServerID,
 		ResourceID:            built.ResourceID,
@@ -147,6 +149,12 @@ func WithBackupPoliciesSettings(value json.RawMessage) BackupPolicyOption {
 func WithBackupPoliciesArchivedAt(value BackupPolicyNullTime) BackupPolicyOption {
 	return func(f *BackupPolicyFactory) {
 		f.BackupPolicyEntity.ArchivedAt = value
+	}
+}
+
+func WithBackupPoliciesActivatedAt(value BackupPolicyNullTime) BackupPolicyOption {
+	return func(f *BackupPolicyFactory) {
+		f.BackupPolicyEntity.ActivatedAt = value
 	}
 }
 

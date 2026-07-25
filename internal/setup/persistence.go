@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -146,8 +147,11 @@ func CompleteCredentialHandoff() error {
 	if err != nil {
 		return fmt.Errorf("load installer config for backup activation: %w", err)
 	}
-	if err := writeApplicationEnvironment(cfg, cfg.S3.Enabled); err != nil {
-		return fmt.Errorf("activate scheduled backups for next boot: %w", err)
+	if err := WriteApplicationEnvironment(cfg); err != nil {
+		return fmt.Errorf("write final application environment: %w", err)
+	}
+	if err := runInstalledApplicationCommand(cfg, "backups", "activate"); err != nil {
+		return fmt.Errorf("activate backup policies for next boot: %w", err)
 	}
 	if err := NewStateStore().MarkCredentialsVerified(); err != nil {
 		return fmt.Errorf("record credential verification: %w", err)
@@ -235,11 +239,12 @@ func setupStepCompleted(state State, id string) bool {
 }
 
 func WriteApplicationEnvironment(cfg Config) error {
-	return writeApplicationEnvironment(cfg, false)
+	values := applicationEnvironmentValues(cfg)
+	return writeProtectedFile(ApplicationEnvPath, []byte(formatEnvironment(values)), 0o600)
 }
 
-func writeApplicationEnvironment(cfg Config, backupsEnabled bool) error {
-	values := [][2]string{
+func applicationEnvironmentValues(cfg Config) [][2]string {
+	return [][2]string{
 		{"ENVIRONMENT", "production"},
 		{"PROJECT_NAME", "deploycrate-ce"},
 		{"INSTALLATION_ID", cfg.InstallationID},
@@ -268,10 +273,6 @@ func writeApplicationEnvironment(cfg Config, backupsEnabled bool) error {
 		{"PEPPER", cfg.Secrets.Pepper},
 		{"PREVIOUS_PEPPERS", ""},
 		{"METRICS_ROLLUP_ENABLED", "true"},
-		{"BACKUPS_ENABLED", strconv.FormatBool(backupsEnabled)},
-		{"BACKUP_SERVER_SCHEDULE", cfg.S3.ServerPolicy.Schedule},
-		{"BACKUP_DATABASE_ENABLED", strconv.FormatBool(cfg.S3.Enabled && !cfg.Database.External)},
-		{"BACKUP_DATABASE_SCHEDULE", cfg.S3.DatabasePolicy.Schedule},
 		{"PROMETHEUS_URL", "http://127.0.0.1:9090"},
 		{"CLICKHOUSE_URL", "http://127.0.0.1:8123"},
 		{"CLICKHOUSE_DATABASE", "deploycrate"},
@@ -282,7 +283,35 @@ func writeApplicationEnvironment(cfg Config, backupsEnabled bool) error {
 		{"AWS_SES_SECRET_ACCESS_KEY", ""},
 		{"AWS_SES_CONFIGURATION_SET", ""},
 	}
-	return writeProtectedFile(ApplicationEnvPath, []byte(formatEnvironment(values)), 0o600)
+}
+
+func runInstalledApplicationCommand(cfg Config, arguments ...string) error {
+	values := applicationEnvironmentValues(cfg)
+	overrides := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		overrides[value[0]] = struct{}{}
+	}
+	environment := make([]string, 0, len(os.Environ())+len(values))
+	for _, value := range os.Environ() {
+		key, _, _ := strings.Cut(value, "=")
+		if _, overridden := overrides[key]; !overridden {
+			environment = append(environment, value)
+		}
+	}
+	for _, value := range values {
+		environment = append(environment, value[0]+"="+value[1])
+	}
+	command := exec.Command(ApplicationReleaseBinaryPath(cfg.Version), arguments...)
+	command.Env = environment
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf(
+			"installed application command failed: %w: %s",
+			err,
+			strings.TrimSpace(string(output)),
+		)
+	}
+	return nil
 }
 
 func InstallApplicationBinary(source string) error {

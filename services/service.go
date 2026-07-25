@@ -22,5 +22,7 @@ var Module = fx.Module(
 		NewBackupExecutor,
 		NewBackupVerifier,
 		NewBackupRetention,
+		NewBackupPolicyActivator,
+		NewBackupScheduler,
 	),
 )

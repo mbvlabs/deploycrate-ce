@@ -31,6 +31,7 @@ type BackupPolicyEntity struct {
 	Verification          json.RawMessage      `bun:"verification,type:jsonb"`
 	Settings              json.RawMessage      `bun:"settings,type:jsonb"`
 	ArchivedAt            BackupPolicyNullTime `bun:"archived_at"`
+	ActivatedAt           BackupPolicyNullTime `bun:"activated_at"`
 	TargetType            string               `bun:"target_type"`
 	ServerID              *uuid.UUID           `bun:"server_id,type:uuid"`
 	ResourceID            *uuid.UUID           `bun:"resource_id,type:uuid"`
@@ -82,13 +83,28 @@ func (e *BackupPolicyEntity) Validate() error {
 	if !validJSONObject(e.Settings) {
 		builder.Add("settings", "invalid", "backup settings must be a JSON object")
 	}
+	if e.ActivatedAt.Valid && e.ActivatedAt.Time.IsZero() {
+		builder.Add("activated_at", "invalid", "backup policy activation time is invalid")
+	}
 	if e.NextRunAt.IsZero() {
 		builder.Add("next_run_at", "required", "backup policy next run time is required")
+	}
+	if e.ActivatedAt.Valid && !e.NextRunAt.IsZero() &&
+		!e.NextRunAt.After(e.ActivatedAt.Time) {
+		builder.Add("next_run_at", "invalid", "active backup policy next run must follow activation")
+	}
+	if e.LastScheduledAt.Valid && !e.NextRunAt.IsZero() &&
+		!e.NextRunAt.After(e.LastScheduledAt.Time) {
+		builder.Add("next_run_at", "invalid", "backup policy next run must follow its last scheduled run")
 	}
 	if e.BackupDestinationID == uuid.Nil {
 		builder.Add("backup_destination_id", "required", "backup destination is required")
 	}
 	return builder.Err()
+}
+
+func (e BackupPolicyEntity) Schedulable() bool {
+	return e.ActivatedAt.Valid && !e.ArchivedAt.Valid
 }
 
 func validJSONObject(value json.RawMessage) bool {
@@ -155,6 +171,28 @@ type ScheduledBackupPolicy struct {
 	EnvironmentID          uuid.UUID  `bun:"environment_id"`
 }
 
+type BackupPolicySchedule struct {
+	ID        uuid.UUID `bun:"id"`
+	NextRunAt time.Time `bun:"next_run_at"`
+}
+
+func (bp backupPolicy) ActiveSchedules(
+	ctx context.Context,
+	db storage.Executor,
+) ([]BackupPolicySchedule, error) {
+	var schedules []BackupPolicySchedule
+	if err := db.NewSelect().
+		TableExpr("backup_policies AS policy").
+		ColumnExpr("policy.id, policy.next_run_at").
+		Where("policy.archived_at IS NULL").
+		Where("policy.activated_at IS NOT NULL").
+		OrderExpr("policy.next_run_at ASC, policy.id ASC").
+		Scan(ctx, &schedules); err != nil {
+		return nil, err
+	}
+	return schedules, nil
+}
+
 func scheduledBackupPoliciesQuery(db storage.Executor) *bun.SelectQuery {
 	return db.NewSelect().
 		TableExpr("backup_policies AS policy").
@@ -166,29 +204,91 @@ func scheduledBackupPoliciesQuery(db storage.Executor) *bun.SelectQuery {
 		ColumnExpr("COALESCE(server_target.environment_id, resource_binding.environment_id) AS environment_id").
 		Join("LEFT JOIN LATERAL (SELECT environment_id FROM environment_targets WHERE server_id = policy.server_id AND detached_at IS NULL ORDER BY attached_at DESC LIMIT 1) AS server_target ON TRUE").
 		Join("LEFT JOIN environment_resources AS resource_binding ON resource_binding.id = policy.environment_resource_id AND resource_binding.archived_at IS NULL").
-		Join("LEFT JOIN resource_endpoints AS endpoint ON endpoint.id = resource_binding.resource_endpoint_id AND endpoint.archived_at IS NULL").
-		Where("policy.archived_at IS NULL")
+		Join("LEFT JOIN resource_endpoints AS endpoint ON endpoint.id = resource_binding.resource_endpoint_id AND endpoint.archived_at IS NULL")
 }
 
-func (bp backupPolicy) FindForInstallationTargetUpdate(
+func (bp backupPolicy) FindScheduled(
 	ctx context.Context,
 	db storage.Executor,
-	installationID, targetType, legacyPolicyName string,
+	id uuid.UUID,
 ) (ScheduledBackupPolicy, error) {
 	var policy ScheduledBackupPolicy
 	if err := scheduledBackupPoliciesQuery(db).
-		Join("JOIN backup_destinations AS destination ON destination.id = policy.backup_destination_id AND destination.archived_at IS NULL").
-		Join("JOIN credentials AS credential ON credential.id = destination.credential_id AND credential.archived_at IS NULL").
-		Where("(credential.metadata ->> 'installation_id' = ? OR (COALESCE(credential.metadata ->> 'installation_id', '') = '' AND policy.name = ?))", installationID, legacyPolicyName).
-		Where("policy.target_type = ?", targetType).
-		OrderExpr("CASE WHEN credential.metadata ->> 'installation_id' = ? THEN 0 ELSE 1 END", installationID).
-		OrderExpr("policy.created_at ASC").
-		Limit(1).
-		For("UPDATE OF policy").
+		Where("policy.id = ?", id).
 		Scan(ctx, &policy); err != nil {
 		return ScheduledBackupPolicy{}, err
 	}
 	return policy, nil
+}
+
+func (bp backupPolicy) FindForUpdate(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (BackupPolicyEntity, error) {
+	var policy BackupPolicyEntity
+	if err := db.NewSelect().
+		Model(&policy).
+		Where("id = ?", id).
+		For("UPDATE").
+		Scan(ctx); err != nil {
+		return BackupPolicyEntity{}, err
+	}
+	return policy, nil
+}
+
+func (bp backupPolicy) FindInactiveInstallationPoliciesForUpdate(
+	ctx context.Context,
+	db storage.Executor,
+	installationID string,
+) ([]BackupPolicyEntity, error) {
+	var policies []BackupPolicyEntity
+	if err := db.NewSelect().
+		Model(&policies).
+		Join("JOIN backup_destinations AS destination ON destination.id = backup_policies.backup_destination_id AND destination.archived_at IS NULL").
+		Join("JOIN credentials AS credential ON credential.id = destination.credential_id AND credential.archived_at IS NULL").
+		Where("credential.metadata ->> 'installation_id' = ?", installationID).
+		Where("backup_policies.archived_at IS NULL").
+		Where("backup_policies.activated_at IS NULL").
+		OrderExpr("backup_policies.created_at ASC").
+		For("UPDATE OF backup_policies").
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	return policies, nil
+}
+
+func (bp backupPolicy) Activate(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	activatedAt, nextRunAt time.Time,
+) error {
+	_, err := db.NewUpdate().
+		Model((*BackupPolicyEntity)(nil)).
+		Set("activated_at = ?", activatedAt).
+		Set("next_run_at = ?", nextRunAt).
+		Set("updated_at = ?", activatedAt).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+func (bp backupPolicy) ReplaceSchedule(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	schedule string,
+	nextRunAt, updatedAt time.Time,
+) error {
+	_, err := db.NewUpdate().
+		Model((*BackupPolicyEntity)(nil)).
+		Set("schedule = ?", schedule).
+		Set("next_run_at = ?", nextRunAt).
+		Set("updated_at = ?", updatedAt).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
 }
 
 func (bp backupPolicy) AdvanceSchedule(
@@ -233,6 +333,7 @@ type CreateBackupPolicyData struct {
 	Verification          json.RawMessage
 	Settings              json.RawMessage
 	ArchivedAt            sql.NullTime
+	ActivatedAt           sql.NullTime
 	TargetType            string
 	ServerID              *uuid.UUID
 	ResourceID            *uuid.UUID
@@ -261,6 +362,7 @@ func (bp backupPolicy) Create(
 		Verification:          data.Verification,
 		Settings:              data.Settings,
 		ArchivedAt:            data.ArchivedAt,
+		ActivatedAt:           data.ActivatedAt,
 		TargetType:            data.TargetType,
 		ServerID:              data.ServerID,
 		ResourceID:            data.ResourceID,
@@ -294,6 +396,7 @@ type UpdateBackupPolicyData struct {
 	Verification          json.RawMessage
 	Settings              json.RawMessage
 	ArchivedAt            sql.NullTime
+	ActivatedAt           sql.NullTime
 	TargetType            string
 	ServerID              *uuid.UUID
 	ResourceID            *uuid.UUID
@@ -321,6 +424,7 @@ func (bp backupPolicy) Update(
 		Verification:          data.Verification,
 		Settings:              data.Settings,
 		ArchivedAt:            data.ArchivedAt,
+		ActivatedAt:           data.ActivatedAt,
 		TargetType:            data.TargetType,
 		ServerID:              data.ServerID,
 		ResourceID:            data.ResourceID,
@@ -347,6 +451,7 @@ func (bp backupPolicy) Update(
 		Column("verification").
 		Column("settings").
 		Column("archived_at").
+		Column("activated_at").
 		Column("target_type").
 		Column("server_id").
 		Column("resource_id").
@@ -453,6 +558,7 @@ func (bp backupPolicy) Upsert(
 		Verification:          data.Verification,
 		Settings:              data.Settings,
 		ArchivedAt:            data.ArchivedAt,
+		ActivatedAt:           data.ActivatedAt,
 		TargetType:            data.TargetType,
 		ServerID:              data.ServerID,
 		ResourceID:            data.ResourceID,
@@ -479,6 +585,7 @@ func (bp backupPolicy) Upsert(
 		Set("verification = excluded.verification").
 		Set("settings = excluded.settings").
 		Set("archived_at = excluded.archived_at").
+		Set("activated_at = excluded.activated_at").
 		Set("target_type = excluded.target_type").
 		Set("server_id = excluded.server_id").
 		Set("resource_id = excluded.resource_id").

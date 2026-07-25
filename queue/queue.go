@@ -4,24 +4,22 @@ package queue
 import (
 	"context"
 	"database/sql"
-	"fmt"
 	"log/slog"
 	"time"
 
-	"deploycrate-ce/config"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/queue/jobs"
 
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
 	"github.com/riverqueue/river/rivertype"
-	"github.com/robfig/cron/v3"
 
 	"go.uber.org/fx"
 )
 
 type Processor struct {
 	Client *river.Client[*sql.Tx]
+	seeder *BackupScheduleSeeder
 }
 
 const periodicJobsGroup = `group:"periodic_jobs"`
@@ -32,6 +30,7 @@ type ProcessorParams struct {
 	DB           storage.Pool
 	Workers      *river.Workers
 	PeriodicJobs []*river.PeriodicJob `group:"periodic_jobs"`
+	Seeder       *BackupScheduleSeeder
 }
 
 func (p Processor) Shutdown(ctx context.Context) error {
@@ -40,6 +39,10 @@ func (p Processor) Shutdown(ctx context.Context) error {
 
 func (p Processor) Start(ctx context.Context) error {
 	return p.Client.Start(ctx)
+}
+
+func (p Processor) Seed(ctx context.Context) error {
+	return p.seeder.Seed(ctx)
 }
 
 func (p Processor) Stop(ctx context.Context) error {
@@ -61,7 +64,7 @@ func NewProcessor(params ProcessorParams) (Processor, error) {
 		return Processor{}, err
 	}
 
-	return Processor{riverClient}, nil
+	return Processor{Client: riverClient, seeder: params.Seeder}, nil
 }
 
 type InsertOnly struct {
@@ -138,56 +141,13 @@ func NewInsertQueue(insertOnly InsertOnly) storage.InsertQueue {
 	return &insertOnly
 }
 
-type BackupPeriodicJobs struct {
-	fx.Out
-
-	Jobs []*river.PeriodicJob `group:"periodic_jobs,flatten"`
-}
-
-func NewBackupPeriodicJobs(configuration config.Config) (BackupPeriodicJobs, error) {
-	if !configuration.Backups.Enabled {
-		return BackupPeriodicJobs{}, nil
-	}
-
-	server, err := backupPeriodicJob("server", configuration.Backups.ServerSchedule)
-	if err != nil {
-		return BackupPeriodicJobs{}, err
-	}
-	periodicJobs := []*river.PeriodicJob{server}
-	if configuration.Backups.DatabaseEnabled {
-		database, err := backupPeriodicJob("resource", configuration.Backups.DatabaseSchedule)
-		if err != nil {
-			return BackupPeriodicJobs{}, err
-		}
-		periodicJobs = append(periodicJobs, database)
-	}
-	return BackupPeriodicJobs{Jobs: periodicJobs}, nil
-}
-
-func backupPeriodicJob(targetType, cronSpec string) (*river.PeriodicJob, error) {
-	schedule, err := cron.ParseStandard(cronSpec)
-	if err != nil {
-		return nil, fmt.Errorf("parse %s backup cron: %w", targetType, err)
-	}
-	return river.NewPeriodicJob(
-		schedule,
-		func() (river.JobArgs, *river.InsertOpts) {
-			return jobs.BackupScheduleArgs{
-				TargetType:  targetType,
-				ScheduledAt: time.Now().UTC().Truncate(time.Minute),
-			}, nil
-		},
-		&river.PeriodicJobOpts{ID: "backup_" + targetType + "_schedule"},
-	), nil
-}
-
 var Module = fx.Module(
 	"queue",
 	fx.Provide(
 		NewInsertOnly,
 		NewInsertQueue,
+		NewBackupScheduleSeeder,
 		NewProcessor,
 		fx.Annotate(NewMetricRollupPeriodicJob, fx.ResultTags(periodicJobsGroup)),
-		NewBackupPeriodicJobs,
 	),
 )

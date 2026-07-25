@@ -15,7 +15,7 @@ CREATE TABLE resource_restores (
 
     change_id UUID NOT NULL REFERENCES changes (id) ON DELETE RESTRICT,
     change_task_id UUID NOT NULL REFERENCES change_tasks (id) ON DELETE RESTRICT,
-    resource_backup_id UUID NOT NULL REFERENCES resource_backups (id) ON DELETE RESTRICT,
+    backup_id UUID NOT NULL REFERENCES backups (id) ON DELETE RESTRICT,
     resource_id UUID NOT NULL REFERENCES resources (id) ON DELETE RESTRICT,
     source_environment_resource_id UUID REFERENCES environment_resources (id) ON DELETE RESTRICT,
     target_environment_resource_id UUID REFERENCES environment_resources (id) ON DELETE RESTRICT,
