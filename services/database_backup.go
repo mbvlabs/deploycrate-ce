@@ -82,7 +82,8 @@ func (service *DatabaseBackup) Run(
 		return BackupArtifact{}, fmt.Errorf("validate PostgreSQL custom dump: %w", err)
 	}
 	manifest := map[string]any{
-		"artifact_version":          "1",
+		"artifact_version":          scope.Backup.FormatVersion,
+		"installation_id":           service.config.App.InstallationID,
 		"backup_id":                 scope.Backup.ID.String(),
 		"policy_id":                 scope.Backup.BackupPolicyID.String(),
 		"resource_id":               scope.Backup.ResourceID.String(),
@@ -121,11 +122,12 @@ func (service *DatabaseBackup) Run(
 	}
 	digestBytes := digest.Sum(nil)
 	metadata := map[string]string{
-		"backup-id":      scope.Backup.ID.String(),
-		"policy-id":      scope.Backup.BackupPolicyID.String(),
-		"resource-id":    scope.Backup.ResourceID.String(),
-		"sha256":         hex.EncodeToString(digestBytes),
-		"format-version": "1",
+		"backup-id":       scope.Backup.ID.String(),
+		"policy-id":       scope.Backup.BackupPolicyID.String(),
+		"resource-id":     scope.Backup.ResourceID.String(),
+		"installation-id": service.config.App.InstallationID,
+		"sha256":          hex.EncodeToString(digestBytes),
+		"format-version":  scope.Backup.FormatVersion,
 	}
 	remote, uploadErr := store.Put(ctx, objectKey, file, metadata)
 	closeErr := file.Close()

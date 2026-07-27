@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"time"
@@ -23,6 +25,12 @@ type MetricRollup struct {
 	Target        string    `json:"target"`
 	Resource      string    `json:"resource"`
 	ObservationID string    `json:"observation_id"`
+}
+
+type MetricRollupExport struct {
+	Rows        int64  `json:"rows"`
+	FirstBucket string `json:"first_bucket,omitempty"`
+	LastBucket  string `json:"last_bucket,omitempty"`
 }
 
 type Client struct {
@@ -75,4 +83,63 @@ func (client Client) InsertMetricRollups(ctx context.Context, rollups []MetricRo
 		return fmt.Errorf("insert ClickHouse metric rollups: unexpected status %s", response.Status)
 	}
 	return nil
+}
+
+func (client Client) ExportMetricRollups(
+	ctx context.Context,
+	destination io.Writer,
+) (MetricRollupExport, error) {
+	endpoint, err := url.Parse(client.baseURL)
+	if err != nil {
+		return MetricRollupExport{}, fmt.Errorf("build ClickHouse export URL: %w", err)
+	}
+	query := endpoint.Query()
+	query.Set("database", client.database)
+	query.Set(
+		"query",
+		"SELECT bucket_start, observed_at, metric, average, maximum, `last`, server, environment, deployment, target, resource, observation_id FROM metric_rollups ORDER BY bucket_start, metric, server, target, resource, observation_id FORMAT JSONEachRow",
+	)
+	endpoint.RawQuery = query.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), nil)
+	if err != nil {
+		return MetricRollupExport{}, fmt.Errorf("build ClickHouse export request: %w", err)
+	}
+	request.SetBasicAuth(client.user, client.password)
+	response, err := client.client.Do(request)
+	if err != nil {
+		return MetricRollupExport{}, fmt.Errorf("export ClickHouse metric rollups: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 800))
+		return MetricRollupExport{}, fmt.Errorf(
+			"export ClickHouse metric rollups: unexpected status %s: %s",
+			response.Status,
+			string(message),
+		)
+	}
+
+	decoder := json.NewDecoder(io.TeeReader(response.Body, destination))
+	result := MetricRollupExport{}
+	for {
+		var row struct {
+			BucketStart string `json:"bucket_start"`
+		}
+		if err := decoder.Decode(&row); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return MetricRollupExport{}, fmt.Errorf("decode ClickHouse metric rollup export: %w", err)
+		}
+		if row.BucketStart == "" {
+			return MetricRollupExport{}, errors.New("ClickHouse metric rollup export is missing bucket_start")
+		}
+		result.Rows++
+		if result.FirstBucket == "" || row.BucketStart < result.FirstBucket {
+			result.FirstBucket = row.BucketStart
+		}
+		if result.LastBucket == "" || row.BucketStart > result.LastBucket {
+			result.LastBucket = row.BucketStart
+		}
+	}
+	return result, nil
 }

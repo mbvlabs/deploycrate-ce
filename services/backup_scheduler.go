@@ -55,7 +55,7 @@ func (service *BackupScheduler) Schedule(
 	if err != nil {
 		return fmt.Errorf("load scheduled backup policy %s: %w", policyID, err)
 	}
-	backupID, err := service.enqueue(ctx, tx, policy, slot)
+	backupID, err := service.enqueue(ctx, tx, policy, slot, "schedule")
 	if err != nil {
 		return err
 	}
@@ -156,6 +156,7 @@ func (service *BackupScheduler) enqueue(
 	tx bun.Tx,
 	policy models.ScheduledBackupPolicy,
 	slot time.Time,
+	triggerType string,
 ) (uuid.UUID, error) {
 	sequence, err := models.Change.NextSequence(ctx, tx, policy.EnvironmentID)
 	if err != nil {
@@ -163,7 +164,7 @@ func (service *BackupScheduler) enqueue(
 	}
 	now := time.Now().UTC()
 	change, err := models.Change.Create(ctx, tx, models.CreateChangeData{
-		Sequence: sequence, Kind: "backup", TriggerType: "schedule", ActorType: "system",
+		Sequence: sequence, Kind: "backup", TriggerType: triggerType, ActorType: "system",
 		CauseSystem:    sql.NullString{String: "deploycrate-ce", Valid: true},
 		CauseReference: sql.NullString{String: policy.ID.String(), Valid: true},
 		CorrelationID:  uuid.New(), CorrectionContext: json.RawMessage(`{}`),
@@ -183,7 +184,7 @@ func (service *BackupScheduler) enqueue(
 	}
 	task, err := models.ChangeTask.Create(ctx, tx, models.CreateChangeTaskData{
 		Kind: "backup_execute", SubjectType: policy.TargetType, SubjectID: *targetID,
-		IdempotencyKey: "backup:" + policy.ID.String() + ":" + slot.Format(time.RFC3339),
+		IdempotencyKey: "backup:" + triggerType + ":" + policy.ID.String() + ":" + slot.Format(time.RFC3339Nano),
 		Input:          json.RawMessage(`{}`), Status: "pending", AvailableAt: now,
 		ChangeID: change.ID, ServerID: policy.ServerID,
 	})
@@ -192,7 +193,7 @@ func (service *BackupScheduler) enqueue(
 	}
 	backupID := uuid.New()
 	if _, err := models.Backup.Create(ctx, tx, models.CreateBackupData{
-		ID: backupID, TargetType: policy.TargetType, TriggerType: "schedule", ScheduledAt: slot,
+		ID: backupID, TargetType: policy.TargetType, TriggerType: triggerType, ScheduledAt: slot,
 		Strategy: policy.Strategy, Driver: policy.Driver, Format: policy.Format,
 		FormatVersion: "1", ProviderMetadata: json.RawMessage(`{}`),
 		Status: models.BackupStatusPending, RequestedAt: now,
@@ -214,4 +215,53 @@ func (service *BackupScheduler) enqueue(
 		return uuid.Nil, fmt.Errorf("insert backup execution job: %w", err)
 	}
 	return backupID, nil
+}
+
+func (service *BackupScheduler) EnsureInitial(
+	ctx context.Context,
+	policyID uuid.UUID,
+) error {
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	policyState, err := models.BackupPolicy.FindForUpdate(ctx, tx, policyID)
+	if err != nil {
+		return fmt.Errorf("lock initial backup policy %s: %w", policyID, err)
+	}
+	if !policyState.Schedulable() {
+		return nil
+	}
+	exists, err := models.Backup.ExistsForPolicy(ctx, tx, policyID)
+	if err != nil {
+		return fmt.Errorf("inspect initial backup policy %s: %w", policyID, err)
+	}
+	if exists {
+		return nil
+	}
+	policy, err := models.BackupPolicy.FindScheduled(ctx, tx, policyID)
+	if err != nil {
+		return fmt.Errorf("load initial backup policy %s: %w", policyID, err)
+	}
+	slot := time.Now().UTC()
+	backupID, err := service.enqueue(ctx, tx, policy, slot, "installer")
+	if err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit initial backup: %w", err)
+	}
+	slog.InfoContext(
+		ctx,
+		"initial backup scheduled",
+		"backup_id", backupID,
+		"backup_policy_id", policy.ID,
+		"target_type", policy.TargetType,
+		"driver", policy.Driver,
+		"trigger_type", "installer",
+		"lifecycle_status", models.BackupStatusPending,
+	)
+	return nil
 }

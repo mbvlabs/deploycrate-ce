@@ -18,6 +18,7 @@ import (
 	"deploycrate-ce/internal/inertia"
 	"deploycrate-ce/internal/server"
 	"deploycrate-ce/internal/storage"
+	"deploycrate-ce/models"
 	"deploycrate-ce/queue"
 	"deploycrate-ce/router"
 	"deploycrate-ce/services"
@@ -71,6 +72,7 @@ func main() {
 
 		fx.Invoke(startQueueProcessor),
 		fx.Invoke(startServer),
+		fx.Invoke(ensureInitialBackupsOnStartup),
 	)
 
 	if err := app.Start(ctx); err != nil {
@@ -196,6 +198,29 @@ func startServer(lc fx.Lifecycle, appCtx context.Context, r *router.Router, cfg 
 				}
 				return shutdownErr
 			}, done)
+		},
+	})
+}
+
+func ensureInitialBackupsOnStartup(
+	lc fx.Lifecycle,
+	db storage.Pool,
+	scheduler *services.BackupScheduler,
+) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			policies, err := models.BackupPolicy.ActiveSchedules(ctx, db.Executor())
+			if err != nil {
+				return fmt.Errorf("load configured backup policies: %w", err)
+			}
+
+			for _, policy := range policies {
+				if err := scheduler.EnsureInitial(ctx, policy.ID); err != nil {
+					return fmt.Errorf("ensure initial backup for policy %s: %w", policy.ID, err)
+				}
+			}
+
+			return nil
 		},
 	})
 }

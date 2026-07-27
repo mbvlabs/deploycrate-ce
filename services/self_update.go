@@ -23,6 +23,7 @@ import (
 	"deploycrate-ce/clients/cloudflare"
 	"deploycrate-ce/config"
 	"deploycrate-ce/internal/storage"
+	"deploycrate-ce/internal/sudo"
 	"deploycrate-ce/models"
 
 	"github.com/google/uuid"
@@ -1425,7 +1426,13 @@ func runReleaseCommand(ctx context.Context, binaryPath string, arguments ...stri
 }
 
 func serviceActive(ctx context.Context, service string) (bool, error) {
-	command := exec.CommandContext(ctx, "sudo", "-n", "systemctl", "is-active", "--quiet", service)
+	command := sudo.CommandContext(
+		ctx,
+		"/usr/bin/systemctl",
+		"is-active",
+		"--quiet",
+		service,
+	)
 	output, err := command.CombinedOutput()
 	if err == nil {
 		return true, nil
@@ -1443,7 +1450,7 @@ func serviceActive(ctx context.Context, service string) (bool, error) {
 }
 
 func serviceEnabled(ctx context.Context, service string) (bool, error) {
-	command := exec.CommandContext(ctx, "sudo", "-n", "systemctl", "is-enabled", service)
+	command := sudo.CommandContext(ctx, "/usr/bin/systemctl", "is-enabled", service)
 	output, err := command.CombinedOutput()
 	state := strings.TrimSpace(string(output))
 	if err == nil {
@@ -1486,17 +1493,31 @@ func stopServiceAndWait(ctx context.Context, service string, wait time.Duration)
 }
 
 func runSystemctl(ctx context.Context, action, service string) error {
-	return runSudo(ctx, "systemctl", action, service)
+	output, err := sudo.CommandContext(
+		ctx,
+		"/usr/bin/systemctl",
+		action,
+		service,
+	).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf(
+			"systemctl %s %s: %w: %s",
+			action,
+			service,
+			err,
+			strings.TrimSpace(string(output)),
+		)
+	}
+	return nil
 }
 
-func runSudo(ctx context.Context, command string, args ...string) error {
-	allArgs := append([]string{"-n", command}, args...)
-	output, err := exec.CommandContext(ctx, "sudo", allArgs...).CombinedOutput()
+func runSudo(ctx context.Context, command string, arguments ...string) error {
+	output, err := sudo.CommandContext(ctx, command, arguments...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf(
 			"sudo %s %s: %w: %s",
 			command,
-			strings.Join(args, " "),
+			strings.Join(arguments, " "),
 			err,
 			strings.TrimSpace(string(output)),
 		)

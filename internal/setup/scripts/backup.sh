@@ -62,6 +62,10 @@ printf '%s\n' \
   /etc/wireguard \
   /etc/ssh \
   /var/lib/deploycrate-ce \
+  /var/lib/caddy \
+  /var/lib/deploycrate/ssh-ca/deploycrate-ssh-ca-recovery-v1.age \
+  /opt/deploycrate-ce/releases \
+  /opt/deploycrate-ce/slots \
   /home/admin/.ssh/authorized_keys \
   /etc/systemd/system/deploycrate-ce@.service \
   /etc/systemd/system/caddy.service \
@@ -71,6 +75,7 @@ printf '%s\n' \
   > "${temporary_sources}"
 
 printf '%s\n' \
+  /etc/deploycrate-ce/installer-secrets.json \
   /var/lib/deploycrate-ce/runtime/backups \
   /var/lib/docker/volumes/deploycrate-ce-postgres \
   '**/postgresql/**' \

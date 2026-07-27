@@ -17,6 +17,7 @@ var Module = fx.Module(
 		NewCaddyRouteService,
 		NewSSHCAService,
 		NewMetricRollupService,
+		NewClickHouseBackup,
 		NewServerBackup,
 		NewDatabaseBackup,
 		NewBackupExecutor,

@@ -48,7 +48,7 @@ The wizard collects and reviews:
 | Operating-system access | The `admin` password is required and the wizard recommends at least 12 characters without enforcing a minimum length. Every server receives a generated Ed25519 administrator key for one-time handoff. An optional ordinary owner public key is retained independently in `authorized_keys`. |
 | Application administrator | The wizard requires a valid email address and a password of at least 8 characters. The administrator is created or updated and marked verified. |
 | PostgreSQL | Choose a local PostgreSQL 17 Docker container or an external server. External connections support `disable`, `require`, `verify-ca`, and `verify-full`; an optional CA file is copied to a managed path before installation starts. |
-| Backup destination | Optional generic S3-compatible or Cloudflare R2 destination with capability validation, encrypted credentials, Restic server backups, and local PostgreSQL logical backups. |
+| Backup destination | Optional generic S3-compatible or Cloudflare R2 destination with capability validation, encrypted credentials, Restic server backups that default to daily, and local PostgreSQL logical backups that default to every six hours. Server snapshots include configuration, releases, slot links, Caddy state, the encrypted SSH CA recovery bundle, and a verified export of durable ClickHouse metric rollups. Prometheus raw data remains excluded. |
 
 Generated session, encryption, signing, pepper, and local database secrets are not prompted for or printed. The age passphrase for the SSH CA recovery bundle is always generated automatically and appears only in the final handoff. Database credentials remain in the protected application environment file until the resource credential encryption contract is implemented.
 
@@ -67,7 +67,8 @@ After the operator approves the review screen, the CLI saves resumable configura
 9. Creates blue and green systemd slots on `127.0.0.1:8080` and `127.0.0.1:8081`, but links and starts only the initial blue slot.
 10. Installs checksum-verified Caddy 2.11.4, records the initial topology, applies the route, and hardens SSH. Direct root login and SSH passwords are disabled; public keys and the installation user CA remain enabled for `admin` only.
 11. Verifies WireGuard, node-exporter, Docker, Caddy, PostgreSQL, Prometheus, ClickHouse, and the active application slot.
-12. Displays credentials, the recovery bundle path and checksum, and its age passphrase. `[ Copy details ]` remains the first focused action. Typing `CONFIRM` acknowledges the off-server recovery copy, removes transient installer secrets and the temporary bootstrap binaries, then reboots.
+12. Displays credentials, the recovery bundle path and checksum, and its age passphrase. `[ Copy details ]` remains the first focused action. Typing `CONFIRM` acknowledges the off-server recovery copy, activates backup policies, removes transient installer secrets and the temporary bootstrap binaries, then reboots.
+13. On application startup, the application lifecycle checks every configured backup policy and creates one initial backup when that policy has no backup record. The registered backup workers then execute and verify it through the same pipeline as scheduled backups.
 
 The health check retries for about one minute. A single-server WireGuard mesh has no handshake until another peer joins.
 
@@ -102,7 +103,7 @@ OpenSSH server trust reads the user CA file, which may contain overlapping publi
 
 For accidental CA loss, restore the original bundle with `bootstrap ssh-ca recover`. Suspected compromise is different: generate new CAs, distribute both new public keys alongside the old keys, switch signing to the new CAs, wait for old 30-minute user certificates to expire, and only then remove the old public keys. Do not restore a suspected-compromised CA.
 
-For WireGuard failure, inspect `wg-quick@wg0`, `/etc/wireguard/wg0.conf`, the `10.99.0.1/16` address, UDP 51820, and `wg show wg0` before restarting the unit. For Prometheus failure, run `promtool check config /etc/prometheus/prometheus.yml`, inspect `journalctl -u prometheus`, verify its localhost listener, then check `/api/v1/targets`. ClickHouse metrics are disposable, expire after seven days, and are intentionally not backed up.
+For WireGuard failure, inspect `wg-quick@wg0`, `/etc/wireguard/wg0.conf`, the `10.99.0.1/16` address, UDP 51820, and `wg show wg0` before restarting the unit. For Prometheus failure, run `promtool check config /etc/prometheus/prometheus.yml`, inspect `journalctl -u prometheus`, verify its localhost listener, then check `/api/v1/targets`. Prometheus raw metrics remain disposable. ClickHouse rollups expire after seven days locally and are exported into each server backup.
 
 ### Upcoming Managed Node Enrollment
 
@@ -172,7 +173,7 @@ The remaining DeployCrate-managed locations are:
 | `/var/lib/deploycrate-builds/` | Build workspace owned by the `deploycrate` user. Builder images and build containers remain Docker-managed. |
 | `/home/admin/.ssh/authorized_keys` | Generated administrator key and optional ordinary owner key for SSH access as `admin`. |
 
-ClickHouse uses the Docker volume `deploycrate-ce-clickhouse`. Its `metric_rollups` table expires rows after seven days and has no backup policy.
+ClickHouse uses the Docker volume `deploycrate-ce-clickhouse`. Its `metric_rollups` table expires rows after seven days and is exported in deterministic JSONEachRow format into each daily server backup. The live Docker volume itself is not copied.
 
 The installer also places the checksum-verified Buildpacks CLI at `/usr/local/bin/pack`. Caddy is installed from the pinned official Debian package at `/usr/bin/caddy` and held at the installer-supported version. Docker Engine and the remaining host packages use their standard Debian package locations.
 

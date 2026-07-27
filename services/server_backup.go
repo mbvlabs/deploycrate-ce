@@ -8,12 +8,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
+	"time"
 
 	"deploycrate-ce/clients/objectstorage"
+	"deploycrate-ce/config"
+	"deploycrate-ce/internal/sudo"
 )
 
 const (
@@ -21,16 +26,42 @@ const (
 	backupSourcesManifest           = "/usr/local/share/deploycrate-ce/backup-sources-v1"
 	backupExcludesManifest          = "/usr/local/share/deploycrate-ce/backup-excludes-v1"
 	backupRecoveryManifestDirectory = "/var/lib/deploycrate-ce/runtime/recovery-manifests"
+	sshCARecoveryBundlePath         = "/var/lib/deploycrate/ssh-ca/deploycrate-ssh-ca-recovery-v1.age"
+	installerSecretsPath            = "/etc/deploycrate-ce/installer-secrets.json"
 )
 
-type ServerBackup struct{}
+type ServerBackup struct {
+	config     config.Config
+	clickhouse *ClickHouseBackup
+}
 
-func NewServerBackup() *ServerBackup { return &ServerBackup{} }
+func NewServerBackup(configuration config.Config, clickhouse *ClickHouseBackup) *ServerBackup {
+	return &ServerBackup{config: configuration, clickhouse: clickhouse}
+}
 
 type resticSnapshot struct {
 	ID      string   `json:"id"`
 	ShortID string   `json:"short_id"`
 	Tags    []string `json:"tags"`
+}
+
+type serverRecoveryManifest struct {
+	Version              int                      `json:"version"`
+	FormatVersion        string                   `json:"format_version"`
+	InstallationID       string                   `json:"installation_id"`
+	BackupID             string                   `json:"backup_id"`
+	PolicyID             string                   `json:"policy_id"`
+	ServerID             string                   `json:"server_id"`
+	ScheduledAt          string                   `json:"scheduled_at"`
+	ProducerVersion      string                   `json:"producer_version"`
+	Packages             string                   `json:"packages"`
+	SystemdUnits         string                   `json:"systemd_units"`
+	Containers           string                   `json:"containers"`
+	Slots                map[string]string        `json:"slots"`
+	ReleaseDigests       map[string]string        `json:"release_digests"`
+	IdentityFingerprints map[string]string        `json:"identity_fingerprints"`
+	SSHCARecoverySHA256  string                   `json:"ssh_ca_recovery_sha256"`
+	ClickHouse           ClickHouseBackupArtifact `json:"clickhouse_metric_rollups"`
 }
 
 func (service *ServerBackup) Run(
@@ -63,13 +94,26 @@ func (service *ServerBackup) Run(
 			ctx, environment, scope.DestinationPathStyle, snapshot,
 		)
 	}
-	recoveryManifest, cleanupManifest, err := createServerRecoveryManifest(ctx, scope)
+	clickHousePath := path.Join(
+		backupRecoveryManifestDirectory,
+		scope.Backup.ID.String()+"-clickhouse-metric-rollups.jsonl",
+	)
+	clickHouseArtifact, err := service.clickhouse.Export(ctx, clickHousePath)
+	if err != nil {
+		return BackupArtifact{}, err
+	}
+	defer os.Remove(clickHousePath)
+	recoveryManifest, cleanupManifest, err := service.createServerRecoveryManifest(
+		ctx,
+		scope,
+		clickHouseArtifact,
+	)
 	if err != nil {
 		return BackupArtifact{}, err
 	}
 	defer cleanupManifest()
 
-	sourcesFile, cleanup, err := existingBackupSources()
+	sourcesFile, cleanup, err := existingBackupSources(ctx)
 	if err != nil {
 		return BackupArtifact{}, err
 	}
@@ -84,6 +128,7 @@ func (service *ServerBackup) Run(
 		"backup", "--json", "--files-from", sourcesFile,
 		"--exclude-file", backupExcludesManifest,
 		recoveryManifest,
+		clickHousePath,
 	}
 	for _, immutableTag := range tags {
 		arguments = append(arguments, "--tag", immutableTag)
@@ -139,9 +184,10 @@ func existingServerBackupArtifact(
 	return serverBackupArtifact(snapshot, stats.TotalSize)
 }
 
-func createServerRecoveryManifest(
+func (service *ServerBackup) createServerRecoveryManifest(
 	ctx context.Context,
 	scope BackupScope,
+	clickhouse ClickHouseBackupArtifact,
 ) (string, func(), error) {
 	if err := os.MkdirAll(backupRecoveryManifestDirectory, 0o700); err != nil {
 		return "", func() {}, err
@@ -161,20 +207,47 @@ func createServerRecoveryManifest(
 		}
 		return target
 	}
-	manifest := map[string]any{
-		"version":       1,
-		"backup_id":     scope.Backup.ID.String(),
-		"server_id":     scope.Backup.ServerID.String(),
-		"scheduled_at":  scope.Backup.ScheduledAt.UTC(),
-		"packages":      commandOutput("/usr/bin/dpkg-query", "-W", "-f=${Package}\t${Version}\n"),
-		"systemd_units": commandOutput("/usr/bin/systemctl", "list-unit-files", "--no-pager", "--no-legend"),
-		"containers": commandOutput(
+	releaseDigests, err := applicationReleaseDigests()
+	if err != nil {
+		return "", func() {}, err
+	}
+	sshCARecoveryDigest, err := fileSHA256(sshCARecoveryBundlePath)
+	if err != nil {
+		return "", func() {}, fmt.Errorf("digest SSH CA recovery bundle: %w", err)
+	}
+	identityFingerprints := map[string]string{}
+	for name, filePath := range map[string]string{
+		"ssh_user_ca":    "/etc/ssh/deploycrate-user-ca.pub",
+		"ssh_host_ca":    "/etc/ssh/deploycrate-host-ca.pub",
+		"ssh_host_key":   "/etc/ssh/ssh_host_ed25519_key.pub",
+		"wireguard_peer": "/etc/wireguard/deploycrate-ce.pub",
+	} {
+		fingerprint, err := privilegedFileSHA256(ctx, filePath)
+		if err != nil {
+			return "", func() {}, fmt.Errorf("fingerprint %s: %w", name, err)
+		}
+		identityFingerprints[name] = fingerprint
+	}
+	manifest := serverRecoveryManifest{
+		Version:         1,
+		FormatVersion:   scope.Backup.FormatVersion,
+		InstallationID:  service.config.App.InstallationID,
+		BackupID:        scope.Backup.ID.String(),
+		PolicyID:        scope.Backup.BackupPolicyID.String(),
+		ServerID:        scope.Backup.ServerID.String(),
+		ScheduledAt:     scope.Backup.ScheduledAt.UTC().Format(time.RFC3339Nano),
+		ProducerVersion: scope.Backup.ProducerVersion,
+		Packages:        commandOutput("/usr/bin/dpkg-query", "-W", "-f=${Package}\t${Version}\n"),
+		SystemdUnits:    commandOutput("/usr/bin/systemctl", "list-unit-files", "--no-pager", "--no-legend"),
+		Containers: commandOutput(
 			"/usr/bin/docker", "ps", "--all", "--format", "{{.Names}}\t{{.Image}}\t{{.Status}}",
 		),
-		"slots": map[string]string{
-			"blue":  symlinkTarget("/opt/deploycrate-ce/slots/blue"),
-			"green": symlinkTarget("/opt/deploycrate-ce/slots/green"),
+		Slots: map[string]string{
+			"blue":  symlinkTarget("/opt/deploycrate-ce/slots/blue/deploycrate-ce"),
+			"green": symlinkTarget("/opt/deploycrate-ce/slots/green/deploycrate-ce"),
 		},
+		ReleaseDigests: releaseDigests, IdentityFingerprints: identityFingerprints,
+		SSHCARecoverySHA256: sshCARecoveryDigest, ClickHouse: clickhouse,
 	}
 	encoded, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -185,6 +258,63 @@ func createServerRecoveryManifest(
 	}
 	cleanup := func() { _ = os.Remove(manifestPath) }
 	return manifestPath, cleanup, nil
+}
+
+func applicationReleaseDigests() (map[string]string, error) {
+	digests := map[string]string{}
+	err := filepath.WalkDir(
+		"/opt/deploycrate-ce/releases",
+		func(filePath string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() || entry.Name() != "deploycrate-ce" {
+				return nil
+			}
+			digest, err := fileSHA256(filePath)
+			if err != nil {
+				return err
+			}
+			digests[filePath] = digest
+			return nil
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("digest application releases: %w", err)
+	}
+	if len(digests) == 0 {
+		return nil, errors.New("no application release binaries are available for backup")
+	}
+	return digests, nil
+}
+
+func fileSHA256(filePath string) (string, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+	digest := sha256.New()
+	if _, err := io.Copy(digest, file); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
+}
+
+func privilegedFileSHA256(ctx context.Context, filePath string) (string, error) {
+	output, err := sudo.CommandContext(ctx, "/usr/bin/sha256sum", filePath).Output()
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(string(output))
+	if len(fields) != 2 {
+		return "", errors.New("sha256sum returned an invalid result")
+	}
+	digest, err := hex.DecodeString(fields[0])
+	if err != nil || len(digest) != sha256.Size {
+		return "", errors.New("sha256sum returned an invalid digest")
+	}
+	return fields[0], nil
 }
 
 func findResticSnapshot(
@@ -265,15 +395,20 @@ func runRestic(
 	}
 	resticArguments := []string{"-o", "s3.bucket-lookup=" + bucketLookup}
 	resticArguments = append(resticArguments, arguments...)
-	command := exec.CommandContext(
+	command := sudo.CommandContextPreserveEnvironment(
 		ctx,
-		"/usr/bin/sudo",
-		append([]string{"-n", "-E", resticExecutable}, resticArguments...)...,
+		resticExecutable,
+		resticArguments...,
 	)
 	command.Env = environment
-	output, err := command.CombinedOutput()
+	var stderr strings.Builder
+	command.Stderr = &stderr
+	output, err := command.Output()
 	if err != nil {
-		message := strings.TrimSpace(string(output))
+		message := strings.TrimSpace(stderr.String())
+		if message == "" {
+			message = strings.TrimSpace(string(output))
+		}
 		if len(message) > 800 {
 			message = message[:800]
 		}
@@ -282,7 +417,7 @@ func runRestic(
 	return output, nil
 }
 
-func existingBackupSources() (string, func(), error) {
+func existingBackupSources(ctx context.Context) (string, func(), error) {
 	manifest, err := os.Open(backupSourcesManifest)
 	if err != nil {
 		return "", func() {}, fmt.Errorf("open backup source manifest: %w", err)
@@ -305,17 +440,19 @@ func existingBackupSources() (string, func(), error) {
 		if source == "" {
 			continue
 		}
-		if _, err := os.Stat(source); err == nil {
+		exists, err := privilegedPathExists(ctx, source)
+		if err != nil {
+			file.Close()
+			cleanup()
+			return "", func() {}, fmt.Errorf("inspect backup source %s: %w", source, err)
+		}
+		if exists {
 			if _, err := fmt.Fprintln(file, source); err != nil {
 				file.Close()
 				cleanup()
 				return "", func() {}, err
 			}
 			count++
-		} else if !errors.Is(err, os.ErrNotExist) {
-			file.Close()
-			cleanup()
-			return "", func() {}, fmt.Errorf("inspect backup source %s: %w", source, err)
 		}
 	}
 	if err := scanner.Err(); err != nil {
@@ -332,4 +469,16 @@ func existingBackupSources() (string, func(), error) {
 		return "", func() {}, errors.New("backup source manifest has no available paths")
 	}
 	return file.Name(), cleanup, nil
+}
+
+func privilegedPathExists(ctx context.Context, filePath string) (bool, error) {
+	err := sudo.CommandContext(ctx, "/usr/bin/test", "-e", filePath).Run()
+	if err == nil {
+		return true, nil
+	}
+	var exitError *exec.ExitError
+	if errors.As(err, &exitError) && exitError.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
 }

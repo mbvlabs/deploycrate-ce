@@ -254,47 +254,16 @@ func (backup) FindVerifiedByPolicy(
 	return backups, nil
 }
 
-type InitialBackupRecord struct {
-	ID             uuid.UUID `bun:"id"`
-	BackupPolicyID uuid.UUID `bun:"backup_policy_id"`
-	Status         string    `bun:"status"`
-}
-
-func (backup) FindLatestInstallerByPolicies(
+func (backup) ExistsForPolicy(
 	ctx context.Context,
 	db storage.Executor,
-	policyIDs []uuid.UUID,
-) ([]InitialBackupRecord, error) {
-	if len(policyIDs) == 0 {
-		return nil, nil
-	}
-	var records []InitialBackupRecord
-	if err := db.NewSelect().
-		TableExpr("backups AS backup").
-		ColumnExpr("DISTINCT ON (backup.backup_policy_id) backup.id, backup.backup_policy_id, backup.status").
-		Where("backup.backup_policy_id IN (?)", bun.In(policyIDs)).
-		Where("backup.trigger_type = ?", "installer").
-		Where("backup.status <> ?", BackupStatusPruned).
-		OrderExpr("backup.backup_policy_id, backup.scheduled_at DESC").
-		Scan(ctx, &records); err != nil {
-		return nil, err
-	}
-	return records, nil
-}
-
-func (backup) CountVerified(
-	ctx context.Context,
-	db storage.Executor,
-	ids []uuid.UUID,
-) (int, error) {
-	if len(ids) == 0 {
-		return 0, nil
-	}
-	return db.NewSelect().
+	policyID uuid.UUID,
+) (bool, error) {
+	count, err := db.NewSelect().
 		Model((*BackupEntity)(nil)).
-		Where("id IN (?)", bun.In(ids)).
-		Where("status = ?", BackupStatusVerified).
+		Where("backup_policy_id = ?", policyID).
 		Count(ctx)
+	return count > 0, err
 }
 
 func SelectBackupsToPrune(

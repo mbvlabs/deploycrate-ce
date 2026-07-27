@@ -2,8 +2,10 @@ package services
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -84,7 +86,7 @@ func (service *BackupVerifier) Verify(ctx context.Context, backupID uuid.UUID) e
 		)
 	}
 	if scope.Backup.TargetType == "server" {
-		err = verifyServerBackup(ctx, scope, credential)
+		err = service.verifyServerBackup(ctx, scope, credential)
 	} else {
 		var store *objectstorage.Client
 		store, err = objectstorage.New(
@@ -175,7 +177,7 @@ func (service *BackupVerifier) recordVerificationFailure(
 	return errors.Join(verificationErr, recordErr, changeErr)
 }
 
-func verifyServerBackup(
+func (service *BackupVerifier) verifyServerBackup(
 	ctx context.Context,
 	scope BackupScope,
 	credential BackupCredentialPayload,
@@ -217,18 +219,28 @@ func verifyServerBackup(
 	if err != nil {
 		return fmt.Errorf("list Restic snapshot: %w", err)
 	}
+	manifestPath := backupRecoveryManifestDirectory + "/" + scope.Backup.ID.String() + ".json"
+	clickHousePath := backupRecoveryManifestDirectory + "/" + scope.Backup.ID.String() +
+		"-clickhouse-metric-rollups.jsonl"
 	requiredPaths := []string{
 		"/etc/deploycrate-ce",
 		"/var/lib/deploycrate-ce",
-		backupRecoveryManifestDirectory + "/" + scope.Backup.ID.String() + ".json",
+		"/var/lib/caddy",
+		"/opt/deploycrate-ce/releases",
+		"/opt/deploycrate-ce/slots",
+		sshCARecoveryBundlePath,
+		manifestPath,
+		clickHousePath,
 	}
 	foundPaths := map[string]bool{}
+	snapshotPaths := map[string]bool{}
 	for line := range strings.SplitSeq(string(output), "\n") {
 		var node struct {
 			StructType string `json:"struct_type"`
 			Path       string `json:"path"`
 		}
 		if json.Unmarshal([]byte(line), &node) == nil && node.StructType == "node" {
+			snapshotPaths[node.Path] = true
 			for _, required := range requiredPaths {
 				if node.Path == required || strings.HasPrefix(node.Path, required+"/") {
 					foundPaths[required] = true
@@ -240,6 +252,89 @@ func verifyServerBackup(
 		if !foundPaths[required] {
 			return fmt.Errorf("Restic snapshot is missing required manifest path %s", required)
 		}
+	}
+	if snapshotPaths[installerSecretsPath] {
+		return errors.New("Restic snapshot contains transient installer secrets")
+	}
+	manifestBytes, err := runRestic(
+		ctx,
+		environment,
+		scope.DestinationPathStyle,
+		"dump",
+		snapshot.ID,
+		manifestPath,
+	)
+	if err != nil {
+		return fmt.Errorf("read server backup manifest: %w", err)
+	}
+	var manifest serverRecoveryManifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
+		return fmt.Errorf("decode server backup manifest: %w", err)
+	}
+	if manifest.Version != 1 || manifest.FormatVersion != scope.Backup.FormatVersion ||
+		manifest.InstallationID != service.config.App.InstallationID ||
+		manifest.BackupID != scope.Backup.ID.String() ||
+		manifest.PolicyID != scope.Backup.BackupPolicyID.String() ||
+		manifest.ServerID != scope.Backup.ServerID.String() ||
+		manifest.ProducerVersion != scope.Backup.ProducerVersion {
+		return errors.New("server backup manifest does not match the backup record")
+	}
+	scheduledAt, err := time.Parse(time.RFC3339Nano, manifest.ScheduledAt)
+	if err != nil || !scheduledAt.Equal(scope.Backup.ScheduledAt) {
+		return errors.New("server backup manifest has an invalid scheduled time")
+	}
+	if len(manifest.ReleaseDigests) == 0 || manifest.Slots["blue"] == "" ||
+		len(manifest.IdentityFingerprints) != 4 {
+		return errors.New("server backup manifest is missing release or identity metadata")
+	}
+	for releasePath, digestValue := range manifest.ReleaseDigests {
+		if !strings.HasPrefix(releasePath, "/opt/deploycrate-ce/releases/") ||
+			!validSHA256(digestValue) || !snapshotPaths[releasePath] {
+			return errors.New("server backup manifest contains invalid release metadata")
+		}
+	}
+	for _, digestValue := range manifest.IdentityFingerprints {
+		if !validSHA256(digestValue) {
+			return errors.New("server backup manifest contains an invalid identity fingerprint")
+		}
+	}
+	if !validSHA256(manifest.SSHCARecoverySHA256) {
+		return errors.New("server backup manifest contains an invalid SSH CA recovery digest")
+	}
+	sshCARecoveryBundle, err := runRestic(
+		ctx,
+		environment,
+		scope.DestinationPathStyle,
+		"dump",
+		snapshot.ID,
+		sshCARecoveryBundlePath,
+	)
+	if err != nil {
+		return fmt.Errorf("read encrypted SSH CA recovery bundle: %w", err)
+	}
+	sshDigest := sha256.Sum256(sshCARecoveryBundle)
+	if hex.EncodeToString(sshDigest[:]) != manifest.SSHCARecoverySHA256 {
+		return errors.New("encrypted SSH CA recovery bundle digest does not match the server manifest")
+	}
+	if manifest.ClickHouse.Path != clickHousePath || manifest.ClickHouse.Format != "JSONEachRow" ||
+		manifest.ClickHouse.SchemaVersion != clickHouseMetricRollupSchemaVersion ||
+		!validSHA256(manifest.ClickHouse.SHA256) || manifest.ClickHouse.SizeBytes < 0 ||
+		manifest.ClickHouse.Rows < 0 {
+		return errors.New("server backup manifest contains invalid ClickHouse metadata")
+	}
+	clickHouseBytes, err := runRestic(
+		ctx,
+		environment,
+		scope.DestinationPathStyle,
+		"dump",
+		snapshot.ID,
+		clickHousePath,
+	)
+	if err != nil {
+		return fmt.Errorf("read ClickHouse metric rollup export: %w", err)
+	}
+	if err := verifyClickHouseExport(clickHouseBytes, manifest.ClickHouse); err != nil {
+		return err
 	}
 	var verification struct {
 		RepositoryCheck string `json:"repository_check"`
@@ -266,6 +361,49 @@ func verifyServerBackup(
 		); err != nil {
 			return fmt.Errorf("check Restic repository: %w", err)
 		}
+	}
+	return nil
+}
+
+func validSHA256(value string) bool {
+	digest, err := hex.DecodeString(value)
+	return err == nil && len(digest) == sha256.Size
+}
+
+func verifyClickHouseExport(value []byte, expected ClickHouseBackupArtifact) error {
+	if int64(len(value)) != expected.SizeBytes {
+		return errors.New("ClickHouse metric rollup export size does not match the server manifest")
+	}
+	digest := sha256.Sum256(value)
+	if hex.EncodeToString(digest[:]) != expected.SHA256 {
+		return errors.New("ClickHouse metric rollup export digest does not match the server manifest")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(value))
+	rows := int64(0)
+	firstBucket := ""
+	lastBucket := ""
+	for {
+		var row struct {
+			BucketStart string `json:"bucket_start"`
+		}
+		if err := decoder.Decode(&row); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return fmt.Errorf("decode ClickHouse metric rollup export: %w", err)
+		}
+		if row.BucketStart == "" {
+			return errors.New("ClickHouse metric rollup export contains an empty bucket_start")
+		}
+		rows++
+		if firstBucket == "" || row.BucketStart < firstBucket {
+			firstBucket = row.BucketStart
+		}
+		if lastBucket == "" || row.BucketStart > lastBucket {
+			lastBucket = row.BucketStart
+		}
+	}
+	if rows != expected.Rows || firstBucket != expected.FirstBucket || lastBucket != expected.LastBucket {
+		return errors.New("ClickHouse metric rollup export contents do not match the server manifest")
 	}
 	return nil
 }
@@ -309,11 +447,12 @@ func (service *BackupVerifier) verifyDatabaseBackup(
 		return errors.New("database backup record is missing its resource identity")
 	}
 	expectedMetadata := map[string]string{
-		"backup-id":      scope.Backup.ID.String(),
-		"policy-id":      scope.Backup.BackupPolicyID.String(),
-		"resource-id":    scope.Backup.ResourceID.String(),
-		"sha256":         fmt.Sprintf("%x", scope.Backup.Digest),
-		"format-version": scope.Backup.FormatVersion,
+		"backup-id":       scope.Backup.ID.String(),
+		"policy-id":       scope.Backup.BackupPolicyID.String(),
+		"resource-id":     scope.Backup.ResourceID.String(),
+		"installation-id": service.config.App.InstallationID,
+		"sha256":          fmt.Sprintf("%x", scope.Backup.Digest),
+		"format-version":  scope.Backup.FormatVersion,
 	}
 	for key, expected := range expectedMetadata {
 		if remote.Metadata[key] != expected {
@@ -393,6 +532,7 @@ func (service *BackupVerifier) verifyDatabaseBackup(
 	}
 	var manifest struct {
 		ArtifactVersion string    `json:"artifact_version"`
+		InstallationID  string    `json:"installation_id"`
 		BackupID        string    `json:"backup_id"`
 		PolicyID        string    `json:"policy_id"`
 		ResourceID      string    `json:"resource_id"`
@@ -405,6 +545,7 @@ func (service *BackupVerifier) verifyDatabaseBackup(
 		return fmt.Errorf("decode database backup manifest: %w", err)
 	}
 	if manifest.ArtifactVersion != scope.Backup.FormatVersion ||
+		manifest.InstallationID != service.config.App.InstallationID ||
 		manifest.BackupID != scope.Backup.ID.String() ||
 		manifest.PolicyID != scope.Backup.BackupPolicyID.String() ||
 		manifest.ResourceID != scope.Backup.ResourceID.String() ||
