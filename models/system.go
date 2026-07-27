@@ -9,54 +9,34 @@ import (
 )
 
 type SystemOverview struct {
-	ApplicationName          string          `json:"applicationName"     bun:"application_name"`
-	ApplicationSlug          string          `json:"applicationSlug"     bun:"application_slug"`
-	EnvironmentName          string          `json:"environmentName"     bun:"environment_name"`
-	EnvironmentKind          string          `json:"environmentKind"     bun:"environment_kind"`
-	ServerName               string          `json:"serverName"          bun:"server_name"`
-	ServerAddress            string          `json:"serverAddress"       bun:"server_address"`
-	ServerStatus             string          `json:"serverStatus"        bun:"server_status"`
-	ServerCapabilities       json.RawMessage `json:"serverCapabilities" bun:"server_capabilities"`
-	OperatingSystem          string          `json:"operatingSystem"     bun:"operating_system"`
-	Distribution             string          `json:"distribution"        bun:"distribution"`
-	DistributionVersion      string          `json:"distributionVersion" bun:"distribution_version"`
-	Architecture             string          `json:"architecture"        bun:"architecture"`
-	NetworkName              string          `json:"networkName"         bun:"network_name"`
-	NetworkDriver            string          `json:"networkDriver"       bun:"network_driver"`
-	NetworkState             string          `json:"networkState"        bun:"network_state"`
-	DatabaseID               string          `json:"databaseId"          bun:"database_id"`
-	DatabaseName             string          `json:"databaseName"        bun:"database_name"`
-	DatabaseCategory         string          `json:"databaseCategory"    bun:"database_category"`
-	DatabaseKind             string          `json:"databaseKind"        bun:"database_kind"`
-	DatabaseSharingScope     string          `json:"databaseSharingScope" bun:"database_sharing_scope"`
-	DatabaseBindingAlias     string          `json:"databaseBindingAlias" bun:"database_binding_alias"`
-	DatabaseCredentialSource string          `json:"databaseCredentialSource" bun:"database_credential_source"`
-	DatabaseHasCredential    bool            `json:"databaseHasCredential" bun:"database_has_credential"`
-	DatabaseEndpointName     string          `json:"databaseEndpointName" bun:"database_endpoint_name"`
-	DatabaseEndpointRole     string          `json:"databaseEndpointRole" bun:"database_endpoint_role"`
-	DatabaseAddress          string          `json:"databaseAddress"     bun:"database_address"`
-	DatabasePort             int32           `json:"databasePort"        bun:"database_port"`
-	DatabaseProtocol         string          `json:"databaseProtocol"    bun:"database_protocol"`
-	DatabaseTLSMode          string          `json:"databaseTlsMode"     bun:"database_tls_mode"`
-	DatabaseExternal         bool            `json:"databaseExternal"    bun:"database_external"`
-	DatabaseHasInstallation  bool            `json:"databaseHasInstallation" bun:"database_has_installation"`
-	DatabaseImageReference   string          `json:"databaseImageReference" bun:"database_image_reference"`
-	DatabaseContainerName    string          `json:"databaseContainerName" bun:"database_container_name"`
-	DatabaseRestartPolicy    string          `json:"databaseRestartPolicy" bun:"database_restart_policy"`
-	DatabaseVolume           string          `json:"databaseVolume"      bun:"database_volume"`
-	DatabaseBind             string          `json:"databaseBind"        bun:"database_bind"`
-	ReleaseVersion           string          `json:"releaseVersion"      bun:"release_version"`
-	ArtifactReference        string          `json:"artifactReference"   bun:"artifact_reference"`
-	DeploymentStatus         string          `json:"deploymentStatus"    bun:"deployment_status"`
-	DeploymentStep           string          `json:"deploymentStep"      bun:"deployment_step"`
-	ActiveSlot               string          `json:"activeSlot"          bun:"active_slot"`
-	ActiveService            string          `json:"activeService"       bun:"active_service"`
-	ActiveState              string          `json:"activeState"         bun:"active_state"`
-	ActivePort               int32           `json:"activePort"          bun:"active_port"`
-	Domain                   string          `json:"domain"              bun:"domain"`
-	RouteExternalID          string          `json:"routeExternalId"     bun:"route_external_id"`
-	RouteState               string          `json:"routeState"          bun:"route_state"`
-	ObservedAt               time.Time       `json:"observedAt"          bun:"observed_at"`
+	ApplicationName     string          `json:"applicationName"     bun:"application_name"`
+	ApplicationSlug     string          `json:"applicationSlug"     bun:"application_slug"`
+	EnvironmentName     string          `json:"environmentName"     bun:"environment_name"`
+	EnvironmentKind     string          `json:"environmentKind"     bun:"environment_kind"`
+	ServerID            string          `json:"-"                   bun:"server_id"`
+	ServerName          string          `json:"serverName"          bun:"server_name"`
+	ServerAddress       string          `json:"serverAddress"       bun:"server_address"`
+	ServerStatus        string          `json:"serverStatus"        bun:"server_status"`
+	ServerCapabilities  json.RawMessage `json:"serverCapabilities" bun:"server_capabilities"`
+	OperatingSystem     string          `json:"operatingSystem"     bun:"operating_system"`
+	Distribution        string          `json:"distribution"        bun:"distribution"`
+	DistributionVersion string          `json:"distributionVersion" bun:"distribution_version"`
+	Architecture        string          `json:"architecture"        bun:"architecture"`
+	NetworkName         string          `json:"networkName"         bun:"network_name"`
+	NetworkDriver       string          `json:"networkDriver"       bun:"network_driver"`
+	NetworkState        string          `json:"networkState"        bun:"network_state"`
+	ReleaseVersion      string          `json:"releaseVersion"      bun:"release_version"`
+	ArtifactReference   string          `json:"artifactReference"   bun:"artifact_reference"`
+	DeploymentStatus    string          `json:"deploymentStatus"    bun:"deployment_status"`
+	DeploymentStep      string          `json:"deploymentStep"      bun:"deployment_step"`
+	ActiveSlot          string          `json:"activeSlot"          bun:"active_slot"`
+	ActiveService       string          `json:"activeService"       bun:"active_service"`
+	ActiveState         string          `json:"activeState"         bun:"active_state"`
+	ActivePort          int32           `json:"activePort"          bun:"active_port"`
+	Domain              string          `json:"domain"              bun:"domain"`
+	RouteExternalID     string          `json:"routeExternalId"     bun:"route_external_id"`
+	RouteState          string          `json:"routeState"          bun:"route_state"`
+	ObservedAt          time.Time       `json:"observedAt"          bun:"observed_at"`
 }
 
 func (a application) FindSystemOverview(
@@ -70,6 +50,7 @@ func (a application) FindSystemOverview(
 		ColumnExpr("application.slug AS application_slug").
 		ColumnExpr("environment.name AS environment_name").
 		ColumnExpr("environment.kind AS environment_kind").
+		ColumnExpr("server.id::text AS server_id").
 		ColumnExpr("server.name AS server_name").
 		ColumnExpr("server.address AS server_address").
 		ColumnExpr("COALESCE(server_status.state, 'unknown') AS server_status").
@@ -81,27 +62,6 @@ func (a application) FindSystemOverview(
 		ColumnExpr("COALESCE(network.name, '') AS network_name").
 		ColumnExpr("COALESCE(server_network.driver, '') AS network_driver").
 		ColumnExpr("COALESCE(server_network.state, '') AS network_state").
-		ColumnExpr("COALESCE(resource.id::text, '') AS database_id").
-		ColumnExpr("COALESCE(resource.name, '') AS database_name").
-		ColumnExpr("COALESCE(resource.category, '') AS database_category").
-		ColumnExpr("COALESCE(resource.kind, '') AS database_kind").
-		ColumnExpr("COALESCE(resource.sharing_scope, '') AS database_sharing_scope").
-		ColumnExpr("COALESCE(environment_resource.alias, '') AS database_binding_alias").
-		ColumnExpr("COALESCE(environment_resource.configuration ->> 'credential_source', '') AS database_credential_source").
-		ColumnExpr("environment_resource.resource_credential_id IS NOT NULL AS database_has_credential").
-		ColumnExpr("COALESCE(endpoint.name, '') AS database_endpoint_name").
-		ColumnExpr("COALESCE(endpoint.role, '') AS database_endpoint_role").
-		ColumnExpr("COALESCE(endpoint.address, '') AS database_address").
-		ColumnExpr("COALESCE(endpoint.port, 0) AS database_port").
-		ColumnExpr("COALESCE(endpoint.protocol, '') AS database_protocol").
-		ColumnExpr("COALESCE(endpoint.tls_mode, '') AS database_tls_mode").
-		ColumnExpr("COALESCE((endpoint.settings ->> 'external')::boolean, FALSE) AS database_external").
-		ColumnExpr("installation.id IS NOT NULL AS database_has_installation").
-		ColumnExpr("COALESCE(installation.image_reference, '') AS database_image_reference").
-		ColumnExpr("COALESCE(installation.container_name, '') AS database_container_name").
-		ColumnExpr("COALESCE(installation.restart_policy, '') AS database_restart_policy").
-		ColumnExpr("COALESCE(installation.configuration ->> 'volume', '') AS database_volume").
-		ColumnExpr("COALESCE(installation.configuration ->> 'bind', '') AS database_bind").
 		ColumnExpr("COALESCE(release.version, '') AS release_version").
 		ColumnExpr("release.artifact_reference AS artifact_reference").
 		ColumnExpr("deployment.status AS deployment_status").
@@ -127,10 +87,6 @@ func (a application) FindSystemOverview(
 		Join("LEFT JOIN environment_networks AS environment_network ON environment_network.environment_id = environment.id AND environment_network.role = 'primary' AND environment_network.removed_at IS NULL").
 		Join("LEFT JOIN private_networks AS network ON network.id = environment_network.private_network_id AND network.archived_at IS NULL").
 		Join("LEFT JOIN server_networks AS server_network ON server_network.server_id = server.id AND server_network.private_network_id = network.id AND server_network.removed_at IS NULL").
-		Join("LEFT JOIN environment_resources AS environment_resource ON environment_resource.environment_id = environment.id AND environment_resource.alias = 'database' AND environment_resource.archived_at IS NULL").
-		Join("LEFT JOIN resources AS resource ON resource.id = environment_resource.resource_id AND resource.category = 'database' AND resource.archived_at IS NULL").
-		Join("LEFT JOIN resource_endpoints AS endpoint ON endpoint.id = environment_resource.resource_endpoint_id AND endpoint.archived_at IS NULL").
-		Join("LEFT JOIN resource_installations AS installation ON installation.id = endpoint.resource_installation_id AND installation.archived_at IS NULL").
 		Where("application.slug = ?", SystemApplicationSlug).
 		OrderExpr("route.created_at DESC").
 		Limit(1).
@@ -138,6 +94,71 @@ func (a application) FindSystemOverview(
 		return SystemOverview{}, err
 	}
 	return overview, nil
+}
+
+type SystemResourceOverview struct {
+	ID               string `json:"id" bun:"id"`
+	Name             string `json:"name" bun:"name"`
+	Category         string `json:"category" bun:"category"`
+	Kind             string `json:"kind" bun:"kind"`
+	SharingScope     string `json:"sharingScope" bun:"sharing_scope"`
+	BindingAlias     string `json:"bindingAlias" bun:"binding_alias"`
+	CredentialSource string `json:"credentialSource" bun:"credential_source"`
+	HasCredential    bool   `json:"hasCredential" bun:"has_credential"`
+	EndpointName     string `json:"endpointName" bun:"endpoint_name"`
+	EndpointRole     string `json:"endpointRole" bun:"endpoint_role"`
+	Address          string `json:"address" bun:"address"`
+	Port             int32  `json:"port" bun:"port"`
+	Protocol         string `json:"protocol" bun:"protocol"`
+	TLSMode          string `json:"tlsMode" bun:"tls_mode"`
+	External         bool   `json:"external" bun:"external"`
+	HasInstallation  bool   `json:"hasInstallation" bun:"has_installation"`
+	ImageReference   string `json:"imageReference" bun:"image_reference"`
+	ContainerName    string `json:"containerName" bun:"container_name"`
+	RestartPolicy    string `json:"restartPolicy" bun:"restart_policy"`
+	Volume           string `json:"volume" bun:"volume"`
+	Bind             string `json:"bind" bun:"bind"`
+}
+
+func (a application) FindSystemResources(
+	ctx context.Context,
+	db storage.Executor,
+) ([]SystemResourceOverview, error) {
+	resources := make([]SystemResourceOverview, 0)
+	if err := db.NewSelect().
+		TableExpr("applications AS application").
+		ColumnExpr("resource.id::text AS id").
+		ColumnExpr("resource.name AS name").
+		ColumnExpr("resource.category AS category").
+		ColumnExpr("resource.kind AS kind").
+		ColumnExpr("resource.sharing_scope AS sharing_scope").
+		ColumnExpr("binding.alias AS binding_alias").
+		ColumnExpr("COALESCE(binding.configuration ->> 'credential_source', '') AS credential_source").
+		ColumnExpr("binding.resource_credential_id IS NOT NULL AS has_credential").
+		ColumnExpr("endpoint.name AS endpoint_name").
+		ColumnExpr("endpoint.role AS endpoint_role").
+		ColumnExpr("endpoint.address AS address").
+		ColumnExpr("endpoint.port AS port").
+		ColumnExpr("endpoint.protocol AS protocol").
+		ColumnExpr("endpoint.tls_mode AS tls_mode").
+		ColumnExpr("COALESCE((endpoint.settings ->> 'external')::boolean, FALSE) AS external").
+		ColumnExpr("installation.id IS NOT NULL AS has_installation").
+		ColumnExpr("COALESCE(installation.image_reference, '') AS image_reference").
+		ColumnExpr("COALESCE(installation.container_name, '') AS container_name").
+		ColumnExpr("COALESCE(installation.restart_policy, '') AS restart_policy").
+		ColumnExpr("COALESCE(installation.configuration ->> 'volume', '') AS volume").
+		ColumnExpr("COALESCE(installation.configuration ->> 'bind', '') AS bind").
+		Join("JOIN environments AS environment ON environment.application_id = application.id AND environment.archived_at IS NULL").
+		Join("JOIN environment_resources AS binding ON binding.environment_id = environment.id AND binding.archived_at IS NULL").
+		Join("JOIN resources AS resource ON resource.id = binding.resource_id AND resource.archived_at IS NULL").
+		Join("JOIN resource_endpoints AS endpoint ON endpoint.id = binding.resource_endpoint_id AND endpoint.archived_at IS NULL").
+		Join("LEFT JOIN resource_installations AS installation ON installation.id = endpoint.resource_installation_id AND installation.archived_at IS NULL").
+		Where("application.slug = ?", SystemApplicationSlug).
+		OrderExpr("binding.created_at ASC").
+		Scan(ctx, &resources); err != nil {
+		return nil, err
+	}
+	return resources, nil
 }
 
 type SystemDeploymentEvent struct {

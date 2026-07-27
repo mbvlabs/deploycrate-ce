@@ -190,6 +190,76 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		return fmt.Errorf("bind DeployCrate CE database resource: %w", err)
 	}
 
+	clickHouse, err := factories.CreateResource(ctx, exec, environment.ID,
+		factories.WithResourcesName("DeployCrate CE ClickHouse"),
+		factories.WithResourcesCategory("database"),
+		factories.WithResourcesKind("clickhouse"),
+		factories.WithResourcesSharingScope("environment"),
+		factories.WithResourcesArchivedAt(sql.NullTime{}),
+	)
+	if err != nil {
+		return fmt.Errorf("create DeployCrate CE ClickHouse resource: %w", err)
+	}
+	clickHouseInstallation, err := factories.CreateResourceInstallation(
+		ctx,
+		exec,
+		clickHouse.ID,
+		server.ID,
+		nil,
+		factories.WithResourceInstallationsImageReference(
+			"clickhouse/clickhouse-server:25.8.28.1",
+		),
+		factories.WithResourceInstallationsImageDigest(sql.NullString{}),
+		factories.WithResourceInstallationsContainerName("deploycrate-ce-clickhouse"),
+		factories.WithResourceInstallationsRestartPolicy("unless-stopped"),
+		factories.WithResourceInstallationsConfiguration(
+			json.RawMessage(
+				`{"volume":"deploycrate-ce-clickhouse","bind":"127.0.0.1:8123"}`,
+			),
+		),
+		factories.WithResourceInstallationsArchivedAt(sql.NullTime{}),
+	)
+	if err != nil {
+		return fmt.Errorf("create DeployCrate CE ClickHouse installation: %w", err)
+	}
+	clickHouseEndpoint, err := factories.CreateResourceEndpoint(
+		ctx,
+		exec,
+		clickHouse.ID,
+		&clickHouseInstallation.ID,
+		&network.ID,
+		factories.WithResourceEndpointsName("ClickHouse HTTP"),
+		factories.WithResourceEndpointsRole("primary"),
+		factories.WithResourceEndpointsAddress("127.0.0.1"),
+		factories.WithResourceEndpointsPort(8123),
+		factories.WithResourceEndpointsProtocol("http"),
+		factories.WithResourceEndpointsTlsMode("disable"),
+		factories.WithResourceEndpointsSettings(
+			json.RawMessage(`{"database":"deploycrate","user":"deploycrate"}`),
+		),
+		factories.WithResourceEndpointsArchivedAt(sql.NullTime{}),
+	)
+	if err != nil {
+		return fmt.Errorf("create DeployCrate CE ClickHouse endpoint: %w", err)
+	}
+	if _, err := factories.CreateEnvironmentResource(
+		ctx,
+		exec,
+		environment.ID,
+		clickHouse.ID,
+		clickHouseEndpoint.ID,
+		nil,
+		factories.WithEnvironmentResourcesAlias("telemetry"),
+		factories.WithEnvironmentResourcesConfiguration(
+			json.RawMessage(
+				`{"credential_source":"app_env","password_env":"CLICKHOUSE_PASSWORD"}`,
+			),
+		),
+		factories.WithEnvironmentResourcesArchivedAt(sql.NullTime{}),
+	); err != nil {
+		return fmt.Errorf("bind DeployCrate CE ClickHouse resource: %w", err)
+	}
+
 	domain, err := factories.CreateEnvironmentDomain(ctx, exec, environment.ID,
 		factories.WithEnvironmentDomainsHostname("deploycrate.localhost"),
 		factories.WithEnvironmentDomainsIsPrimary(true),

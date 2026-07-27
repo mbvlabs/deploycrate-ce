@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -19,22 +20,21 @@ type MetricRollupService struct {
 	enabled    bool
 	db         storage.Pool
 	prometheus prometheusclient.Client
-	clickhouse clickhouseclient.Client
+	clickhouse *ClickHouseResource
 	now        func() time.Time
 }
 
-func NewMetricRollupService(configuration config.Config, db storage.Pool) MetricRollupService {
+func NewMetricRollupService(
+	configuration config.Config,
+	db storage.Pool,
+	clickhouse *ClickHouseResource,
+) MetricRollupService {
 	return MetricRollupService{
 		enabled:    configuration.Metrics.Enabled,
 		db:         db,
 		prometheus: prometheusclient.New(configuration.Metrics.PrometheusURL),
-		clickhouse: clickhouseclient.New(
-			configuration.Metrics.ClickHouseURL,
-			configuration.Metrics.ClickHouseDatabase,
-			configuration.Metrics.ClickHouseUser,
-			configuration.Metrics.ClickHousePassword,
-		),
-		now: time.Now,
+		clickhouse: clickhouse,
+		now:        time.Now,
 	}
 }
 
@@ -47,7 +47,33 @@ var metricRollupDefinitions = []rollupDefinition{
 	{name: "cpu_utilization_percent", expression: `(1 - avg without (cpu, mode) (rate(node_cpu_seconds_total{mode="idle"}[1m]))) * 100`},
 	{name: "load_1", expression: `node_load1`},
 	{name: "memory_available_bytes", expression: `node_memory_MemAvailable_bytes`},
+	{name: "memory_total_bytes", expression: `node_memory_MemTotal_bytes`},
 	{name: "root_filesystem_available_bytes", expression: `node_filesystem_avail_bytes{mountpoint="/",fstype!=""}`},
+	{name: "root_filesystem_size_bytes", expression: `node_filesystem_size_bytes{mountpoint="/",fstype!=""}`},
+}
+
+type SystemResourceUsage struct {
+	Used float64 `json:"used"`
+	Free float64 `json:"free"`
+}
+
+type SystemTelemetry struct {
+	Available      bool                          `json:"available"`
+	ObservedAt     time.Time                     `json:"observedAt"`
+	CPU            SystemResourceUsage           `json:"cpu"`
+	Memory         SystemResourceUsage           `json:"memory"`
+	Storage        SystemResourceUsage           `json:"storage"`
+	MemoryHistory  []SystemTelemetryHistoryPoint `json:"memoryHistory"`
+	StorageHistory []SystemTelemetryHistoryPoint `json:"storageHistory"`
+}
+
+const systemTelemetryFreshness = 5 * time.Minute
+const systemTelemetryHistoryWindow = 24 * time.Hour
+
+type SystemTelemetryHistoryPoint struct {
+	ObservedAt time.Time `json:"observedAt"`
+	Used       float64   `json:"used"`
+	Free       float64   `json:"free"`
 }
 
 func (service MetricRollupService) Collect(ctx context.Context) error {
@@ -99,7 +125,159 @@ func (service MetricRollupService) Collect(ctx context.Context) error {
 			rollups = append(rollups, *rollup)
 		}
 	}
-	return service.clickhouse.InsertMetricRollups(ctx, rollups)
+	client, err := service.clickhouse.Client(ctx)
+	if err != nil {
+		return err
+	}
+	return client.InsertMetricRollups(ctx, rollups)
+}
+
+func (service MetricRollupService) SystemTelemetry(
+	ctx context.Context,
+	server string,
+) (SystemTelemetry, error) {
+	if !service.enabled || server == "" {
+		return SystemTelemetry{}, nil
+	}
+	client, err := service.clickhouse.Client(ctx)
+	if err != nil {
+		return SystemTelemetry{}, err
+	}
+	values, err := client.LatestSystemMetricValues(ctx, server)
+	if err != nil {
+		return SystemTelemetry{}, err
+	}
+	metrics := make(map[string]clickhouseclient.MetricValue, len(values))
+	for _, value := range values {
+		metrics[value.Metric] = value
+	}
+	required := []string{
+		"cpu_utilization_percent",
+		"memory_available_bytes",
+		"memory_total_bytes",
+		"root_filesystem_available_bytes",
+		"root_filesystem_size_bytes",
+	}
+	observedAt := service.now().UTC()
+	for _, metric := range required {
+		value, ok := metrics[metric]
+		if !ok || service.now().UTC().Sub(value.ObservedAt) > systemTelemetryFreshness {
+			return SystemTelemetry{}, nil
+		}
+		if value.ObservedAt.Before(observedAt) {
+			observedAt = value.ObservedAt
+		}
+	}
+
+	memoryTotal := metrics["memory_total_bytes"].Value
+	storageTotal := metrics["root_filesystem_size_bytes"].Value
+	if memoryTotal <= 0 || storageTotal <= 0 {
+		return SystemTelemetry{}, nil
+	}
+	cpuUsed := clamp(metrics["cpu_utilization_percent"].Value, 0, 100)
+	memoryFree := clamp(
+		metrics["memory_available_bytes"].Value,
+		0,
+		memoryTotal,
+	)
+	memoryUsed := memoryTotal - memoryFree
+	storageFree := clamp(
+		metrics["root_filesystem_available_bytes"].Value,
+		0,
+		storageTotal,
+	)
+	storageUsed := storageTotal - storageFree
+
+	telemetry := SystemTelemetry{
+		Available:      true,
+		ObservedAt:     observedAt,
+		CPU:            SystemResourceUsage{Used: cpuUsed, Free: 100 - cpuUsed},
+		Memory:         SystemResourceUsage{Used: memoryUsed, Free: memoryFree},
+		Storage:        SystemResourceUsage{Used: storageUsed, Free: storageFree},
+		MemoryHistory:  []SystemTelemetryHistoryPoint{},
+		StorageHistory: []SystemTelemetryHistoryPoint{},
+	}
+	history, err := client.SystemMetricHistory(
+		ctx,
+		server,
+		service.now().UTC().Add(-systemTelemetryHistoryWindow),
+	)
+	if err != nil {
+		return telemetry, err
+	}
+	telemetry.MemoryHistory = systemResourceHistory(
+		history,
+		"memory_available_bytes",
+		"memory_total_bytes",
+	)
+	telemetry.StorageHistory = systemResourceHistory(
+		history,
+		"root_filesystem_available_bytes",
+		"root_filesystem_size_bytes",
+	)
+	return telemetry, nil
+}
+
+func systemResourceHistory(
+	values []clickhouseclient.MetricHistoryValue,
+	availableMetric string,
+	totalMetric string,
+) []SystemTelemetryHistoryPoint {
+	type bucket struct {
+		observedAt time.Time
+		available  float64
+		total      float64
+		hasFree    bool
+		hasTotal   bool
+	}
+	buckets := make(map[int64]*bucket)
+	for _, value := range values {
+		if value.Metric != availableMetric && value.Metric != totalMetric {
+			continue
+		}
+		key := value.BucketStart.UnixMilli()
+		current := buckets[key]
+		if current == nil {
+			current = &bucket{observedAt: value.BucketStart}
+			buckets[key] = current
+		}
+		if value.Metric == availableMetric {
+			current.available = value.Value
+			current.hasFree = true
+		} else {
+			current.total = value.Value
+			current.hasTotal = true
+		}
+	}
+	keys := make([]int64, 0, len(buckets))
+	for key := range buckets {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	points := make([]SystemTelemetryHistoryPoint, 0, len(keys))
+	for _, key := range keys {
+		current := buckets[key]
+		if !current.hasFree || !current.hasTotal || current.total <= 0 {
+			continue
+		}
+		free := clamp(current.available, 0, current.total)
+		points = append(points, SystemTelemetryHistoryPoint{
+			ObservedAt: current.observedAt,
+			Used:       current.total - free,
+			Free:       free,
+		})
+	}
+	return points
+}
+
+func clamp(value, minimum, maximum float64) float64 {
+	if value < minimum {
+		return minimum
+	}
+	if value > maximum {
+		return maximum
+	}
+	return value
 }
 
 func rollupIdentity(labels map[string]string) string {

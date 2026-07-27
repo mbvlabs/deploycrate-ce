@@ -348,6 +348,15 @@ func (service BootstrapService) createGraph(
 	if err != nil {
 		return BootstrapResult{}, err
 	}
+	if err := createBootstrapClickHouseResource(
+		ctx,
+		tx,
+		environment.ID,
+		server.ID,
+		network.ID,
+	); err != nil {
+		return BootstrapResult{}, err
+	}
 	if err := createBootstrapBackups(
 		ctx,
 		tx,
@@ -459,6 +468,68 @@ func (service BootstrapService) createGraph(
 		NetworkID: network.ID, ReleaseID: release.ID, InstanceID: instance.ID,
 		CaddyRouteID: route.ID, ExternalRouteID: externalRouteID,
 	}, nil
+}
+
+func createBootstrapClickHouseResource(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentID, serverID, networkID uuid.UUID,
+) error {
+	resource, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
+		Name: "DeployCrate CE ClickHouse", Category: "database", Kind: "clickhouse",
+		SharingScope: "environment", OwnerEnvironmentID: environmentID,
+	})
+	if err != nil {
+		return fmt.Errorf("create bootstrap ClickHouse resource: %w", err)
+	}
+	installation, err := models.ResourceInstallation.Create(
+		ctx,
+		exec,
+		models.CreateResourceInstallationData{
+			ImageReference: "clickhouse/clickhouse-server:25.8.28.1",
+			ContainerName:  "deploycrate-ce-clickhouse",
+			RestartPolicy:  "unless-stopped",
+			Configuration: json.RawMessage(
+				`{"volume":"deploycrate-ce-clickhouse","bind":"127.0.0.1:8123"}`,
+			),
+			ResourceID: resource.ID,
+			ServerID:   serverID,
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("create bootstrap ClickHouse installation: %w", err)
+	}
+	endpoint, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
+		Name:                   "ClickHouse HTTP",
+		Role:                   "primary",
+		Address:                "127.0.0.1",
+		Port:                   8123,
+		Protocol:               "http",
+		TlsMode:                "disable",
+		Settings:               json.RawMessage(`{"database":"deploycrate","user":"deploycrate"}`),
+		ResourceID:             resource.ID,
+		ResourceInstallationID: &installation.ID,
+		PrivateNetworkID:       &networkID,
+	})
+	if err != nil {
+		return fmt.Errorf("create bootstrap ClickHouse endpoint: %w", err)
+	}
+	if _, err := models.EnvironmentResource.Create(
+		ctx,
+		exec,
+		models.CreateEnvironmentResourceData{
+			Alias: "telemetry",
+			Configuration: json.RawMessage(
+				`{"credential_source":"app_env","password_env":"CLICKHOUSE_PASSWORD"}`,
+			),
+			EnvironmentID:      environmentID,
+			ResourceID:         resource.ID,
+			ResourceEndpointID: endpoint.ID,
+		},
+	); err != nil {
+		return fmt.Errorf("bind bootstrap ClickHouse resource: %w", err)
+	}
+	return nil
 }
 
 type bootstrapDatabaseTopology struct {

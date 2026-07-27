@@ -9,9 +9,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-
-	clickhouseclient "deploycrate-ce/clients/clickhouse"
-	"deploycrate-ce/config"
 )
 
 const clickHouseMetricRollupSchemaVersion = "1"
@@ -28,22 +25,21 @@ type ClickHouseBackupArtifact struct {
 }
 
 type ClickHouseBackup struct {
-	client clickhouseclient.Client
+	resource *ClickHouseResource
 }
 
-func NewClickHouseBackup(configuration config.Config) *ClickHouseBackup {
-	return &ClickHouseBackup{client: clickhouseclient.New(
-		configuration.Metrics.ClickHouseURL,
-		configuration.Metrics.ClickHouseDatabase,
-		configuration.Metrics.ClickHouseUser,
-		configuration.Metrics.ClickHousePassword,
-	)}
+func NewClickHouseBackup(resource *ClickHouseResource) *ClickHouseBackup {
+	return &ClickHouseBackup{resource: resource}
 }
 
 func (service *ClickHouseBackup) Export(
 	ctx context.Context,
 	destination string,
 ) (ClickHouseBackupArtifact, error) {
+	client, err := service.resource.Client(ctx)
+	if err != nil {
+		return ClickHouseBackupArtifact{}, err
+	}
 	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
 		return ClickHouseBackupArtifact{}, fmt.Errorf("create ClickHouse backup staging directory: %w", err)
 	}
@@ -52,7 +48,7 @@ func (service *ClickHouseBackup) Export(
 		return ClickHouseBackupArtifact{}, fmt.Errorf("create ClickHouse metric rollup export: %w", err)
 	}
 	digest := sha256.New()
-	export, exportErr := service.client.ExportMetricRollups(ctx, io.MultiWriter(file, digest))
+	export, exportErr := client.ExportMetricRollups(ctx, io.MultiWriter(file, digest))
 	closeErr := file.Close()
 	if exportErr != nil || closeErr != nil {
 		_ = os.Remove(destination)

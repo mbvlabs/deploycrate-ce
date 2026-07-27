@@ -20,10 +20,15 @@ import (
 type System struct {
 	db     storage.Pool
 	health *services.SystemHealth
+	metric services.MetricRollupService
 }
 
-func NewSystem(db storage.Pool, health *services.SystemHealth) System {
-	return System{db: db, health: health}
+func NewSystem(
+	db storage.Pool,
+	health *services.SystemHealth,
+	metric services.MetricRollupService,
+) System {
+	return System{db: db, health: health, metric: metric}
 }
 
 func (s System) RegisterRoutes(r *router.Router) error {
@@ -67,6 +72,13 @@ func (s System) Overview(etx *echo.Context) error {
 	if err != nil {
 		return s.renderLoadError(etx, "overview", err)
 	}
+	resources, err := models.Application.FindSystemResources(
+		etx.Request().Context(),
+		s.db.Executor(),
+	)
+	if err != nil {
+		return s.renderLoadError(etx, "resources", err)
+	}
 	backups, err := models.Backup.FindSystemHealth(
 		etx.Request().Context(),
 		s.db.Executor(),
@@ -74,12 +86,23 @@ func (s System) Overview(etx *echo.Context) error {
 	if err != nil {
 		return s.renderLoadError(etx, "backup health", err)
 	}
+	telemetry, err := s.metric.SystemTelemetry(etx.Request().Context(), overview.ServerID)
+	if err != nil {
+		slog.WarnContext(
+			etx.Request().Context(),
+			"failed to load DeployCrate CE system telemetry",
+			"error",
+			err,
+		)
+	}
 
 	return inertia.Page(etx, "System/Overview", inertia.Props{
-		"auth":    s.authProps(etx),
-		"system":  overview,
-		"health":  s.health.Run(etx.Request().Context()),
-		"backups": backups,
+		"auth":      s.authProps(etx),
+		"system":    overview,
+		"resources": resources,
+		"health":    s.health.Run(etx.Request().Context()),
+		"backups":   backups,
+		"telemetry": telemetry,
 	})
 }
 

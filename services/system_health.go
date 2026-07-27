@@ -36,12 +36,17 @@ type SystemHealthReport struct {
 type SystemHealth struct {
 	configuration config.Config
 	db            storage.Pool
+	clickhouse    *ClickHouseResource
 }
 
 type systemHealthChecker func(context.Context) (string, error)
 
-func NewSystemHealth(configuration config.Config, db storage.Pool) *SystemHealth {
-	return &SystemHealth{configuration: configuration, db: db}
+func NewSystemHealth(
+	configuration config.Config,
+	db storage.Pool,
+	clickhouse *ClickHouseResource,
+) *SystemHealth {
+	return &SystemHealth{configuration: configuration, db: db, clickhouse: clickhouse}
 }
 
 func (s *SystemHealth) Run(ctx context.Context) SystemHealthReport {
@@ -206,12 +211,15 @@ func (s *SystemHealth) checkPrometheusTargets(ctx context.Context) (string, erro
 }
 
 func (s *SystemHealth) checkClickHouse(ctx context.Context) (string, error) {
-	return getSystemHealth(
-		ctx,
-		strings.TrimRight(s.configuration.Metrics.ClickHouseURL, "/")+"/ping",
-		s.configuration.Metrics.ClickHouseUser,
-		s.configuration.Metrics.ClickHousePassword,
-	)
+	client, err := s.clickhouse.Client(ctx)
+	if err != nil {
+		return "", err
+	}
+	detail, err := client.Ping(ctx)
+	if err != nil {
+		return "", err
+	}
+	return "ClickHouse resource responded " + detail, nil
 }
 
 func checkSystemDisk(context.Context) (string, error) {

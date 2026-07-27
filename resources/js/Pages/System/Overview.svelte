@@ -4,6 +4,8 @@
   import * as Accordion from '@/Components/ui/accordion'
   import { Button } from '@/Components/ui/button'
   import { Separator } from '@/Components/ui/separator'
+  import UsageHistory from '@/Components/System/UsageHistory.svelte'
+  import UsageDonut from '@/Components/System/UsageDonut.svelte'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
@@ -23,27 +25,6 @@
     networkName: string
     networkDriver: string
     networkState: string
-    databaseId: string
-    databaseName: string
-    databaseCategory: string
-    databaseKind: string
-    databaseSharingScope: string
-    databaseBindingAlias: string
-    databaseCredentialSource: string
-    databaseHasCredential: boolean
-    databaseEndpointName: string
-    databaseEndpointRole: string
-    databaseAddress: string
-    databasePort: number
-    databaseProtocol: string
-    databaseTlsMode: string
-    databaseExternal: boolean
-    databaseHasInstallation: boolean
-    databaseImageReference: string
-    databaseContainerName: string
-    databaseRestartPolicy: string
-    databaseVolume: string
-    databaseBind: string
     releaseVersion: string
     artifactReference: string
     deploymentStatus: string
@@ -56,6 +37,30 @@
     routeExternalId: string
     routeState: string
     observedAt: string
+  }
+
+  type SystemResource = {
+    id: string
+    name: string
+    category: string
+    kind: string
+    sharingScope: string
+    bindingAlias: string
+    credentialSource: string
+    hasCredential: boolean
+    endpointName: string
+    endpointRole: string
+    address: string
+    port: number
+    protocol: string
+    tlsMode: string
+    external: boolean
+    hasInstallation: boolean
+    imageReference: string
+    containerName: string
+    restartPolicy: string
+    volume: string
+    bind: string
   }
 
   type SystemHealth = {
@@ -83,11 +88,23 @@
     activeOrRetrying: boolean
   }
 
-  let { auth, system, health, backups }: {
+  type SystemTelemetry = {
+    available: boolean
+    observedAt: string
+    cpu: { used: number; free: number }
+    memory: { used: number; free: number }
+    storage: { used: number; free: number }
+    memoryHistory: Array<{ observedAt: string; used: number; free: number }>
+    storageHistory: Array<{ observedAt: string; used: number; free: number }>
+  }
+
+  let { auth, system, resources, health, backups, telemetry }: {
     auth: { email: string }
     system: SystemOverview
+    resources: SystemResource[]
     health: SystemHealth
     backups: BackupHealthPolicy[]
+    telemetry: SystemTelemetry
   } = $props()
   let openSections = $state(['network', 'runtime', 'resource', 'backups', 'deployments'])
 
@@ -107,6 +124,7 @@
     const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1)
     return `${(value / (1024 ** index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`
   }
+  const formatPercent = (value: number) => `${value.toFixed(1)}%`
   const capabilityValue = (value: unknown): string => {
     if (typeof value === 'boolean') return value ? 'Available' : 'Unavailable'
     if (typeof value === 'string') return checkLabel(value)
@@ -144,6 +162,45 @@
           <Link {...props} href={routes.systemUpdate()}>Manage updates</Link>
         {/snippet}
       </Button>
+    </section>
+
+    <section aria-labelledby="host-usage-heading">
+      <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 id="host-usage-heading" class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Host usage</h2>
+          <p class="mt-1 text-xs text-muted-foreground">Latest ClickHouse telemetry for the system server</p>
+        </div>
+        {#if telemetry.available}
+          <p class="text-xs text-muted-foreground">Observed {new Date(telemetry.observedAt).toLocaleString()}</p>
+        {/if}
+      </div>
+      <div class="grid gap-3 lg:grid-cols-3">
+        <UsageDonut
+          label="CPU"
+          used={telemetry.cpu.used}
+          free={telemetry.cpu.free}
+          formatValue={formatPercent}
+          available={telemetry.available}
+        />
+        <UsageDonut
+          label="Memory"
+          used={telemetry.memory.used}
+          free={telemetry.memory.free}
+          formatValue={formatBytes}
+          available={telemetry.available}
+        />
+        <UsageDonut
+          label="Storage"
+          used={telemetry.storage.used}
+          free={telemetry.storage.free}
+          formatValue={formatBytes}
+          available={telemetry.available}
+        />
+      </div>
+      <div class="mt-3 grid gap-3 xl:grid-cols-2">
+        <UsageHistory label="Memory usage" points={telemetry.memoryHistory ?? []} />
+        <UsageHistory label="Storage usage" points={telemetry.storageHistory ?? []} />
+      </div>
     </section>
 
     <Accordion.Root type="multiple" bind:value={openSections} class="grid gap-3">
@@ -295,143 +352,92 @@
         <Accordion.Trigger class="py-5 hover:no-underline">
           <div class="flex w-full items-center justify-between gap-6">
             <div>
-              <p class="text-sm font-semibold">Resource</p>
-              <p class="mt-1 font-normal text-muted-foreground">Database resource bound to the system environment</p>
+              <p class="text-sm font-semibold">Resources</p>
+              <p class="mt-1 font-normal text-muted-foreground">Infrastructure resources bound to the system environment</p>
             </div>
-            <span class="capitalize text-muted-foreground">
-              {system.databaseId ? (system.databaseExternal ? 'External' : 'Local') : 'Not configured'}
-            </span>
+            <span class="text-muted-foreground">{resources.length ? `${resources.length} configured` : 'Not configured'}</span>
           </div>
         </Accordion.Trigger>
         <Accordion.Content class="border-t border-border py-5">
-          {#if system.databaseId}
-            <div class="space-y-6">
-              <div>
-                <h3 class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Resource identity</h3>
-                <dl class="mt-4 grid gap-x-8 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
-                  <div>
-                    <dt class="text-muted-foreground">Name</dt>
-                    <dd class="mt-1 text-sm font-medium">{system.databaseName}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-muted-foreground">Category</dt>
-                    <dd class="mt-1 text-sm capitalize">{system.databaseCategory}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-muted-foreground">Kind</dt>
-                    <dd class="mt-1 text-sm capitalize">{system.databaseKind}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-muted-foreground">Sharing scope</dt>
-                    <dd class="mt-1 text-sm capitalize">{stateLabel(system.databaseSharingScope)}</dd>
-                  </div>
-                  <div class="sm:col-span-2 xl:col-span-4">
-                    <dt class="text-muted-foreground">Resource ID</dt>
-                    <dd class="mt-1 break-all font-mono text-xs">{system.databaseId}</dd>
-                  </div>
-                </dl>
-              </div>
-
-              <Separator />
-
-              <div>
-                <h3 class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Environment binding</h3>
-                <dl class="mt-4 grid gap-x-8 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
-                  <div>
-                    <dt class="text-muted-foreground">Environment</dt>
-                    <dd class="mt-1 text-sm font-medium">{system.environmentName}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-muted-foreground">Alias</dt>
-                    <dd class="mt-1 font-mono text-xs">{system.databaseBindingAlias}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-muted-foreground">Credential source</dt>
-                    <dd class="mt-1 text-sm">{credentialSourceLabel(system.databaseCredentialSource)}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-muted-foreground">Managed credential</dt>
-                    <dd class="mt-1 text-sm">{system.databaseHasCredential ? 'Configured' : 'Not configured'}</dd>
-                  </div>
-                </dl>
-              </div>
-
-              <Separator />
-
-              <div>
-                <h3 class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Endpoint</h3>
-                <dl class="mt-4 grid gap-x-8 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
-                  <div>
-                    <dt class="text-muted-foreground">Name</dt>
-                    <dd class="mt-1 text-sm font-medium">{system.databaseEndpointName}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-muted-foreground">Role</dt>
-                    <dd class="mt-1 text-sm capitalize">{system.databaseEndpointRole}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-muted-foreground">Protocol</dt>
-                    <dd class="mt-1 text-sm capitalize">{system.databaseProtocol}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-muted-foreground">TLS mode</dt>
-                    <dd class="mt-1 text-sm">{system.databaseTlsMode || 'Not configured'}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-muted-foreground">Address</dt>
-                    <dd class="mt-1 break-all font-mono text-xs">{system.databaseAddress}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-muted-foreground">Port</dt>
-                    <dd class="mt-1 font-mono text-xs">{system.databasePort}</dd>
-                  </div>
-                  <div>
-                    <dt class="text-muted-foreground">Management</dt>
-                    <dd class="mt-1 text-sm">{system.databaseExternal ? 'Externally managed' : 'Managed by DeployCrate'}</dd>
-                  </div>
-                </dl>
-              </div>
-
-              <Separator />
-
-              <div>
-                <h3 class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Installation</h3>
-                {#if system.databaseHasInstallation}
-                  <dl class="mt-4 grid gap-x-8 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
+          {#if resources.length}
+            <div class="space-y-4">
+              {#each resources as resource (resource.id)}
+                <article class="border border-border/70 bg-muted/20 p-4">
+                  <div class="flex flex-wrap items-start justify-between gap-4">
                     <div>
-                      <dt class="text-muted-foreground">Image</dt>
-                      <dd class="mt-1 break-all font-mono text-xs">{system.databaseImageReference}</dd>
+                      <p class="text-sm font-semibold">{resource.name}</p>
+                      <p class="mt-1 font-mono text-xs text-muted-foreground">{resource.bindingAlias}</p>
+                    </div>
+                    <span class="text-xs capitalize text-muted-foreground">
+                      {resource.external ? 'External' : 'Local'} · {resource.kind}
+                    </span>
+                  </div>
+
+                  <dl class="mt-5 grid gap-x-8 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
+                    <div>
+                      <dt class="text-muted-foreground">Category</dt>
+                      <dd class="mt-1 text-sm capitalize">{resource.category}</dd>
                     </div>
                     <div>
-                      <dt class="text-muted-foreground">Container</dt>
-                      <dd class="mt-1 font-mono text-xs">{system.databaseContainerName}</dd>
+                      <dt class="text-muted-foreground">Sharing scope</dt>
+                      <dd class="mt-1 text-sm capitalize">{stateLabel(resource.sharingScope)}</dd>
                     </div>
                     <div>
-                      <dt class="text-muted-foreground">Restart policy</dt>
-                      <dd class="mt-1 text-sm">{system.databaseRestartPolicy}</dd>
+                      <dt class="text-muted-foreground">Credential source</dt>
+                      <dd class="mt-1 text-sm">{credentialSourceLabel(resource.credentialSource)}</dd>
                     </div>
                     <div>
-                      <dt class="text-muted-foreground">Server</dt>
-                      <dd class="mt-1 text-sm font-medium">{system.serverName}</dd>
+                      <dt class="text-muted-foreground">Managed credential</dt>
+                      <dd class="mt-1 text-sm">{resource.hasCredential ? 'Configured' : 'Application environment'}</dd>
                     </div>
                     <div>
-                      <dt class="text-muted-foreground">Volume</dt>
-                      <dd class="mt-1 font-mono text-xs">{system.databaseVolume || 'Not configured'}</dd>
+                      <dt class="text-muted-foreground">Endpoint</dt>
+                      <dd class="mt-1 text-sm font-medium">{resource.endpointName}</dd>
                     </div>
                     <div>
-                      <dt class="text-muted-foreground">Bind</dt>
-                      <dd class="mt-1 font-mono text-xs">{system.databaseBind || 'Not configured'}</dd>
+                      <dt class="text-muted-foreground">Role</dt>
+                      <dd class="mt-1 text-sm capitalize">{resource.endpointRole}</dd>
+                    </div>
+                    <div>
+                      <dt class="text-muted-foreground">Address</dt>
+                      <dd class="mt-1 break-all font-mono text-xs">{resource.protocol}://{resource.address}:{resource.port}</dd>
+                    </div>
+                    <div>
+                      <dt class="text-muted-foreground">TLS mode</dt>
+                      <dd class="mt-1 text-sm">{resource.tlsMode || 'Not configured'}</dd>
+                    </div>
+                    {#if resource.hasInstallation}
+                      <div>
+                        <dt class="text-muted-foreground">Image</dt>
+                        <dd class="mt-1 break-all font-mono text-xs">{resource.imageReference}</dd>
+                      </div>
+                      <div>
+                        <dt class="text-muted-foreground">Container</dt>
+                        <dd class="mt-1 font-mono text-xs">{resource.containerName}</dd>
+                      </div>
+                      <div>
+                        <dt class="text-muted-foreground">Restart policy</dt>
+                        <dd class="mt-1 text-sm capitalize">{stateLabel(resource.restartPolicy)}</dd>
+                      </div>
+                      <div>
+                        <dt class="text-muted-foreground">Volume</dt>
+                        <dd class="mt-1 font-mono text-xs">{resource.volume || 'Not configured'}</dd>
+                      </div>
+                      <div>
+                        <dt class="text-muted-foreground">Bind</dt>
+                        <dd class="mt-1 font-mono text-xs">{resource.bind || 'Not configured'}</dd>
+                      </div>
+                    {/if}
+                    <div class="sm:col-span-2 xl:col-span-4">
+                      <dt class="text-muted-foreground">Resource ID</dt>
+                      <dd class="mt-1 break-all font-mono text-xs">{resource.id}</dd>
                     </div>
                   </dl>
-                {:else}
-                  <p class="mt-4 text-sm text-muted-foreground">
-                    This resource is externally managed and has no local DeployCrate installation.
-                  </p>
-                {/if}
-              </div>
+                </article>
+              {/each}
             </div>
           {:else}
-            <p class="text-sm text-muted-foreground">No active database resource is bound to the system environment.</p>
+            <p class="text-sm text-muted-foreground">No active resources are bound to the system environment.</p>
           {/if}
         </Accordion.Content>
       </Accordion.Item>

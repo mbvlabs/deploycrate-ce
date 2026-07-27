@@ -9,6 +9,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -33,6 +35,18 @@ type MetricRollupExport struct {
 	LastBucket  string `json:"last_bucket,omitempty"`
 }
 
+type MetricValue struct {
+	Metric     string
+	Value      float64
+	ObservedAt time.Time
+}
+
+type MetricHistoryValue struct {
+	BucketStart time.Time
+	Metric      string
+	Value       float64
+}
+
 type Client struct {
 	baseURL  string
 	database string
@@ -46,6 +60,36 @@ func New(baseURL, database, user, password string) Client {
 		baseURL: baseURL, database: database, user: user, password: password,
 		client: &http.Client{Timeout: 15 * time.Second},
 	}
+}
+
+func (client Client) Ping(ctx context.Context) (string, error) {
+	endpoint, err := url.Parse(client.baseURL)
+	if err != nil {
+		return "", fmt.Errorf("build ClickHouse ping URL: %w", err)
+	}
+	endpoint.Path = strings.TrimRight(endpoint.Path, "/") + "/ping"
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
+	if err != nil {
+		return "", fmt.Errorf("build ClickHouse ping request: %w", err)
+	}
+	request.SetBasicAuth(client.user, client.password)
+	response, err := client.client.Do(request)
+	if err != nil {
+		return "", fmt.Errorf("ping ClickHouse: %w", err)
+	}
+	defer response.Body.Close()
+	message, err := io.ReadAll(io.LimitReader(response.Body, 800))
+	if err != nil {
+		return "", fmt.Errorf("read ClickHouse ping response: %w", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf(
+			"ping ClickHouse: unexpected status %s: %s",
+			response.Status,
+			string(message),
+		)
+	}
+	return strings.TrimSpace(string(message)), nil
 }
 
 func (client Client) InsertMetricRollups(ctx context.Context, rollups []MetricRollup) error {
@@ -83,6 +127,138 @@ func (client Client) InsertMetricRollups(ctx context.Context, rollups []MetricRo
 		return fmt.Errorf("insert ClickHouse metric rollups: unexpected status %s", response.Status)
 	}
 	return nil
+}
+
+func (client Client) LatestSystemMetricValues(
+	ctx context.Context,
+	server string,
+) ([]MetricValue, error) {
+	endpoint, err := url.Parse(client.baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("build ClickHouse URL: %w", err)
+	}
+	query := endpoint.Query()
+	query.Set("database", client.database)
+	query.Set("param_server", server)
+	query.Set(
+		"query",
+		"SELECT metric, argMax(`last`, observed_at) AS value, toString(toUnixTimestamp64Milli(max(observed_at))) AS observed_at_milliseconds FROM metric_rollups WHERE server = {server:String} AND metric IN ('cpu_utilization_percent', 'memory_available_bytes', 'memory_total_bytes', 'root_filesystem_available_bytes', 'root_filesystem_size_bytes') GROUP BY metric FORMAT JSONEachRow",
+	)
+	endpoint.RawQuery = query.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("build ClickHouse system metric request: %w", err)
+	}
+	request.SetBasicAuth(client.user, client.password)
+	response, err := client.client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("query ClickHouse system metrics: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 800))
+		return nil, fmt.Errorf(
+			"query ClickHouse system metrics: unexpected status %s: %s",
+			response.Status,
+			string(message),
+		)
+	}
+
+	values := make([]MetricValue, 0, 5)
+	decoder := json.NewDecoder(response.Body)
+	for {
+		var row struct {
+			Metric                 string  `json:"metric"`
+			Value                  float64 `json:"value"`
+			ObservedAtMilliseconds string  `json:"observed_at_milliseconds"`
+		}
+		if err := decoder.Decode(&row); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return nil, fmt.Errorf("decode ClickHouse system metrics: %w", err)
+		}
+		observedAtMilliseconds, err := strconv.ParseInt(
+			row.ObservedAtMilliseconds,
+			10,
+			64,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("decode ClickHouse system metric timestamp: %w", err)
+		}
+		values = append(values, MetricValue{
+			Metric:     row.Metric,
+			Value:      row.Value,
+			ObservedAt: time.UnixMilli(observedAtMilliseconds).UTC(),
+		})
+	}
+	return values, nil
+}
+
+func (client Client) SystemMetricHistory(
+	ctx context.Context,
+	server string,
+	since time.Time,
+) ([]MetricHistoryValue, error) {
+	endpoint, err := url.Parse(client.baseURL)
+	if err != nil {
+		return nil, fmt.Errorf("build ClickHouse URL: %w", err)
+	}
+	query := endpoint.Query()
+	query.Set("database", client.database)
+	query.Set("param_server", server)
+	query.Set("param_since_seconds", strconv.FormatInt(since.Unix(), 10))
+	query.Set(
+		"query",
+		"SELECT toString(toUInt64(toUnixTimestamp(bucket_start)) * 1000) AS bucket_start_milliseconds, metric, argMax(`last`, observed_at) AS value FROM metric_rollups WHERE server = {server:String} AND bucket_start >= toDateTime({since_seconds:UInt32}) AND metric IN ('memory_available_bytes', 'memory_total_bytes', 'root_filesystem_available_bytes', 'root_filesystem_size_bytes') GROUP BY bucket_start, metric ORDER BY bucket_start, metric FORMAT JSONEachRow",
+	)
+	endpoint.RawQuery = query.Encode()
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("build ClickHouse system metric history request: %w", err)
+	}
+	request.SetBasicAuth(client.user, client.password)
+	response, err := client.client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("query ClickHouse system metric history: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 800))
+		return nil, fmt.Errorf(
+			"query ClickHouse system metric history: unexpected status %s: %s",
+			response.Status,
+			string(message),
+		)
+	}
+
+	values := make([]MetricHistoryValue, 0, 24*60*4)
+	decoder := json.NewDecoder(response.Body)
+	for {
+		var row struct {
+			BucketStartMilliseconds string  `json:"bucket_start_milliseconds"`
+			Metric                  string  `json:"metric"`
+			Value                   float64 `json:"value"`
+		}
+		if err := decoder.Decode(&row); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return nil, fmt.Errorf("decode ClickHouse system metric history: %w", err)
+		}
+		bucketStartMilliseconds, err := strconv.ParseInt(
+			row.BucketStartMilliseconds,
+			10,
+			64,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("decode ClickHouse system metric history timestamp: %w", err)
+		}
+		values = append(values, MetricHistoryValue{
+			BucketStart: time.UnixMilli(bucketStartMilliseconds).UTC(),
+			Metric:      row.Metric,
+			Value:       row.Value,
+		})
+	}
+	return values, nil
 }
 
 func (client Client) ExportMetricRollups(

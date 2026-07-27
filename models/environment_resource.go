@@ -27,6 +27,16 @@ type EnvironmentResourceEntity struct {
 	ResourceCredentialID *uuid.UUID      `bun:"resource_credential_id,type:uuid"`
 }
 
+type EnvironmentResourceConnection struct {
+	ResourceKind     string          `bun:"resource_kind"`
+	Address          string          `bun:"address"`
+	Port             int32           `bun:"port"`
+	Protocol         string          `bun:"protocol"`
+	TLSMode          string          `bun:"tls_mode"`
+	Settings         json.RawMessage `bun:"settings"`
+	CredentialSource string          `bun:"credential_source"`
+}
+
 func (e *EnvironmentResourceEntity) Validate() error {
 	return nil
 }
@@ -45,6 +55,37 @@ func (er environmentResource) Find(
 	}
 
 	return entity, nil
+}
+
+func (er environmentResource) FindConnectionByApplicationAndAlias(
+	ctx context.Context,
+	db storage.Executor,
+	applicationSlug string,
+	alias string,
+) (EnvironmentResourceConnection, error) {
+	var connection EnvironmentResourceConnection
+	if err := db.NewSelect().
+		TableExpr("environment_resources AS binding").
+		ColumnExpr("resource.kind AS resource_kind").
+		ColumnExpr("endpoint.address AS address").
+		ColumnExpr("endpoint.port AS port").
+		ColumnExpr("endpoint.protocol AS protocol").
+		ColumnExpr("endpoint.tls_mode AS tls_mode").
+		ColumnExpr("endpoint.settings AS settings").
+		ColumnExpr("COALESCE(binding.configuration ->> 'credential_source', '') AS credential_source").
+		Join("JOIN environments AS environment ON environment.id = binding.environment_id AND environment.archived_at IS NULL").
+		Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
+		Join("JOIN resources AS resource ON resource.id = binding.resource_id AND resource.archived_at IS NULL").
+		Join("JOIN resource_endpoints AS endpoint ON endpoint.id = binding.resource_endpoint_id AND endpoint.archived_at IS NULL").
+		Where("application.slug = ?", applicationSlug).
+		Where("binding.alias = ?", alias).
+		Where("binding.archived_at IS NULL").
+		OrderExpr("binding.created_at DESC").
+		Limit(1).
+		Scan(ctx, &connection); err != nil {
+		return EnvironmentResourceConnection{}, err
+	}
+	return connection, nil
 }
 
 type CreateEnvironmentResourceData struct {

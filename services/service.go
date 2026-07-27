@@ -13,6 +13,7 @@ var Module = fx.Module(
 	fx.Provide(
 		NewIdentity,
 		NewSelfUpdate,
+		NewClickHouseResource,
 		NewSystemHealth,
 		func() CaddyClient { return caddyclients.New("") },
 		NewCaddyRouteService,
