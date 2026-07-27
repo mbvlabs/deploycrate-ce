@@ -27,7 +27,11 @@ func (e *EnvironmentDomainEntity) Validate() error {
 	return nil
 }
 
-func (ed environmentDomain) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentDomainEntity, error) {
+func (ed environmentDomain) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (EnvironmentDomainEntity, error) {
 	var entity EnvironmentDomainEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -39,6 +43,53 @@ func (ed environmentDomain) Find(ctx context.Context, db storage.Executor, id uu
 	return entity, nil
 }
 
+type BootstrapGraphRecord struct {
+	ApplicationID   uuid.UUID `bun:"application_id"`
+	EnvironmentID   uuid.UUID `bun:"environment_id"`
+	ServerID        uuid.UUID `bun:"server_id"`
+	NetworkID       uuid.UUID `bun:"network_id"`
+	ReleaseID       uuid.UUID `bun:"release_id"`
+	InstanceID      uuid.UUID `bun:"instance_id"`
+	CaddyRouteID    uuid.UUID `bun:"caddy_route_id"`
+	ExternalRouteID string    `bun:"external_route_id"`
+}
+
+func (ed environmentDomain) FindBootstrapGraphByHostname(
+	ctx context.Context,
+	db storage.Executor,
+	hostname string,
+) (BootstrapGraphRecord, bool, error) {
+	var row BootstrapGraphRecord
+	err := db.NewSelect().
+		TableExpr("caddy_routes AS route").
+		ColumnExpr("environment.application_id AS application_id").
+		ColumnExpr("environment.id AS environment_id").
+		ColumnExpr("target.server_id AS server_id").
+		ColumnExpr("network.id AS network_id").
+		ColumnExpr("route.release_id AS release_id").
+		ColumnExpr("backend.instance_id AS instance_id").
+		ColumnExpr("route.id AS caddy_route_id").
+		ColumnExpr("route.external_id AS external_route_id").
+		Join("JOIN environment_domains AS domain ON domain.id = route.environment_domain_id").
+		Join("JOIN environments AS environment ON environment.id = domain.environment_id").
+		Join("JOIN environment_targets AS target ON target.id = route.environment_target_id").
+		Join("JOIN caddy_route_backends AS backend ON backend.caddy_route_id = route.id AND backend.removed_at IS NULL").
+		Join("JOIN private_networks AS network ON network.owner_environment_id = environment.id AND network.archived_at IS NULL").
+		Where("domain.hostname = ?", hostname).
+		Where("domain.archived_at IS NULL").
+		Where("route.removed_at IS NULL").
+		OrderExpr("backend.id ASC").
+		Limit(1).
+		Scan(ctx, &row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return BootstrapGraphRecord{}, false, nil
+	}
+	if err != nil {
+		return BootstrapGraphRecord{}, false, err
+	}
+	return row, true, nil
+}
+
 type CreateEnvironmentDomainData struct {
 	Hostname      string
 	IsPrimary     bool
@@ -46,7 +97,11 @@ type CreateEnvironmentDomainData struct {
 	EnvironmentID uuid.UUID
 }
 
-func (ed environmentDomain) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentDomainData) (EnvironmentDomainEntity, error) {
+func (ed environmentDomain) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentDomainData,
+) (EnvironmentDomainEntity, error) {
 	entity := EnvironmentDomainEntity{
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),
@@ -77,7 +132,11 @@ type UpdateEnvironmentDomainData struct {
 	EnvironmentID uuid.UUID
 }
 
-func (ed environmentDomain) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentDomainData) (EnvironmentDomainEntity, error) {
+func (ed environmentDomain) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateEnvironmentDomainData,
+) (EnvironmentDomainEntity, error) {
 	entity := EnvironmentDomainEntity{
 		ID:            data.ID,
 		UpdatedAt:     time.Now(),
@@ -116,7 +175,10 @@ func (ed environmentDomain) Destroy(ctx context.Context, db storage.Executor, id
 	return err
 }
 
-func (ed environmentDomain) All(ctx context.Context, db storage.Executor) ([]EnvironmentDomainEntity, error) {
+func (ed environmentDomain) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]EnvironmentDomainEntity, error) {
 	var entities []EnvironmentDomainEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -135,7 +197,11 @@ type PaginatedEnvironmentDomains struct {
 	TotalPages         int64
 }
 
-func (ed environmentDomain) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedEnvironmentDomains, error) {
+func (ed environmentDomain) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedEnvironmentDomains, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -174,7 +240,11 @@ func (ed environmentDomain) Paginate(ctx context.Context, db storage.Executor, p
 	}, nil
 }
 
-func (ed environmentDomain) Upsert(ctx context.Context, db storage.Executor, data CreateEnvironmentDomainData) (EnvironmentDomainEntity, error) {
+func (ed environmentDomain) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentDomainData,
+) (EnvironmentDomainEntity, error) {
 	entity := EnvironmentDomainEntity{
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),

@@ -21,7 +21,13 @@ type EnvironmentResourceFactory struct {
 
 type EnvironmentResourceOption func(*EnvironmentResourceFactory)
 
-func BuildEnvironmentResource(environmentID uuid.UUID, resourceID uuid.UUID, resourceEndpointID uuid.UUID, resourceCredentialID *uuid.UUID, opts ...EnvironmentResourceOption) models.EnvironmentResourceEntity {
+func BuildEnvironmentResource(
+	environmentID uuid.UUID,
+	resourceID uuid.UUID,
+	resourceEndpointID uuid.UUID,
+	resourceCredentialID *uuid.UUID,
+	opts ...EnvironmentResourceOption,
+) models.EnvironmentResourceEntity {
 	f := &EnvironmentResourceFactory{
 		EnvironmentResourceEntity: models.EnvironmentResourceEntity{
 			Alias:                faker.Word(),
@@ -41,8 +47,21 @@ func BuildEnvironmentResource(environmentID uuid.UUID, resourceID uuid.UUID, res
 	return f.EnvironmentResourceEntity
 }
 
-func CreateEnvironmentResource(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, resourceID uuid.UUID, resourceEndpointID uuid.UUID, resourceCredentialID *uuid.UUID, opts ...EnvironmentResourceOption) (models.EnvironmentResourceEntity, error) {
-	built := BuildEnvironmentResource(environmentID, resourceID, resourceEndpointID, resourceCredentialID, opts...)
+func CreateEnvironmentResource(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentID uuid.UUID,
+	resourceID uuid.UUID,
+	resourceEndpointID uuid.UUID,
+	resourceCredentialID *uuid.UUID,
+	opts ...EnvironmentResourceOption,
+) (models.EnvironmentResourceEntity, error) {
+	built := BuildEnvironmentResource(
+		environmentID,
+		resourceID,
+		resourceEndpointID,
+		resourceCredentialID,
+		opts...)
 
 	entity := models.EnvironmentResourceEntity{
 		ID:                   uuid.New(),
@@ -64,11 +83,27 @@ func CreateEnvironmentResource(ctx context.Context, exec storage.Executor, envir
 	return entity, nil
 }
 
-func CreateEnvironmentResources(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, resourceID uuid.UUID, resourceEndpointID uuid.UUID, resourceCredentialID *uuid.UUID, count int, opts ...EnvironmentResourceOption) ([]models.EnvironmentResourceEntity, error) {
+func CreateEnvironmentResources(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentID uuid.UUID,
+	resourceID uuid.UUID,
+	resourceEndpointID uuid.UUID,
+	resourceCredentialID *uuid.UUID,
+	count int,
+	opts ...EnvironmentResourceOption,
+) ([]models.EnvironmentResourceEntity, error) {
 	environmentresources := make([]models.EnvironmentResourceEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateEnvironmentResource(ctx, exec, environmentID, resourceID, resourceEndpointID, resourceCredentialID, opts...)
+		entity, err := CreateEnvironmentResource(
+			ctx,
+			exec,
+			environmentID,
+			resourceID,
+			resourceEndpointID,
+			resourceCredentialID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create environmentresource %d: %w", i+1, err)
 		}

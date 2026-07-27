@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/mail"
+	"net/url"
 	"os"
 	"os/exec"
 	"strconv"
@@ -16,6 +17,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"deploycrate-ce/clients/objectstorage"
 	"deploycrate-ce/internal/setup"
 	"deploycrate-ce/internal/storage"
 )
@@ -30,7 +32,10 @@ const (
 	screenDatabaseChoice
 	screenDatabase
 	screenStorageChoice
+	screenStorageProvider
 	screenStorage
+	screenServerBackupPolicy
+	screenDatabaseBackupPolicy
 	screenValidating
 	screenReview
 	screenRunning
@@ -62,6 +67,8 @@ type Model struct {
 	configSaved         bool
 	credentialsVerified bool
 	handoffConfirmation textinput.Model
+	handoffFocus        int
+	copyRequested       bool
 	rebootStarted       bool
 	activity            spinner.Model
 }
@@ -77,7 +84,10 @@ var (
 	colorBorder = lipgloss.Color("#34415a")
 
 	titleStyle = lipgloss.NewStyle().Bold(true).Foreground(colorPink)
-	panelStyle = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(colorBorder).Padding(1, 2)
+	panelStyle = lipgloss.NewStyle().
+			BorderStyle(lipgloss.RoundedBorder()).
+			BorderForeground(colorBorder).
+			Padding(1, 2)
 	mutedStyle = lipgloss.NewStyle().Foreground(colorMuted)
 	labelStyle = lipgloss.NewStyle().Bold(true).Foreground(colorCyan)
 	errorStyle = lipgloss.NewStyle().Foreground(colorRed)
@@ -90,7 +100,15 @@ func NewModel(cfg setup.Config, host setup.HostInfo, dryRun bool) Model {
 		spinner.WithSpinner(spinner.MiniDot),
 		spinner.WithStyle(lipgloss.NewStyle().Foreground(colorPink)),
 	)
-	return Model{config: cfg, host: host, dryRun: dryRun, screen: screenWelcome, width: 88, height: 30, activity: activity}
+	return Model{
+		config:   cfg,
+		host:     host,
+		dryRun:   dryRun,
+		screen:   screenWelcome,
+		width:    88,
+		height:   30,
+		activity: activity,
+	}
 }
 
 func NewHandoffModel(cfg setup.Config, dryRun, credentialsVerified bool) Model {
@@ -103,7 +121,7 @@ func NewHandoffModel(cfg setup.Config, dryRun, credentialsVerified bool) Model {
 }
 
 func (m Model) Init() tea.Cmd {
-	if m.screen == screenHandoff {
+	if m.screen == screenHandoff && m.handoffConfirmation.Focused() {
 		return textinput.Blink
 	}
 	return nil
@@ -124,6 +142,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
+		if m.config.S3.Enabled {
+			m.config.S3.ValidatedAt = time.Now().UTC()
+		}
 		m.screen = screenReview
 		return m, nil
 	case runEventMsg:
@@ -139,7 +160,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.screen = screenHandoff
 			m.credentialsVerified = false
 			m.handoffConfirmation = newHandoffConfirmation()
-			return m, textinput.Blink
+			m.handoffFocus = 0
+			m.copyRequested = false
+			return m, nil
 		}
 		return m, waitForEvent(m.eventStream)
 	case runClosedMsg:
@@ -161,6 +184,24 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		var command tea.Cmd
 		m.activity, command = m.activity.Update(msg)
 		return m, command
+	case tea.PasteMsg:
+		if m.screen == screenRunning || m.screen == screenValidating {
+			return m, nil
+		}
+		if m.screen == screenHandoff {
+			if m.handoffFocus != 1 {
+				return m, nil
+			}
+			var command tea.Cmd
+			m.handoffConfirmation, command = m.handoffConfirmation.Update(msg)
+			return m, command
+		}
+		if m.focus < 0 || m.focus >= len(m.inputs) {
+			return m, nil
+		}
+		var command tea.Cmd
+		m.inputs[m.focus], command = m.inputs[m.focus].Update(msg)
+		return m, command
 	case tea.KeyPressMsg:
 		key := msg.String()
 		if key == "ctrl+c" {
@@ -175,7 +216,8 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.screen == screenHandoff {
 			return m.updateHandoff(msg)
 		}
-		if m.screen == screenDatabaseChoice || m.screen == screenStorageChoice {
+		if m.screen == screenDatabaseChoice || m.screen == screenStorageChoice ||
+			m.screen == screenStorageProvider {
 			return m.updateChoice(key)
 		}
 		if m.screen == screenWelcome || m.screen == screenReview {
@@ -200,7 +242,9 @@ func (m Model) View() tea.View {
 	header := titleStyle.Render("DeployCrate CE Setup") + "  " + mutedStyle.Render(m.stepLabel())
 	body := panelStyle.Width(width).Render(header + "\n\n" + content)
 	footer := mutedStyle.Render("ctrl+c cancel")
-	if m.screen != screenRunning && m.screen != screenValidating && m.screen != screenHandoff {
+	if m.screen == screenHandoff {
+		footer += mutedStyle.Render("  •  tab move  •  enter select")
+	} else if m.screen != screenRunning && m.screen != screenValidating {
 		footer += mutedStyle.Render("  •  tab move  •  enter continue")
 	}
 	view := tea.NewView(lipgloss.NewStyle().Margin(1, 2).Render(body + "\n" + footer))
@@ -229,9 +273,9 @@ func (m *Model) setScreen(next screen) {
 		}
 	case screenAccess:
 		m.inputs = []textinput.Model{
-			newInput("Linux password", m.config.Secrets.LinuxPassword, true),
-			newInput("Confirm Linux password", "", true),
-			newInput("ssh-ed25519 AAAA... or blank to generate", m.config.SSHPublicKey, false),
+			newInput("Server administrator password", m.config.Secrets.ServerAdminPassword, true),
+			newInput("Confirm server administrator password", "", true),
+			newInput("Optional ordinary owner SSH public key", m.config.OwnerSSHPublicKey, false),
 		}
 	case screenAdmin:
 		m.inputs = []textinput.Model{
@@ -254,8 +298,25 @@ func (m *Model) setScreen(next screen) {
 			newInput("https://s3.example.com or blank for AWS", m.config.S3.Endpoint, false),
 			newInput("Region", m.config.S3.Region, false),
 			newInput("Bucket", m.config.S3.Bucket, false),
+			newInput("Optional object prefix", m.config.S3.Prefix, false),
+			newInput("true or false", strconv.FormatBool(m.config.S3.UsePathStyle), false),
 			newInput("Access key ID", m.config.Secrets.S3AccessKeyID, true),
 			newInput("Secret access key", m.config.Secrets.S3SecretAccessKey, true),
+		}
+	case screenServerBackupPolicy:
+		m.inputs = []textinput.Model{
+			newInput("0 2 * * *", m.config.S3.ServerPolicy.Schedule, false),
+			newInput("7", strconv.Itoa(m.config.S3.ServerPolicy.Retention.KeepDaily), false),
+			newInput("4", strconv.Itoa(m.config.S3.ServerPolicy.Retention.KeepWeekly), false),
+			newInput("6", strconv.Itoa(m.config.S3.ServerPolicy.Retention.KeepMonthly), false),
+		}
+	case screenDatabaseBackupPolicy:
+		m.inputs = []textinput.Model{
+			newInput("0 */6 * * *", m.config.S3.DatabasePolicy.Schedule, false),
+			newInput("12", strconv.Itoa(m.config.S3.DatabasePolicy.Retention.KeepLast), false),
+			newInput("7", strconv.Itoa(m.config.S3.DatabasePolicy.Retention.KeepDaily), false),
+			newInput("4", strconv.Itoa(m.config.S3.DatabasePolicy.Retention.KeepWeekly), false),
+			newInput("6", strconv.Itoa(m.config.S3.DatabasePolicy.Retention.KeepMonthly), false),
 		}
 	}
 	if len(m.inputs) > 0 {
@@ -287,7 +348,6 @@ func newInput(placeholder, value string, password bool) textinput.Model {
 func newHandoffConfirmation() textinput.Model {
 	input := newInput("CONFIRM", "", false)
 	input.CharLimit = len("CONFIRM")
-	input.Focus()
 	return input
 }
 
@@ -347,29 +407,30 @@ func (m *Model) commitForm() error {
 		}
 		m.config.Domain, m.config.SSHPort = value(0), port
 	case screenAccess:
-		if len(value(0)) < 12 {
-			return errors.New("Linux password must be at least 12 characters")
+		if value(0) == "" {
+			return errors.New("server administrator password is required")
 		}
 		if value(0) != value(1) {
-			return errors.New("Linux passwords do not match")
+			return errors.New("server administrator passwords do not match")
 		}
-		m.config.Secrets.LinuxPassword = value(0)
-		if value(2) == "" {
+		m.config.Secrets.ServerAdminPassword = value(0)
+		if value(2) != "" {
+			if err := setup.ValidateSSHPublicKey(value(2)); err != nil {
+				return err
+			}
+			m.config.OwnerSSHPublicKey = value(2)
+		} else {
+			m.config.OwnerSSHPublicKey = ""
+		}
+		if m.config.Secrets.SSHPrivateKey == "" {
 			publicKey, privateKey, err := setup.GenerateSSHKeyPair()
 			if err != nil {
 				return err
 			}
 			m.config.SSHPublicKey = publicKey
 			m.config.Secrets.SSHPrivateKey = privateKey
-			m.config.GeneratedSSHKey = true
-		} else {
-			if err := setup.ValidateSSHPublicKey(value(2)); err != nil {
-				return err
-			}
-			m.config.SSHPublicKey = value(2)
-			m.config.Secrets.SSHPrivateKey = ""
-			m.config.GeneratedSSHKey = false
 		}
+		m.config.GeneratedSSHKey = true
 	case screenAdmin:
 		if _, err := mail.ParseAddress(value(0)); err != nil {
 			return errors.New("enter a valid application admin email")
@@ -390,7 +451,12 @@ func (m *Model) commitForm() error {
 		if value(0) == "" || value(2) == "" || value(3) == "" || value(4) == "" {
 			return errors.New("all database fields are required")
 		}
-		allowedSSL := map[string]bool{"disable": true, "require": true, "verify-ca": true, "verify-full": true}
+		allowedSSL := map[string]bool{
+			"disable":     true,
+			"require":     true,
+			"verify-ca":   true,
+			"verify-full": true,
+		}
 		if !allowedSSL[value(5)] {
 			return errors.New("SSL mode must be disable, require, verify-ca, or verify-full")
 		}
@@ -404,14 +470,59 @@ func (m *Model) commitForm() error {
 		}
 		m.config.Database.TLSCAPath = value(6)
 	case screenStorage:
-		if value(1) == "" || value(2) == "" || value(3) == "" || value(4) == "" {
+		pathStyle, err := strconv.ParseBool(value(4))
+		if err != nil {
+			return errors.New("path-style access must be true or false")
+		}
+		if value(1) == "" || value(2) == "" || value(5) == "" || value(6) == "" {
 			return errors.New("region, bucket, access key, and secret key are required")
 		}
-		m.config.S3.Endpoint, m.config.S3.Region, m.config.S3.Bucket = value(0), value(1), value(2)
-		m.config.Secrets.S3AccessKeyID, m.config.Secrets.S3SecretAccessKey = value(3), value(4)
+		normalized, err := objectstorage.Normalize(objectstorage.Config{
+			Provider: m.config.S3.Provider, Endpoint: value(0), Region: value(1),
+			Bucket: value(2), Prefix: value(3), ForcePathStyle: pathStyle,
+		})
+		if err != nil {
+			return err
+		}
+		m.config.S3.Endpoint, m.config.S3.Region, m.config.S3.Bucket = normalized.Endpoint, normalized.Region, normalized.Bucket
+		m.config.S3.Prefix, m.config.S3.UsePathStyle = normalized.Prefix, normalized.ForcePathStyle
+		m.config.Secrets.S3AccessKeyID, m.config.Secrets.S3SecretAccessKey = value(5), value(6)
+	case screenServerBackupPolicy:
+		retention, err := parseRetention(0, value(1), value(2), value(3))
+		if err != nil {
+			return err
+		}
+		m.config.S3.ServerPolicy = setup.BackupPolicyConfig{Schedule: value(0), Retention: retention}
+	case screenDatabaseBackupPolicy:
+		keepLast, err := strconv.Atoi(value(1))
+		if err != nil || keepLast < 1 {
+			return errors.New("database recent retention must be at least 1")
+		}
+		retention, err := parseRetention(keepLast, value(2), value(3), value(4))
+		if err != nil {
+			return err
+		}
+		m.config.S3.DatabasePolicy = setup.BackupPolicyConfig{Schedule: value(0), Retention: retention}
 	}
 	m.err = nil
 	return nil
+}
+
+func parseRetention(keepLast int, daily, weekly, monthly string) (setup.BackupRetention, error) {
+	values := []string{daily, weekly, monthly}
+	parsed := make([]int, len(values))
+	for index, value := range values {
+		count, err := strconv.Atoi(value)
+		if err != nil || count < 1 {
+			return setup.BackupRetention{}, errors.New(
+				"daily, weekly, and monthly retention must be at least 1",
+			)
+		}
+		parsed[index] = count
+	}
+	return setup.BackupRetention{
+		KeepLast: keepLast, KeepDaily: parsed[0], KeepWeekly: parsed[1], KeepMonthly: parsed[2],
+	}, nil
 }
 
 func (m Model) advanceAfterForm() (tea.Model, tea.Cmd) {
@@ -429,6 +540,15 @@ func (m Model) advanceAfterForm() (tea.Model, tea.Cmd) {
 		m.choice = 0
 		m.inputs = nil
 	case screenStorage:
+		m.setScreen(screenServerBackupPolicy)
+	case screenServerBackupPolicy:
+		if !m.config.Database.External {
+			m.setScreen(screenDatabaseBackupPolicy)
+			return m, textinput.Blink
+		}
+		m.screen = screenValidating
+		return m, tea.Batch(validateRemoteServices(m.config, m.dryRun), m.activity.Tick)
+	case screenDatabaseBackupPolicy:
 		m.screen = screenValidating
 		return m, tea.Batch(validateRemoteServices(m.config, m.dryRun), m.activity.Tick)
 	}
@@ -450,15 +570,33 @@ func (m Model) updateChoice(key string) (tea.Model, tea.Cmd) {
 			m.setScreen(screenDatabase)
 			return m, textinput.Blink
 		}
-		m.config.Database = setup.DatabaseConfig{External: false, Host: "127.0.0.1", Port: 5432, Name: "deploycrate_ce", User: "deploycrate", SSLMode: "disable"}
+		m.config.Database = setup.DatabaseConfig{
+			External: false,
+			Host:     "127.0.0.1",
+			Port:     5432,
+			Name:     "deploycrate_ce",
+			User:     "deploycrate",
+			SSLMode:  "disable",
+		}
 		m.screen = screenStorageChoice
 		m.choice = 0
 		return m, nil
 	}
-	m.config.S3.Enabled = m.choice == 1
-	if m.config.S3.Enabled {
+	if m.screen == screenStorageProvider {
+		m.config.S3.Provider = "s3"
+		if m.choice == 1 {
+			m.config.S3.Provider = "r2"
+			m.config.S3.Region = "auto"
+			m.config.S3.UsePathStyle = true
+		}
 		m.setScreen(screenStorage)
 		return m, textinput.Blink
+	}
+	m.config.S3.Enabled = m.choice == 1
+	if m.config.S3.Enabled {
+		m.screen = screenStorageProvider
+		m.choice = 0
+		return m, nil
 	}
 	m.screen = screenValidating
 	return m, tea.Batch(validateRemoteServices(m.config, m.dryRun), m.activity.Tick)
@@ -466,17 +604,34 @@ func (m Model) updateChoice(key string) (tea.Model, tea.Cmd) {
 
 func validateRemoteServices(cfg setup.Config, dryRun bool) tea.Cmd {
 	return func() tea.Msg {
-		if dryRun || !cfg.Database.External {
+		if dryRun {
 			return validationMsg{}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		db, err := storage.NewPostgres(ctx, cfg.DatabaseURL())
-		if err != nil {
-			return validationMsg{err: fmt.Errorf("external database validation failed: %w", err)}
+		if cfg.Database.External {
+			db, err := storage.NewPostgres(ctx, cfg.DatabaseURL())
+			if err != nil {
+				return validationMsg{err: fmt.Errorf("external database validation failed: %w", err)}
+			}
+			if err := db.Close(); err != nil {
+				return validationMsg{err: fmt.Errorf("close external database validation connection: %w", err)}
+			}
 		}
-		if err := db.Close(); err != nil {
-			return validationMsg{err: fmt.Errorf("close external database validation connection: %w", err)}
+		if cfg.S3.Enabled {
+			client, err := objectstorage.New(ctx, objectstorage.Config{
+				Provider: cfg.S3.Provider, Endpoint: cfg.S3.Endpoint, Region: cfg.S3.Region,
+				Bucket: cfg.S3.Bucket, Prefix: cfg.S3.Prefix, ForcePathStyle: cfg.S3.UsePathStyle,
+			}, objectstorage.Credentials{
+				AccessKeyID:     cfg.Secrets.S3AccessKeyID,
+				SecretAccessKey: cfg.Secrets.S3SecretAccessKey,
+			})
+			if err != nil {
+				return validationMsg{err: fmt.Errorf("object storage validation failed: %w", err)}
+			}
+			if err := client.Probe(ctx, cfg.InstallationID); err != nil {
+				return validationMsg{err: fmt.Errorf("object storage validation failed: %w", err)}
+			}
 		}
 		return validationMsg{}
 	}
@@ -529,14 +684,38 @@ func (m Model) updateHandoff(message tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.rebootStarted {
 		return m, nil
 	}
-	if message.String() == "enter" {
+
+	key := message.String()
+	if key == "tab" || key == "shift+tab" || key == "up" || key == "down" {
+		if m.handoffFocus == 0 {
+			m.handoffFocus = 1
+			m.handoffConfirmation.Focus()
+			return m, textinput.Blink
+		}
+		m.handoffFocus = 0
+		m.handoffConfirmation.Blur()
+		return m, nil
+	}
+
+	if key == "enter" && m.handoffFocus == 0 {
+		m.err = nil
+		m.copyRequested = true
+		return m, tea.SetClipboard(m.handoffDetails())
+	}
+
+	if key == "enter" {
 		if strings.TrimSpace(m.handoffConfirmation.Value()) != "CONFIRM" {
-			m.err = errors.New("type CONFIRM exactly to remove transient secrets and reboot")
+			m.err = errors.New(
+				"type CONFIRM exactly to remove transient secrets and bootstrap binaries, then reboot",
+			)
 			return m, nil
 		}
 		m.err = nil
 		m.rebootStarted = true
 		return m, reboot(m.dryRun)
+	}
+	if m.handoffFocus == 0 {
+		return m, nil
 	}
 	m.err = nil
 	var command tea.Cmd
@@ -561,24 +740,83 @@ func (m Model) renderScreen(width int) string {
 	switch m.screen {
 	case screenWelcome:
 		content = labelStyle.Render("Ready to configure this VPS") + "\n\n" +
-			fmt.Sprintf("Detected %s %s on %s\n%d MB memory available · %d MB disk free\n\n", m.host.Distribution, m.host.Version, m.host.Architecture, m.host.MemoryMB, m.host.DiskFreeMB) +
-			warnStyle.Render("The deploycrate user will receive unrestricted passwordless sudo and Docker access.") + "\n\nPress enter to begin."
+			fmt.Sprintf(
+				"Detected %s %s on %s\n%d MB memory available · %d MB disk free\n\n",
+				m.host.Distribution,
+				m.host.Version,
+				m.host.Architecture,
+				m.host.MemoryMB,
+				m.host.DiskFreeMB,
+			) +
+			warnStyle.Render(
+				"The admin and deploycrate users receive passwordless sudo and Docker access; deploycrate remains non-login.",
+			) + "\n\nPress enter to begin."
 	case screenServer:
 		content = m.renderForm([]string{"Public domain", "SSH port"})
 	case screenAccess:
-		content = m.renderForm([]string{"Linux password", "Confirm password", "Existing SSH public key"}) + "\n" + mutedStyle.Render("Leave the SSH key blank to generate an Ed25519 key pair for one-time handoff.")
+		content = m.renderForm(
+			[]string{"Server administrator password", "Confirm password", "Ordinary owner SSH public key"},
+		) + "\n" + mutedStyle.Render(
+			"At least 12 characters is recommended, not required. A unique Ed25519 admin key is always generated.",
+		)
 	case screenAdmin:
-		content = m.renderForm([]string{"Application admin email", "Application admin password", "Confirm password"})
+		content = m.renderForm(
+			[]string{"Application admin email", "Application admin password", "Confirm password"},
+		)
 	case screenDatabaseChoice:
-		content = m.renderChoice("Where should PostgreSQL run?", []string{"Local Docker PostgreSQL", "Externally hosted PostgreSQL"})
+		content = m.renderChoice(
+			"Where should PostgreSQL run?",
+			[]string{"Local Docker PostgreSQL", "Externally hosted PostgreSQL"},
+		)
 	case screenDatabase:
-		content = m.renderForm([]string{"Host", "Port", "Database", "User", "Password", "SSL mode", "CA certificate path"})
+		content = m.renderForm(
+			[]string{
+				"Host",
+				"Port",
+				"Database",
+				"User",
+				"Password",
+				"SSL mode",
+				"CA certificate path",
+			},
+		)
 	case screenStorageChoice:
-		content = m.renderChoice("Configure S3-compatible storage for backups?", []string{"Not now", "Yes, store destination details"})
+		content = m.renderChoice(
+			"Configure S3-compatible storage for backups?",
+			[]string{"Not now", "Yes, store destination details"},
+		)
+	case screenStorageProvider:
+		content = m.renderChoice(
+			"Which object storage provider should backups use?",
+			[]string{"Generic S3-compatible storage", "Cloudflare R2"},
+		)
 	case screenStorage:
-		content = m.renderForm([]string{"Endpoint", "Region", "Bucket", "Access key ID", "Secret access key"})
+		content = m.renderForm(
+			[]string{
+				"Endpoint", "Region", "Bucket", "Prefix", "Path-style access",
+				"Access key ID", "Secret access key",
+			},
+		)
+	case screenServerBackupPolicy:
+		content = m.renderForm(
+			[]string{
+				"Server cron schedule", "Daily recovery points", "Weekly recovery points",
+				"Monthly recovery points",
+			},
+		)
+	case screenDatabaseBackupPolicy:
+		content = m.renderForm(
+			[]string{
+				"Database cron schedule", "Recent recovery points", "Daily recovery points",
+				"Weekly recovery points", "Monthly recovery points",
+			},
+		)
 	case screenValidating:
-		content = m.activity.View() + " " + labelStyle.Render("Validating configuration") + "\n\n" + mutedStyle.Render("Checking external database connectivity. S3 validation is pending the backup adapter.")
+		content = m.activity.View() + " " + labelStyle.Render(
+			"Validating configuration",
+		) + "\n\n" + mutedStyle.Render(
+			"Checking database connectivity and object-storage write, head, get, list, and delete capabilities.",
+		)
 	case screenReview:
 		content = m.renderReview()
 	case screenRunning:
@@ -628,21 +866,78 @@ func (m Model) renderChoice(question string, options []string) string {
 func (m Model) renderReview() string {
 	database := "Local PostgreSQL 17 container"
 	if m.config.Database.External {
-		database = fmt.Sprintf("External PostgreSQL at %s:%d (%s)", m.config.Database.Host, m.config.Database.Port, m.config.Database.SSLMode)
+		database = fmt.Sprintf(
+			"External PostgreSQL at %s:%d (%s)",
+			m.config.Database.Host,
+			m.config.Database.Port,
+			m.config.Database.SSLMode,
+		)
 	}
 	storage := "Not configured"
 	if m.config.S3.Enabled {
-		storage = fmt.Sprintf("%s / %s", m.config.S3.Region, m.config.S3.Bucket)
+		hostname := "AWS S3"
+		if endpoint, err := url.Parse(m.config.S3.Endpoint); err == nil && endpoint.Hostname() != "" {
+			hostname = endpoint.Hostname()
+		}
+		storage = fmt.Sprintf(
+			"%s via %s, %s / %s",
+			strings.ToUpper(m.config.S3.Provider),
+			hostname,
+			m.config.S3.Region,
+			m.config.S3.Bucket,
+		)
+		if m.config.S3.Prefix != "" {
+			storage += "/" + m.config.S3.Prefix
+		}
 	}
 	rows := []string{
 		labelStyle.Render("Server") + "       https://" + m.config.Domain,
-		labelStyle.Render("SSH") + fmt.Sprintf("          deploycrate@%s:%d", m.config.Domain, m.config.SSHPort),
-		labelStyle.Render("SSH key") + "      " + setup.SSHFingerprint(m.config.SSHPublicKey),
+		labelStyle.Render(
+			"SSH",
+		) + fmt.Sprintf(
+			"          %s@%s:%d",
+			m.config.AdminUser,
+			m.config.Domain,
+			m.config.SSHPort,
+		),
+		labelStyle.Render("Admin SSH key") + " " + setup.SSHFingerprint(m.config.SSHPublicKey),
 		labelStyle.Render("Database") + "     " + database,
 		labelStyle.Render("Backups") + "      " + storage,
 		labelStyle.Render("App admin") + "     " + m.config.AdminEmail,
 	}
-	return strings.Join(rows, "\n") + "\n\n" + warnStyle.Render("This will configure the host and later disable root SSH access.") + "\n\nPress enter to install."
+	if m.config.OwnerSSHPublicKey != "" {
+		rows = append(
+			rows,
+			labelStyle.Render("Owner SSH key")+" "+setup.SSHFingerprint(m.config.OwnerSSHPublicKey),
+		)
+	}
+	if m.config.S3.Enabled {
+		serverRetention := m.config.S3.ServerPolicy.Retention
+		rows = append(rows, labelStyle.Render("Server backup")+fmt.Sprintf(
+			" %s, %d daily / %d weekly / %d monthly",
+			m.config.S3.ServerPolicy.Schedule,
+			serverRetention.KeepDaily,
+			serverRetention.KeepWeekly,
+			serverRetention.KeepMonthly,
+		))
+		if !m.config.Database.External {
+			databaseRetention := m.config.S3.DatabasePolicy.Retention
+			rows = append(rows, labelStyle.Render("Database backup")+fmt.Sprintf(
+				" %s, %d recent / %d daily / %d weekly / %d monthly",
+				m.config.S3.DatabasePolicy.Schedule,
+				databaseRetention.KeepLast,
+				databaseRetention.KeepDaily,
+				databaseRetention.KeepWeekly,
+				databaseRetention.KeepMonthly,
+			))
+		}
+	}
+	return strings.Join(
+		rows,
+		"\n",
+	) + "\n\n" + warnStyle.Render(
+		"This will configure the host and later disable root SSH access.",
+	) + "\n\nPress enter to install."
 }
 
 func (m Model) renderProgress() string {
@@ -679,7 +974,9 @@ func (m Model) renderProgress() string {
 	if m.err != nil {
 		b.WriteString("\n")
 		if m.configSaved {
-			b.WriteString(warnStyle.Render("Fix the reported issue, then run: sudo deploycrate resume"))
+			b.WriteString(
+				warnStyle.Render("Fix the reported issue, then run: sudo bootstrap resume"),
+			)
 		} else {
 			b.WriteString(warnStyle.Render("Fix the reported issue, then retry the installation."))
 		}
@@ -713,33 +1010,132 @@ func (m Model) renderHandoff() string {
 	b.WriteString(okStyle.Bold(true).Render("Setup complete. Final confirmation required."))
 	b.WriteString("\n\n")
 	b.WriteString(labelStyle.Render("Application URL") + "  https://" + m.config.Domain + "\n")
-	b.WriteString(labelStyle.Render("Linux user") + "      deploycrate\n")
-	b.WriteString(labelStyle.Render("Linux password") + "  " + m.config.Secrets.LinuxPassword + "\n")
-	b.WriteString(labelStyle.Render("SSH command") + fmt.Sprintf("       ssh -p %d deploycrate@%s\n", m.config.SSHPort, m.config.Domain))
-	b.WriteString(labelStyle.Render("SSH fingerprint") + "   " + setup.SSHFingerprint(m.config.SSHPublicKey) + "\n")
+	b.WriteString(labelStyle.Render("Server admin") + "     " + m.config.AdminUser + "\n")
+	b.WriteString(
+		labelStyle.Render("Admin password") + "   " + m.config.Secrets.ServerAdminPassword + "\n",
+	)
+	b.WriteString(
+		labelStyle.Render(
+			"SSH command",
+		) + fmt.Sprintf(
+			"       ssh -p %d %s@%s\n",
+			m.config.SSHPort,
+			m.config.AdminUser,
+			m.config.Domain,
+		),
+	)
+	b.WriteString(
+		labelStyle.Render(
+			"SSH fingerprint",
+		) + "   " + setup.SSHFingerprint(
+			m.config.SSHPublicKey,
+		) + "\n",
+	)
 	if m.config.GeneratedSSHKey {
 		b.WriteString("\n" + warnStyle.Render("Generated SSH private key, shown once") + "\n")
 		b.WriteString(m.config.Secrets.SSHPrivateKey + "\n")
 	}
+	recoveryChecksum, checksumErr := setup.SSHCARecoveryBundleChecksum()
+	if checksumErr == nil && !m.credentialsVerified {
+		b.WriteString("\n" + warnStyle.Render("SSH CA recovery material, shown once") + "\n")
+		b.WriteString(labelStyle.Render("Bundle") + "            " + setup.SSHCARecoveryBundlePath + "\n")
+		b.WriteString(labelStyle.Render("SHA-256") + "           " + recoveryChecksum + "\n")
+		b.WriteString(labelStyle.Render("Age passphrase") + "    " + m.config.Secrets.SSHCARecoveryPassphrase + "\n")
+		b.WriteString("Copy the bundle off this server and store the passphrase separately.\n")
+	}
+	if m.config.S3.Enabled && !m.credentialsVerified {
+		b.WriteString("\n" + warnStyle.Render("Backup recovery material, shown once") + "\n")
+		b.WriteString(labelStyle.Render("Restic password") + "    " + m.config.Secrets.ResticPassword + "\n")
+		b.WriteString(labelStyle.Render("Age identity") + "       " + m.config.Secrets.AgeIdentity + "\n")
+		b.WriteString(
+			"Store both values off-server. Losing them makes the corresponding backups unusable.\n",
+		)
+	}
 	b.WriteString(labelStyle.Render("App admin") + "       " + m.config.AdminEmail + "\n")
-	b.WriteString(labelStyle.Render("Admin password") + "   " + m.config.Secrets.AdminPassword + "\n\n")
+	b.WriteString(
+		labelStyle.Render("App password") + "     " + m.config.Secrets.AdminPassword + "\n\n",
+	)
+	copyButton := mutedStyle.Render("[ Copy details ]")
+	if m.handoffFocus == 0 {
+		copyButton = lipgloss.NewStyle().Bold(true).Foreground(colorPink).Render("[ Copy details ]")
+		copyButton += "  " + labelStyle.Render("Press Enter to copy all details.")
+	}
+	b.WriteString(copyButton + "\n")
+	if m.copyRequested {
+		b.WriteString(okStyle.Render("Copy request sent to your terminal clipboard.") + "\n")
+	}
+	b.WriteString("\n")
 	b.WriteString(labelStyle.Render("Final step") + "\n")
 	if m.credentialsVerified {
-		b.WriteString("Your previous confirmation was recorded, but secret cleanup did not finish.\n")
+		b.WriteString(
+			"Your previous confirmation was recorded, but secret cleanup did not finish.\n",
+		)
 	} else {
-		b.WriteString("Copy every credential above, then verify the SSH command from a second terminal.\n")
+		b.WriteString(
+			"Copy every credential above, then verify the SSH command from a second terminal.\n",
+		)
 	}
-	b.WriteString(warnStyle.Render("Type CONFIRM and press enter to permanently remove transient secrets and reboot.") + "\n\n")
+	b.WriteString(
+		warnStyle.Render(
+			"Type CONFIRM to acknowledge recovery handoff, remove transient secrets, and reboot.",
+		) + "\n\n",
+	)
 	b.WriteString(m.handoffConfirmation.View())
+	return b.String()
+}
+
+func (m Model) handoffDetails() string {
+	var b strings.Builder
+	b.WriteString("DeployCrate CE setup details\n\n")
+	b.WriteString("Application URL: https://" + m.config.Domain + "\n")
+	b.WriteString("Server administrator: " + m.config.AdminUser + "\n")
+	b.WriteString("Server administrator password: " + m.config.Secrets.ServerAdminPassword + "\n")
+	b.WriteString(
+		fmt.Sprintf(
+			"SSH command: ssh -p %d %s@%s\n",
+			m.config.SSHPort,
+			m.config.AdminUser,
+			m.config.Domain,
+		),
+	)
+	b.WriteString("SSH fingerprint: " + setup.SSHFingerprint(m.config.SSHPublicKey) + "\n")
+	if m.config.GeneratedSSHKey {
+		b.WriteString("\nGenerated SSH private key:\n")
+		b.WriteString(m.config.Secrets.SSHPrivateKey + "\n")
+	}
+	if recoveryChecksum, err := setup.SSHCARecoveryBundleChecksum(); err == nil && !m.credentialsVerified {
+		b.WriteString("\nSSH CA recovery bundle: " + setup.SSHCARecoveryBundlePath + "\n")
+		b.WriteString("SSH CA recovery SHA-256: " + recoveryChecksum + "\n")
+		b.WriteString("SSH CA recovery age passphrase: " + m.config.Secrets.SSHCARecoveryPassphrase + "\n")
+		b.WriteString("Store the bundle off-server and keep this passphrase separately.\n")
+	}
+	if m.config.S3.Enabled && !m.credentialsVerified {
+		b.WriteString("\nBackup Restic password: " + m.config.Secrets.ResticPassword + "\n")
+		b.WriteString("Backup age identity: " + m.config.Secrets.AgeIdentity + "\n")
+		b.WriteString("Store both backup recovery values off-server.\n")
+	}
+	b.WriteString("\nApp admin: " + m.config.AdminEmail + "\n")
+	b.WriteString("Admin password: " + m.config.Secrets.AdminPassword + "\n")
 	return b.String()
 }
 
 func (m Model) stepLabel() string {
 	labels := map[screen]string{
-		screenWelcome: "welcome", screenServer: "server", screenAccess: "access", screenAdmin: "admin",
-		screenDatabaseChoice: "database", screenDatabase: "database", screenStorageChoice: "backups",
-		screenStorage: "backups", screenValidating: "validation", screenReview: "review",
-		screenRunning: "installing", screenHandoff: "handoff",
+		screenWelcome:              "welcome",
+		screenServer:               "server",
+		screenAccess:               "access",
+		screenAdmin:                "admin",
+		screenDatabaseChoice:       "database",
+		screenDatabase:             "database",
+		screenStorageChoice:        "backups",
+		screenStorageProvider:      "backups",
+		screenStorage:              "backups",
+		screenServerBackupPolicy:   "backup policy",
+		screenDatabaseBackupPolicy: "backup policy",
+		screenValidating:           "validation",
+		screenReview:               "review",
+		screenRunning:              "installing",
+		screenHandoff:              "handoff",
 	}
 	return labels[m.screen]
 }

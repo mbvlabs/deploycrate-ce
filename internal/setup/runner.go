@@ -74,7 +74,15 @@ func (r Runner) Execute(ctx context.Context, cfg Config, report Reporter) error 
 
 	for index, step := range r.Steps {
 		if current, ok := state.Steps[step.ID()]; ok && current.Status == StepCompleted {
-			report(Event{Kind: EventSkipped, StepID: step.ID(), Description: step.Describe(cfg), Index: index + 1, Total: len(r.Steps)})
+			report(
+				Event{
+					Kind:        EventSkipped,
+					StepID:      step.ID(),
+					Description: step.Describe(cfg),
+					Index:       index + 1,
+					Total:       len(r.Steps),
+				},
+			)
 			continue
 		}
 
@@ -83,13 +91,26 @@ func (r Runner) Execute(ctx context.Context, cfg Config, report Reporter) error 
 			return fmt.Errorf("check step %s: %w", step.ID(), err)
 		}
 		if check.Complete {
-			state.Steps[step.ID()] = StepState{ID: step.ID(), Status: StepCompleted, CompletedAt: time.Now()}
+			state.Steps[step.ID()] = StepState{
+				ID:          step.ID(),
+				Status:      StepCompleted,
+				CompletedAt: time.Now(),
+			}
 			if !r.Run.DryRun {
 				if err := r.Store.Save(state); err != nil {
 					return err
 				}
 			}
-			report(Event{Kind: EventSkipped, StepID: step.ID(), Description: step.Describe(cfg), Line: check.Detail, Index: index + 1, Total: len(r.Steps)})
+			report(
+				Event{
+					Kind:        EventSkipped,
+					StepID:      step.ID(),
+					Description: step.Describe(cfg),
+					Line:        check.Detail,
+					Index:       index + 1,
+					Total:       len(r.Steps),
+				},
+			)
 			continue
 		}
 
@@ -100,7 +121,15 @@ func (r Runner) Execute(ctx context.Context, cfg Config, report Reporter) error 
 				return err
 			}
 		}
-		report(Event{Kind: EventStarted, StepID: step.ID(), Description: step.Describe(cfg), Index: index + 1, Total: len(r.Steps)})
+		report(
+			Event{
+				Kind:        EventStarted,
+				StepID:      step.ID(),
+				Description: step.Describe(cfg),
+				Index:       index + 1,
+				Total:       len(r.Steps),
+			},
+		)
 
 		err = step.Apply(ctx, cfg, r.Run, report)
 		if err != nil {
@@ -112,7 +141,16 @@ func (r Runner) Execute(ctx context.Context, cfg Config, report Reporter) error 
 					err = errors.Join(err, saveErr)
 				}
 			}
-			report(Event{Kind: EventFailed, StepID: step.ID(), Description: step.Describe(cfg), Err: err, Index: index + 1, Total: len(r.Steps)})
+			report(
+				Event{
+					Kind:        EventFailed,
+					StepID:      step.ID(),
+					Description: step.Describe(cfg),
+					Err:         err,
+					Index:       index + 1,
+					Total:       len(r.Steps),
+				},
+			)
 			return fmt.Errorf("step %s failed: %w", step.ID(), err)
 		}
 
@@ -125,7 +163,15 @@ func (r Runner) Execute(ctx context.Context, cfg Config, report Reporter) error 
 				return err
 			}
 		}
-		report(Event{Kind: EventCompleted, StepID: step.ID(), Description: step.Describe(cfg), Index: index + 1, Total: len(r.Steps)})
+		report(
+			Event{
+				Kind:        EventCompleted,
+				StepID:      step.ID(),
+				Description: step.Describe(cfg),
+				Index:       index + 1,
+				Total:       len(r.Steps),
+			},
+		)
 	}
 
 	report(Event{Kind: EventFinished, Index: len(r.Steps), Total: len(r.Steps)})
@@ -149,7 +195,13 @@ func NewShell(dryRun bool, secrets []string) Shell {
 	}
 }
 
-func (s Shell) Run(ctx context.Context, stepID string, script string, environment map[string]string, report Reporter) error {
+func (s Shell) Run(
+	ctx context.Context,
+	stepID string,
+	script string,
+	environment map[string]string,
+	report Reporter,
+) error {
 	if s.DryRun {
 		report(Event{Kind: EventLog, StepID: stepID, Line: "dry run: script execution skipped"})
 		return nil
@@ -181,7 +233,12 @@ func (s Shell) Output(ctx context.Context, name string, args ...string) (string,
 	command := exec.CommandContext(ctx, name, args...)
 	output, err := command.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("%s failed: %w: %s", name, err, redact(strings.TrimSpace(string(output)), s.Secrets))
+		return "", fmt.Errorf(
+			"%s failed: %w: %s",
+			name,
+			err,
+			redact(strings.TrimSpace(string(output)), s.Secrets),
+		)
 	}
 	return strings.TrimSpace(string(output)), nil
 }
@@ -197,7 +254,13 @@ func (s Shell) writeLog(stepID string, output []byte) {
 		return
 	}
 	defer file.Close()
-	_, _ = fmt.Fprintf(file, "\n[%s] %s\n%s", time.Now().Format(time.RFC3339), stepID, redact(string(output), s.Secrets))
+	_, _ = fmt.Fprintf(
+		file,
+		"\n[%s] %s\n%s",
+		time.Now().Format(time.RFC3339),
+		stepID,
+		redact(string(output), s.Secrets),
+	)
 }
 
 func redact(value string, secrets []string) string {

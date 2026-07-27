@@ -19,7 +19,11 @@ type EnvironmentStateRevisionFactory struct {
 
 type EnvironmentStateRevisionOption func(*EnvironmentStateRevisionFactory)
 
-func BuildEnvironmentStateRevision(environmentID uuid.UUID, changeID uuid.UUID, opts ...EnvironmentStateRevisionOption) models.EnvironmentStateRevisionEntity {
+func BuildEnvironmentStateRevision(
+	environmentID uuid.UUID,
+	changeID uuid.UUID,
+	opts ...EnvironmentStateRevisionOption,
+) models.EnvironmentStateRevisionEntity {
 	f := &EnvironmentStateRevisionFactory{
 		EnvironmentStateRevisionEntity: models.EnvironmentStateRevisionEntity{
 			State:         json.RawMessage{},
@@ -35,7 +39,13 @@ func BuildEnvironmentStateRevision(environmentID uuid.UUID, changeID uuid.UUID, 
 	return f.EnvironmentStateRevisionEntity
 }
 
-func CreateEnvironmentStateRevision(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, changeID uuid.UUID, opts ...EnvironmentStateRevisionOption) (models.EnvironmentStateRevisionEntity, error) {
+func CreateEnvironmentStateRevision(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentID uuid.UUID,
+	changeID uuid.UUID,
+	opts ...EnvironmentStateRevisionOption,
+) (models.EnvironmentStateRevisionEntity, error) {
 	built := BuildEnvironmentStateRevision(environmentID, changeID, opts...)
 
 	entity := models.EnvironmentStateRevisionEntity{
@@ -54,7 +64,14 @@ func CreateEnvironmentStateRevision(ctx context.Context, exec storage.Executor, 
 	return entity, nil
 }
 
-func CreateEnvironmentStateRevisions(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, changeID uuid.UUID, count int, opts ...EnvironmentStateRevisionOption) ([]models.EnvironmentStateRevisionEntity, error) {
+func CreateEnvironmentStateRevisions(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentID uuid.UUID,
+	changeID uuid.UUID,
+	count int,
+	opts ...EnvironmentStateRevisionOption,
+) ([]models.EnvironmentStateRevisionEntity, error) {
 	environmentstaterevisions := make([]models.EnvironmentStateRevisionEntity, 0, count)
 
 	for i := range count {

@@ -25,7 +25,11 @@ func (e *ChangeStateRevisionEntity) Validate() error {
 	return nil
 }
 
-func (csr changeStateRevision) Find(ctx context.Context, db storage.Executor, id int32) (ChangeStateRevisionEntity, error) {
+func (csr changeStateRevision) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id int32,
+) (ChangeStateRevisionEntity, error) {
 	var entity ChangeStateRevisionEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -43,7 +47,11 @@ type CreateChangeStateRevisionData struct {
 	EnvironmentStateRevisionID uuid.UUID
 }
 
-func (csr changeStateRevision) Create(ctx context.Context, db storage.Executor, data CreateChangeStateRevisionData) (ChangeStateRevisionEntity, error) {
+func (csr changeStateRevision) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateChangeStateRevisionData,
+) (ChangeStateRevisionEntity, error) {
 	entity := ChangeStateRevisionEntity{
 		CreatedAt:                  time.Now(),
 		UpdatedAt:                  time.Now(),
@@ -71,7 +79,11 @@ type UpdateChangeStateRevisionData struct {
 	EnvironmentStateRevisionID uuid.UUID
 }
 
-func (csr changeStateRevision) Update(ctx context.Context, db storage.Executor, data UpdateChangeStateRevisionData) (ChangeStateRevisionEntity, error) {
+func (csr changeStateRevision) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateChangeStateRevisionData,
+) (ChangeStateRevisionEntity, error) {
 	entity := ChangeStateRevisionEntity{
 		ID:                         data.ID,
 		UpdatedAt:                  time.Now(),
@@ -108,7 +120,10 @@ func (csr changeStateRevision) Destroy(ctx context.Context, db storage.Executor,
 	return err
 }
 
-func (csr changeStateRevision) All(ctx context.Context, db storage.Executor) ([]ChangeStateRevisionEntity, error) {
+func (csr changeStateRevision) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]ChangeStateRevisionEntity, error) {
 	var entities []ChangeStateRevisionEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -127,7 +142,11 @@ type PaginatedChangeStateRevisions struct {
 	TotalPages           int64
 }
 
-func (csr changeStateRevision) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedChangeStateRevisions, error) {
+func (csr changeStateRevision) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedChangeStateRevisions, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -166,7 +185,11 @@ func (csr changeStateRevision) Paginate(ctx context.Context, db storage.Executor
 	}, nil
 }
 
-func (csr changeStateRevision) Upsert(ctx context.Context, db storage.Executor, data CreateChangeStateRevisionData) (ChangeStateRevisionEntity, error) {
+func (csr changeStateRevision) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateChangeStateRevisionData,
+) (ChangeStateRevisionEntity, error) {
 	entity := ChangeStateRevisionEntity{
 		CreatedAt:                  time.Now(),
 		UpdatedAt:                  time.Now(),

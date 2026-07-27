@@ -21,7 +21,11 @@ type ResourceInstallationStatusFactory struct {
 
 type ResourceInstallationStatusOption func(*ResourceInstallationStatusFactory)
 
-func BuildResourceInstallationStatus(externalID sql.NullString, resourceInstallationID uuid.UUID, opts ...ResourceInstallationStatusOption) models.ResourceInstallationStatusEntity {
+func BuildResourceInstallationStatus(
+	externalID sql.NullString,
+	resourceInstallationID uuid.UUID,
+	opts ...ResourceInstallationStatusOption,
+) models.ResourceInstallationStatusEntity {
 	f := &ResourceInstallationStatusFactory{
 		ResourceInstallationStatusEntity: models.ResourceInstallationStatusEntity{
 			ExternalID:             externalID,
@@ -45,7 +49,13 @@ func BuildResourceInstallationStatus(externalID sql.NullString, resourceInstalla
 	return f.ResourceInstallationStatusEntity
 }
 
-func CreateResourceInstallationStatus(ctx context.Context, exec storage.Executor, externalID sql.NullString, resourceInstallationID uuid.UUID, opts ...ResourceInstallationStatusOption) (models.ResourceInstallationStatusEntity, error) {
+func CreateResourceInstallationStatus(
+	ctx context.Context,
+	exec storage.Executor,
+	externalID sql.NullString,
+	resourceInstallationID uuid.UUID,
+	opts ...ResourceInstallationStatusOption,
+) (models.ResourceInstallationStatusEntity, error) {
 	built := BuildResourceInstallationStatus(externalID, resourceInstallationID, opts...)
 
 	entity := models.ResourceInstallationStatusEntity{
@@ -71,11 +81,23 @@ func CreateResourceInstallationStatus(ctx context.Context, exec storage.Executor
 	return entity, nil
 }
 
-func CreateResourceInstallationStatuss(ctx context.Context, exec storage.Executor, externalID sql.NullString, resourceInstallationID uuid.UUID, count int, opts ...ResourceInstallationStatusOption) ([]models.ResourceInstallationStatusEntity, error) {
+func CreateResourceInstallationStatuss(
+	ctx context.Context,
+	exec storage.Executor,
+	externalID sql.NullString,
+	resourceInstallationID uuid.UUID,
+	count int,
+	opts ...ResourceInstallationStatusOption,
+) ([]models.ResourceInstallationStatusEntity, error) {
 	resourceinstallationstatuss := make([]models.ResourceInstallationStatusEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateResourceInstallationStatus(ctx, exec, externalID, resourceInstallationID, opts...)
+		entity, err := CreateResourceInstallationStatus(
+			ctx,
+			exec,
+			externalID,
+			resourceInstallationID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resourceinstallationstatus %d: %w", i+1, err)
 		}
@@ -85,7 +107,9 @@ func CreateResourceInstallationStatuss(ctx context.Context, exec storage.Executo
 	return resourceinstallationstatuss, nil
 }
 
-func WithResourceInstallationStatusesExternalID(value sql.NullString) ResourceInstallationStatusOption {
+func WithResourceInstallationStatusesExternalID(
+	value sql.NullString,
+) ResourceInstallationStatusOption {
 	return func(f *ResourceInstallationStatusFactory) {
 		f.ResourceInstallationStatusEntity.ExternalID = value
 	}
@@ -97,7 +121,9 @@ func WithResourceInstallationStatusesState(value string) ResourceInstallationSta
 	}
 }
 
-func WithResourceInstallationStatusesInstalledVersion(value sql.NullString) ResourceInstallationStatusOption {
+func WithResourceInstallationStatusesInstalledVersion(
+	value sql.NullString,
+) ResourceInstallationStatusOption {
 	return func(f *ResourceInstallationStatusFactory) {
 		f.ResourceInstallationStatusEntity.InstalledVersion = value
 	}
@@ -121,13 +147,17 @@ func WithResourceInstallationStatusesSource(value string) ResourceInstallationSt
 	}
 }
 
-func WithResourceInstallationStatusesHealthReason(value sql.NullString) ResourceInstallationStatusOption {
+func WithResourceInstallationStatusesHealthReason(
+	value sql.NullString,
+) ResourceInstallationStatusOption {
 	return func(f *ResourceInstallationStatusFactory) {
 		f.ResourceInstallationStatusEntity.HealthReason = value
 	}
 }
 
-func WithResourceInstallationStatusesDetails(value json.RawMessage) ResourceInstallationStatusOption {
+func WithResourceInstallationStatusesDetails(
+	value json.RawMessage,
+) ResourceInstallationStatusOption {
 	return func(f *ResourceInstallationStatusFactory) {
 		f.ResourceInstallationStatusEntity.Details = value
 	}
@@ -145,7 +175,9 @@ func WithResourceInstallationStatusesExpiresAt(value time.Time) ResourceInstalla
 	}
 }
 
-func WithResourceInstallationStatusesResourceInstallationID(value uuid.UUID) ResourceInstallationStatusOption {
+func WithResourceInstallationStatusesResourceInstallationID(
+	value uuid.UUID,
+) ResourceInstallationStatusOption {
 	return func(f *ResourceInstallationStatusFactory) {
 		f.ResourceInstallationStatusEntity.ResourceInstallationID = value
 	}

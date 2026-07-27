@@ -151,13 +151,19 @@ func newApplicationSessionStore(
 	return store, nil
 }
 
-func newCORSConfig(applicationOrigin string, additionalOrigins []string) (echomw.CORSConfig, error) {
+func newCORSConfig(
+	applicationOrigin string,
+	additionalOrigins []string,
+) (echomw.CORSConfig, error) {
 	applicationOrigin = strings.TrimSpace(applicationOrigin)
 	if applicationOrigin == "" {
 		return echomw.CORSConfig{}, errors.New("application origin must not be empty")
 	}
 	if strings.Contains(applicationOrigin, "*") {
-		return echomw.CORSConfig{}, fmt.Errorf("credentialed CORS origin %q must not contain a wildcard", applicationOrigin)
+		return echomw.CORSConfig{}, fmt.Errorf(
+			"credentialed CORS origin %q must not contain a wildcard",
+			applicationOrigin,
+		)
 	}
 
 	origins := []string{applicationOrigin}
@@ -167,7 +173,10 @@ func newCORSConfig(applicationOrigin string, additionalOrigins []string) (echomw
 			continue
 		}
 		if strings.Contains(origin, "*") {
-			return echomw.CORSConfig{}, fmt.Errorf("credentialed CORS origin %q must not contain a wildcard", origin)
+			return echomw.CORSConfig{}, fmt.Errorf(
+				"credentialed CORS origin %q must not contain a wildcard",
+				origin,
+			)
 		}
 		origins = append(origins, origin)
 	}

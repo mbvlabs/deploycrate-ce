@@ -32,7 +32,11 @@ func (e *SourceEventEntity) Validate() error {
 	return nil
 }
 
-func (se sourceEvent) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (SourceEventEntity, error) {
+func (se sourceEvent) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (SourceEventEntity, error) {
 	var entity SourceEventEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -55,7 +59,11 @@ type CreateSourceEventData struct {
 	EnvironmentSourceID uuid.UUID
 }
 
-func (se sourceEvent) Create(ctx context.Context, db storage.Executor, data CreateSourceEventData) (SourceEventEntity, error) {
+func (se sourceEvent) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateSourceEventData,
+) (SourceEventEntity, error) {
 	entity := SourceEventEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
@@ -94,7 +102,11 @@ type UpdateSourceEventData struct {
 	EnvironmentSourceID uuid.UUID
 }
 
-func (se sourceEvent) Update(ctx context.Context, db storage.Executor, data UpdateSourceEventData) (SourceEventEntity, error) {
+func (se sourceEvent) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateSourceEventData,
+) (SourceEventEntity, error) {
 	entity := SourceEventEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
@@ -160,7 +172,11 @@ type PaginatedSourceEvents struct {
 	TotalPages   int64
 }
 
-func (se sourceEvent) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedSourceEvents, error) {
+func (se sourceEvent) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedSourceEvents, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -199,7 +215,11 @@ func (se sourceEvent) Paginate(ctx context.Context, db storage.Executor, page, p
 	}, nil
 }
 
-func (se sourceEvent) Upsert(ctx context.Context, db storage.Executor, data CreateSourceEventData) (SourceEventEntity, error) {
+func (se sourceEvent) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateSourceEventData,
+) (SourceEventEntity, error) {
 	entity := SourceEventEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),

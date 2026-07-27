@@ -5,8 +5,10 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"time"
 
 	"deploycrate-ce/internal/storage"
+	"deploycrate-ce/queue/jobs"
 
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
@@ -17,6 +19,7 @@ import (
 
 type Processor struct {
 	Client *river.Client[*sql.Tx]
+	seeder *BackupScheduleSeeder
 }
 
 const periodicJobsGroup = `group:"periodic_jobs"`
@@ -27,6 +30,7 @@ type ProcessorParams struct {
 	DB           storage.Pool
 	Workers      *river.Workers
 	PeriodicJobs []*river.PeriodicJob `group:"periodic_jobs"`
+	Seeder       *BackupScheduleSeeder
 }
 
 func (p Processor) Shutdown(ctx context.Context) error {
@@ -35,6 +39,10 @@ func (p Processor) Shutdown(ctx context.Context) error {
 
 func (p Processor) Start(ctx context.Context) error {
 	return p.Client.Start(ctx)
+}
+
+func (p Processor) Seed(ctx context.Context) error {
+	return p.seeder.Seed(ctx)
 }
 
 func (p Processor) Stop(ctx context.Context) error {
@@ -46,15 +54,17 @@ func NewProcessor(params ProcessorParams) (Processor, error) {
 		PeriodicJobs: params.PeriodicJobs,
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault: {MaxWorkers: 100},
+			jobs.BackupQueue:   {MaxWorkers: 1},
 		},
-		Logger:  slog.Default(),
-		Workers: params.Workers,
+		RescueStuckJobsAfter: 13 * time.Hour,
+		Logger:               slog.Default(),
+		Workers:              params.Workers,
 	})
 	if err != nil {
 		return Processor{}, err
 	}
 
-	return Processor{riverClient}, nil
+	return Processor{Client: riverClient, seeder: params.Seeder}, nil
 }
 
 type InsertOnly struct {
@@ -127,10 +137,17 @@ func NewInsertOnly(db storage.Pool, workers *river.Workers) (InsertOnly, error) 
 	return InsertOnly{riverClient}, nil
 }
 
+func NewInsertQueue(insertOnly InsertOnly) storage.InsertQueue {
+	return &insertOnly
+}
+
 var Module = fx.Module(
 	"queue",
 	fx.Provide(
 		NewInsertOnly,
+		NewInsertQueue,
+		NewBackupScheduleSeeder,
 		NewProcessor,
+		fx.Annotate(NewMetricRollupPeriodicJob, fx.ResultTags(periodicJobsGroup)),
 	),
 )

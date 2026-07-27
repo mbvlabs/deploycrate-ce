@@ -6,7 +6,7 @@ requested_version="${DEPLOYCRATE_VERSION:-latest}"
 requested_base_url="${DEPLOYCRATE_RELEASE_BASE_URL:-}"
 
 fail() {
-  printf 'deploycrate installer: %s\n' "$1" >&2
+  printf 'bootstrap installer: %s\n' "$1" >&2
   exit 1
 }
 
@@ -57,15 +57,15 @@ if command -v cosign >/dev/null 2>&1; then
     --bundle "${work_dir}/checksums.txt.sigstore.json" \
     "${work_dir}/checksums.txt" >/dev/null
 else
-  printf 'deploycrate installer: cosign is not installed, checksum verified but signature verification was skipped\n' >&2
+  printf 'bootstrap installer: cosign is not installed, checksum verified but signature verification was skipped\n' >&2
 fi
 
 tar -xzf "${work_dir}/${archive}" -C "$work_dir"
-install -m 0755 "${work_dir}/deploycrate" /usr/local/bin/deploycrate
+install -m 0755 "${work_dir}/bootstrap" /usr/local/bin/bootstrap
 install -m 0755 "${work_dir}/deploycrate-ce" /usr/local/bin/deploycrate-ce
 
-printf 'DeployCrate CE CLI installed at /usr/local/bin/deploycrate\n'
+printf 'DeployCrate CE bootstrap installed at /usr/local/bin/bootstrap\n'
 if [ -r /dev/tty ] && [ -w /dev/tty ]; then
-  exec /usr/local/bin/deploycrate install </dev/tty >/dev/tty 2>/dev/tty
+  exec /usr/local/bin/bootstrap install </dev/tty >/dev/tty 2>/dev/tty
 fi
-printf 'Run sudo deploycrate install from a terminal to continue.\n'
+printf 'Run sudo bootstrap install from a terminal to continue.\n'

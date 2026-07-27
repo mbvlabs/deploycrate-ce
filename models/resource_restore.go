@@ -25,7 +25,7 @@ type ResourceRestoreEntity struct {
 	Error                       sql.NullString `bun:"error"`
 	ChangeID                    uuid.UUID      `bun:"change_id,type:uuid"`
 	ChangeTaskID                uuid.UUID      `bun:"change_task_id,type:uuid"`
-	ResourceBackupID            uuid.UUID      `bun:"resource_backup_id,type:uuid"`
+	BackupID                    uuid.UUID      `bun:"backup_id,type:uuid"`
 	ResourceID                  uuid.UUID      `bun:"resource_id,type:uuid"`
 	SourceEnvironmentResourceID *uuid.UUID     `bun:"source_environment_resource_id,type:uuid"`
 	TargetEnvironmentResourceID *uuid.UUID     `bun:"target_environment_resource_id,type:uuid"`
@@ -36,7 +36,11 @@ func (e *ResourceRestoreEntity) Validate() error {
 	return nil
 }
 
-func (rr resourceRestore) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (ResourceRestoreEntity, error) {
+func (rr resourceRestore) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (ResourceRestoreEntity, error) {
 	var entity ResourceRestoreEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -57,14 +61,18 @@ type CreateResourceRestoreData struct {
 	Error                       sql.NullString
 	ChangeID                    uuid.UUID
 	ChangeTaskID                uuid.UUID
-	ResourceBackupID            uuid.UUID
+	BackupID                    uuid.UUID
 	ResourceID                  uuid.UUID
 	SourceEnvironmentResourceID *uuid.UUID
 	TargetEnvironmentResourceID *uuid.UUID
 	TargetInstallationID        *uuid.UUID
 }
 
-func (rr resourceRestore) Create(ctx context.Context, db storage.Executor, data CreateResourceRestoreData) (ResourceRestoreEntity, error) {
+func (rr resourceRestore) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceRestoreData,
+) (ResourceRestoreEntity, error) {
 	entity := ResourceRestoreEntity{
 		ID:                          uuid.New(),
 		CreatedAt:                   time.Now(),
@@ -77,7 +85,7 @@ func (rr resourceRestore) Create(ctx context.Context, db storage.Executor, data 
 		Error:                       data.Error,
 		ChangeID:                    data.ChangeID,
 		ChangeTaskID:                data.ChangeTaskID,
-		ResourceBackupID:            data.ResourceBackupID,
+		BackupID:                    data.BackupID,
 		ResourceID:                  data.ResourceID,
 		SourceEnvironmentResourceID: data.SourceEnvironmentResourceID,
 		TargetEnvironmentResourceID: data.TargetEnvironmentResourceID,
@@ -106,14 +114,18 @@ type UpdateResourceRestoreData struct {
 	Error                       sql.NullString
 	ChangeID                    uuid.UUID
 	ChangeTaskID                uuid.UUID
-	ResourceBackupID            uuid.UUID
+	BackupID                    uuid.UUID
 	ResourceID                  uuid.UUID
 	SourceEnvironmentResourceID *uuid.UUID
 	TargetEnvironmentResourceID *uuid.UUID
 	TargetInstallationID        *uuid.UUID
 }
 
-func (rr resourceRestore) Update(ctx context.Context, db storage.Executor, data UpdateResourceRestoreData) (ResourceRestoreEntity, error) {
+func (rr resourceRestore) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateResourceRestoreData,
+) (ResourceRestoreEntity, error) {
 	entity := ResourceRestoreEntity{
 		ID:                          data.ID,
 		UpdatedAt:                   time.Now(),
@@ -125,7 +137,7 @@ func (rr resourceRestore) Update(ctx context.Context, db storage.Executor, data 
 		Error:                       data.Error,
 		ChangeID:                    data.ChangeID,
 		ChangeTaskID:                data.ChangeTaskID,
-		ResourceBackupID:            data.ResourceBackupID,
+		BackupID:                    data.BackupID,
 		ResourceID:                  data.ResourceID,
 		SourceEnvironmentResourceID: data.SourceEnvironmentResourceID,
 		TargetEnvironmentResourceID: data.TargetEnvironmentResourceID,
@@ -147,7 +159,7 @@ func (rr resourceRestore) Update(ctx context.Context, db storage.Executor, data 
 		Column("error").
 		Column("change_id").
 		Column("change_task_id").
-		Column("resource_backup_id").
+		Column("backup_id").
 		Column("resource_id").
 		Column("source_environment_resource_id").
 		Column("target_environment_resource_id").
@@ -170,7 +182,10 @@ func (rr resourceRestore) Destroy(ctx context.Context, db storage.Executor, id u
 	return err
 }
 
-func (rr resourceRestore) All(ctx context.Context, db storage.Executor) ([]ResourceRestoreEntity, error) {
+func (rr resourceRestore) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]ResourceRestoreEntity, error) {
 	var entities []ResourceRestoreEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -189,7 +204,11 @@ type PaginatedResourceRestores struct {
 	TotalPages       int64
 }
 
-func (rr resourceRestore) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedResourceRestores, error) {
+func (rr resourceRestore) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedResourceRestores, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -228,7 +247,11 @@ func (rr resourceRestore) Paginate(ctx context.Context, db storage.Executor, pag
 	}, nil
 }
 
-func (rr resourceRestore) Upsert(ctx context.Context, db storage.Executor, data CreateResourceRestoreData) (ResourceRestoreEntity, error) {
+func (rr resourceRestore) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceRestoreData,
+) (ResourceRestoreEntity, error) {
 	entity := ResourceRestoreEntity{
 		ID:                          uuid.New(),
 		CreatedAt:                   time.Now(),
@@ -241,7 +264,7 @@ func (rr resourceRestore) Upsert(ctx context.Context, db storage.Executor, data 
 		Error:                       data.Error,
 		ChangeID:                    data.ChangeID,
 		ChangeTaskID:                data.ChangeTaskID,
-		ResourceBackupID:            data.ResourceBackupID,
+		BackupID:                    data.BackupID,
 		ResourceID:                  data.ResourceID,
 		SourceEnvironmentResourceID: data.SourceEnvironmentResourceID,
 		TargetEnvironmentResourceID: data.TargetEnvironmentResourceID,
@@ -263,7 +286,7 @@ func (rr resourceRestore) Upsert(ctx context.Context, db storage.Executor, data 
 		Set("error = excluded.error").
 		Set("change_id = excluded.change_id").
 		Set("change_task_id = excluded.change_task_id").
-		Set("resource_backup_id = excluded.resource_backup_id").
+		Set("backup_id = excluded.backup_id").
 		Set("resource_id = excluded.resource_id").
 		Set("source_environment_resource_id = excluded.source_environment_resource_id").
 		Set("target_environment_resource_id = excluded.target_environment_resource_id").

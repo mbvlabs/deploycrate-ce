@@ -53,7 +53,13 @@ func (lock *InstallLock) Close() error {
 
 func Preflight(ctx context.Context, dryRun bool) (HostInfo, error) {
 	if dryRun {
-		return HostInfo{Distribution: "debian", Version: "13", Architecture: "amd64", MemoryMB: 4096, DiskFreeMB: 20480}, nil
+		return HostInfo{
+			Distribution: "debian",
+			Version:      "13",
+			Architecture: "amd64",
+			MemoryMB:     4096,
+			DiskFreeMB:   20480,
+		}, nil
 	}
 	if os.Geteuid() != 0 {
 		return HostInfo{}, errors.New("run the installer as root with sudo")
@@ -64,7 +70,11 @@ func Preflight(ctx context.Context, dryRun bool) (HostInfo, error) {
 		return HostInfo{}, err
 	}
 	if osRelease["ID"] != "debian" || !strings.HasPrefix(osRelease["VERSION_ID"], "13") {
-		return HostInfo{}, fmt.Errorf("unsupported operating system %s %s; this release supports Debian 13", osRelease["ID"], osRelease["VERSION_ID"])
+		return HostInfo{}, fmt.Errorf(
+			"unsupported operating system %s %s; this release supports Debian 13",
+			osRelease["ID"],
+			osRelease["VERSION_ID"],
+		)
 	}
 	for _, command := range []string{"apt-get", "bash", "systemctl", "sshd"} {
 		if _, err := exec.LookPath(command); err != nil {
@@ -86,15 +96,15 @@ func Preflight(ctx context.Context, dryRun bool) (HostInfo, error) {
 		return HostInfo{}, fmt.Errorf("inspect root filesystem: %w", err)
 	}
 	diskFreeMB := stat.Bavail * uint64(stat.Bsize) / 1024 / 1024
-	if diskFreeMB < 5120 {
-		return HostInfo{}, fmt.Errorf("at least 5120 MB of free disk is required, found %d MB", diskFreeMB)
+	if diskFreeMB < 10240 {
+		return HostInfo{}, fmt.Errorf(
+			"at least 10240 MB of free disk is required, found %d MB",
+			diskFreeMB,
+		)
 	}
 	memoryMB, err := availableMemoryMB()
 	if err != nil {
 		return HostInfo{}, err
-	}
-	if memoryMB < 512 {
-		return HostInfo{}, fmt.Errorf("at least 512 MB of available memory is required, found %d MB", memoryMB)
 	}
 	return HostInfo{
 		Distribution: osRelease["ID"], Version: osRelease["VERSION_ID"], Architecture: architecture,

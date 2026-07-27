@@ -29,7 +29,11 @@ func (e *ResourceEntity) Validate() error {
 	return nil
 }
 
-func (r resource) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (ResourceEntity, error) {
+func (r resource) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (ResourceEntity, error) {
 	var entity ResourceEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -50,7 +54,11 @@ type CreateResourceData struct {
 	OwnerEnvironmentID uuid.UUID
 }
 
-func (r resource) Create(ctx context.Context, db storage.Executor, data CreateResourceData) (ResourceEntity, error) {
+func (r resource) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceData,
+) (ResourceEntity, error) {
 	entity := ResourceEntity{
 		ID:                 uuid.New(),
 		CreatedAt:          time.Now(),
@@ -85,7 +93,11 @@ type UpdateResourceData struct {
 	OwnerEnvironmentID uuid.UUID
 }
 
-func (r resource) Update(ctx context.Context, db storage.Executor, data UpdateResourceData) (ResourceEntity, error) {
+func (r resource) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateResourceData,
+) (ResourceEntity, error) {
 	entity := ResourceEntity{
 		ID:                 data.ID,
 		UpdatedAt:          time.Now(),
@@ -147,7 +159,11 @@ type PaginatedResources struct {
 	TotalPages int64
 }
 
-func (r resource) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedResources, error) {
+func (r resource) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedResources, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -186,7 +202,11 @@ func (r resource) Paginate(ctx context.Context, db storage.Executor, page, pageS
 	}, nil
 }
 
-func (r resource) Upsert(ctx context.Context, db storage.Executor, data CreateResourceData) (ResourceEntity, error) {
+func (r resource) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceData,
+) (ResourceEntity, error) {
 	entity := ResourceEntity{
 		ID:                 uuid.New(),
 		CreatedAt:          time.Now(),

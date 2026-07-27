@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${USERNAME:?USERNAME is required}"
+: "${SERVICE_USER:?SERVICE_USER is required}"
 
 install -d -m 0755 /opt/deploycrate-ce/slots/blue /opt/deploycrate-ce/slots/green
 install -d -m 0700 /etc/deploycrate-ce/slots
 install -d -m 0755 /var/lib/deploycrate-ce
-install -d -m 0750 -o "${USERNAME}" -g "${USERNAME}" /var/lib/deploycrate-ce/runtime
+install -d -m 0750 -o "${SERVICE_USER}" -g "${SERVICE_USER}" /var/lib/deploycrate-ce/runtime
 
 cat > /etc/deploycrate-ce/slots/blue.env <<EOF
 PORT="8080"
@@ -28,8 +28,8 @@ After=network-online.target docker.service
 
 [Service]
 Type=simple
-User=${USERNAME}
-Group=${USERNAME}
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
 WorkingDirectory=/opt/deploycrate-ce
 EnvironmentFile=/etc/deploycrate-ce/app.env
 EnvironmentFile=/etc/deploycrate-ce/slots/%i.env

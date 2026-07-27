@@ -73,6 +73,8 @@ type Config struct {
 	Email     email
 	AwsSes    awsSes
 	Auth      auth
+	SSHCA     SSHCA
+	Metrics   Metrics
 }
 
 func NewConfig() Config {
@@ -83,6 +85,8 @@ func NewConfig() Config {
 		Email:     newEmailConfig(),
 		AwsSes:    newAwsSesConfig(),
 		Auth:      newAuthConfig(),
+		SSHCA:     newSSHCAConfig(),
+		Metrics:   newMetricsConfig(),
 	}
 }
 

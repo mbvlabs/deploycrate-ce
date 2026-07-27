@@ -7,6 +7,7 @@ import (
 	"deploycrate-ce/internal/validation"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,10 +29,55 @@ type CredentialEntity struct {
 }
 
 func (e *CredentialEntity) Validate() error {
-	return nil
+	builder := validation.NewBuilder()
+	if e.ID == uuid.Nil {
+		builder.Add("id", "required", "credential ID is required")
+	}
+	if strings.TrimSpace(e.Name) == "" {
+		builder.Add("name", "required", "credential name is required")
+	}
+	if strings.TrimSpace(e.Provider) == "" {
+		builder.Add("provider", "required", "credential provider is required")
+	}
+	if len(e.Metadata) == 0 || !json.Valid(e.Metadata) {
+		builder.Add("metadata", "invalid", "credential metadata must be valid JSON")
+	}
+	if len(e.EncPayload) < 2 {
+		builder.Add("enc_payload", "required", "encrypted credential payload is required")
+	}
+	if strings.HasPrefix(e.Provider, "backup_") {
+		if e.Provider != "backup_s3" && e.Provider != "backup_r2" {
+			builder.Add("provider", "unsupported", "backup credential provider must be backup_s3 or backup_r2")
+		}
+		var metadata struct {
+			InstallationID string `json:"installation_id"`
+			Provider       string `json:"provider"`
+			Endpoint       string `json:"endpoint"`
+			Region         string `json:"region"`
+			Bucket         string `json:"bucket"`
+		}
+		if json.Unmarshal(e.Metadata, &metadata) != nil ||
+			strings.TrimSpace(metadata.InstallationID) == "" ||
+			metadata.Provider != strings.TrimPrefix(e.Provider, "backup_") ||
+			strings.TrimSpace(metadata.Region) == "" || strings.TrimSpace(metadata.Bucket) == "" ||
+			(metadata.Provider == "r2" && strings.TrimSpace(metadata.Endpoint) == "") {
+			builder.Add("metadata", "invalid", "backup credential metadata is incomplete or incompatible")
+		}
+	}
+	if e.ArchivedAt.Valid && e.VerifiedAt.Valid && e.VerifiedAt.Time.After(e.ArchivedAt.Time) {
+		builder.Add("verified_at", "invalid", "archived credentials cannot be verified after archival")
+	}
+	if e.ArchivedAt.Valid && e.LastUsedAt.Valid && e.LastUsedAt.Time.After(e.ArchivedAt.Time) {
+		builder.Add("last_used_at", "invalid", "archived credentials cannot be used after archival")
+	}
+	return builder.Err()
 }
 
-func (c credential) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (CredentialEntity, error) {
+func (c credential) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (CredentialEntity, error) {
 	var entity CredentialEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -53,7 +99,11 @@ type CreateCredentialData struct {
 	ArchivedAt sql.NullTime
 }
 
-func (c credential) Create(ctx context.Context, db storage.Executor, data CreateCredentialData) (CredentialEntity, error) {
+func (c credential) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateCredentialData,
+) (CredentialEntity, error) {
 	entity := CredentialEntity{
 		ID:         uuid.New(),
 		CreatedAt:  time.Now(),
@@ -90,7 +140,11 @@ type UpdateCredentialData struct {
 	ArchivedAt sql.NullTime
 }
 
-func (c credential) Update(ctx context.Context, db storage.Executor, data UpdateCredentialData) (CredentialEntity, error) {
+func (c credential) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateCredentialData,
+) (CredentialEntity, error) {
 	entity := CredentialEntity{
 		ID:         data.ID,
 		UpdatedAt:  time.Now(),
@@ -154,7 +208,11 @@ type PaginatedCredentials struct {
 	TotalPages  int64
 }
 
-func (c credential) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedCredentials, error) {
+func (c credential) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedCredentials, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -193,7 +251,11 @@ func (c credential) Paginate(ctx context.Context, db storage.Executor, page, pag
 	}, nil
 }
 
-func (c credential) Upsert(ctx context.Context, db storage.Executor, data CreateCredentialData) (CredentialEntity, error) {
+func (c credential) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateCredentialData,
+) (CredentialEntity, error) {
 	entity := CredentialEntity{
 		ID:         uuid.New(),
 		CreatedAt:  time.Now(),

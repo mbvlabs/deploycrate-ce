@@ -77,7 +77,11 @@ type CreateChangeData struct {
 	CorrectsChangeID  *uuid.UUID
 }
 
-func (c change) Create(ctx context.Context, db storage.Executor, data CreateChangeData) (ChangeEntity, error) {
+func (c change) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateChangeData,
+) (ChangeEntity, error) {
 	entity := ChangeEntity{
 		ID:                uuid.New(),
 		CreatedAt:         time.Now(),
@@ -138,7 +142,11 @@ type UpdateChangeData struct {
 	CorrectsChangeID  *uuid.UUID
 }
 
-func (c change) Update(ctx context.Context, db storage.Executor, data UpdateChangeData) (ChangeEntity, error) {
+func (c change) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateChangeData,
+) (ChangeEntity, error) {
 	entity := ChangeEntity{
 		ID:                data.ID,
 		UpdatedAt:         time.Now(),
@@ -226,7 +234,11 @@ type PaginatedChanges struct {
 	TotalPages int64
 }
 
-func (c change) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedChanges, error) {
+func (c change) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedChanges, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -265,7 +277,11 @@ func (c change) Paginate(ctx context.Context, db storage.Executor, page, pageSiz
 	}, nil
 }
 
-func (c change) Upsert(ctx context.Context, db storage.Executor, data CreateChangeData) (ChangeEntity, error) {
+func (c change) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateChangeData,
+) (ChangeEntity, error) {
 	entity := ChangeEntity{
 		ID:                uuid.New(),
 		CreatedAt:         time.Now(),
@@ -325,7 +341,11 @@ func (c change) Upsert(ctx context.Context, db storage.Executor, data CreateChan
 	return entity, nil
 }
 
-func (c change) NextSequence(ctx context.Context, db storage.Executor, environmentID uuid.UUID) (int64, error) {
+func (c change) NextSequence(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) (int64, error) {
 	var sequence int64
 	err := db.NewSelect().
 		TableExpr("changes").
@@ -335,11 +355,70 @@ func (c change) NextSequence(ctx context.Context, db storage.Executor, environme
 	return sequence, err
 }
 
-func (c change) RecordProgress(ctx context.Context, db storage.Executor, id uuid.UUID, status string, at time.Time) error {
+func (c change) RecordProgress(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	status string,
+	at time.Time,
+) error {
 	_, err := db.NewUpdate().
 		TableExpr("changes").
 		Set("status = ?", status).
 		Set("started_at = COALESCE(started_at, ?)", at).
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+func (c change) MarkRunning(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("changes").
+		Set("status = ?", "running").
+		Set("started_at = COALESCE(started_at, ?)", at).
+		Set("finished_at = NULL").
+		Set("error = NULL").
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+func (c change) MarkCompleted(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("changes").
+		Set("status = ?", "completed").
+		Set("finished_at = ?", at).
+		Set("error = NULL").
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+func (c change) MarkFailed(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	operationErr error,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("changes").
+		Set("status = ?", "failed").
+		Set("finished_at = ?", at).
+		Set("error = ?", operationErr.Error()).
 		Set("updated_at = ?", at).
 		Where("id = ?", id).
 		Exec(ctx)

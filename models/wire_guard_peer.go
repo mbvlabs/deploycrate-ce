@@ -5,7 +5,13 @@ import (
 	"database/sql"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
+	"encoding/base64"
 	"errors"
+	"fmt"
+	"net"
+	"net/netip"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,10 +34,48 @@ type WireGuardPeerEntity struct {
 }
 
 func (e *WireGuardPeerEntity) Validate() error {
+	var errs []error
+	key, err := base64.StdEncoding.DecodeString(strings.TrimSpace(e.PublicKey))
+	if err != nil || len(key) != 32 {
+		errs = append(errs, errors.New("public key must be a base64-encoded 32-byte WireGuard key"))
+	}
+	address, err := netip.ParseAddr(strings.TrimSpace(e.PrivateAddress))
+	network := netip.MustParsePrefix("10.99.0.0/16")
+	if err != nil || !address.Is4() || !network.Contains(address) || address == network.Addr() {
+		errs = append(errs, errors.New("private address must be a host address in 10.99.0.0/16"))
+	}
+	if e.ListenPort < 1 || e.ListenPort > 65535 {
+		errs = append(errs, errors.New("listen port must be between 1 and 65535"))
+	}
+	if e.Endpoint.Valid {
+		host, port, endpointErr := net.SplitHostPort(strings.TrimSpace(e.Endpoint.String))
+		parsedPort, portErr := strconv.Atoi(port)
+		if endpointErr != nil || strings.TrimSpace(host) == "" || portErr != nil || parsedPort < 1 || parsedPort > 65535 {
+			errs = append(errs, errors.New("endpoint must contain a reachable host and UDP port"))
+		}
+	} else if !e.RetiredAt.Valid {
+		errs = append(errs, errors.New("an active WireGuard peer requires an endpoint"))
+	}
+	if e.ActivatedAt.IsZero() {
+		errs = append(errs, errors.New("activation time is required"))
+	}
+	if e.RetiredAt.Valid && e.RetiredAt.Time.Before(e.ActivatedAt) {
+		errs = append(errs, errors.New("retirement cannot precede activation"))
+	}
+	if e.ServerID == uuid.Nil {
+		errs = append(errs, errors.New("server is required"))
+	}
+	if len(errs) > 0 {
+		return fmt.Errorf("invalid WireGuard peer: %w", errors.Join(errs...))
+	}
 	return nil
 }
 
-func (wgp wireGuardPeer) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (WireGuardPeerEntity, error) {
+func (wgp wireGuardPeer) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (WireGuardPeerEntity, error) {
 	var entity WireGuardPeerEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -54,7 +98,11 @@ type CreateWireGuardPeerData struct {
 	ServerID       uuid.UUID
 }
 
-func (wgp wireGuardPeer) Create(ctx context.Context, db storage.Executor, data CreateWireGuardPeerData) (WireGuardPeerEntity, error) {
+func (wgp wireGuardPeer) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateWireGuardPeerData,
+) (WireGuardPeerEntity, error) {
 	entity := WireGuardPeerEntity{
 		ID:             uuid.New(),
 		CreatedAt:      time.Now(),
@@ -93,7 +141,11 @@ type UpdateWireGuardPeerData struct {
 	ServerID       uuid.UUID
 }
 
-func (wgp wireGuardPeer) Update(ctx context.Context, db storage.Executor, data UpdateWireGuardPeerData) (WireGuardPeerEntity, error) {
+func (wgp wireGuardPeer) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateWireGuardPeerData,
+) (WireGuardPeerEntity, error) {
 	entity := WireGuardPeerEntity{
 		ID:             data.ID,
 		UpdatedAt:      time.Now(),
@@ -140,7 +192,10 @@ func (wgp wireGuardPeer) Destroy(ctx context.Context, db storage.Executor, id uu
 	return err
 }
 
-func (wgp wireGuardPeer) All(ctx context.Context, db storage.Executor) ([]WireGuardPeerEntity, error) {
+func (wgp wireGuardPeer) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]WireGuardPeerEntity, error) {
 	var entities []WireGuardPeerEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -159,7 +214,11 @@ type PaginatedWireGuardPeer struct {
 	TotalPages    int64
 }
 
-func (wgp wireGuardPeer) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedWireGuardPeer, error) {
+func (wgp wireGuardPeer) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedWireGuardPeer, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -198,7 +257,11 @@ func (wgp wireGuardPeer) Paginate(ctx context.Context, db storage.Executor, page
 	}, nil
 }
 
-func (wgp wireGuardPeer) Upsert(ctx context.Context, db storage.Executor, data CreateWireGuardPeerData) (WireGuardPeerEntity, error) {
+func (wgp wireGuardPeer) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateWireGuardPeerData,
+) (WireGuardPeerEntity, error) {
 	entity := WireGuardPeerEntity{
 		ID:             uuid.New(),
 		CreatedAt:      time.Now(),

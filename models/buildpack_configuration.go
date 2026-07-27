@@ -30,7 +30,11 @@ func (e *BuildpackConfigurationEntity) Validate() error {
 	return nil
 }
 
-func (bc buildpackConfiguration) Find(ctx context.Context, db storage.Executor, id int32) (BuildpackConfigurationEntity, error) {
+func (bc buildpackConfiguration) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id int32,
+) (BuildpackConfigurationEntity, error) {
 	var entity BuildpackConfigurationEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -51,7 +55,11 @@ type CreateBuildpackConfigurationData struct {
 	ContainerRegistryID uuid.UUID
 }
 
-func (bc buildpackConfiguration) Create(ctx context.Context, db storage.Executor, data CreateBuildpackConfigurationData) (BuildpackConfigurationEntity, error) {
+func (bc buildpackConfiguration) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateBuildpackConfigurationData,
+) (BuildpackConfigurationEntity, error) {
 	entity := BuildpackConfigurationEntity{
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),
@@ -85,7 +93,11 @@ type UpdateBuildpackConfigurationData struct {
 	ContainerRegistryID uuid.UUID
 }
 
-func (bc buildpackConfiguration) Update(ctx context.Context, db storage.Executor, data UpdateBuildpackConfigurationData) (BuildpackConfigurationEntity, error) {
+func (bc buildpackConfiguration) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateBuildpackConfigurationData,
+) (BuildpackConfigurationEntity, error) {
 	entity := BuildpackConfigurationEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
@@ -128,7 +140,10 @@ func (bc buildpackConfiguration) Destroy(ctx context.Context, db storage.Executo
 	return err
 }
 
-func (bc buildpackConfiguration) All(ctx context.Context, db storage.Executor) ([]BuildpackConfigurationEntity, error) {
+func (bc buildpackConfiguration) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]BuildpackConfigurationEntity, error) {
 	var entities []BuildpackConfigurationEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -147,7 +162,11 @@ type PaginatedBuildpackConfigurations struct {
 	TotalPages              int64
 }
 
-func (bc buildpackConfiguration) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedBuildpackConfigurations, error) {
+func (bc buildpackConfiguration) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedBuildpackConfigurations, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -186,7 +205,11 @@ func (bc buildpackConfiguration) Paginate(ctx context.Context, db storage.Execut
 	}, nil
 }
 
-func (bc buildpackConfiguration) Upsert(ctx context.Context, db storage.Executor, data CreateBuildpackConfigurationData) (BuildpackConfigurationEntity, error) {
+func (bc buildpackConfiguration) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateBuildpackConfigurationData,
+) (BuildpackConfigurationEntity, error) {
 	entity := BuildpackConfigurationEntity{
 		CreatedAt:           time.Now(),
 		UpdatedAt:           time.Now(),

@@ -10,6 +10,24 @@ var SystemOverview = routing.NewSimpleRoute(
 	SystemPrefix,
 )
 
+var SystemDeployments = routing.NewSimpleRoute(
+	"/deployments",
+	"system.deployments",
+	SystemPrefix,
+)
+
+var SystemDatabase = routing.NewSimpleRoute(
+	"/database",
+	"system.database",
+	SystemPrefix,
+)
+
+var SystemNetwork = routing.NewSimpleRoute(
+	"/network",
+	"system.network",
+	SystemPrefix,
+)
+
 var SystemUpdate = routing.NewSimpleRoute(
 	"/update",
 	"system.update",

@@ -21,7 +21,10 @@ type ChangeTaskAttemptFactory struct {
 
 type ChangeTaskAttemptOption func(*ChangeTaskAttemptFactory)
 
-func BuildChangeTaskAttempt(changeTaskID uuid.UUID, opts ...ChangeTaskAttemptOption) models.ChangeTaskAttemptEntity {
+func BuildChangeTaskAttempt(
+	changeTaskID uuid.UUID,
+	opts ...ChangeTaskAttemptOption,
+) models.ChangeTaskAttemptEntity {
 	f := &ChangeTaskAttemptFactory{
 		ChangeTaskAttemptEntity: models.ChangeTaskAttemptEntity{
 			Attempt:         randomInt(1, 1000, 100),
@@ -42,7 +45,12 @@ func BuildChangeTaskAttempt(changeTaskID uuid.UUID, opts ...ChangeTaskAttemptOpt
 	return f.ChangeTaskAttemptEntity
 }
 
-func CreateChangeTaskAttempt(ctx context.Context, exec storage.Executor, changeTaskID uuid.UUID, opts ...ChangeTaskAttemptOption) (models.ChangeTaskAttemptEntity, error) {
+func CreateChangeTaskAttempt(
+	ctx context.Context,
+	exec storage.Executor,
+	changeTaskID uuid.UUID,
+	opts ...ChangeTaskAttemptOption,
+) (models.ChangeTaskAttemptEntity, error) {
 	built := BuildChangeTaskAttempt(changeTaskID, opts...)
 
 	entity := models.ChangeTaskAttemptEntity{
@@ -66,7 +74,13 @@ func CreateChangeTaskAttempt(ctx context.Context, exec storage.Executor, changeT
 	return entity, nil
 }
 
-func CreateChangeTaskAttempts(ctx context.Context, exec storage.Executor, changeTaskID uuid.UUID, count int, opts ...ChangeTaskAttemptOption) ([]models.ChangeTaskAttemptEntity, error) {
+func CreateChangeTaskAttempts(
+	ctx context.Context,
+	exec storage.Executor,
+	changeTaskID uuid.UUID,
+	count int,
+	opts ...ChangeTaskAttemptOption,
+) ([]models.ChangeTaskAttemptEntity, error) {
 	changetaskattempts := make([]models.ChangeTaskAttemptEntity, 0, count)
 
 	for i := range count {

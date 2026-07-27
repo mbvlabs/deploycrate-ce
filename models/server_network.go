@@ -34,7 +34,11 @@ func (e *ServerNetworkEntity) Validate() error {
 	return nil
 }
 
-func (sn serverNetwork) Find(ctx context.Context, db storage.Executor, id int32) (ServerNetworkEntity, error) {
+func (sn serverNetwork) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id int32,
+) (ServerNetworkEntity, error) {
 	var entity ServerNetworkEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -59,7 +63,11 @@ type CreateServerNetworkData struct {
 	PrivateNetworkID uuid.UUID
 }
 
-func (sn serverNetwork) Create(ctx context.Context, db storage.Executor, data CreateServerNetworkData) (ServerNetworkEntity, error) {
+func (sn serverNetwork) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateServerNetworkData,
+) (ServerNetworkEntity, error) {
 	entity := ServerNetworkEntity{
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),
@@ -101,7 +109,11 @@ type UpdateServerNetworkData struct {
 	PrivateNetworkID uuid.UUID
 }
 
-func (sn serverNetwork) Update(ctx context.Context, db storage.Executor, data UpdateServerNetworkData) (ServerNetworkEntity, error) {
+func (sn serverNetwork) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateServerNetworkData,
+) (ServerNetworkEntity, error) {
 	entity := ServerNetworkEntity{
 		ID:               data.ID,
 		UpdatedAt:        time.Now(),
@@ -152,7 +164,10 @@ func (sn serverNetwork) Destroy(ctx context.Context, db storage.Executor, id int
 	return err
 }
 
-func (sn serverNetwork) All(ctx context.Context, db storage.Executor) ([]ServerNetworkEntity, error) {
+func (sn serverNetwork) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]ServerNetworkEntity, error) {
 	var entities []ServerNetworkEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -171,7 +186,11 @@ type PaginatedServerNetworks struct {
 	TotalPages     int64
 }
 
-func (sn serverNetwork) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedServerNetworks, error) {
+func (sn serverNetwork) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedServerNetworks, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -210,7 +229,11 @@ func (sn serverNetwork) Paginate(ctx context.Context, db storage.Executor, page,
 	}, nil
 }
 
-func (sn serverNetwork) Upsert(ctx context.Context, db storage.Executor, data CreateServerNetworkData) (ServerNetworkEntity, error) {
+func (sn serverNetwork) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateServerNetworkData,
+) (ServerNetworkEntity, error) {
 	entity := ServerNetworkEntity{
 		CreatedAt:        time.Now(),
 		UpdatedAt:        time.Now(),

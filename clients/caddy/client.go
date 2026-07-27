@@ -8,15 +8,19 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
 
 const (
-	DefaultBaseURL = "http://127.0.0.1:2019"
-	routesPath     = "/config/apps/http/servers/srv0/routes"
+	DefaultBaseURL           = "http://127.0.0.1:2019"
+	routesPath               = "/config/apps/http/servers/srv0/routes"
+	applyRouteMaxAttempts    = 3
+	applyRouteRetryBaseDelay = 250 * time.Millisecond
 )
 
 type Backend struct {
@@ -49,11 +53,8 @@ func (client *Client) ApplyRoute(ctx context.Context, route Route) error {
 	if err := validateRoute(route); err != nil {
 		return err
 	}
-	if err := client.ensureServer(ctx); err != nil {
-		return err
-	}
 
-	payload, err := json.Marshal(routeEntry{
+	entry := routeEntry{
 		ID:       route.ID,
 		Match:    []routeMatch{{Host: []string{route.Domain}}},
 		Terminal: true,
@@ -65,12 +66,39 @@ func (client *Client) ApplyRoute(ctx context.Context, route Route) error {
 				Weights: weights(route.Backends),
 			}},
 		}},
-	})
-	if err != nil {
-		return fmt.Errorf("caddy: encode route %s: %w", route.ID, err)
 	}
 
-	exists, err := client.routeExists(ctx, route.ID)
+	for attempt := 1; attempt <= applyRouteMaxAttempts; attempt++ {
+		err := client.applyRoute(ctx, entry)
+		if err == nil {
+			return nil
+		}
+		if !isRetryableTransportError(ctx, err) || attempt == applyRouteMaxAttempts {
+			return err
+		}
+		if err := waitForApplyRetry(ctx, attempt); err != nil {
+			return fmt.Errorf("caddy: retry route %s: %w", route.ID, err)
+		}
+	}
+
+	return fmt.Errorf("caddy: apply route %s: retry attempts exhausted", route.ID)
+}
+
+func (client *Client) applyRoute(ctx context.Context, entry routeEntry) error {
+	serverExists, err := client.serverExists(ctx)
+	if err != nil {
+		return err
+	}
+	if !serverExists {
+		return client.createServerWithRoute(ctx, entry)
+	}
+
+	payload, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("caddy: encode route %s: %w", entry.ID, err)
+	}
+
+	exists, err := client.routeExists(ctx, entry.ID)
 	if err != nil {
 		return err
 	}
@@ -78,10 +106,10 @@ func (client *Client) ApplyRoute(ctx context.Context, route Route) error {
 	path := routesPath
 	if exists {
 		method = http.MethodPatch
-		path = "/id/" + url.PathEscape(route.ID)
+		path = "/id/" + url.PathEscape(entry.ID)
 	}
 	if err := client.request(ctx, method, path, payload, http.StatusOK, http.StatusCreated); err != nil {
-		return fmt.Errorf("caddy: apply route %s: %w", route.ID, err)
+		return fmt.Errorf("caddy: apply route %s: %w", entry.ID, err)
 	}
 	return nil
 }
@@ -97,37 +125,66 @@ func (client *Client) VerifyRoute(ctx context.Context, id string) error {
 	return nil
 }
 
-func (client *Client) ensureServer(ctx context.Context) error {
+func (client *Client) serverExists(ctx context.Context) (bool, error) {
 	status, body, err := client.status(ctx, routesPath)
 	if err != nil {
-		return fmt.Errorf("caddy: inspect HTTP server: %w", err)
+		return false, fmt.Errorf("caddy: inspect HTTP server: %w", err)
 	}
 	if status == http.StatusOK {
-		return nil
+		return true, nil
 	}
 	if status != http.StatusNotFound && !isInvalidTraversal(status, body) {
-		return fmt.Errorf("caddy: inspect HTTP server: unexpected status %d: %s", status, strings.TrimSpace(string(body)))
+		return false, fmt.Errorf("caddy: inspect HTTP server: unexpected status %d: %s", status, strings.TrimSpace(string(body)))
 	}
+	return false, nil
+}
 
+func (client *Client) createServerWithRoute(ctx context.Context, route routeEntry) error {
 	payload, err := json.Marshal(map[string]any{
 		"apps": map[string]any{
 			"http": map[string]any{
 				"servers": map[string]any{
 					"srv0": map[string]any{
 						"listen": []string{":443"},
-						"routes": []any{},
+						"routes": []routeEntry{route},
 					},
 				},
 			},
 		},
 	})
 	if err != nil {
-		return fmt.Errorf("caddy: encode HTTP server: %w", err)
+		return fmt.Errorf("caddy: encode HTTP server with route %s: %w", route.ID, err)
 	}
 	if err := client.request(ctx, http.MethodPatch, "/config/", payload, http.StatusOK); err != nil {
-		return fmt.Errorf("caddy: create HTTP server: %w", err)
+		return fmt.Errorf("caddy: create HTTP server with route %s: %w", route.ID, err)
 	}
 	return nil
+}
+
+func isRetryableTransportError(ctx context.Context, err error) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+
+	var urlError *url.Error
+	if errors.As(err, &urlError) {
+		return true
+	}
+
+	var networkError net.Error
+	return errors.As(err, &networkError)
+}
+
+func waitForApplyRetry(ctx context.Context, attempt int) error {
+	timer := time.NewTimer(time.Duration(attempt) * applyRouteRetryBaseDelay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func (client *Client) routeExists(ctx context.Context, id string) (bool, error) {
@@ -183,11 +240,9 @@ func (client *Client) request(ctx context.Context, method, path string, payload 
 		return err
 	}
 	defer response.Body.Close()
-	for _, status := range allowed {
-		if response.StatusCode == status {
-			_, _ = io.Copy(io.Discard, response.Body)
-			return nil
-		}
+	if slices.Contains(allowed, response.StatusCode) {
+		_, _ = io.Copy(io.Discard, response.Body)
+		return nil
 	}
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, 32*1024))
 	return errors.Join(

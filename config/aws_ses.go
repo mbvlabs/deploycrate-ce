@@ -5,7 +5,7 @@ import (
 )
 
 type awsSes struct {
-	Region           string `env:"AWS_REGION" envDefault:"us-east-1"`
+	Region           string `env:"AWS_REGION"                envDefault:"us-east-1"`
 	AccessKeyID      string `env:"AWS_SES_ACCESS_KEY_ID"`
 	SecretAccessKey  string `env:"AWS_SES_SECRET_ACCESS_KEY"`
 	ConfigurationSet string `env:"AWS_SES_CONFIGURATION_SET"`

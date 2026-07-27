@@ -21,7 +21,12 @@ type ServerNetworkFactory struct {
 
 type ServerNetworkOption func(*ServerNetworkFactory)
 
-func BuildServerNetwork(externalID sql.NullString, serverID uuid.UUID, privateNetworkID uuid.UUID, opts ...ServerNetworkOption) models.ServerNetworkEntity {
+func BuildServerNetwork(
+	externalID sql.NullString,
+	serverID uuid.UUID,
+	privateNetworkID uuid.UUID,
+	opts ...ServerNetworkOption,
+) models.ServerNetworkEntity {
 	f := &ServerNetworkFactory{
 		ServerNetworkEntity: models.ServerNetworkEntity{
 			Driver:           faker.Word(),
@@ -44,7 +49,14 @@ func BuildServerNetwork(externalID sql.NullString, serverID uuid.UUID, privateNe
 	return f.ServerNetworkEntity
 }
 
-func CreateServerNetwork(ctx context.Context, exec storage.Executor, externalID sql.NullString, serverID uuid.UUID, privateNetworkID uuid.UUID, opts ...ServerNetworkOption) (models.ServerNetworkEntity, error) {
+func CreateServerNetwork(
+	ctx context.Context,
+	exec storage.Executor,
+	externalID sql.NullString,
+	serverID uuid.UUID,
+	privateNetworkID uuid.UUID,
+	opts ...ServerNetworkOption,
+) (models.ServerNetworkEntity, error) {
 	built := BuildServerNetwork(externalID, serverID, privateNetworkID, opts...)
 
 	entity := models.ServerNetworkEntity{
@@ -70,11 +82,25 @@ func CreateServerNetwork(ctx context.Context, exec storage.Executor, externalID 
 	return entity, nil
 }
 
-func CreateServerNetworks(ctx context.Context, exec storage.Executor, externalID sql.NullString, serverID uuid.UUID, privateNetworkID uuid.UUID, count int, opts ...ServerNetworkOption) ([]models.ServerNetworkEntity, error) {
+func CreateServerNetworks(
+	ctx context.Context,
+	exec storage.Executor,
+	externalID sql.NullString,
+	serverID uuid.UUID,
+	privateNetworkID uuid.UUID,
+	count int,
+	opts ...ServerNetworkOption,
+) ([]models.ServerNetworkEntity, error) {
 	servernetworks := make([]models.ServerNetworkEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateServerNetwork(ctx, exec, externalID, serverID, privateNetworkID, opts...)
+		entity, err := CreateServerNetwork(
+			ctx,
+			exec,
+			externalID,
+			serverID,
+			privateNetworkID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create servernetwork %d: %w", i+1, err)
 		}

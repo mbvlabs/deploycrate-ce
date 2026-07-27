@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${USERNAME:?USERNAME is required}"
+: "${SERVICE_USER:?SERVICE_USER is required}"
 
 pack_version="0.40.6"
 architecture="$(dpkg --print-architecture)"
@@ -35,7 +35,7 @@ if [ ! -x /usr/local/bin/pack ] || ! /usr/local/bin/pack version 2>/dev/null | g
   install -m 0755 "${temporary_directory}/pack" /usr/local/bin/pack
 fi
 
-install -d -m 0750 -o "${USERNAME}" -g "${USERNAME}" /var/lib/deploycrate-builds
+install -d -m 0750 -o "${SERVICE_USER}" -g "${SERVICE_USER}" /var/lib/deploycrate-builds
 
-runuser -u "${USERNAME}" -- /usr/local/bin/pack version
-runuser -u "${USERNAME}" -- docker info >/dev/null
+runuser -u "${SERVICE_USER}" -- /usr/local/bin/pack version
+runuser -u "${SERVICE_USER}" -- docker info >/dev/null

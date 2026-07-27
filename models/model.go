@@ -47,7 +47,7 @@ type (
 	caddyRouteBackend            struct{}
 	backupDestination            struct{}
 	backupPolicy                 struct{}
-	resourceBackup               struct{}
+	backup                       struct{}
 	resourceRestore              struct{}
 	outboxEvent                  struct{}
 	environmentStateRevision     struct{}
@@ -107,7 +107,7 @@ var (
 	CaddyRouteBackend            caddyRouteBackend
 	BackupDestination            backupDestination
 	BackupPolicy                 backupPolicy
-	ResourceBackup               resourceBackup
+	Backup                       backup
 	ResourceRestore              resourceRestore
 	OutboxEvent                  outboxEvent
 	EnvironmentStateRevision     environmentStateRevision

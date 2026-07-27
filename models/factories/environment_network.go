@@ -20,7 +20,11 @@ type EnvironmentNetworkFactory struct {
 
 type EnvironmentNetworkOption func(*EnvironmentNetworkFactory)
 
-func BuildEnvironmentNetwork(environmentID uuid.UUID, privateNetworkID uuid.UUID, opts ...EnvironmentNetworkOption) models.EnvironmentNetworkEntity {
+func BuildEnvironmentNetwork(
+	environmentID uuid.UUID,
+	privateNetworkID uuid.UUID,
+	opts ...EnvironmentNetworkOption,
+) models.EnvironmentNetworkEntity {
 	f := &EnvironmentNetworkFactory{
 		EnvironmentNetworkEntity: models.EnvironmentNetworkEntity{
 			Role:             faker.Word(),
@@ -37,7 +41,13 @@ func BuildEnvironmentNetwork(environmentID uuid.UUID, privateNetworkID uuid.UUID
 	return f.EnvironmentNetworkEntity
 }
 
-func CreateEnvironmentNetwork(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, privateNetworkID uuid.UUID, opts ...EnvironmentNetworkOption) (models.EnvironmentNetworkEntity, error) {
+func CreateEnvironmentNetwork(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentID uuid.UUID,
+	privateNetworkID uuid.UUID,
+	opts ...EnvironmentNetworkOption,
+) (models.EnvironmentNetworkEntity, error) {
 	built := BuildEnvironmentNetwork(environmentID, privateNetworkID, opts...)
 
 	entity := models.EnvironmentNetworkEntity{
@@ -57,7 +67,14 @@ func CreateEnvironmentNetwork(ctx context.Context, exec storage.Executor, enviro
 	return entity, nil
 }
 
-func CreateEnvironmentNetworks(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, privateNetworkID uuid.UUID, count int, opts ...EnvironmentNetworkOption) ([]models.EnvironmentNetworkEntity, error) {
+func CreateEnvironmentNetworks(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentID uuid.UUID,
+	privateNetworkID uuid.UUID,
+	count int,
+	opts ...EnvironmentNetworkOption,
+) ([]models.EnvironmentNetworkEntity, error) {
 	environmentnetworks := make([]models.EnvironmentNetworkEntity, 0, count)
 
 	for i := range count {

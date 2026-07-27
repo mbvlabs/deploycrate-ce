@@ -26,7 +26,11 @@ func (e *PrivateNetworkEntity) Validate() error {
 	return nil
 }
 
-func (pn privateNetwork) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (PrivateNetworkEntity, error) {
+func (pn privateNetwork) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (PrivateNetworkEntity, error) {
 	var entity PrivateNetworkEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -44,7 +48,11 @@ type CreatePrivateNetworkData struct {
 	OwnerEnvironmentID *uuid.UUID
 }
 
-func (pn privateNetwork) Create(ctx context.Context, db storage.Executor, data CreatePrivateNetworkData) (PrivateNetworkEntity, error) {
+func (pn privateNetwork) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreatePrivateNetworkData,
+) (PrivateNetworkEntity, error) {
 	entity := PrivateNetworkEntity{
 		ID:                 uuid.New(),
 		CreatedAt:          time.Now(),
@@ -73,7 +81,11 @@ type UpdatePrivateNetworkData struct {
 	OwnerEnvironmentID *uuid.UUID
 }
 
-func (pn privateNetwork) Update(ctx context.Context, db storage.Executor, data UpdatePrivateNetworkData) (PrivateNetworkEntity, error) {
+func (pn privateNetwork) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdatePrivateNetworkData,
+) (PrivateNetworkEntity, error) {
 	entity := PrivateNetworkEntity{
 		ID:                 data.ID,
 		UpdatedAt:          time.Now(),
@@ -110,7 +122,10 @@ func (pn privateNetwork) Destroy(ctx context.Context, db storage.Executor, id uu
 	return err
 }
 
-func (pn privateNetwork) All(ctx context.Context, db storage.Executor) ([]PrivateNetworkEntity, error) {
+func (pn privateNetwork) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]PrivateNetworkEntity, error) {
 	var entities []PrivateNetworkEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -129,7 +144,11 @@ type PaginatedPrivateNetworks struct {
 	TotalPages      int64
 }
 
-func (pn privateNetwork) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedPrivateNetworks, error) {
+func (pn privateNetwork) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedPrivateNetworks, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -168,7 +187,11 @@ func (pn privateNetwork) Paginate(ctx context.Context, db storage.Executor, page
 	}, nil
 }
 
-func (pn privateNetwork) Upsert(ctx context.Context, db storage.Executor, data CreatePrivateNetworkData) (PrivateNetworkEntity, error) {
+func (pn privateNetwork) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreatePrivateNetworkData,
+) (PrivateNetworkEntity, error) {
 	entity := PrivateNetworkEntity{
 		ID:                 uuid.New(),
 		CreatedAt:          time.Now(),

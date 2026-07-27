@@ -4,6 +4,7 @@ package controllers
 import (
 	"deploycrate-ce/controllers/api"
 	"deploycrate-ce/router"
+
 	"go.uber.org/fx"
 )
 
@@ -16,6 +17,7 @@ var constructors = fx.Provide(
 	api.NewAPI,
 	NewSessions,
 	NewResetPasswords,
+	NewSystem,
 	NewSelfUpdates,
 )
 
@@ -35,6 +37,9 @@ var Module = fx.Module(
 		return c.RegisterRoutes(r)
 	}),
 	fx.Invoke(func(r *router.Router, c ResetPasswords) error {
+		return c.RegisterRoutes(r)
+	}),
+	fx.Invoke(func(r *router.Router, c System) error {
 		return c.RegisterRoutes(r)
 	}),
 	fx.Invoke(func(r *router.Router, c SelfUpdates) error {

@@ -29,7 +29,11 @@ func (e *ChangeItemEntity) Validate() error {
 	return nil
 }
 
-func (ci changeItem) Find(ctx context.Context, db storage.Executor, id int32) (ChangeItemEntity, error) {
+func (ci changeItem) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id int32,
+) (ChangeItemEntity, error) {
 	var entity ChangeItemEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -50,7 +54,11 @@ type CreateChangeItemData struct {
 	ChangeID       uuid.UUID
 }
 
-func (ci changeItem) Create(ctx context.Context, db storage.Executor, data CreateChangeItemData) (ChangeItemEntity, error) {
+func (ci changeItem) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateChangeItemData,
+) (ChangeItemEntity, error) {
 	entity := ChangeItemEntity{
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
@@ -84,7 +92,11 @@ type UpdateChangeItemData struct {
 	ChangeID       uuid.UUID
 }
 
-func (ci changeItem) Update(ctx context.Context, db storage.Executor, data UpdateChangeItemData) (ChangeItemEntity, error) {
+func (ci changeItem) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateChangeItemData,
+) (ChangeItemEntity, error) {
 	entity := ChangeItemEntity{
 		ID:             data.ID,
 		UpdatedAt:      time.Now(),
@@ -146,7 +158,11 @@ type PaginatedChangeItems struct {
 	TotalPages  int64
 }
 
-func (ci changeItem) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedChangeItems, error) {
+func (ci changeItem) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedChangeItems, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -185,7 +201,11 @@ func (ci changeItem) Paginate(ctx context.Context, db storage.Executor, page, pa
 	}, nil
 }
 
-func (ci changeItem) Upsert(ctx context.Context, db storage.Executor, data CreateChangeItemData) (ChangeItemEntity, error) {
+func (ci changeItem) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateChangeItemData,
+) (ChangeItemEntity, error) {
 	entity := ChangeItemEntity{
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),

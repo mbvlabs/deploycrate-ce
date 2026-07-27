@@ -34,7 +34,11 @@ func (e *InstanceEntity) Validate() error {
 	return nil
 }
 
-func (i instance) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (InstanceEntity, error) {
+func (i instance) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (InstanceEntity, error) {
 	var entity InstanceEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -59,7 +63,11 @@ type CreateInstanceData struct {
 	EnvironmentTargetID uuid.UUID
 }
 
-func (i instance) Create(ctx context.Context, db storage.Executor, data CreateInstanceData) (InstanceEntity, error) {
+func (i instance) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateInstanceData,
+) (InstanceEntity, error) {
 	entity := InstanceEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
@@ -102,7 +110,11 @@ type UpdateInstanceData struct {
 	EnvironmentTargetID uuid.UUID
 }
 
-func (i instance) Update(ctx context.Context, db storage.Executor, data UpdateInstanceData) (InstanceEntity, error) {
+func (i instance) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateInstanceData,
+) (InstanceEntity, error) {
 	entity := InstanceEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
@@ -172,7 +184,11 @@ type PaginatedInstances struct {
 	TotalPages int64
 }
 
-func (i instance) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedInstances, error) {
+func (i instance) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedInstances, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -211,7 +227,11 @@ func (i instance) Paginate(ctx context.Context, db storage.Executor, page, pageS
 	}, nil
 }
 
-func (i instance) Upsert(ctx context.Context, db storage.Executor, data CreateInstanceData) (InstanceEntity, error) {
+func (i instance) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateInstanceData,
+) (InstanceEntity, error) {
 	entity := InstanceEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
@@ -253,7 +273,13 @@ func (i instance) Upsert(ctx context.Context, db storage.Executor, data CreateIn
 	return entity, nil
 }
 
-func (i instance) ObserveState(ctx context.Context, db storage.Executor, id uuid.UUID, state string, at time.Time) error {
+func (i instance) ObserveState(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	state string,
+	at time.Time,
+) error {
 	_, err := db.NewUpdate().
 		TableExpr("instances").
 		Set("state = ?", state).
@@ -264,7 +290,14 @@ func (i instance) ObserveState(ctx context.Context, db storage.Executor, id uuid
 	return err
 }
 
-func (i instance) FinishSystemUpdate(ctx context.Context, db storage.Executor, id uuid.UUID, state string, removed bool, at time.Time) error {
+func (i instance) FinishSystemUpdate(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	state string,
+	removed bool,
+	at time.Time,
+) error {
 	query := db.NewUpdate().
 		TableExpr("instances").
 		Set("state = ?", state).

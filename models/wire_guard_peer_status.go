@@ -28,7 +28,11 @@ func (e *WireGuardPeerStatusEntity) Validate() error {
 	return nil
 }
 
-func (wgps wireGuardPeerStatus) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (WireGuardPeerStatusEntity, error) {
+func (wgps wireGuardPeerStatus) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (WireGuardPeerStatusEntity, error) {
 	var entity WireGuardPeerStatusEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -48,7 +52,11 @@ type CreateWireGuardPeerStatusData struct {
 	WireguardPeerID   uuid.UUID
 }
 
-func (wgps wireGuardPeerStatus) Create(ctx context.Context, db storage.Executor, data CreateWireGuardPeerStatusData) (WireGuardPeerStatusEntity, error) {
+func (wgps wireGuardPeerStatus) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateWireGuardPeerStatusData,
+) (WireGuardPeerStatusEntity, error) {
 	entity := WireGuardPeerStatusEntity{
 		ID:                uuid.New(),
 		CreatedAt:         time.Now(),
@@ -81,7 +89,11 @@ type UpdateWireGuardPeerStatusData struct {
 	WireguardPeerID   uuid.UUID
 }
 
-func (wgps wireGuardPeerStatus) Update(ctx context.Context, db storage.Executor, data UpdateWireGuardPeerStatusData) (WireGuardPeerStatusEntity, error) {
+func (wgps wireGuardPeerStatus) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateWireGuardPeerStatusData,
+) (WireGuardPeerStatusEntity, error) {
 	entity := WireGuardPeerStatusEntity{
 		ID:                data.ID,
 		UpdatedAt:         time.Now(),
@@ -113,7 +125,11 @@ func (wgps wireGuardPeerStatus) Update(ctx context.Context, db storage.Executor,
 	return entity, nil
 }
 
-func (wgps wireGuardPeerStatus) Destroy(ctx context.Context, db storage.Executor, id uuid.UUID) error {
+func (wgps wireGuardPeerStatus) Destroy(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) error {
 	_, err := db.NewDelete().
 		Model((*WireGuardPeerStatusEntity)(nil)).
 		Where("id = ?", id).
@@ -122,7 +138,10 @@ func (wgps wireGuardPeerStatus) Destroy(ctx context.Context, db storage.Executor
 	return err
 }
 
-func (wgps wireGuardPeerStatus) All(ctx context.Context, db storage.Executor) ([]WireGuardPeerStatusEntity, error) {
+func (wgps wireGuardPeerStatus) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]WireGuardPeerStatusEntity, error) {
 	var entities []WireGuardPeerStatusEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -141,7 +160,11 @@ type PaginatedWireGuardPeerStatus struct {
 	TotalPages          int64
 }
 
-func (wgps wireGuardPeerStatus) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedWireGuardPeerStatus, error) {
+func (wgps wireGuardPeerStatus) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedWireGuardPeerStatus, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -180,7 +203,11 @@ func (wgps wireGuardPeerStatus) Paginate(ctx context.Context, db storage.Executo
 	}, nil
 }
 
-func (wgps wireGuardPeerStatus) Upsert(ctx context.Context, db storage.Executor, data CreateWireGuardPeerStatusData) (WireGuardPeerStatusEntity, error) {
+func (wgps wireGuardPeerStatus) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateWireGuardPeerStatusData,
+) (WireGuardPeerStatusEntity, error) {
 	entity := WireGuardPeerStatusEntity{
 		ID:                uuid.New(),
 		CreatedAt:         time.Now(),

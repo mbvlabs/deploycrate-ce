@@ -87,23 +87,15 @@
         <Sidebar.GroupContent>
           <Sidebar.Menu>
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.serverIndex())} tooltipContent="Servers">
-                {#snippet child({ props })}
-                  <Link {...props} href={routes.serverIndex()}>
-                    <ServerIcon />
-                    <span>Servers</span>
-                  </Link>
-                {/snippet}
+              <Sidebar.MenuButton disabled tooltipContent="Servers">
+                <ServerIcon />
+                <span>Servers</span>
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.privateNetworkIndex()) || $page.url.startsWith('/server-network-attachments')} tooltipContent="Networks">
-                {#snippet child({ props })}
-                  <Link {...props} href={routes.privateNetworkIndex()}>
-                    <NetworkIcon />
-                    <span>Networks</span>
-                  </Link>
-                {/snippet}
+              <Sidebar.MenuButton disabled tooltipContent="Networks">
+                <NetworkIcon />
+                <span>Networks</span>
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
           </Sidebar.Menu>
@@ -150,6 +142,36 @@
                   <Link {...props} href={routes.systemUpdate()}>
                     <SettingsIcon />
                     <span>Updates</span>
+                  </Link>
+                {/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={$page.url === routes.systemDeployments()} tooltipContent="Deployments">
+                {#snippet child({ props })}
+                  <Link {...props} href={routes.systemDeployments()}>
+                    <GitBranchIcon />
+                    <span>Deployments</span>
+                  </Link>
+                {/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={$page.url === routes.systemDatabase()} tooltipContent="Database">
+                {#snippet child({ props })}
+                  <Link {...props} href={routes.systemDatabase()}>
+                    <DatabaseIcon />
+                    <span>Database</span>
+                  </Link>
+                {/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={$page.url === routes.systemNetwork()} tooltipContent="Network">
+                {#snippet child({ props })}
+                  <Link {...props} href={routes.systemNetwork()}>
+                    <NetworkIcon />
+                    <span>Network</span>
                   </Link>
                 {/snippet}
               </Sidebar.MenuButton>

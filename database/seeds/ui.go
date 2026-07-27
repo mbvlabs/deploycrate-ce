@@ -16,7 +16,9 @@ import (
 func UI(ctx context.Context, exec storage.Executor) error {
 	now := time.Now()
 
-	edgePrimary, err := factories.CreateServer(ctx, exec,
+	edgePrimary, err := factories.CreateServer(
+		ctx,
+		exec,
 		factories.WithServersName("Edge Primary"),
 		factories.WithServersSlug("edge-primary"),
 		factories.WithServersOperatingSystem(sql.NullString{String: "linux", Valid: true}),
@@ -25,7 +27,9 @@ func UI(ctx context.Context, exec storage.Executor) error {
 		factories.WithServersArchitecture(sql.NullString{String: "amd64", Valid: true}),
 		factories.WithServersPackageManager(sql.NullString{String: "apt", Valid: true}),
 		factories.WithServersInitSystem(sql.NullString{String: "systemd", Valid: true}),
-		factories.WithServersCapabilities(json.RawMessage(`{"caddy":true,"docker":true,"wireguard":true}`)),
+		factories.WithServersCapabilities(
+			json.RawMessage(`{"caddy":true,"docker":true,"wireguard":true}`),
+		),
 		factories.WithServersIPv4Address("203.0.113.10"),
 		factories.WithServersIPv6Address("2001:db8::10"),
 		factories.WithServersIsConfigured(true),
@@ -66,7 +70,7 @@ func UI(ctx context.Context, exec storage.Executor) error {
 		ctx,
 		exec,
 		edgePrimary.ID,
-		factories.WithWireguardPeersPublicKey("edge-primary-public-key"),
+		factories.WithWireguardPeersPublicKey("A01HgChlFDmNeerZkEsg0ssMLfrWzAaN+YQU17E6jsA="),
 		factories.WithWireguardPeersEncPrivateKey(
 			[]byte("encrypted-edge-primary-wireguard-private-key"),
 		),
@@ -92,7 +96,9 @@ func UI(ctx context.Context, exec storage.Executor) error {
 		return fmt.Errorf("create edge primary WireGuard status: %w", err)
 	}
 
-	edgeSecondary, err := factories.CreateServer(ctx, exec,
+	edgeSecondary, err := factories.CreateServer(
+		ctx,
+		exec,
 		factories.WithServersName("Edge Secondary"),
 		factories.WithServersSlug("edge-secondary"),
 		factories.WithServersOperatingSystem(sql.NullString{String: "linux", Valid: true}),
@@ -101,7 +107,9 @@ func UI(ctx context.Context, exec storage.Executor) error {
 		factories.WithServersArchitecture(sql.NullString{String: "arm64", Valid: true}),
 		factories.WithServersPackageManager(sql.NullString{String: "apt", Valid: true}),
 		factories.WithServersInitSystem(sql.NullString{String: "systemd", Valid: true}),
-		factories.WithServersCapabilities(json.RawMessage(`{"caddy":true,"docker":true,"wireguard":true}`)),
+		factories.WithServersCapabilities(
+			json.RawMessage(`{"caddy":true,"docker":true,"wireguard":true}`),
+		),
 		factories.WithServersIPv4Address("203.0.113.11"),
 		factories.WithServersIPv6Address("2001:db8::11"),
 		factories.WithServersIsConfigured(true),
@@ -142,7 +150,7 @@ func UI(ctx context.Context, exec storage.Executor) error {
 		ctx,
 		exec,
 		edgeSecondary.ID,
-		factories.WithWireguardPeersPublicKey("edge-secondary-public-key"),
+		factories.WithWireguardPeersPublicKey("Hmya7lvwcIhy9WNC+GnIWRZlT9OY7XLzK8LSQbByl8Y="),
 		factories.WithWireguardPeersEncPrivateKey(
 			[]byte("encrypted-edge-secondary-wireguard-private-key"),
 		),
@@ -168,7 +176,9 @@ func UI(ctx context.Context, exec storage.Executor) error {
 		return fmt.Errorf("create edge secondary WireGuard status: %w", err)
 	}
 
-	worker, err := factories.CreateServer(ctx, exec,
+	worker, err := factories.CreateServer(
+		ctx,
+		exec,
 		factories.WithServersName("Build Worker"),
 		factories.WithServersSlug("build-worker"),
 		factories.WithServersOperatingSystem(sql.NullString{String: "linux", Valid: true}),
@@ -177,7 +187,9 @@ func UI(ctx context.Context, exec storage.Executor) error {
 		factories.WithServersArchitecture(sql.NullString{String: "amd64", Valid: true}),
 		factories.WithServersPackageManager(sql.NullString{String: "apk", Valid: true}),
 		factories.WithServersInitSystem(sql.NullString{String: "openrc", Valid: true}),
-		factories.WithServersCapabilities(json.RawMessage(`{"buildkit":true,"docker":true,"wireguard":true}`)),
+		factories.WithServersCapabilities(
+			json.RawMessage(`{"buildkit":true,"docker":true,"wireguard":true}`),
+		),
 		factories.WithServersIPv4Address("198.51.100.20"),
 		factories.WithServersIPv6Address("2001:db8::20"),
 		factories.WithServersIsConfigured(true),
@@ -218,7 +230,7 @@ func UI(ctx context.Context, exec storage.Executor) error {
 		ctx,
 		exec,
 		worker.ID,
-		factories.WithWireguardPeersPublicKey("build-worker-public-key"),
+		factories.WithWireguardPeersPublicKey("7Z0N2UKFv0cG4B6Je+TlfB0xzY5K0mnwx6Wh2Sa2Hbw="),
 		factories.WithWireguardPeersEncPrivateKey(
 			[]byte("encrypted-build-worker-wireguard-private-key"),
 		),
@@ -380,7 +392,9 @@ func UI(ctx context.Context, exec storage.Executor) error {
 		return err
 	}
 
-	fmt.Println("Created UI seed data: 4 servers, 4 networks, and the DeployCrate CE system topology")
+	fmt.Println(
+		"Created UI seed data: 4 servers, 4 networks, and the DeployCrate CE system topology",
+	)
 
 	return nil
 }

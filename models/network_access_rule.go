@@ -29,7 +29,11 @@ func (e *NetworkAccessRuleEntity) Validate() error {
 	return nil
 }
 
-func (nar networkAccessRule) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (NetworkAccessRuleEntity, error) {
+func (nar networkAccessRule) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (NetworkAccessRuleEntity, error) {
 	var entity NetworkAccessRuleEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -50,7 +54,11 @@ type CreateNetworkAccessRuleData struct {
 	EnvironmentResourceID uuid.UUID
 }
 
-func (nar networkAccessRule) Create(ctx context.Context, db storage.Executor, data CreateNetworkAccessRuleData) (NetworkAccessRuleEntity, error) {
+func (nar networkAccessRule) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateNetworkAccessRuleData,
+) (NetworkAccessRuleEntity, error) {
 	entity := NetworkAccessRuleEntity{
 		ID:                    uuid.New(),
 		CreatedAt:             time.Now(),
@@ -85,7 +93,11 @@ type UpdateNetworkAccessRuleData struct {
 	EnvironmentResourceID uuid.UUID
 }
 
-func (nar networkAccessRule) Update(ctx context.Context, db storage.Executor, data UpdateNetworkAccessRuleData) (NetworkAccessRuleEntity, error) {
+func (nar networkAccessRule) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateNetworkAccessRuleData,
+) (NetworkAccessRuleEntity, error) {
 	entity := NetworkAccessRuleEntity{
 		ID:                    data.ID,
 		UpdatedAt:             time.Now(),
@@ -128,7 +140,10 @@ func (nar networkAccessRule) Destroy(ctx context.Context, db storage.Executor, i
 	return err
 }
 
-func (nar networkAccessRule) All(ctx context.Context, db storage.Executor) ([]NetworkAccessRuleEntity, error) {
+func (nar networkAccessRule) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]NetworkAccessRuleEntity, error) {
 	var entities []NetworkAccessRuleEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -147,7 +162,11 @@ type PaginatedNetworkAccessRules struct {
 	TotalPages         int64
 }
 
-func (nar networkAccessRule) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedNetworkAccessRules, error) {
+func (nar networkAccessRule) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedNetworkAccessRules, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -186,7 +205,11 @@ func (nar networkAccessRule) Paginate(ctx context.Context, db storage.Executor, 
 	}, nil
 }
 
-func (nar networkAccessRule) Upsert(ctx context.Context, db storage.Executor, data CreateNetworkAccessRuleData) (NetworkAccessRuleEntity, error) {
+func (nar networkAccessRule) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateNetworkAccessRuleData,
+) (NetworkAccessRuleEntity, error) {
 	entity := NetworkAccessRuleEntity{
 		ID:                    uuid.New(),
 		CreatedAt:             time.Now(),

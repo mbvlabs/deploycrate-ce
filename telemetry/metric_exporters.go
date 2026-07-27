@@ -31,7 +31,10 @@ func NewOtlpMetricExporter(endpoint string, headers map[string]string) *OtlpHttp
 	}
 }
 
-func NewOtlpMetricExporterInsecure(endpoint string, headers map[string]string) *OtlpHttpMetricExporter {
+func NewOtlpMetricExporterInsecure(
+	endpoint string,
+	headers map[string]string,
+) *OtlpHttpMetricExporter {
 	if endpoint == "" {
 		return nil
 	}
@@ -47,7 +50,10 @@ func (o *OtlpHttpMetricExporter) Name() string {
 	return "otlp-http-metrics"
 }
 
-func (o *OtlpHttpMetricExporter) GetSdkMetricExporter(ctx context.Context, res *resource.Resource) (sdkmetric.Exporter, error) {
+func (o *OtlpHttpMetricExporter) GetSdkMetricExporter(
+	ctx context.Context,
+	res *resource.Resource,
+) (sdkmetric.Exporter, error) {
 	endpoint := strings.TrimPrefix(o.endpoint, "http://")
 	endpoint = strings.TrimPrefix(endpoint, "https://")
 
@@ -121,7 +127,10 @@ func (n *NoopMetricExporter) Name() string {
 	return "noop-metrics"
 }
 
-func (n *NoopMetricExporter) GetSdkMetricExporter(ctx context.Context, res *resource.Resource) (sdkmetric.Exporter, error) {
+func (n *NoopMetricExporter) GetSdkMetricExporter(
+	ctx context.Context,
+	res *resource.Resource,
+) (sdkmetric.Exporter, error) {
 	return &noopSdkMetricExporter{}, nil
 }
 

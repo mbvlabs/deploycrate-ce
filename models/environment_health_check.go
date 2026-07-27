@@ -32,7 +32,11 @@ func (e *EnvironmentHealthCheckEntity) Validate() error {
 	return nil
 }
 
-func (ehc environmentHealthCheck) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentHealthCheckEntity, error) {
+func (ehc environmentHealthCheck) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (EnvironmentHealthCheckEntity, error) {
 	var entity EnvironmentHealthCheckEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -56,7 +60,11 @@ type CreateEnvironmentHealthCheckData struct {
 	EnvironmentID   uuid.UUID
 }
 
-func (ehc environmentHealthCheck) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentHealthCheckData) (EnvironmentHealthCheckEntity, error) {
+func (ehc environmentHealthCheck) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentHealthCheckData,
+) (EnvironmentHealthCheckEntity, error) {
 	entity := EnvironmentHealthCheckEntity{
 		ID:              uuid.New(),
 		CreatedAt:       time.Now(),
@@ -97,7 +105,11 @@ type UpdateEnvironmentHealthCheckData struct {
 	EnvironmentID   uuid.UUID
 }
 
-func (ehc environmentHealthCheck) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentHealthCheckData) (EnvironmentHealthCheckEntity, error) {
+func (ehc environmentHealthCheck) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateEnvironmentHealthCheckData,
+) (EnvironmentHealthCheckEntity, error) {
 	entity := EnvironmentHealthCheckEntity{
 		ID:              data.ID,
 		UpdatedAt:       time.Now(),
@@ -137,7 +149,11 @@ func (ehc environmentHealthCheck) Update(ctx context.Context, db storage.Executo
 	return entity, nil
 }
 
-func (ehc environmentHealthCheck) Destroy(ctx context.Context, db storage.Executor, id uuid.UUID) error {
+func (ehc environmentHealthCheck) Destroy(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) error {
 	_, err := db.NewDelete().
 		Model((*EnvironmentHealthCheckEntity)(nil)).
 		Where("id = ?", id).
@@ -146,7 +162,10 @@ func (ehc environmentHealthCheck) Destroy(ctx context.Context, db storage.Execut
 	return err
 }
 
-func (ehc environmentHealthCheck) All(ctx context.Context, db storage.Executor) ([]EnvironmentHealthCheckEntity, error) {
+func (ehc environmentHealthCheck) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]EnvironmentHealthCheckEntity, error) {
 	var entities []EnvironmentHealthCheckEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -165,7 +184,11 @@ type PaginatedEnvironmentHealthChecks struct {
 	TotalPages              int64
 }
 
-func (ehc environmentHealthCheck) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedEnvironmentHealthChecks, error) {
+func (ehc environmentHealthCheck) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedEnvironmentHealthChecks, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -204,7 +227,11 @@ func (ehc environmentHealthCheck) Paginate(ctx context.Context, db storage.Execu
 	}, nil
 }
 
-func (ehc environmentHealthCheck) Upsert(ctx context.Context, db storage.Executor, data CreateEnvironmentHealthCheckData) (EnvironmentHealthCheckEntity, error) {
+func (ehc environmentHealthCheck) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentHealthCheckData,
+) (EnvironmentHealthCheckEntity, error) {
 	entity := EnvironmentHealthCheckEntity{
 		ID:              uuid.New(),
 		CreatedAt:       time.Now(),

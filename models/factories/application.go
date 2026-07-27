@@ -36,7 +36,11 @@ func BuildApplication(opts ...ApplicationOption) models.ApplicationEntity {
 	return f.ApplicationEntity
 }
 
-func CreateApplication(ctx context.Context, exec storage.Executor, opts ...ApplicationOption) (models.ApplicationEntity, error) {
+func CreateApplication(
+	ctx context.Context,
+	exec storage.Executor,
+	opts ...ApplicationOption,
+) (models.ApplicationEntity, error) {
 	built := BuildApplication(opts...)
 
 	entity := models.ApplicationEntity{
@@ -55,7 +59,12 @@ func CreateApplication(ctx context.Context, exec storage.Executor, opts ...Appli
 	return entity, nil
 }
 
-func CreateApplications(ctx context.Context, exec storage.Executor, count int, opts ...ApplicationOption) ([]models.ApplicationEntity, error) {
+func CreateApplications(
+	ctx context.Context,
+	exec storage.Executor,
+	count int,
+	opts ...ApplicationOption,
+) ([]models.ApplicationEntity, error) {
 	applications := make([]models.ApplicationEntity, 0, count)
 
 	for i := range count {

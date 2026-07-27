@@ -26,7 +26,11 @@ func (e *EnvironmentStateRevisionEntity) Validate() error {
 	return nil
 }
 
-func (esr environmentStateRevision) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentStateRevisionEntity, error) {
+func (esr environmentStateRevision) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (EnvironmentStateRevisionEntity, error) {
 	var entity EnvironmentStateRevisionEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -44,7 +48,11 @@ type CreateEnvironmentStateRevisionData struct {
 	ChangeID      uuid.UUID
 }
 
-func (esr environmentStateRevision) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentStateRevisionData) (EnvironmentStateRevisionEntity, error) {
+func (esr environmentStateRevision) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentStateRevisionData,
+) (EnvironmentStateRevisionEntity, error) {
 	entity := EnvironmentStateRevisionEntity{
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),
@@ -73,7 +81,11 @@ type UpdateEnvironmentStateRevisionData struct {
 	ChangeID      uuid.UUID
 }
 
-func (esr environmentStateRevision) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentStateRevisionData) (EnvironmentStateRevisionEntity, error) {
+func (esr environmentStateRevision) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateEnvironmentStateRevisionData,
+) (EnvironmentStateRevisionEntity, error) {
 	entity := EnvironmentStateRevisionEntity{
 		ID:            data.ID,
 		UpdatedAt:     time.Now(),
@@ -101,7 +113,11 @@ func (esr environmentStateRevision) Update(ctx context.Context, db storage.Execu
 	return entity, nil
 }
 
-func (esr environmentStateRevision) Destroy(ctx context.Context, db storage.Executor, id uuid.UUID) error {
+func (esr environmentStateRevision) Destroy(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) error {
 	_, err := db.NewDelete().
 		Model((*EnvironmentStateRevisionEntity)(nil)).
 		Where("id = ?", id).
@@ -110,7 +126,10 @@ func (esr environmentStateRevision) Destroy(ctx context.Context, db storage.Exec
 	return err
 }
 
-func (esr environmentStateRevision) All(ctx context.Context, db storage.Executor) ([]EnvironmentStateRevisionEntity, error) {
+func (esr environmentStateRevision) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]EnvironmentStateRevisionEntity, error) {
 	var entities []EnvironmentStateRevisionEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -129,7 +148,11 @@ type PaginatedEnvironmentStateRevisions struct {
 	TotalPages                int64
 }
 
-func (esr environmentStateRevision) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedEnvironmentStateRevisions, error) {
+func (esr environmentStateRevision) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedEnvironmentStateRevisions, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -168,7 +191,11 @@ func (esr environmentStateRevision) Paginate(ctx context.Context, db storage.Exe
 	}, nil
 }
 
-func (esr environmentStateRevision) Upsert(ctx context.Context, db storage.Executor, data CreateEnvironmentStateRevisionData) (EnvironmentStateRevisionEntity, error) {
+func (esr environmentStateRevision) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentStateRevisionData,
+) (EnvironmentStateRevisionEntity, error) {
 	entity := EnvironmentStateRevisionEntity{
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),

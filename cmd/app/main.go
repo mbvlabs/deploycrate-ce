@@ -18,6 +18,7 @@ import (
 	"deploycrate-ce/internal/inertia"
 	"deploycrate-ce/internal/server"
 	"deploycrate-ce/internal/storage"
+	"deploycrate-ce/models"
 	"deploycrate-ce/queue"
 	"deploycrate-ce/router"
 	"deploycrate-ce/services"
@@ -39,7 +40,10 @@ func main() {
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	if err := inertia.Init("inertia/root.go.html", inertia.WithSharedProp("appVersion", appVersion)); err != nil {
+	if err := inertia.Init(
+		"inertia/root.go.html",
+		inertia.WithSharedProp("appVersion", appVersion),
+	); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to initialize inertia: %s\n", err)
 		os.Exit(1)
 	}
@@ -47,6 +51,7 @@ func main() {
 		fx.Provide(
 			func() context.Context { return ctx },
 			func() services.CurrentVersion { return services.CurrentVersion(appVersion) },
+			func(service services.MetricRollupService) queue.MetricRollupCollector { return service },
 			func(cfg config.Config) (email.TransactionalSender, email.MarketingSender) {
 				if config.Env == server.ProdEnvironment {
 					return mailclients.NewAwsSes(cfg), mailclients.NewAwsSes(cfg)
@@ -67,6 +72,7 @@ func main() {
 
 		fx.Invoke(startQueueProcessor),
 		fx.Invoke(startServer),
+		fx.Invoke(ensureInitialBackupsOnStartup),
 	)
 
 	if err := app.Start(ctx); err != nil {
@@ -103,9 +109,33 @@ func runCommand(ctx context.Context, arguments []string) error {
 			return err
 		}
 		defer db.Close()
-		if err := storage.RunMigrations(ctx, db.Conn(), database.Migrations, "migrations"); err != nil {
+		if err := storage.RunMigrations(
+			ctx,
+			db.Conn(),
+			database.Migrations,
+			"migrations",
+		); err != nil {
 			return fmt.Errorf("run database migrations: %w", err)
 		}
+		return nil
+	case "backups":
+		if len(arguments) != 2 || arguments[1] != "activate" {
+			return errors.New("usage: deploycrate-ce backups activate")
+		}
+		cfg := config.NewConfig()
+		db, err := database.NewPostgres(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+		activated, err := services.NewBackupPolicyActivator(db).Activate(
+			ctx,
+			cfg.App.InstallationID,
+		)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("activated %d backup policies\n", activated)
 		return nil
 	default:
 		return fmt.Errorf("unknown deploycrate-ce command %q", arguments[0])
@@ -115,7 +145,10 @@ func runCommand(ctx context.Context, arguments []string) error {
 func startQueueProcessor(lc fx.Lifecycle, appCtx context.Context, p queue.Processor) {
 	var done <-chan struct{}
 	lc.Append(fx.Hook{
-		OnStart: func(context.Context) error {
+		OnStart: func(ctx context.Context) error {
+			if err := p.Seed(ctx); err != nil {
+				return fmt.Errorf("seed backup schedules: %w", err)
+			}
 			done = startInBackground(appCtx, "queue processor", p.Start)
 			return nil
 		},
@@ -157,11 +190,37 @@ func startServer(lc fx.Lifecycle, appCtx context.Context, r *router.Router, cfg 
 				var shutdownErr error
 				for _, shutdowner := range srv.Shutdowners {
 					if err := shutdowner.Shutdown(ctx); err != nil {
-						shutdownErr = errors.Join(shutdownErr, fmt.Errorf("server: shutdown component %T: %w", shutdowner, err))
+						shutdownErr = errors.Join(
+							shutdownErr,
+							fmt.Errorf("server: shutdown component %T: %w", shutdowner, err),
+						)
 					}
 				}
 				return shutdownErr
 			}, done)
+		},
+	})
+}
+
+func ensureInitialBackupsOnStartup(
+	lc fx.Lifecycle,
+	db storage.Pool,
+	scheduler *services.BackupScheduler,
+) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			policies, err := models.BackupPolicy.ActiveSchedules(ctx, db.Executor())
+			if err != nil {
+				return fmt.Errorf("load configured backup policies: %w", err)
+			}
+
+			for _, policy := range policies {
+				if err := scheduler.EnsureInitial(ctx, policy.ID); err != nil {
+					return fmt.Errorf("ensure initial backup for policy %s: %w", policy.ID, err)
+				}
+			}
+
+			return nil
 		},
 	})
 }

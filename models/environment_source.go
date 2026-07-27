@@ -33,7 +33,11 @@ func (e *EnvironmentSourceEntity) Validate() error {
 	return nil
 }
 
-func (es environmentSource) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentSourceEntity, error) {
+func (es environmentSource) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (EnvironmentSourceEntity, error) {
 	var entity EnvironmentSourceEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -57,7 +61,11 @@ type CreateEnvironmentSourceData struct {
 	ContainerRegistryID *uuid.UUID
 }
 
-func (es environmentSource) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentSourceData) (EnvironmentSourceEntity, error) {
+func (es environmentSource) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentSourceData,
+) (EnvironmentSourceEntity, error) {
 	entity := EnvironmentSourceEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
@@ -98,7 +106,11 @@ type UpdateEnvironmentSourceData struct {
 	ContainerRegistryID *uuid.UUID
 }
 
-func (es environmentSource) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentSourceData) (EnvironmentSourceEntity, error) {
+func (es environmentSource) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateEnvironmentSourceData,
+) (EnvironmentSourceEntity, error) {
 	entity := EnvironmentSourceEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
@@ -147,7 +159,10 @@ func (es environmentSource) Destroy(ctx context.Context, db storage.Executor, id
 	return err
 }
 
-func (es environmentSource) All(ctx context.Context, db storage.Executor) ([]EnvironmentSourceEntity, error) {
+func (es environmentSource) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]EnvironmentSourceEntity, error) {
 	var entities []EnvironmentSourceEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -166,7 +181,11 @@ type PaginatedEnvironmentSources struct {
 	TotalPages         int64
 }
 
-func (es environmentSource) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedEnvironmentSources, error) {
+func (es environmentSource) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedEnvironmentSources, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -205,7 +224,11 @@ func (es environmentSource) Paginate(ctx context.Context, db storage.Executor, p
 	}, nil
 }
 
-func (es environmentSource) Upsert(ctx context.Context, db storage.Executor, data CreateEnvironmentSourceData) (EnvironmentSourceEntity, error) {
+func (es environmentSource) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentSourceData,
+) (EnvironmentSourceEntity, error) {
 	entity := EnvironmentSourceEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),

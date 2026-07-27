@@ -3,6 +3,7 @@ package setup
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	caddyclients "deploycrate-ce/clients/caddy"
 	"deploycrate-ce/database"
+	"deploycrate-ce/internal/secretcrypto"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
 	"deploycrate-ce/services"
@@ -34,11 +36,19 @@ func (step setupStep) Check(ctx context.Context, cfg Config, runtime Runtime) (C
 	return step.check(ctx, cfg, runtime)
 }
 
-func (step setupStep) Apply(ctx context.Context, cfg Config, runtime Runtime, report Reporter) error {
+func (step setupStep) Apply(
+	ctx context.Context,
+	cfg Config,
+	runtime Runtime,
+	report Reporter,
+) error {
 	return step.apply(ctx, cfg, runtime, report)
 }
 
-func scriptSetupStep(id, description, scriptName string, environment func(Config) map[string]string) Step {
+func scriptSetupStep(
+	id, description, scriptName string,
+	environment func(Config) map[string]string,
+) Step {
 	return setupStep{
 		id: id, description: description,
 		apply: func(ctx context.Context, cfg Config, runtime Runtime, report Reporter) error {
@@ -58,38 +68,154 @@ func scriptSetupStep(id, description, scriptName string, environment func(Config
 func DefaultSteps() []Step {
 	return []Step{
 		scriptSetupStep("host-packages", "Install baseline host packages", "packages.sh", nil),
-		scriptSetupStep("deploycrate-user", "Create unrestricted deploycrate user and SSH access", "user.sh", func(cfg Config) map[string]string {
-			return map[string]string{"USERNAME": cfg.LinuxUser, "PASSWORD": cfg.Secrets.LinuxPassword, "SSH_PUBLIC_KEY": cfg.SSHPublicKey}
-		}),
-		scriptSetupStep("host-safety", "Configure journald, fail2ban, and swap", "host.sh", func(cfg Config) map[string]string {
-			return map[string]string{"SSH_PORT": fmt.Sprint(cfg.SSHPort)}
-		}),
-		scriptSetupStep("wireguard", "Configure the WireGuard mesh interface", "wireguard.sh", func(Config) map[string]string {
-			return map[string]string{
-				"WG_ADDRESS":     WireGuardPrivateAddress + "/16",
-				"WG_LISTEN_PORT": fmt.Sprint(WireGuardListenPort),
-			}
-		}),
-		scriptSetupStep("docker", "Install and configure Docker Engine", "docker.sh", func(cfg Config) map[string]string {
-			return map[string]string{"USERNAME": cfg.LinuxUser}
-		}),
-		scriptSetupStep("buildpacks", "Install the Cloud Native Buildpacks tooling", "buildpacks.sh", func(cfg Config) map[string]string {
-			return map[string]string{"USERNAME": cfg.LinuxUser}
-		}),
+		scriptSetupStep(
+			"server-users",
+			"Create the administrator and internal service account",
+			"user.sh",
+			func(cfg Config) map[string]string {
+				return map[string]string{
+					"ADMIN_USER":           cfg.AdminUser,
+					"SERVICE_USER":         cfg.ServiceUser,
+					"PASSWORD":             cfg.Secrets.ServerAdminPassword,
+					"SSH_PUBLIC_KEY":       cfg.SSHPublicKey,
+					"OWNER_SSH_PUBLIC_KEY": cfg.OwnerSSHPublicKey,
+				}
+			},
+		),
+		scriptSetupStep("backup-tools-0-18-1", "Install pinned backup tools and manifests", "backup.sh", nil),
+		sshCASetupStep(),
+		scriptSetupStep(
+			"host-safety",
+			"Configure journald, fail2ban, and swap",
+			"host.sh",
+			func(cfg Config) map[string]string {
+				return map[string]string{"SSH_PORT": fmt.Sprint(cfg.SSHPort)}
+			},
+		),
+		scriptSetupStep(
+			"wireguard",
+			"Configure the WireGuard mesh interface",
+			"wireguard.sh",
+			func(Config) map[string]string {
+				return map[string]string{
+					"WG_ADDRESS":     WireGuardPrivateAddress + "/16",
+					"WG_LISTEN_PORT": fmt.Sprint(WireGuardListenPort),
+				}
+			},
+		),
+		scriptSetupStep(
+			"node-exporter-1-11-1",
+			"Install hardened node-exporter on WireGuard",
+			"node-exporter.sh",
+			nil,
+		),
+		scriptSetupStep(
+			"docker",
+			"Install and configure Docker Engine",
+			"docker.sh",
+			func(cfg Config) map[string]string {
+				return map[string]string{
+					"ADMIN_USER":   cfg.AdminUser,
+					"SERVICE_USER": cfg.ServiceUser,
+				}
+			},
+		),
+		scriptSetupStep(
+			"clickhouse-25-8-28-1",
+			"Start pinned ClickHouse metrics storage",
+			"clickhouse.sh",
+			func(cfg Config) map[string]string {
+				return map[string]string{"CLICKHOUSE_PASSWORD": cfg.Secrets.ClickHousePassword}
+			},
+		),
+		scriptSetupStep(
+			"prometheus-3-13-1",
+			"Install Prometheus with 24-hour raw retention",
+			"prometheus.sh",
+			nil,
+		),
+		scriptSetupStep(
+			"buildpacks",
+			"Install the Cloud Native Buildpacks tooling",
+			"buildpacks.sh",
+			func(cfg Config) map[string]string {
+				return map[string]string{"SERVICE_USER": cfg.ServiceUser}
+			},
+		),
 		databaseStep(),
 		applicationBinaryStep(),
 		applicationConfigStep(),
 		migrationStep(),
 		adminStep(),
-		backupConfigStep(),
-		scriptSetupStep("application-service-caddy-2-11-4", "Configure blue-green systemd slots and start pinned Caddy", "service.sh", func(cfg Config) map[string]string {
-			return map[string]string{"USERNAME": cfg.LinuxUser}
-		}),
+		scriptSetupStep(
+			"application-service-caddy-2-11-4",
+			"Configure blue-green systemd slots and start pinned Caddy",
+			"service.sh",
+			func(cfg Config) map[string]string {
+				return map[string]string{"SERVICE_USER": cfg.ServiceUser}
+			},
+		),
 		healthStep(),
 		controlPlaneBootstrapStep(),
-		scriptSetupStep("ssh-hardening", "Harden SSH and configure the firewall", "ssh.sh", func(cfg Config) map[string]string {
-			return map[string]string{"USERNAME": cfg.LinuxUser, "SSH_PORT": fmt.Sprint(cfg.SSHPort)}
-		}),
+		scriptSetupStep(
+			"ssh-hardening",
+			"Harden SSH and configure the firewall",
+			"ssh.sh",
+			func(cfg Config) map[string]string {
+				return map[string]string{
+					"ADMIN_USER": cfg.AdminUser,
+					"SSH_PORT":   fmt.Sprint(cfg.SSHPort),
+				}
+			},
+		),
+		scriptSetupStep(
+			"service-health",
+			"Verify control-plane services, listeners, and active slot",
+			"service-health.sh",
+			func(cfg Config) map[string]string {
+				return map[string]string{
+					"DATABASE_EXTERNAL":   fmt.Sprint(cfg.Database.External),
+					"CLICKHOUSE_PASSWORD": cfg.Secrets.ClickHousePassword,
+					"ADMIN_USER":          cfg.AdminUser,
+					"SERVICE_USER":        cfg.ServiceUser,
+				}
+			},
+		),
+	}
+}
+
+func sshCASetupStep() Step {
+	return setupStep{
+		id:          "ssh-ca-recovery-v1",
+		description: "Create SSH CAs and verify encrypted recovery bundle",
+		apply: func(ctx context.Context, cfg Config, runtime Runtime, report Reporter) error {
+			script, err := loadScript("ssh-ca.sh")
+			if err != nil {
+				return err
+			}
+			if err := runtime.Shell.Run(ctx, "ssh-ca-recovery-v1", script, map[string]string{
+				"SERVICE_USER": cfg.ServiceUser,
+				"DOMAIN":       cfg.Domain,
+			}, report); err != nil {
+				return err
+			}
+			if runtime.DryRun {
+				return nil
+			}
+			if err := CreateSSHCARecoveryBundle(cfg.Secrets.SSHCARecoveryPassphrase); err != nil {
+				return err
+			}
+			checksum, err := SSHCARecoveryBundleChecksum()
+			if err != nil {
+				return err
+			}
+			report(Event{
+				Kind:   EventLog,
+				StepID: "ssh-ca-recovery-v1",
+				Line:   "SSH CA recovery bundle verified: " + checksum,
+			})
+			return nil
+		},
 	}
 }
 
@@ -98,7 +224,13 @@ func databaseStep() Step {
 		id: "database", description: "Configure local or external PostgreSQL",
 		apply: func(ctx context.Context, cfg Config, runtime Runtime, report Reporter) error {
 			if runtime.DryRun {
-				report(Event{Kind: EventLog, StepID: "database", Line: "dry run: database setup skipped"})
+				report(
+					Event{
+						Kind:   EventLog,
+						StepID: "database",
+						Line:   "dry run: database setup skipped",
+					},
+				)
 				return nil
 			}
 			if !cfg.Database.External {
@@ -107,7 +239,9 @@ func databaseStep() Step {
 					return err
 				}
 				return runtime.Shell.Run(ctx, "database", script, map[string]string{
-					"DB_NAME": cfg.Database.Name, "DB_USER": cfg.Database.User, "DB_PASSWORD": cfg.Secrets.DatabasePassword,
+					"DB_NAME":     cfg.Database.Name,
+					"DB_USER":     cfg.Database.User,
+					"DB_PASSWORD": cfg.Secrets.DatabasePassword,
 				}, report)
 			}
 			db, err := storage.NewPostgres(ctx, cfg.DatabaseURL())
@@ -128,12 +262,22 @@ func applicationBinaryStep() Step {
 			}
 			releaseInfo, releaseErr := os.Stat(ApplicationReleaseBinaryPath(cfg.Version))
 			slotInfo, slotErr := os.Stat(ApplicationSlotBinaryPath("blue"))
-			complete := releaseErr == nil && slotErr == nil && releaseInfo.Mode().IsRegular() && slotInfo.Mode().IsRegular()
-			return CheckResult{Complete: complete, Detail: "release binary and blue slot already installed"}, nil
+			complete := releaseErr == nil && slotErr == nil && releaseInfo.Mode().IsRegular() &&
+				slotInfo.Mode().IsRegular()
+			return CheckResult{
+				Complete: complete,
+				Detail:   "release binary and blue slot already installed",
+			}, nil
 		},
 		apply: func(ctx context.Context, cfg Config, runtime Runtime, report Reporter) error {
 			if runtime.DryRun {
-				report(Event{Kind: EventLog, StepID: "application-binary", Line: "dry run: release binary placement skipped"})
+				report(
+					Event{
+						Kind:   EventLog,
+						StepID: "application-binary",
+						Line:   "dry run: release binary placement skipped",
+					},
+				)
 				return nil
 			}
 			return InstallApplicationReleaseBinary(ctx, "", cfg.Version)
@@ -143,10 +287,17 @@ func applicationBinaryStep() Step {
 
 func controlPlaneBootstrapStep() Step {
 	return setupStep{
-		id: "control-plane-topology", description: "Create the control-plane topology and apply the Caddy route",
+		id:          "control-plane-topology",
+		description: "Create the control-plane topology and apply the Caddy route",
 		apply: func(ctx context.Context, cfg Config, runtimeState Runtime, report Reporter) error {
 			if runtimeState.DryRun {
-				report(Event{Kind: EventLog, StepID: "control-plane-topology", Line: "dry run: topology persistence and Caddy API configuration skipped"})
+				report(
+					Event{
+						Kind:   EventLog,
+						StepID: "control-plane-topology",
+						Line:   "dry run: topology persistence and Caddy API configuration skipped",
+					},
+				)
 				return nil
 			}
 
@@ -170,29 +321,60 @@ func controlPlaneBootstrapStep() Step {
 
 			routes := services.NewCaddyRouteService(db, caddyclients.New(""))
 			bootstrap := services.NewBootstrapService(db, routes)
+			backupInput, err := encryptedBootstrapBackupInput(cfg)
+			if err != nil {
+				return err
+			}
 			result, err := bootstrap.Bootstrap(ctx, services.BootstrapInput{
-				Domain: cfg.Domain, Version: cfg.Version,
-				ArtifactReference: ApplicationReleaseBinaryPath(cfg.Version), ArtifactDigest: digest,
-				Distribution: metadata["ID"], DistributionVersion: metadata["VERSION_ID"], Architecture: runtime.GOARCH,
-				DatabaseExternal: cfg.Database.External, DatabaseHost: cfg.Database.Host,
-				DatabasePort: cfg.Database.Port, DatabaseName: cfg.Database.Name, DatabaseSSLMode: cfg.Database.SSLMode,
+				Domain:  cfg.Domain,
+				Version: cfg.Version,
+				ArtifactReference: ApplicationReleaseBinaryPath(
+					cfg.Version,
+				),
+				ArtifactDigest:      digest,
+				Distribution:        metadata["ID"],
+				DistributionVersion: metadata["VERSION_ID"],
+				Architecture:        runtime.GOARCH,
+				DatabaseExternal:    cfg.Database.External,
+				DatabaseHost:        cfg.Database.Host,
+				DatabasePort:        cfg.Database.Port,
+				DatabaseName:        cfg.Database.Name,
+				DatabaseSSLMode:     cfg.Database.SSLMode,
+				Backup:              backupInput,
 				WireGuard: services.BootstrapWireGuardInput{
-					Interface: WireGuardInterface, NetworkCIDR: WireGuardNetworkCIDR,
-					PrivateAddress: WireGuardPrivateAddress, PublicKey: wireGuardIdentity.PublicKey,
+					Interface:           WireGuardInterface,
+					NetworkCIDR:         WireGuardNetworkCIDR,
+					PrivateAddress:      WireGuardPrivateAddress,
+					PublicKey:           wireGuardIdentity.PublicKey,
 					EncryptedPrivateKey: wireGuardIdentity.EncryptedPrivateKey,
-					Endpoint:            cfg.Domain + ":" + fmt.Sprint(WireGuardListenPort), ListenPort: WireGuardListenPort,
+					Endpoint: cfg.Domain + ":" + fmt.Sprint(
+						WireGuardListenPort,
+					),
+					ListenPort: WireGuardListenPort,
 				},
 			})
 			if err != nil {
 				return err
 			}
-			report(Event{Kind: EventLog, StepID: "control-plane-topology", Line: "bootstrap topology committed and Caddy route applied"})
+			report(
+				Event{
+					Kind:   EventLog,
+					StepID: "control-plane-topology",
+					Line:   "bootstrap topology committed and Caddy route applied",
+				},
+			)
 
 			script, err := loadScript("caddy-resume.sh")
 			if err != nil {
 				return err
 			}
-			if err := runtimeState.Shell.Run(ctx, "control-plane-topology", script, nil, report); err != nil {
+			if err := runtimeState.Shell.Run(
+				ctx,
+				"control-plane-topology",
+				script,
+				nil,
+				report,
+			); err != nil {
 				return err
 			}
 			if err := bootstrap.VerifyRoute(ctx, result.ExternalRouteID); err != nil {
@@ -203,12 +385,68 @@ func controlPlaneBootstrapStep() Step {
 	}
 }
 
+func encryptedBootstrapBackupInput(cfg Config) (services.BootstrapBackupInput, error) {
+	if !cfg.S3.Enabled {
+		return services.BootstrapBackupInput{}, nil
+	}
+	payload, err := json.Marshal(struct {
+		AccessKeyID     string `json:"access_key_id"`
+		SecretAccessKey string `json:"secret_access_key"`
+		ResticPassword  string `json:"restic_password"`
+		AgeIdentity     string `json:"age_identity"`
+	}{
+		AccessKeyID:     cfg.Secrets.S3AccessKeyID,
+		SecretAccessKey: cfg.Secrets.S3SecretAccessKey,
+		ResticPassword:  cfg.Secrets.ResticPassword,
+		AgeIdentity:     cfg.Secrets.AgeIdentity,
+	})
+	if err != nil {
+		return services.BootstrapBackupInput{}, fmt.Errorf("encode backup credential: %w", err)
+	}
+	defer clear(payload)
+	encrypted, err := secretcrypto.Encrypt(payload, cfg.Secrets.SessionEncryptionKey)
+	if err != nil {
+		return services.BootstrapBackupInput{}, fmt.Errorf("encrypt backup credential: %w", err)
+	}
+	serverRetention, err := json.Marshal(cfg.S3.ServerPolicy.Retention)
+	if err != nil {
+		return services.BootstrapBackupInput{}, err
+	}
+	databaseRetention, err := json.Marshal(cfg.S3.DatabasePolicy.Retention)
+	if err != nil {
+		return services.BootstrapBackupInput{}, err
+	}
+	return services.BootstrapBackupInput{
+		Enabled:                    true,
+		InstallationID:             cfg.InstallationID,
+		Provider:                   cfg.S3.Provider,
+		Endpoint:                   cfg.S3.Endpoint,
+		Region:                     cfg.S3.Region,
+		Bucket:                     cfg.S3.Bucket,
+		Prefix:                     cfg.S3.Prefix,
+		ForcePathStyle:             cfg.S3.UsePathStyle,
+		EncryptedCredentialPayload: encrypted,
+		ValidatedAt:                cfg.S3.ValidatedAt,
+		ServerSchedule:             cfg.S3.ServerPolicy.Schedule,
+		ServerRetention:            serverRetention,
+		DatabaseSchedule:           cfg.S3.DatabasePolicy.Schedule,
+		DatabaseRetention:          databaseRetention,
+	}, nil
+}
+
 func applicationConfigStep() Step {
 	return setupStep{
-		id: "application-config", description: "Write protected application secrets and configuration",
+		id:          "application-config-backups-v1",
+		description: "Write protected application secrets and configuration",
 		apply: func(_ context.Context, cfg Config, runtime Runtime, report Reporter) error {
 			if runtime.DryRun {
-				report(Event{Kind: EventLog, StepID: "application-config", Line: "dry run: application configuration skipped"})
+				report(
+					Event{
+						Kind:   EventLog,
+						StepID: "application-config-backups-v1",
+						Line:   "dry run: application configuration skipped",
+					},
+				)
 				return nil
 			}
 			return WriteApplicationEnvironment(cfg)
@@ -221,7 +459,13 @@ func migrationStep() Step {
 		id: "database-migrations", description: "Apply embedded database migrations",
 		apply: func(ctx context.Context, cfg Config, runtime Runtime, report Reporter) error {
 			if runtime.DryRun {
-				report(Event{Kind: EventLog, StepID: "database-migrations", Line: "dry run: migrations skipped"})
+				report(
+					Event{
+						Kind:   EventLog,
+						StepID: "database-migrations",
+						Line:   "dry run: migrations skipped",
+					},
+				)
 				return nil
 			}
 			db, err := storage.NewPostgres(ctx, cfg.DatabaseURL())
@@ -239,7 +483,13 @@ func adminStep() Step {
 		id: "application-admin", description: "Create or update the application administrator",
 		apply: func(ctx context.Context, cfg Config, runtime Runtime, report Reporter) error {
 			if runtime.DryRun {
-				report(Event{Kind: EventLog, StepID: "application-admin", Line: "dry run: administrator setup skipped"})
+				report(
+					Event{
+						Kind:   EventLog,
+						StepID: "application-admin",
+						Line:   "dry run: administrator setup skipped",
+					},
+				)
 				return nil
 			}
 			db, err := storage.NewPostgres(ctx, cfg.DatabaseURL())
@@ -247,42 +497,39 @@ func adminStep() Step {
 				return err
 			}
 			defer db.Close()
-			hashedPassword, err := models.HashPassword(cfg.Secrets.AdminPassword, cfg.Secrets.Pepper)
+			hashedPassword, err := models.HashPassword(
+				cfg.Secrets.AdminPassword,
+				cfg.Secrets.Pepper,
+			)
 			if err != nil {
 				return fmt.Errorf("hash administrator password: %w", err)
 			}
 			admin, err := models.User.FindByEmail(ctx, db.Executor(), cfg.AdminEmail)
 			if errors.Is(err, models.ErrNotFound) {
-				admin, err = models.User.Create(ctx, db.Executor(), cfg.Secrets.Pepper, models.CreateUserData{
-					Email:        cfg.AdminEmail,
-					PasswordPair: models.PasswordPair{Password: cfg.Secrets.AdminPassword, ConfirmPassword: cfg.Secrets.AdminPassword},
-				})
+				admin, err = models.User.Create(
+					ctx,
+					db.Executor(),
+					cfg.Secrets.Pepper,
+					models.CreateUserData{
+						Email: cfg.AdminEmail,
+						PasswordPair: models.PasswordPair{
+							Password:        cfg.Secrets.AdminPassword,
+							ConfirmPassword: cfg.Secrets.AdminPassword,
+						},
+					},
+				)
 			}
 			if err != nil {
 				return fmt.Errorf("find or create administrator: %w", err)
 			}
 			_, err = models.User.Update(ctx, db.Executor(), models.UpdateUserData{
-				ID: admin.ID, Email: cfg.AdminEmail, Password: []byte(hashedPassword), IsAdmin: true,
+				ID:               admin.ID,
+				Email:            cfg.AdminEmail,
+				Password:         []byte(hashedPassword),
+				IsAdmin:          true,
 				EmailValidatedAt: sql.NullTime{Time: time.Now(), Valid: true},
 			})
 			return err
-		},
-	}
-}
-
-func backupConfigStep() Step {
-	return setupStep{
-		id: "backup-destination", description: "Store S3-compatible backup configuration",
-		apply: func(_ context.Context, cfg Config, runtime Runtime, report Reporter) error {
-			if !cfg.S3.Enabled {
-				report(Event{Kind: EventLog, StepID: "backup-destination", Line: "S3-compatible backups were not selected"})
-				return nil
-			}
-			if runtime.DryRun {
-				report(Event{Kind: EventLog, StepID: "backup-destination", Line: "dry run: backup configuration skipped"})
-				return nil
-			}
-			return WriteBackupEnvironment(cfg)
 		},
 	}
 }
@@ -292,12 +539,23 @@ func healthStep() Step {
 		id: "health-check", description: "Verify the application health endpoint",
 		apply: func(ctx context.Context, _ Config, runtime Runtime, report Reporter) error {
 			if runtime.DryRun {
-				report(Event{Kind: EventLog, StepID: "health-check", Line: "dry run: health check skipped"})
+				report(
+					Event{
+						Kind:   EventLog,
+						StepID: "health-check",
+						Line:   "dry run: health check skipped",
+					},
+				)
 				return nil
 			}
 			client := &http.Client{Timeout: 5 * time.Second}
 			for attempt := 1; attempt <= 30; attempt++ {
-				request, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://127.0.0.1:8080/api/health", nil)
+				request, err := http.NewRequestWithContext(
+					ctx,
+					http.MethodGet,
+					"http://127.0.0.1:8080/api/health",
+					nil,
+				)
 				if err != nil {
 					return err
 				}

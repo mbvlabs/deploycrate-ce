@@ -5,7 +5,7 @@ base_url="${DEPLOYCRATE_DEVELOPMENT_BASE_URL:-https://get-dev.deploycrate.com}"
 base_url="${base_url%/}"
 
 fail() {
-  printf 'deploycrate development installer: %s\n' "$1" >&2
+  printf 'bootstrap development installer: %s\n' "$1" >&2
   exit 1
 }
 
@@ -36,12 +36,12 @@ download() {
   ) || fail "checksum verification failed for ${binary}"
 }
 
-download "dc-ce-cli" "deploycrate"
+download "dc-ce-cli" "bootstrap"
 
-install -m 0755 "${work_dir}/deploycrate" /usr/local/bin/deploycrate
+install -m 0755 "${work_dir}/bootstrap" /usr/local/bin/bootstrap
 
-printf 'DeployCrate CE development CLI installed\n'
+printf 'DeployCrate CE development bootstrap installed\n'
 if [ -r /dev/tty ] && [ -w /dev/tty ]; then
-  exec /usr/local/bin/deploycrate install </dev/tty >/dev/tty 2>/dev/tty
+  exec /usr/local/bin/bootstrap install </dev/tty >/dev/tty 2>/dev/tty
 fi
-printf 'Run sudo deploycrate install from a terminal to continue.\n'
+printf 'Run sudo bootstrap install from a terminal to continue.\n'

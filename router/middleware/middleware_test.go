@@ -135,7 +135,11 @@ func (s *failingSessionStore) New(request *http.Request, name string) (*sessions
 	return sessions.NewSession(s, name), s.err
 }
 
-func (s *failingSessionStore) Save(request *http.Request, response http.ResponseWriter, session *sessions.Session) error {
+func (s *failingSessionStore) Save(
+	request *http.Request,
+	response http.ResponseWriter,
+	session *sessions.Session,
+) error {
 	return nil
 }
 
@@ -171,10 +175,26 @@ func TestCSRFBypassRequiresBearerWithoutApplicationSession(t *testing.T) {
 		{name: "bearer API request", authorization: "Bearer token", path: "/api/users", want: true},
 		{name: "empty authorization", path: "/api/users", want: false},
 		{name: "empty bearer token", authorization: "Bearer", path: "/api/users", want: false},
-		{name: "malformed bearer header", authorization: "Bearer token extra", path: "/api/users", want: false},
-		{name: "other authorization scheme", authorization: "Basic token", path: "/api/users", want: false},
+		{
+			name:          "malformed bearer header",
+			authorization: "Bearer token extra",
+			path:          "/api/users",
+			want:          false,
+		},
+		{
+			name:          "other authorization scheme",
+			authorization: "Basic token",
+			path:          "/api/users",
+			want:          false,
+		},
 		{name: "non API path", authorization: "Bearer token", path: "/users", want: false},
-		{name: "cookie authenticated API request", authorization: "Bearer token", path: "/api/users", sessionCookie: true, want: false},
+		{
+			name:          "cookie authenticated API request",
+			authorization: "Bearer token",
+			path:          "/api/users",
+			sessionCookie: true,
+			want:          false,
+		},
 	}
 
 	for _, test := range tests {

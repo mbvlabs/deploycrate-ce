@@ -30,7 +30,11 @@ func (e *EnvironmentEntity) Validate() error {
 	return nil
 }
 
-func (e environment) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentEntity, error) {
+func (e environment) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (EnvironmentEntity, error) {
 	var entity EnvironmentEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -52,7 +56,11 @@ type CreateEnvironmentData struct {
 	ApplicationID      uuid.UUID
 }
 
-func (e environment) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentData) (EnvironmentEntity, error) {
+func (e environment) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentData,
+) (EnvironmentEntity, error) {
 	entity := EnvironmentEntity{
 		ID:                 uuid.New(),
 		CreatedAt:          time.Now(),
@@ -89,7 +97,11 @@ type UpdateEnvironmentData struct {
 	ApplicationID      uuid.UUID
 }
 
-func (e environment) Update(ctx context.Context, db storage.Executor, data UpdateEnvironmentData) (EnvironmentEntity, error) {
+func (e environment) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateEnvironmentData,
+) (EnvironmentEntity, error) {
 	entity := EnvironmentEntity{
 		ID:                 data.ID,
 		UpdatedAt:          time.Now(),
@@ -153,7 +165,11 @@ type PaginatedEnvironments struct {
 	TotalPages   int64
 }
 
-func (e environment) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedEnvironments, error) {
+func (e environment) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedEnvironments, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -192,7 +208,11 @@ func (e environment) Paginate(ctx context.Context, db storage.Executor, page, pa
 	}, nil
 }
 
-func (e environment) Upsert(ctx context.Context, db storage.Executor, data CreateEnvironmentData) (EnvironmentEntity, error) {
+func (e environment) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentData,
+) (EnvironmentEntity, error) {
 	entity := EnvironmentEntity{
 		ID:                 uuid.New(),
 		CreatedAt:          time.Now(),

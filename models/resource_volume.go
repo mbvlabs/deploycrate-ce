@@ -30,7 +30,11 @@ func (e *ResourceVolumeEntity) Validate() error {
 	return nil
 }
 
-func (rv resourceVolume) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (ResourceVolumeEntity, error) {
+func (rv resourceVolume) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (ResourceVolumeEntity, error) {
 	var entity ResourceVolumeEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -51,7 +55,11 @@ type CreateResourceVolumeData struct {
 	ServerID      uuid.UUID
 }
 
-func (rv resourceVolume) Create(ctx context.Context, db storage.Executor, data CreateResourceVolumeData) (ResourceVolumeEntity, error) {
+func (rv resourceVolume) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceVolumeData,
+) (ResourceVolumeEntity, error) {
 	entity := ResourceVolumeEntity{
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),
@@ -86,7 +94,11 @@ type UpdateResourceVolumeData struct {
 	ServerID      uuid.UUID
 }
 
-func (rv resourceVolume) Update(ctx context.Context, db storage.Executor, data UpdateResourceVolumeData) (ResourceVolumeEntity, error) {
+func (rv resourceVolume) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateResourceVolumeData,
+) (ResourceVolumeEntity, error) {
 	entity := ResourceVolumeEntity{
 		ID:            data.ID,
 		UpdatedAt:     time.Now(),
@@ -129,7 +141,10 @@ func (rv resourceVolume) Destroy(ctx context.Context, db storage.Executor, id uu
 	return err
 }
 
-func (rv resourceVolume) All(ctx context.Context, db storage.Executor) ([]ResourceVolumeEntity, error) {
+func (rv resourceVolume) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]ResourceVolumeEntity, error) {
 	var entities []ResourceVolumeEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -148,7 +163,11 @@ type PaginatedResourceVolumes struct {
 	TotalPages      int64
 }
 
-func (rv resourceVolume) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedResourceVolumes, error) {
+func (rv resourceVolume) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedResourceVolumes, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -187,7 +206,11 @@ func (rv resourceVolume) Paginate(ctx context.Context, db storage.Executor, page
 	}, nil
 }
 
-func (rv resourceVolume) Upsert(ctx context.Context, db storage.Executor, data CreateResourceVolumeData) (ResourceVolumeEntity, error) {
+func (rv resourceVolume) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceVolumeData,
+) (ResourceVolumeEntity, error) {
 	entity := ResourceVolumeEntity{
 		ID:            uuid.New(),
 		CreatedAt:     time.Now(),

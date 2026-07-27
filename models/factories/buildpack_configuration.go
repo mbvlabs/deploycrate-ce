@@ -21,7 +21,11 @@ type BuildpackConfigurationFactory struct {
 
 type BuildpackConfigurationOption func(*BuildpackConfigurationFactory)
 
-func BuildBuildpackConfiguration(environmentSourceID uuid.UUID, containerRegistryID uuid.UUID, opts ...BuildpackConfigurationOption) models.BuildpackConfigurationEntity {
+func BuildBuildpackConfiguration(
+	environmentSourceID uuid.UUID,
+	containerRegistryID uuid.UUID,
+	opts ...BuildpackConfigurationOption,
+) models.BuildpackConfigurationEntity {
 	f := &BuildpackConfigurationFactory{
 		BuildpackConfigurationEntity: models.BuildpackConfigurationEntity{
 			ContextPath:         faker.Word(),
@@ -40,7 +44,13 @@ func BuildBuildpackConfiguration(environmentSourceID uuid.UUID, containerRegistr
 	return f.BuildpackConfigurationEntity
 }
 
-func CreateBuildpackConfiguration(ctx context.Context, exec storage.Executor, environmentSourceID uuid.UUID, containerRegistryID uuid.UUID, opts ...BuildpackConfigurationOption) (models.BuildpackConfigurationEntity, error) {
+func CreateBuildpackConfiguration(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentSourceID uuid.UUID,
+	containerRegistryID uuid.UUID,
+	opts ...BuildpackConfigurationOption,
+) (models.BuildpackConfigurationEntity, error) {
 	built := BuildBuildpackConfiguration(environmentSourceID, containerRegistryID, opts...)
 
 	entity := models.BuildpackConfigurationEntity{
@@ -62,11 +72,23 @@ func CreateBuildpackConfiguration(ctx context.Context, exec storage.Executor, en
 	return entity, nil
 }
 
-func CreateBuildpackConfigurations(ctx context.Context, exec storage.Executor, environmentSourceID uuid.UUID, containerRegistryID uuid.UUID, count int, opts ...BuildpackConfigurationOption) ([]models.BuildpackConfigurationEntity, error) {
+func CreateBuildpackConfigurations(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentSourceID uuid.UUID,
+	containerRegistryID uuid.UUID,
+	count int,
+	opts ...BuildpackConfigurationOption,
+) ([]models.BuildpackConfigurationEntity, error) {
 	buildpackconfigurations := make([]models.BuildpackConfigurationEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateBuildpackConfiguration(ctx, exec, environmentSourceID, containerRegistryID, opts...)
+		entity, err := CreateBuildpackConfiguration(
+			ctx,
+			exec,
+			environmentSourceID,
+			containerRegistryID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create buildpackconfiguration %d: %w", i+1, err)
 		}
@@ -82,7 +104,9 @@ func WithBuildpackConfigurationsContextPath(value string) BuildpackConfiguration
 	}
 }
 
-func WithBuildpackConfigurationsBuilderReference(value sql.NullString) BuildpackConfigurationOption {
+func WithBuildpackConfigurationsBuilderReference(
+	value sql.NullString,
+) BuildpackConfigurationOption {
 	return func(f *BuildpackConfigurationFactory) {
 		f.BuildpackConfigurationEntity.BuilderReference = value
 	}

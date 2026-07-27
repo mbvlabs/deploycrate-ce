@@ -34,7 +34,11 @@ func (e *DeploymentEventEntity) Validate() error {
 	return nil
 }
 
-func (de deploymentEvent) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (DeploymentEventEntity, error) {
+func (de deploymentEvent) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (DeploymentEventEntity, error) {
 	var entity DeploymentEventEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -59,7 +63,11 @@ type CreateDeploymentEventData struct {
 	ChangeTaskAttemptID *uuid.UUID
 }
 
-func (de deploymentEvent) Create(ctx context.Context, db storage.Executor, data CreateDeploymentEventData) (DeploymentEventEntity, error) {
+func (de deploymentEvent) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateDeploymentEventData,
+) (DeploymentEventEntity, error) {
 	entity := DeploymentEventEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),
@@ -102,7 +110,11 @@ type UpdateDeploymentEventData struct {
 	ChangeTaskAttemptID *uuid.UUID
 }
 
-func (de deploymentEvent) Update(ctx context.Context, db storage.Executor, data UpdateDeploymentEventData) (DeploymentEventEntity, error) {
+func (de deploymentEvent) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateDeploymentEventData,
+) (DeploymentEventEntity, error) {
 	entity := DeploymentEventEntity{
 		ID:                  data.ID,
 		UpdatedAt:           time.Now(),
@@ -153,7 +165,10 @@ func (de deploymentEvent) Destroy(ctx context.Context, db storage.Executor, id u
 	return err
 }
 
-func (de deploymentEvent) All(ctx context.Context, db storage.Executor) ([]DeploymentEventEntity, error) {
+func (de deploymentEvent) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]DeploymentEventEntity, error) {
 	var entities []DeploymentEventEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -172,7 +187,11 @@ type PaginatedDeploymentEvents struct {
 	TotalPages       int64
 }
 
-func (de deploymentEvent) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedDeploymentEvents, error) {
+func (de deploymentEvent) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedDeploymentEvents, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -211,7 +230,11 @@ func (de deploymentEvent) Paginate(ctx context.Context, db storage.Executor, pag
 	}, nil
 }
 
-func (de deploymentEvent) Upsert(ctx context.Context, db storage.Executor, data CreateDeploymentEventData) (DeploymentEventEntity, error) {
+func (de deploymentEvent) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateDeploymentEventData,
+) (DeploymentEventEntity, error) {
 	entity := DeploymentEventEntity{
 		ID:                  uuid.New(),
 		CreatedAt:           time.Now(),

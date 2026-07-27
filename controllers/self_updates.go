@@ -28,19 +28,6 @@ func (s SelfUpdates) RegisterRoutes(r *router.Router) error {
 
 	_, err := r.AddRoute(echo.Route{
 		Method:  http.MethodGet,
-		Path:    routes.SystemOverview.Path(),
-		Name:    routes.SystemOverview.Name(),
-		Handler: s.Overview,
-		Middlewares: []echo.MiddlewareFunc{
-			middleware.AuthOnly,
-		},
-	})
-	if err != nil {
-		errList = append(errList, err)
-	}
-
-	_, err = r.AddRoute(echo.Route{
-		Method:  http.MethodGet,
 		Path:    routes.SystemUpdate.Path(),
 		Name:    routes.SystemUpdate.Name(),
 		Handler: s.Show,
@@ -68,21 +55,6 @@ func (s SelfUpdates) RegisterRoutes(r *router.Router) error {
 	return errors.Join(errList...)
 }
 
-func (s SelfUpdates) Overview(etx *echo.Context) error {
-	overview, err := s.service.Overview(etx.Request().Context())
-	if err != nil {
-		slog.ErrorContext(etx.Request().Context(), "failed to load DeployCrate CE system overview", "error", err)
-		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
-	}
-
-	return inertia.Page(etx, "System/Overview", inertia.Props{
-		"auth": inertia.Props{
-			"email": cookies.ExtractFromCookieApp(etx).Email,
-		},
-		"system": overview,
-	})
-}
-
 func (s SelfUpdates) Show(etx *echo.Context) error {
 	return inertia.Page(etx, "System/Update", inertia.Props{
 		"auth": inertia.Props{
@@ -102,7 +74,12 @@ func (s SelfUpdates) Create(etx *echo.Context) error {
 	case errors.Is(err, services.ErrUpdateInProgress):
 		err = cookies.AddFlash(etx, cookies.FlashInfo, err.Error())
 	default:
-		slog.ErrorContext(etx.Request().Context(), "failed to start DeployCrate CE update", "error", err)
+		slog.ErrorContext(
+			etx.Request().Context(),
+			"failed to start DeployCrate CE update",
+			"error",
+			err,
+		)
 		err = cookies.AddFlash(etx, cookies.FlashError, "Failed to start update: "+err.Error())
 	}
 	if err != nil {

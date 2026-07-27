@@ -20,7 +20,13 @@ type CaddyRouteFactory struct {
 
 type CaddyRouteOption func(*CaddyRouteFactory)
 
-func BuildCaddyRoute(externalID string, environmentTargetID uuid.UUID, environmentDomainID uuid.UUID, releaseID uuid.UUID, opts ...CaddyRouteOption) models.CaddyRouteEntity {
+func BuildCaddyRoute(
+	externalID string,
+	environmentTargetID uuid.UUID,
+	environmentDomainID uuid.UUID,
+	releaseID uuid.UUID,
+	opts ...CaddyRouteOption,
+) models.CaddyRouteEntity {
 	f := &CaddyRouteFactory{
 		CaddyRouteEntity: models.CaddyRouteEntity{
 			ExternalID:          externalID,
@@ -41,8 +47,21 @@ func BuildCaddyRoute(externalID string, environmentTargetID uuid.UUID, environme
 	return f.CaddyRouteEntity
 }
 
-func CreateCaddyRoute(ctx context.Context, exec storage.Executor, externalID string, environmentTargetID uuid.UUID, environmentDomainID uuid.UUID, releaseID uuid.UUID, opts ...CaddyRouteOption) (models.CaddyRouteEntity, error) {
-	built := BuildCaddyRoute(externalID, environmentTargetID, environmentDomainID, releaseID, opts...)
+func CreateCaddyRoute(
+	ctx context.Context,
+	exec storage.Executor,
+	externalID string,
+	environmentTargetID uuid.UUID,
+	environmentDomainID uuid.UUID,
+	releaseID uuid.UUID,
+	opts ...CaddyRouteOption,
+) (models.CaddyRouteEntity, error) {
+	built := BuildCaddyRoute(
+		externalID,
+		environmentTargetID,
+		environmentDomainID,
+		releaseID,
+		opts...)
 
 	entity := models.CaddyRouteEntity{
 		ID:                  uuid.New(),
@@ -65,11 +84,27 @@ func CreateCaddyRoute(ctx context.Context, exec storage.Executor, externalID str
 	return entity, nil
 }
 
-func CreateCaddyRoutes(ctx context.Context, exec storage.Executor, externalID string, environmentTargetID uuid.UUID, environmentDomainID uuid.UUID, releaseID uuid.UUID, count int, opts ...CaddyRouteOption) ([]models.CaddyRouteEntity, error) {
+func CreateCaddyRoutes(
+	ctx context.Context,
+	exec storage.Executor,
+	externalID string,
+	environmentTargetID uuid.UUID,
+	environmentDomainID uuid.UUID,
+	releaseID uuid.UUID,
+	count int,
+	opts ...CaddyRouteOption,
+) ([]models.CaddyRouteEntity, error) {
 	caddyroutes := make([]models.CaddyRouteEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateCaddyRoute(ctx, exec, externalID, environmentTargetID, environmentDomainID, releaseID, opts...)
+		entity, err := CreateCaddyRoute(
+			ctx,
+			exec,
+			externalID,
+			environmentTargetID,
+			environmentDomainID,
+			releaseID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create caddyroute %d: %w", i+1, err)
 		}

@@ -19,12 +19,12 @@ development-assets:
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
         -trimpath \
         -ldflags "-s -w -X main.version=${version}" \
-        -o "${cli_output}/deploycrate" \
-        ./cmd/deploycrate
+        -o "${cli_output}/bootstrap" \
+        ./cmd/bootstrap
 
     (
         cd "${cli_output}"
-        sha256sum deploycrate > deploycrate.sha256
+        sha256sum bootstrap > bootstrap.sha256
     )
     (
         cd "${app_output}"

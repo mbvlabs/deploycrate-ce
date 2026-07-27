@@ -35,7 +35,11 @@ func (e *ResourceEndpointEntity) Validate() error {
 	return nil
 }
 
-func (re resourceEndpoint) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (ResourceEndpointEntity, error) {
+func (re resourceEndpoint) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (ResourceEndpointEntity, error) {
 	var entity ResourceEndpointEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -61,7 +65,11 @@ type CreateResourceEndpointData struct {
 	PrivateNetworkID       *uuid.UUID
 }
 
-func (re resourceEndpoint) Create(ctx context.Context, db storage.Executor, data CreateResourceEndpointData) (ResourceEndpointEntity, error) {
+func (re resourceEndpoint) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceEndpointData,
+) (ResourceEndpointEntity, error) {
 	entity := ResourceEndpointEntity{
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),
@@ -106,7 +114,11 @@ type UpdateResourceEndpointData struct {
 	PrivateNetworkID       *uuid.UUID
 }
 
-func (re resourceEndpoint) Update(ctx context.Context, db storage.Executor, data UpdateResourceEndpointData) (ResourceEndpointEntity, error) {
+func (re resourceEndpoint) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateResourceEndpointData,
+) (ResourceEndpointEntity, error) {
 	entity := ResourceEndpointEntity{
 		ID:                     data.ID,
 		UpdatedAt:              time.Now(),
@@ -159,7 +171,10 @@ func (re resourceEndpoint) Destroy(ctx context.Context, db storage.Executor, id 
 	return err
 }
 
-func (re resourceEndpoint) All(ctx context.Context, db storage.Executor) ([]ResourceEndpointEntity, error) {
+func (re resourceEndpoint) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]ResourceEndpointEntity, error) {
 	var entities []ResourceEndpointEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -178,7 +193,11 @@ type PaginatedResourceEndpoints struct {
 	TotalPages        int64
 }
 
-func (re resourceEndpoint) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedResourceEndpoints, error) {
+func (re resourceEndpoint) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedResourceEndpoints, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -217,7 +236,11 @@ func (re resourceEndpoint) Paginate(ctx context.Context, db storage.Executor, pa
 	}, nil
 }
 
-func (re resourceEndpoint) Upsert(ctx context.Context, db storage.Executor, data CreateResourceEndpointData) (ResourceEndpointEntity, error) {
+func (re resourceEndpoint) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceEndpointData,
+) (ResourceEndpointEntity, error) {
 	entity := ResourceEndpointEntity{
 		ID:                     uuid.New(),
 		CreatedAt:              time.Now(),

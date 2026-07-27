@@ -19,7 +19,11 @@ type EnvironmentTargetFactory struct {
 
 type EnvironmentTargetOption func(*EnvironmentTargetFactory)
 
-func BuildEnvironmentTarget(environmentID uuid.UUID, serverID uuid.UUID, opts ...EnvironmentTargetOption) models.EnvironmentTargetEntity {
+func BuildEnvironmentTarget(
+	environmentID uuid.UUID,
+	serverID uuid.UUID,
+	opts ...EnvironmentTargetOption,
+) models.EnvironmentTargetEntity {
 	f := &EnvironmentTargetFactory{
 		EnvironmentTargetEntity: models.EnvironmentTargetEntity{
 			AttachedAt:    time.Time{},
@@ -36,7 +40,13 @@ func BuildEnvironmentTarget(environmentID uuid.UUID, serverID uuid.UUID, opts ..
 	return f.EnvironmentTargetEntity
 }
 
-func CreateEnvironmentTarget(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, serverID uuid.UUID, opts ...EnvironmentTargetOption) (models.EnvironmentTargetEntity, error) {
+func CreateEnvironmentTarget(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentID uuid.UUID,
+	serverID uuid.UUID,
+	opts ...EnvironmentTargetOption,
+) (models.EnvironmentTargetEntity, error) {
 	built := BuildEnvironmentTarget(environmentID, serverID, opts...)
 
 	entity := models.EnvironmentTargetEntity{
@@ -56,7 +66,14 @@ func CreateEnvironmentTarget(ctx context.Context, exec storage.Executor, environ
 	return entity, nil
 }
 
-func CreateEnvironmentTargets(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, serverID uuid.UUID, count int, opts ...EnvironmentTargetOption) ([]models.EnvironmentTargetEntity, error) {
+func CreateEnvironmentTargets(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentID uuid.UUID,
+	serverID uuid.UUID,
+	count int,
+	opts ...EnvironmentTargetOption,
+) ([]models.EnvironmentTargetEntity, error) {
 	environmenttargets := make([]models.EnvironmentTargetEntity, 0, count)
 
 	for i := range count {

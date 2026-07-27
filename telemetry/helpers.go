@@ -17,7 +17,11 @@ func StartSpan(ctx context.Context, spanName string) (context.Context, trace.Spa
 }
 
 // StartSpanAttrs starts a new span with the given name and attributes using the global tracer.
-func StartSpanAttrs(ctx context.Context, spanName string, attrs ...attribute.KeyValue) (context.Context, trace.Span) {
+func StartSpanAttrs(
+	ctx context.Context,
+	spanName string,
+	attrs ...attribute.KeyValue,
+) (context.Context, trace.Span) {
 	tracer := GetTracer(config.ServiceName)
 	ctx, span := tracer.Start(ctx, spanName)
 	span.SetAttributes(attrs...)

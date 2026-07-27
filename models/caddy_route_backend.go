@@ -27,7 +27,11 @@ func (e *CaddyRouteBackendEntity) Validate() error {
 	return nil
 }
 
-func (crb caddyRouteBackend) Find(ctx context.Context, db storage.Executor, id int32) (CaddyRouteBackendEntity, error) {
+func (crb caddyRouteBackend) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id int32,
+) (CaddyRouteBackendEntity, error) {
 	var entity CaddyRouteBackendEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -46,7 +50,11 @@ type CreateCaddyRouteBackendData struct {
 	InstanceID   uuid.UUID
 }
 
-func (crb caddyRouteBackend) Create(ctx context.Context, db storage.Executor, data CreateCaddyRouteBackendData) (CaddyRouteBackendEntity, error) {
+func (crb caddyRouteBackend) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateCaddyRouteBackendData,
+) (CaddyRouteBackendEntity, error) {
 	entity := CaddyRouteBackendEntity{
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
@@ -76,7 +84,11 @@ type UpdateCaddyRouteBackendData struct {
 	InstanceID   uuid.UUID
 }
 
-func (crb caddyRouteBackend) Update(ctx context.Context, db storage.Executor, data UpdateCaddyRouteBackendData) (CaddyRouteBackendEntity, error) {
+func (crb caddyRouteBackend) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateCaddyRouteBackendData,
+) (CaddyRouteBackendEntity, error) {
 	entity := CaddyRouteBackendEntity{
 		ID:           data.ID,
 		UpdatedAt:    time.Now(),
@@ -115,7 +127,10 @@ func (crb caddyRouteBackend) Destroy(ctx context.Context, db storage.Executor, i
 	return err
 }
 
-func (crb caddyRouteBackend) All(ctx context.Context, db storage.Executor) ([]CaddyRouteBackendEntity, error) {
+func (crb caddyRouteBackend) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]CaddyRouteBackendEntity, error) {
 	var entities []CaddyRouteBackendEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -134,7 +149,11 @@ type PaginatedCaddyRouteBackends struct {
 	TotalPages         int64
 }
 
-func (crb caddyRouteBackend) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedCaddyRouteBackends, error) {
+func (crb caddyRouteBackend) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedCaddyRouteBackends, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -173,7 +192,11 @@ func (crb caddyRouteBackend) Paginate(ctx context.Context, db storage.Executor, 
 	}, nil
 }
 
-func (crb caddyRouteBackend) Upsert(ctx context.Context, db storage.Executor, data CreateCaddyRouteBackendData) (CaddyRouteBackendEntity, error) {
+func (crb caddyRouteBackend) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateCaddyRouteBackendData,
+) (CaddyRouteBackendEntity, error) {
 	entity := CaddyRouteBackendEntity{
 		CreatedAt:    time.Now(),
 		UpdatedAt:    time.Now(),
@@ -202,7 +225,14 @@ func (crb caddyRouteBackend) Upsert(ctx context.Context, db storage.Executor, da
 	return entity, nil
 }
 
-func (crb caddyRouteBackend) FinishSystemUpdate(ctx context.Context, db storage.Executor, id int32, weight int32, removed bool, at time.Time) error {
+func (crb caddyRouteBackend) FinishSystemUpdate(
+	ctx context.Context,
+	db storage.Executor,
+	id int32,
+	weight int32,
+	removed bool,
+	at time.Time,
+) error {
 	query := db.NewUpdate().
 		TableExpr("caddy_route_backends").
 		Set("weight = ?", weight).

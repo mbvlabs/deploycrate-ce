@@ -110,14 +110,22 @@ func (rp ResetPasswords) Create(etx *echo.Context) error {
 			"error",
 			err,
 		)
-		if flashErr := cookies.AddFlash(etx, cookies.FlashError, "Failed to send password reset code"); flashErr != nil {
+		if flashErr := cookies.AddFlash(
+			etx,
+			cookies.FlashError,
+			"Failed to send password reset code",
+		); flashErr != nil {
 			return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 		}
 
 		return inertia.Redirect(etx, routes.PasswordNew.URL(), http.StatusSeeOther)
 	}
 
-	if flashErr := cookies.AddFlash(etx, cookies.FlashSuccess, "If an account exists with that email, you will receive password reset instructions."); flashErr != nil {
+	if flashErr := cookies.AddFlash(
+		etx,
+		cookies.FlashSuccess,
+		"If an account exists with that email, you will receive password reset instructions.",
+	); flashErr != nil {
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 
@@ -129,7 +137,11 @@ func (rp ResetPasswords) Edit(etx *echo.Context) error {
 
 	token := etx.Param("token")
 	if token == "" {
-		if flashErr := cookies.AddFlash(etx, cookies.FlashError, "Invalid or missing reset token"); flashErr != nil {
+		if flashErr := cookies.AddFlash(
+			etx,
+			cookies.FlashError,
+			"Invalid or missing reset token",
+		); flashErr != nil {
 			return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 		}
 		return inertia.Redirect(etx, routes.PasswordNew.URL(), http.StatusSeeOther)
@@ -202,7 +214,11 @@ func (rp ResetPasswords) Update(etx *echo.Context) error {
 		return inertia.Redirect(etx, redirectPath, http.StatusSeeOther)
 	}
 
-	if flashErr := cookies.AddFlash(etx, cookies.FlashSuccess, "Password reset successfully! Please log in."); flashErr != nil {
+	if flashErr := cookies.AddFlash(
+		etx,
+		cookies.FlashSuccess,
+		"Password reset successfully! Please log in.",
+	); flashErr != nil {
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 

@@ -27,7 +27,11 @@ func (e *ServerSSHCredentialEntity) Validate() error {
 	return nil
 }
 
-func (ssshc serverSSHCredential) Find(ctx context.Context, db storage.Executor, id int32) (ServerSSHCredentialEntity, error) {
+func (ssshc serverSSHCredential) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id int32,
+) (ServerSSHCredentialEntity, error) {
 	var entity ServerSSHCredentialEntity
 	if err := db.NewSelect().
 		Model(&entity).
@@ -47,7 +51,11 @@ type CreateServerSSHCredentialData struct {
 	ServerID      uuid.UUID
 }
 
-func (ssshc serverSSHCredential) Create(ctx context.Context, db storage.Executor, data CreateServerSSHCredentialData) (ServerSSHCredentialEntity, error) {
+func (ssshc serverSSHCredential) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateServerSSHCredentialData,
+) (ServerSSHCredentialEntity, error) {
 	entity := ServerSSHCredentialEntity{
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
@@ -79,7 +87,11 @@ type UpdateServerSSHCredentialData struct {
 	ServerID      uuid.UUID
 }
 
-func (ssshc serverSSHCredential) Update(ctx context.Context, db storage.Executor, data UpdateServerSSHCredentialData) (ServerSSHCredentialEntity, error) {
+func (ssshc serverSSHCredential) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateServerSSHCredentialData,
+) (ServerSSHCredentialEntity, error) {
 	entity := ServerSSHCredentialEntity{
 		ID:            data.ID,
 		UpdatedAt:     time.Now(),
@@ -120,7 +132,10 @@ func (ssshc serverSSHCredential) Destroy(ctx context.Context, db storage.Executo
 	return err
 }
 
-func (ssshc serverSSHCredential) All(ctx context.Context, db storage.Executor) ([]ServerSSHCredentialEntity, error) {
+func (ssshc serverSSHCredential) All(
+	ctx context.Context,
+	db storage.Executor,
+) ([]ServerSSHCredentialEntity, error) {
 	var entities []ServerSSHCredentialEntity
 	if err := db.NewSelect().
 		Model(&entities).
@@ -139,7 +154,11 @@ type PaginatedServerSSHCredentials struct {
 	TotalPages           int64
 }
 
-func (ssshc serverSSHCredential) Paginate(ctx context.Context, db storage.Executor, page, pageSize int64) (PaginatedServerSSHCredentials, error) {
+func (ssshc serverSSHCredential) Paginate(
+	ctx context.Context,
+	db storage.Executor,
+	page, pageSize int64,
+) (PaginatedServerSSHCredentials, error) {
 	if page < 1 {
 		page = 1
 	}
@@ -178,7 +197,11 @@ func (ssshc serverSSHCredential) Paginate(ctx context.Context, db storage.Execut
 	}, nil
 }
 
-func (ssshc serverSSHCredential) Upsert(ctx context.Context, db storage.Executor, data CreateServerSSHCredentialData) (ServerSSHCredentialEntity, error) {
+func (ssshc serverSSHCredential) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateServerSSHCredentialData,
+) (ServerSSHCredentialEntity, error) {
 	entity := ServerSSHCredentialEntity{
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),

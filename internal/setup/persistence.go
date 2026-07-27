@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,10 +16,11 @@ import (
 
 const (
 	ApplicationEnvPath      = "/etc/deploycrate-ce/app.env"
-	BackupEnvPath           = "/etc/deploycrate-ce/backup.env"
 	DefaultDatabaseCAPath   = "/etc/ssl/certs/deploycrate-ce-postgresql-ca.crt"
+	BootstrapCLIPath        = "/usr/local/bin/bootstrap"
+	BootstrapAppPayloadPath = "/usr/local/bin/deploycrate-ce"
 	maxDatabaseCAFileSize   = 1024 * 1024
-	finalInstallerSetupStep = "ssh-hardening"
+	finalInstallerSetupStep = "service-health"
 )
 
 type InstallationStatus string
@@ -32,7 +34,11 @@ const (
 )
 
 func ApplicationReleaseBinaryPath(version string) string {
-	return filepath.Join("/opt/deploycrate-ce/releases", releaseDirectoryName(version), "deploycrate-ce")
+	return filepath.Join(
+		"/opt/deploycrate-ce/releases",
+		releaseDirectoryName(version),
+		"deploycrate-ce",
+	)
 }
 
 func ApplicationSlotBinaryPath(slot string) string {
@@ -137,10 +143,28 @@ func RemoveTransientSecrets() error {
 }
 
 func CompleteCredentialHandoff() error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return fmt.Errorf("load installer config for backup activation: %w", err)
+	}
+	if err := WriteApplicationEnvironment(cfg); err != nil {
+		return fmt.Errorf("write final application environment: %w", err)
+	}
+	if err := runInstalledApplicationCommand(cfg, "backups", "activate"); err != nil {
+		return fmt.Errorf("activate backup policies for next boot: %w", err)
+	}
 	if err := NewStateStore().MarkCredentialsVerified(); err != nil {
 		return fmt.Errorf("record credential verification: %w", err)
 	}
-	return RemoveTransientSecrets()
+	if err := RemoveTransientSecrets(); err != nil {
+		return err
+	}
+	for _, path := range []string{BootstrapCLIPath, BootstrapAppPayloadPath} {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("remove temporary bootstrap binary %s: %w", path, err)
+		}
+	}
+	return nil
 }
 
 func persistDatabaseCA(cfg Config) (Config, error) {
@@ -167,7 +191,10 @@ func persistDatabaseCA(cfg Config) (Config, error) {
 		return Config{}, errors.New("database CA certificate is empty")
 	}
 	if info.Size() > maxDatabaseCAFileSize {
-		return Config{}, fmt.Errorf("database CA certificate exceeds %d bytes", maxDatabaseCAFileSize)
+		return Config{}, fmt.Errorf(
+			"database CA certificate exceeds %d bytes",
+			maxDatabaseCAFileSize,
+		)
 	}
 
 	file, err := os.Open(source)
@@ -183,7 +210,10 @@ func persistDatabaseCA(cfg Config) (Config, error) {
 		return Config{}, fmt.Errorf("close database CA certificate: %w", closeErr)
 	}
 	if len(data) > maxDatabaseCAFileSize {
-		return Config{}, fmt.Errorf("database CA certificate exceeds %d bytes", maxDatabaseCAFileSize)
+		return Config{}, fmt.Errorf(
+			"database CA certificate exceeds %d bytes",
+			maxDatabaseCAFileSize,
+		)
 	}
 	if err := writeProtectedFile(target, data, 0o644); err != nil {
 		return Config{}, fmt.Errorf("persist database CA certificate: %w", err)
@@ -209,9 +239,15 @@ func setupStepCompleted(state State, id string) bool {
 }
 
 func WriteApplicationEnvironment(cfg Config) error {
-	values := [][2]string{
+	values := applicationEnvironmentValues(cfg)
+	return writeProtectedFile(ApplicationEnvPath, []byte(formatEnvironment(values)), 0o600)
+}
+
+func applicationEnvironmentValues(cfg Config) [][2]string {
+	return [][2]string{
 		{"ENVIRONMENT", "production"},
 		{"PROJECT_NAME", "deploycrate-ce"},
+		{"INSTALLATION_ID", cfg.InstallationID},
 		{"DOMAIN", cfg.Domain},
 		{"PROTOCOL", "https"},
 		{"DEFAULT_SENDER_SIGNATURE", "noreply@" + cfg.Domain},
@@ -229,33 +265,53 @@ func WriteApplicationEnvironment(cfg Config) error {
 		{"SESSION_ENCRYPTION_KEY", cfg.Secrets.SessionEncryptionKey},
 		{"SESSION_MAX_AGE", "604800"},
 		{"TOKEN_SIGNING_KEY", cfg.Secrets.TokenSigningKey},
+		{"SSH_CA_USER_PRINCIPAL", cfg.AdminUser},
 		{"DEPLOYCRATE_CE_UPDATE_STATUS_PATH", "/var/lib/deploycrate-ce/runtime/self-update.json"},
 		{"CORS_ALLOWED_ORIGINS", "https://" + cfg.Domain},
 		{"CSRF_STRATEGY", "header_only"},
 		{"CSRF_TRUSTED_ORIGINS", "https://" + cfg.Domain},
 		{"PEPPER", cfg.Secrets.Pepper},
 		{"PREVIOUS_PEPPERS", ""},
+		{"METRICS_ROLLUP_ENABLED", "true"},
+		{"PROMETHEUS_URL", "http://127.0.0.1:9090"},
+		{"CLICKHOUSE_URL", "http://127.0.0.1:8123"},
+		{"CLICKHOUSE_DATABASE", "deploycrate"},
+		{"CLICKHOUSE_USER", "deploycrate"},
+		{"CLICKHOUSE_PASSWORD", cfg.Secrets.ClickHousePassword},
 		{"AWS_REGION", "us-east-1"},
 		{"AWS_SES_ACCESS_KEY_ID", ""},
 		{"AWS_SES_SECRET_ACCESS_KEY", ""},
 		{"AWS_SES_CONFIGURATION_SET", ""},
 	}
-	return writeProtectedFile(ApplicationEnvPath, []byte(formatEnvironment(values)), 0o600)
 }
 
-func WriteBackupEnvironment(cfg Config) error {
-	if !cfg.S3.Enabled {
-		return nil
+func runInstalledApplicationCommand(cfg Config, arguments ...string) error {
+	values := applicationEnvironmentValues(cfg)
+	overrides := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		overrides[value[0]] = struct{}{}
 	}
-	values := [][2]string{
-		{"S3_ENDPOINT", cfg.S3.Endpoint},
-		{"S3_REGION", cfg.S3.Region},
-		{"S3_BUCKET", cfg.S3.Bucket},
-		{"S3_ACCESS_KEY_ID", cfg.Secrets.S3AccessKeyID},
-		{"S3_SECRET_ACCESS_KEY", cfg.Secrets.S3SecretAccessKey},
-		{"S3_USE_PATH_STYLE", strconv.FormatBool(cfg.S3.UsePathStyle)},
+	environment := make([]string, 0, len(os.Environ())+len(values))
+	for _, value := range os.Environ() {
+		key, _, _ := strings.Cut(value, "=")
+		if _, overridden := overrides[key]; !overridden {
+			environment = append(environment, value)
+		}
 	}
-	return writeProtectedFile(BackupEnvPath, []byte(formatEnvironment(values)), 0o600)
+	for _, value := range values {
+		environment = append(environment, value[0]+"="+value[1])
+	}
+	command := exec.Command(ApplicationReleaseBinaryPath(cfg.Version), arguments...)
+	command.Env = environment
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf(
+			"installed application command failed: %w: %s",
+			err,
+			strings.TrimSpace(string(output)),
+		)
+	}
+	return nil
 }
 
 func InstallApplicationBinary(source string) error {
@@ -351,7 +407,11 @@ func releaseDirectoryName(version string) string {
 	}
 	var builder strings.Builder
 	for _, value := range version {
-		if value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' || value >= '0' && value <= '9' || value == '.' || value == '-' || value == '_' {
+		if value >= 'a' && value <= 'z' || value >= 'A' && value <= 'Z' ||
+			value >= '0' && value <= '9' ||
+			value == '.' ||
+			value == '-' ||
+			value == '_' {
 			builder.WriteRune(value)
 		} else {
 			builder.WriteByte('_')

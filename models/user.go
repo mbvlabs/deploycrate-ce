@@ -86,7 +86,11 @@ func (u user) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (User
 	return entity, nil
 }
 
-func (u user) FindByEmail(ctx context.Context, db storage.Executor, email string) (UserEntity, error) {
+func (u user) FindByEmail(
+	ctx context.Context,
+	db storage.Executor,
+	email string,
+) (UserEntity, error) {
 	var entity UserEntity
 	err := db.NewSelect().
 		Model(&entity).
@@ -152,7 +156,11 @@ type UpdateUserData struct {
 	IsAdmin          bool
 }
 
-func (u user) Update(ctx context.Context, db storage.Executor, data UpdateUserData) (UserEntity, error) {
+func (u user) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data UpdateUserData,
+) (UserEntity, error) {
 	var current UserEntity
 	err := db.NewSelect().
 		Model(&current).
