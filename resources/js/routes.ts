@@ -36,4 +36,5 @@ export const routes = {
   systemOverview: () => '/system',
   systemUpdate: () => '/system/update',
   systemUpdateCreate: () => '/system/update',
+  systemUpdateStatus: () => '/system/update/status',
 }

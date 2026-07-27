@@ -99,7 +99,7 @@ func main() {
 
 	<-ctx.Done()
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 
 	if err := app.Stop(shutdownCtx); err != nil {
@@ -176,8 +176,9 @@ func startQueueProcessor(lc fx.Lifecycle, appCtx context.Context, p queue.Proces
 }
 
 func startServer(lc fx.Lifecycle, appCtx context.Context, r *router.Router, cfg config.Config) {
+	requestBaseCtx := context.WithoutCancel(appCtx)
 	srv := server.New(
-		appCtx,
+		requestBaseCtx,
 		cfg.App.Host,
 		cfg.App.Port,
 		config.Env,

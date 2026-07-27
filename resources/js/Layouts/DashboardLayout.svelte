@@ -20,8 +20,8 @@
   import { SIDEBAR_COOKIE_NAME } from '@/Components/ui/sidebar/constants'
   import { routes } from '@/routes'
 
-  let { children, email }: { children: Snippet; email: string } = $props()
-  const appVersion = $derived(String($page.props.appVersion ?? 'dev'))
+  let { children, email, version }: { children: Snippet; email: string; version?: string } = $props()
+  const appVersion = $derived(version ?? String($page.props.appVersion ?? 'dev'))
 
   function initialSidebarOpen() {
     if (typeof document === 'undefined') return true

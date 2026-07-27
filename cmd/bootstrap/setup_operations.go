@@ -128,8 +128,16 @@ func bootstrapSetupControlPlane(ctx context.Context, input setup.BootstrapInput)
 		Domain: input.Domain, Version: input.Version,
 		ArtifactReference: input.ArtifactReference, ArtifactDigest: input.ArtifactDigest,
 		Distribution: input.Distribution, DistributionVersion: input.DistributionVersion,
-		Architecture: input.Architecture, DatabaseExternal: input.DatabaseExternal,
-		DatabaseHost: input.DatabaseHost, DatabasePort: input.DatabasePort,
+		Architecture: input.Architecture,
+		Capabilities: services.BootstrapCapabilitiesInput{
+			BuildpacksPackVersion: input.Capabilities.BuildpacksPackVersion,
+			CaddyVersion:          input.Capabilities.CaddyVersion,
+			DockerEngineVersion:   input.Capabilities.DockerEngineVersion,
+			ResticVersion:         input.Capabilities.ResticVersion,
+			WireGuardToolsVersion: input.Capabilities.WireGuardToolsVersion,
+		},
+		DatabaseExternal: input.DatabaseExternal,
+		DatabaseHost:     input.DatabaseHost, DatabasePort: input.DatabasePort,
 		DatabaseName: input.DatabaseName, DatabaseSSLMode: input.DatabaseSSLMode,
 		Backup: services.BootstrapBackupInput{
 			Enabled: input.Backup.Enabled, InstanceID: input.Backup.InstanceID,

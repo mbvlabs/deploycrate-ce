@@ -2,6 +2,7 @@
 set -euo pipefail
 
 : "${SERVICE_USER:?SERVICE_USER is required}"
+: "${CADDY_VERSION:?CADDY_VERSION is required}"
 
 install -d -m 0755 /opt/deploycrate-ce/slots/blue /opt/deploycrate-ce/slots/green
 install -d -m 0700 /etc/deploycrate-ce/slots
@@ -45,7 +46,6 @@ LimitNOFILE=65535
 WantedBy=multi-user.target
 EOF
 
-readonly CADDY_VERSION="2.11.4"
 readonly CADDY_MODULE="http.reverse_proxy.selection_policies.weighted_round_robin"
 architecture="$(dpkg --print-architecture)"
 case "${architecture}" in

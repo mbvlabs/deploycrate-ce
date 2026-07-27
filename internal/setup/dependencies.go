@@ -32,6 +32,7 @@ type BootstrapInput struct {
 	Distribution        string
 	DistributionVersion string
 	Architecture        string
+	Capabilities        BootstrapCapabilitiesInput
 	DatabaseExternal    bool
 	DatabaseHost        string
 	DatabasePort        int
@@ -39,6 +40,14 @@ type BootstrapInput struct {
 	DatabaseSSLMode     string
 	WireGuard           BootstrapWireGuardInput
 	Backup              BootstrapBackupInput
+}
+
+type BootstrapCapabilitiesInput struct {
+	BuildpacksPackVersion string
+	CaddyVersion          string
+	DockerEngineVersion   string
+	ResticVersion         string
+	WireGuardToolsVersion string
 }
 
 type BootstrapBackupInput struct {

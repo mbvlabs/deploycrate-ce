@@ -177,6 +177,16 @@ ClickHouse uses the Docker volume `deploycrate-ce-clickhouse`. Its `metric_rollu
 
 The installer also places the checksum-verified Buildpacks CLI at `/usr/local/bin/pack`. Caddy is installed from the pinned official Debian package at `/usr/bin/caddy` and held at the installer-supported version. Docker Engine and the remaining host packages use their standard Debian package locations.
 
+### GitHub and Buildpacks Setup
+
+After bootstrap, sign in to the dashboard and open **Connections > GitHub**. Choose a personal or organization owner and continue through GitHub's App manifest flow. DeployCrate creates one private GitHub App for this CE installation and encrypts its private key, webhook secret, and client secret in PostgreSQL. Production setup requires the configured public base URL to use HTTPS and must not use localhost or an unspecified address.
+
+Install the App on each required GitHub account, choose repository access, and return to DeployCrate. The connection page shows suspension, repository-selection mode, repository count, and last synchronization time. Use **Sync** after changing repository grants. Local archive actions do not uninstall the App on GitHub, and DeployCrate blocks archival while active application sources depend on the connection.
+
+Open **Applications > New** to create an application, its initial environment, GitHub source binding, Buildpacks configuration, and image destination in one transaction. A matching signed push creates a pending build and a durable River job. This delivery intentionally leaves that job unconsumed. Source checkout, `pack build`, registry push, release creation, and deployment are implemented by the later build-system phase.
+
+For webhook delivery, GitHub must reach the exact public path `/webhooks/github`. Do not place a browser login, body-rewriting proxy, or broad webhook path in front of it. DeployCrate validates `X-Hub-Signature-256` against the raw bounded request body and deduplicates deliveries by `X-GitHub-Delivery`.
+
 When local PostgreSQL is selected, its data is stored in the Docker named volume `deploycrate-ce-postgres`, mounted at `/var/lib/postgresql/data` inside the `deploycrate-ce-postgres` container. The physical host path belongs to Docker and can be found with `docker volume inspect deploycrate-ce-postgres`.
 
 The installer also writes host integration files outside the DeployCrate directories:

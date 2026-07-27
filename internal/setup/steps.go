@@ -8,9 +8,21 @@ import (
 	"net/http"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 
 	"deploycrate-ce/internal/secretcrypto"
+)
+
+const (
+	BuildpacksPackVersion          = "0.40.6"
+	CaddyVersion                   = "2.11.4"
+	DockerBuildxPackageVersion     = "0.35.0-1~debian.13~trixie"
+	DockerCEPackageVersion         = "5:29.6.2-1~debian.13~trixie"
+	DockerComposePackageVersion    = "5.3.1-1~debian.13~trixie"
+	DockerContainerdPackageVersion = "2.2.6-1~debian.13~trixie"
+	DockerEngineVersion            = "29.6.2"
+	ResticVersion                  = "0.18.1"
 )
 
 type setupStep struct {
@@ -76,7 +88,14 @@ func DefaultSteps(operations Operations) []Step {
 				}
 			},
 		),
-		scriptSetupStep("backup-tools-0-18-1", "Install pinned backup tools and manifests", "backup.sh", nil),
+		scriptSetupStep(
+			"backup-tools-0-18-1",
+			"Install pinned backup tools and manifests",
+			"backup.sh",
+			func(Config) map[string]string {
+				return map[string]string{"RESTIC_VERSION": ResticVersion}
+			},
+		),
 		sshCASetupStep(),
 		scriptSetupStep(
 			"host-safety",
@@ -104,13 +123,18 @@ func DefaultSteps(operations Operations) []Step {
 			nil,
 		),
 		scriptSetupStep(
-			"docker",
-			"Install and configure Docker Engine",
+			"docker-29-6-2",
+			"Install and configure the pinned Docker toolchain",
 			"docker.sh",
 			func(cfg Config) map[string]string {
 				return map[string]string{
-					"ADMIN_USER":   cfg.AdminUser,
-					"SERVICE_USER": cfg.ServiceUser,
+					"ADMIN_USER":                     cfg.AdminUser,
+					"CONTAINERD_PACKAGE_VERSION":     DockerContainerdPackageVersion,
+					"DOCKER_BUILDX_PACKAGE_VERSION":  DockerBuildxPackageVersion,
+					"DOCKER_CE_PACKAGE_VERSION":      DockerCEPackageVersion,
+					"DOCKER_COMPOSE_PACKAGE_VERSION": DockerComposePackageVersion,
+					"DOCKER_ENGINE_VERSION":          DockerEngineVersion,
+					"SERVICE_USER":                   cfg.ServiceUser,
 				}
 			},
 		),
@@ -129,11 +153,14 @@ func DefaultSteps(operations Operations) []Step {
 			nil,
 		),
 		scriptSetupStep(
-			"buildpacks",
+			"buildpacks-0-40-6",
 			"Install the Cloud Native Buildpacks tooling",
 			"buildpacks.sh",
 			func(cfg Config) map[string]string {
-				return map[string]string{"SERVICE_USER": cfg.ServiceUser}
+				return map[string]string{
+					"PACK_VERSION": BuildpacksPackVersion,
+					"SERVICE_USER": cfg.ServiceUser,
+				}
 			},
 		),
 		databaseStep(operations.ValidateDatabase),
@@ -146,7 +173,10 @@ func DefaultSteps(operations Operations) []Step {
 			"Configure blue-green systemd slots and start pinned Caddy",
 			"service.sh",
 			func(cfg Config) map[string]string {
-				return map[string]string{"SERVICE_USER": cfg.ServiceUser}
+				return map[string]string{
+					"CADDY_VERSION": CaddyVersion,
+					"SERVICE_USER":  cfg.ServiceUser,
+				}
 			},
 		),
 		healthStep(),
@@ -285,15 +315,16 @@ func controlPlaneBootstrapStep(
 	bootstrapControlPlane func(context.Context, BootstrapInput) (string, error),
 	verifyControlPlaneRoute func(context.Context, string, string) error,
 ) Step {
+	const stepID = "control-plane-topology-capabilities-v1"
 	return setupStep{
-		id:          "control-plane-topology",
+		id:          stepID,
 		description: "Create the control-plane topology and apply the Caddy route",
 		apply: func(ctx context.Context, cfg Config, runtimeState Runtime, report Reporter) error {
 			if runtimeState.DryRun {
 				report(
 					Event{
 						Kind:   EventLog,
-						StepID: "control-plane-topology",
+						StepID: stepID,
 						Line:   "dry run: topology persistence and Caddy API configuration skipped",
 					},
 				)
@@ -319,6 +350,10 @@ func controlPlaneBootstrapStep(
 			if err != nil {
 				return err
 			}
+			wireGuardToolsVersion, err := installedWireGuardToolsVersion(ctx, runtimeState.Shell)
+			if err != nil {
+				return err
+			}
 			externalRouteID, err := bootstrapControlPlane(ctx, BootstrapInput{
 				DatabaseURL: cfg.DatabaseURL(),
 				Domain:      cfg.Domain,
@@ -330,12 +365,19 @@ func controlPlaneBootstrapStep(
 				Distribution:        metadata["ID"],
 				DistributionVersion: metadata["VERSION_ID"],
 				Architecture:        runtime.GOARCH,
-				DatabaseExternal:    cfg.Database.External,
-				DatabaseHost:        cfg.Database.Host,
-				DatabasePort:        cfg.Database.Port,
-				DatabaseName:        cfg.Database.Name,
-				DatabaseSSLMode:     cfg.Database.SSLMode,
-				Backup:              backupInput,
+				Capabilities: BootstrapCapabilitiesInput{
+					BuildpacksPackVersion: BuildpacksPackVersion,
+					CaddyVersion:          CaddyVersion,
+					DockerEngineVersion:   DockerEngineVersion,
+					ResticVersion:         ResticVersion,
+					WireGuardToolsVersion: wireGuardToolsVersion,
+				},
+				DatabaseExternal: cfg.Database.External,
+				DatabaseHost:     cfg.Database.Host,
+				DatabasePort:     cfg.Database.Port,
+				DatabaseName:     cfg.Database.Name,
+				DatabaseSSLMode:  cfg.Database.SSLMode,
+				Backup:           backupInput,
 				WireGuard: BootstrapWireGuardInput{
 					Interface:           WireGuardInterface,
 					NetworkCIDR:         WireGuardNetworkCIDR,
@@ -354,7 +396,7 @@ func controlPlaneBootstrapStep(
 			report(
 				Event{
 					Kind:   EventLog,
-					StepID: "control-plane-topology",
+					StepID: stepID,
 					Line:   "bootstrap topology committed and Caddy route applied",
 				},
 			)
@@ -365,7 +407,7 @@ func controlPlaneBootstrapStep(
 			}
 			if err := runtimeState.Shell.Run(
 				ctx,
-				"control-plane-topology",
+				stepID,
 				script,
 				nil,
 				report,
@@ -378,6 +420,22 @@ func controlPlaneBootstrapStep(
 			return nil
 		},
 	}
+}
+
+func installedWireGuardToolsVersion(ctx context.Context, shell Shell) (string, error) {
+	output, err := shell.Output(ctx, "wg", "--version")
+	if err != nil {
+		return "", fmt.Errorf("read WireGuard tools version: %w", err)
+	}
+	fields := strings.Fields(output)
+	if len(fields) < 2 || fields[0] != "wireguard-tools" {
+		return "", fmt.Errorf("unexpected WireGuard tools version output %q", output)
+	}
+	version := strings.TrimPrefix(fields[1], "v")
+	if version == "" {
+		return "", fmt.Errorf("unexpected WireGuard tools version output %q", output)
+	}
+	return version, nil
 }
 
 func encryptedBootstrapBackupInput(cfg Config) (BootstrapBackupInput, error) {
