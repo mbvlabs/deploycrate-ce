@@ -499,6 +499,17 @@ func createBootstrapClickHouseResource(
 	if err != nil {
 		return fmt.Errorf("create bootstrap ClickHouse installation: %w", err)
 	}
+	if err := createBootstrapResourceVolume(
+		ctx,
+		exec,
+		resource.ID,
+		installation.ID,
+		serverID,
+		"deploycrate-ce-clickhouse",
+		"/var/lib/clickhouse",
+	); err != nil {
+		return fmt.Errorf("create bootstrap ClickHouse volume: %w", err)
+	}
 	endpoint, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
 		Name:                   "ClickHouse HTTP",
 		Role:                   "primary",
@@ -513,6 +524,20 @@ func createBootstrapClickHouseResource(
 	})
 	if err != nil {
 		return fmt.Errorf("create bootstrap ClickHouse endpoint: %w", err)
+	}
+	if _, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
+		Name:                   "WireGuard ClickHouse HTTP",
+		Role:                   "wireguard",
+		Address:                WireGuardPrivateAddress,
+		Port:                   8123,
+		Protocol:               "http",
+		TlsMode:                "disable",
+		Settings:               json.RawMessage(`{"database":"deploycrate","user":"deploycrate","external":false}`),
+		ResourceID:             resource.ID,
+		ResourceInstallationID: &installation.ID,
+		PrivateNetworkID:       &networkID,
+	}); err != nil {
+		return fmt.Errorf("create bootstrap ClickHouse WireGuard endpoint: %w", err)
 	}
 	if _, err := models.EnvironmentResource.Create(
 		ctx,
@@ -572,6 +597,17 @@ func createBootstrapDatabaseResource(
 		if err != nil {
 			return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap database installation: %w", err)
 		}
+		if err := createBootstrapResourceVolume(
+			ctx,
+			exec,
+			resource.ID,
+			installation.ID,
+			serverID,
+			"deploycrate-ce-postgres",
+			"/var/lib/postgresql/data",
+		); err != nil {
+			return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap database volume: %w", err)
+		}
 		installationID = &installation.ID
 		endpointNetworkID = &networkID
 	}
@@ -596,6 +632,22 @@ func createBootstrapDatabaseResource(
 	if err != nil {
 		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap database endpoint: %w", err)
 	}
+	if !input.DatabaseExternal {
+		if _, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
+			Name:                   "WireGuard PostgreSQL",
+			Role:                   "wireguard",
+			Address:                WireGuardPrivateAddress,
+			Port:                   int32(input.DatabasePort),
+			Protocol:               "postgresql",
+			TlsMode:                input.DatabaseSSLMode,
+			Settings:               json.RawMessage(fmt.Sprintf(`{"database":%q,"external":false}`, input.DatabaseName)),
+			ResourceID:             resource.ID,
+			ResourceInstallationID: installationID,
+			PrivateNetworkID:       endpointNetworkID,
+		}); err != nil {
+			return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap database WireGuard endpoint: %w", err)
+		}
+	}
 	binding, err := models.EnvironmentResource.Create(ctx, exec, models.CreateEnvironmentResourceData{
 		Alias: "database",
 		Configuration: json.RawMessage(
@@ -611,6 +663,37 @@ func createBootstrapDatabaseResource(
 	return bootstrapDatabaseTopology{
 		ResourceID: resource.ID, EnvironmentResourceID: binding.ID, InstallationID: installationID,
 	}, nil
+}
+
+func createBootstrapResourceVolume(
+	ctx context.Context,
+	exec storage.Executor,
+	resourceID, installationID, serverID uuid.UUID,
+	name, mountPath string,
+) error {
+	configuration, err := json.Marshal(map[string]string{"volume": name})
+	if err != nil {
+		return fmt.Errorf("encode volume configuration: %w", err)
+	}
+	volume, err := models.ResourceVolume.Create(ctx, exec, models.CreateResourceVolumeData{
+		Name:          name,
+		Driver:        "docker",
+		Configuration: configuration,
+		ResourceID:    resourceID,
+		ServerID:      serverID,
+	})
+	if err != nil {
+		return fmt.Errorf("create resource volume: %w", err)
+	}
+	if _, err := models.ResourceVolumeMount.Create(ctx, exec, models.CreateResourceVolumeMountData{
+		MountPath:              mountPath,
+		ReadOnly:               false,
+		ResourceVolumeID:       volume.ID,
+		ResourceInstallationID: installationID,
+	}); err != nil {
+		return fmt.Errorf("create resource volume mount: %w", err)
+	}
+	return nil
 }
 
 func createBootstrapBackups(

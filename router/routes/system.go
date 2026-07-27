@@ -16,9 +16,44 @@ var SystemDeployments = routing.NewSimpleRoute(
 	SystemPrefix,
 )
 
-var SystemDatabase = routing.NewSimpleRoute(
-	"/database",
-	"system.database",
+var SystemResources = routing.NewSimpleRoute(
+	"/resources",
+	"system.resources",
+	SystemPrefix,
+)
+
+var SystemResource = routing.NewRouteWithUUIDID(
+	"/resources/:id",
+	"system.resource",
+	SystemPrefix,
+)
+
+var SystemResourceEndpointCreate = routing.NewRouteWithUUIDID(
+	"/resources/:id/endpoints",
+	"system.resource.endpoint.create",
+	SystemPrefix,
+)
+
+var SystemResourceWireGuardDeviceCreate = routing.NewRouteWithUUIDID(
+	"/resources/:id/wireguard-devices",
+	"system.resource.wireguard-device.create",
+	SystemPrefix,
+)
+
+type SystemResourceWireGuardDeviceParams struct {
+	ResourceID string `param:"resourceID"`
+	DeviceID   string `param:"deviceID"`
+}
+
+var SystemResourceWireGuardDeviceDestroy = routing.NewRouteWithParams[SystemResourceWireGuardDeviceParams](
+	"/resources/:resourceID/wireguard-devices/:deviceID",
+	"system.resource.wireguard-device.destroy",
+	SystemPrefix,
+)
+
+var SystemWireGuardDeviceDestroy = routing.NewRouteWithUUIDID(
+	"/wireguard-devices/:id",
+	"system.wireguard-device.destroy",
 	SystemPrefix,
 )
 

@@ -14,6 +14,7 @@ import (
 )
 
 const WireGuardMeshCIDR = "10.99.0.0/16"
+const WireGuardPrivateAddress = "10.99.0.1"
 
 type WireGuardDesiredPeer struct {
 	PublicKey           string

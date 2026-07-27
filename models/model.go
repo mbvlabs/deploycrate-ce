@@ -11,6 +11,10 @@ type (
 	serverStatus                 struct{}
 	wireGuardPeer                struct{}
 	wireGuardPeerStatus          struct{}
+	wireGuardDevice              struct{}
+	wireGuardDeviceResourceGrant struct{}
+	wireGuardGrantApplication    struct{}
+	wireGuardDeviceStatus        struct{}
 	environment                  struct{}
 	containerRegistry            struct{}
 	environmentSource            struct{}
@@ -71,6 +75,10 @@ var (
 	ServerStatus                 serverStatus
 	WireGuardPeer                wireGuardPeer
 	WireGuardPeerStatus          wireGuardPeerStatus
+	WireGuardDevice              wireGuardDevice
+	WireGuardDeviceResourceGrant wireGuardDeviceResourceGrant
+	WireGuardGrantApplication    wireGuardGrantApplication
+	WireGuardDeviceStatus        wireGuardDeviceStatus
 	Environment                  environment
 	ContainerRegistry            containerRegistry
 	EnvironmentSource            environmentSource

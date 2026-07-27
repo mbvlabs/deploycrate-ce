@@ -17,3 +17,8 @@ if [ -n "${missing}" ]; then
   DEBIAN_FRONTEND=noninteractive apt-get -o dpkg::lock::timeout=300 update
   DEBIAN_FRONTEND=noninteractive apt-get -o dpkg::lock::timeout=300 install -y ${missing}
 fi
+
+if [ ! -x /usr/lib/systemd/systemd-socket-proxyd ] && [ ! -x /lib/systemd/systemd-socket-proxyd ]; then
+  printf 'systemd-socket-proxyd is required for private Resource listeners\n' >&2
+  exit 1
+fi

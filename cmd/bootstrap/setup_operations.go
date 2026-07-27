@@ -84,7 +84,7 @@ func runSetupMigrations(ctx context.Context, databaseURL string) error {
 		return err
 	}
 	defer db.Close()
-	return storage.RunMigrations(ctx, db.Conn(), database.Migrations, "migrations")
+	return database.ApplyMigrations(ctx, db)
 }
 
 func ensureSetupAdmin(ctx context.Context, input setup.AdminInput) error {

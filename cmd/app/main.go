@@ -17,6 +17,7 @@ import (
 	"deploycrate-ce/database"
 	"deploycrate-ce/email"
 	"deploycrate-ce/internal/inertia"
+	"deploycrate-ce/internal/resourceaccess"
 	"deploycrate-ce/internal/server"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
@@ -87,6 +88,7 @@ func main() {
 		controllers.Module,
 		router.Module,
 
+		fx.Invoke(runMigrationsOnStartup),
 		fx.Invoke(startQueueProcessor),
 		fx.Invoke(startServer),
 		fx.Invoke(ensureInitialBackupsOnStartup),
@@ -126,12 +128,7 @@ func runCommand(ctx context.Context, arguments []string) error {
 			return err
 		}
 		defer db.Close()
-		if err := storage.RunMigrations(
-			ctx,
-			db.Conn(),
-			database.Migrations,
-			"migrations",
-		); err != nil {
+		if err := database.ApplyMigrations(ctx, db); err != nil {
 			return fmt.Errorf("run database migrations: %w", err)
 		}
 		return nil
@@ -154,9 +151,22 @@ func runCommand(ctx context.Context, arguments []string) error {
 		}
 		fmt.Printf("activated %d backup policies\n", activated)
 		return nil
+	case "host-resource-access":
+		return resourceaccess.RunHostCommand(arguments[1:])
 	default:
 		return fmt.Errorf("unknown deploycrate-ce command %q", arguments[0])
 	}
+}
+
+func runMigrationsOnStartup(lc fx.Lifecycle, db storage.Pool) {
+	lc.Append(fx.Hook{
+		OnStart: func(ctx context.Context) error {
+			if err := database.ApplyMigrations(ctx, db); err != nil {
+				return fmt.Errorf("run startup database migrations: %w", err)
+			}
+			return nil
+		},
+	})
 }
 
 func startQueueProcessor(lc fx.Lifecycle, appCtx context.Context, p queue.Processor) {

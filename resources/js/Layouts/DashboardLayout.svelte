@@ -162,11 +162,11 @@
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive={$page.url === routes.systemDatabase()} tooltipContent="Database">
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.systemResources())} tooltipContent="Resources">
                 {#snippet child({ props })}
-                  <Link {...props} href={routes.systemDatabase()}>
+                  <Link {...props} href={routes.systemResources()}>
                     <DatabaseIcon />
-                    <span>Database</span>
+                    <span>Resources</span>
                   </Link>
                 {/snippet}
               </Sidebar.MenuButton>

@@ -1,8 +1,11 @@
 <script lang="ts">
+  import { router } from '@inertiajs/svelte'
   import * as Accordion from '@/Components/ui/accordion'
+  import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
   import JsonCode from '@/Components/JsonCode.svelte'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
+  import { routes } from '@/routes'
 
   type Network = {
     networkId: string
@@ -57,7 +60,19 @@
     backendPort: number
   }
 
-  let { auth, network }: { auth: { email: string }; network: Network } = $props()
+  type Device = {
+    id: string
+    name: string
+    ownerEmail: string
+    privateAddress: string
+    activatedAt: string
+    grantCount: number
+    state: string
+    latestHandshakeAt: string | null
+    observedAt: string | null
+  }
+
+  let { auth, network, devices }: { auth: { email: string }; network: Network; devices: Device[] } = $props()
   let openRecords = $state<string[]>([])
 
   const stateLabel = (value: string) => value ? value.replaceAll('_', ' ') : 'Unknown'
@@ -66,6 +81,9 @@
     if (!value || typeof value !== 'object' || Array.isArray(value)) return ''
     const field = (value as Record<string, unknown>)[key]
     return field === undefined || field === null ? '' : String(field)
+  }
+  function revokeDevice(deviceId: string) {
+    router.delete(routes.systemWireGuardDeviceDestroy(deviceId))
   }
 </script>
 
@@ -323,6 +341,32 @@
           </dl>
         {:else}
           <p class="text-sm text-muted-foreground">No active WireGuard peer is recorded for the system server.</p>
+        {/if}
+      </Card.Content>
+    </Card.Root>
+
+    <Card.Root>
+      <Card.Header>
+        <Card.Title>Developer WireGuard devices</Card.Title>
+        <Card.Description>Roaming devices enrolled for private Resource access. Revoking a device removes every remaining grant.</Card.Description>
+      </Card.Header>
+      <Card.Content>
+        {#if devices.length === 0}
+          <p class="text-sm text-muted-foreground">No developer devices are enrolled.</p>
+        {:else}
+          <div class="space-y-3">
+            {#each devices as device (device.id)}
+              <div class="flex flex-col justify-between gap-3 border border-border p-4 sm:flex-row sm:items-center">
+                <div>
+                  <p class="font-medium">{device.name}</p>
+                  <p class="mt-1 font-mono text-xs">{device.privateAddress} · {device.grantCount} active grant{device.grantCount === 1 ? '' : 's'}</p>
+                  <p class="mt-1 text-xs text-muted-foreground">Owned by {device.ownerEmail}</p>
+                  <p class="mt-1 text-xs text-muted-foreground">{stateLabel(device.state)} · latest handshake {timestamp(device.latestHandshakeAt)}</p>
+                </div>
+                <Button variant="destructive" size="sm" onclick={() => revokeDevice(device.id)}>Revoke device</Button>
+              </div>
+            {/each}
+          </div>
         {/if}
       </Card.Content>
     </Card.Root>
