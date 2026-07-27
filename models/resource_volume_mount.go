@@ -6,6 +6,8 @@ import (
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
 	"errors"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,7 +27,22 @@ type ResourceVolumeMountEntity struct {
 }
 
 func (e *ResourceVolumeMountEntity) Validate() error {
-	return nil
+	e.MountPath = strings.TrimSpace(e.MountPath)
+	builder := validation.NewBuilder()
+	if e.MountPath == "" {
+		builder.Add("mountPath", "required", "mount path is required")
+	} else if !filepath.IsAbs(e.MountPath) {
+		builder.Add("mountPath", "absolute", "mount path must be absolute")
+	} else if filepath.Clean(e.MountPath) != e.MountPath {
+		builder.Add("mountPath", "normalized", "mount path must be normalized")
+	}
+	if e.ResourceVolumeID == uuid.Nil {
+		builder.Add("resourceVolumeId", "required", "volume is required")
+	}
+	if e.ResourceInstallationID == uuid.Nil {
+		builder.Add("resourceInstallationId", "required", "installation is required")
+	}
+	return builder.Err()
 }
 
 func (rvm resourceVolumeMount) Find(

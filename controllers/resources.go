@@ -1,0 +1,757 @@
+package controllers
+
+import (
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
+	"strings"
+
+	"deploycrate-ce/internal/inertia"
+	"deploycrate-ce/internal/validation"
+	"deploycrate-ce/models"
+	"deploycrate-ce/router"
+	"deploycrate-ce/router/cookies"
+	"deploycrate-ce/router/middleware"
+	"deploycrate-ce/router/routes"
+	"deploycrate-ce/services"
+
+	"github.com/google/uuid"
+	"github.com/labstack/echo/v5"
+)
+
+type Resources struct {
+	service *services.ResourceManagement
+}
+
+func NewResources(service *services.ResourceManagement) Resources {
+	return Resources{service: service}
+}
+
+func (controller Resources) RegisterRoutes(r *router.Router) error {
+	definitions := []struct {
+		method string
+		route  interface {
+			Path() string
+			Name() string
+		}
+		handler echo.HandlerFunc
+	}{
+		{http.MethodGet, routes.Resources, controller.Index},
+		{http.MethodGet, routes.ResourceNew, controller.New},
+		{http.MethodPost, routes.ResourceCreate, controller.Create},
+		{http.MethodGet, routes.ResourceShow, controller.Show},
+		{http.MethodGet, routes.ResourceEdit, controller.Edit},
+		{http.MethodPatch, routes.ResourceUpdate, controller.Update},
+		{http.MethodDelete, routes.ResourceDestroy, controller.Destroy},
+		{http.MethodPost, routes.ResourceEndpointCreate, controller.CreateEndpoint},
+		{http.MethodPatch, routes.ResourceEndpointUpdate, controller.UpdateEndpoint},
+		{http.MethodDelete, routes.ResourceEndpointDestroy, controller.DestroyEndpoint},
+		{http.MethodPost, routes.ResourceCredentialCreate, controller.CreateCredential},
+		{http.MethodPatch, routes.ResourceCredentialUpdate, controller.UpdateCredential},
+		{http.MethodDelete, routes.ResourceCredentialDestroy, controller.DestroyCredential},
+		{http.MethodPost, routes.ResourceInstallationCreate, controller.CreateInstallation},
+		{http.MethodPatch, routes.ResourceInstallationUpdate, controller.UpdateInstallation},
+		{http.MethodDelete, routes.ResourceInstallationDestroy, controller.DestroyInstallation},
+		{http.MethodPost, routes.ResourceVolumeCreate, controller.CreateVolume},
+		{http.MethodPatch, routes.ResourceVolumeUpdate, controller.UpdateVolume},
+		{http.MethodDelete, routes.ResourceVolumeDestroy, controller.DestroyVolume},
+		{http.MethodPost, routes.ResourceMountCreate, controller.CreateMount},
+		{http.MethodPatch, routes.ResourceMountUpdate, controller.UpdateMount},
+		{http.MethodDelete, routes.ResourceMountDestroy, controller.DestroyMount},
+		{http.MethodPost, routes.ResourceHealthCheckCreate, controller.CreateHealthCheck},
+		{http.MethodPatch, routes.ResourceHealthCheckUpdate, controller.UpdateHealthCheck},
+		{http.MethodDelete, routes.ResourceHealthCheckDestroy, controller.DestroyHealthCheck},
+	}
+	errList := make([]error, 0, len(definitions))
+	for _, definition := range definitions {
+		_, err := r.AddRoute(echo.Route{
+			Method: definition.method, Path: definition.route.Path(), Name: definition.route.Name(),
+			Handler: definition.handler, Middlewares: []echo.MiddlewareFunc{middleware.AdminOnly},
+		})
+		if err != nil {
+			errList = append(errList, err)
+		}
+	}
+	return errors.Join(errList...)
+}
+
+func (controller Resources) Index(etx *echo.Context) error {
+	filters := models.ResourceListFilters{
+		Search: etx.QueryParam("search"), Kind: etx.QueryParam("kind"), Category: etx.QueryParam("category"),
+		ManagementMode: etx.QueryParam("managementMode"), SharingScope: etx.QueryParam("sharingScope"),
+	}
+	if value := strings.TrimSpace(etx.QueryParam("ownerEnvironmentId")); value != "" {
+		ownerID, err := uuid.Parse(value)
+		if err != nil {
+			return inertia.Page(etx, "Errors/BadRequest", inertia.Props{})
+		}
+		filters.OwnerEnvironmentID = &ownerID
+	}
+	items, err := controller.service.List(etx.Request().Context(), filters)
+	if err != nil {
+		return controller.renderLoadError(etx, err)
+	}
+	options, err := controller.service.Options(etx.Request().Context())
+	if err != nil {
+		return controller.renderLoadError(etx, err)
+	}
+	return inertia.Page(etx, "Resources/Index", inertia.Props{
+		"auth": authProps(etx), "resources": items, "options": options, "filters": inertia.Props{
+			"search": filters.Search, "kind": filters.Kind, "category": filters.Category,
+			"managementMode": filters.ManagementMode, "sharingScope": filters.SharingScope,
+			"ownerEnvironmentId": etx.QueryParam("ownerEnvironmentId"),
+		},
+	})
+}
+
+func (controller Resources) New(etx *echo.Context) error {
+	options, err := controller.service.Options(etx.Request().Context())
+	if err != nil {
+		return controller.renderLoadError(etx, err)
+	}
+	return inertia.Page(etx, "Resources/New", inertia.Props{"auth": authProps(etx), "options": options})
+}
+
+type resourcePayload struct {
+	Name               string `json:"name"`
+	Category           string `json:"category"`
+	Kind               string `json:"kind"`
+	ManagementMode     string `json:"managementMode"`
+	SharingScope       string `json:"sharingScope"`
+	OwnerEnvironmentID string `json:"ownerEnvironmentId"`
+}
+
+func (payload resourcePayload) serviceInput() (services.ResourceInput, error) {
+	ownerID, err := uuid.Parse(payload.OwnerEnvironmentID)
+	if err != nil {
+		return services.ResourceInput{}, domainPayloadError("ownerEnvironmentId", "owner environment is required")
+	}
+	return services.ResourceInput{
+		Name: payload.Name, Category: payload.Category, Kind: payload.Kind,
+		ManagementMode: payload.ManagementMode, SharingScope: payload.SharingScope,
+		OwnerEnvironmentID: ownerID,
+	}, nil
+}
+
+type resourceCreatePayload struct {
+	resourcePayload
+	Endpoint     *resourceEndpointPayload     `json:"endpoint"`
+	Credential   *resourceCredentialPayload   `json:"credential"`
+	Installation *resourceInstallationPayload `json:"installation"`
+	Volume       *resourceVolumePayload       `json:"volume"`
+	Mount        *resourceMountPayload        `json:"mount"`
+	HealthCheck  *resourceHealthCheckPayload  `json:"healthCheck"`
+}
+
+func (payload resourceCreatePayload) serviceInput() (services.CreateResourceInput, error) {
+	resource, err := payload.resourcePayload.serviceInput()
+	if err != nil {
+		return services.CreateResourceInput{}, err
+	}
+	input := services.CreateResourceInput{Resource: resource}
+	if payload.Installation != nil {
+		value, valueErr := payload.Installation.serviceInput()
+		if valueErr != nil {
+			return services.CreateResourceInput{}, valueErr
+		}
+		input.Installation = &value
+	}
+	if payload.Endpoint != nil {
+		value, valueErr := payload.Endpoint.serviceInput()
+		if valueErr != nil {
+			return services.CreateResourceInput{}, valueErr
+		}
+		input.Endpoint = &value
+	}
+	if payload.Credential != nil {
+		value, valueErr := payload.Credential.serviceInput()
+		if valueErr != nil {
+			return services.CreateResourceInput{}, valueErr
+		}
+		input.Credential = &value
+	}
+	if payload.Volume != nil {
+		value, valueErr := payload.Volume.serviceInput()
+		if valueErr != nil {
+			return services.CreateResourceInput{}, valueErr
+		}
+		if value.ServerID == uuid.Nil && input.Installation != nil {
+			value.ServerID = input.Installation.ServerID
+		}
+		input.Volume = &value
+	}
+	if payload.Mount != nil {
+		value, valueErr := payload.Mount.serviceInput()
+		if valueErr != nil {
+			return services.CreateResourceInput{}, valueErr
+		}
+		input.Mount = &value
+	}
+	if payload.HealthCheck != nil {
+		value, valueErr := payload.HealthCheck.serviceInput()
+		if valueErr != nil {
+			return services.CreateResourceInput{}, valueErr
+		}
+		input.HealthCheck = &value
+	}
+	return input, nil
+}
+
+func (controller Resources) Create(etx *echo.Context) error {
+	var payload resourceCreatePayload
+	err := etx.Bind(&payload)
+	var input services.CreateResourceInput
+	if err == nil {
+		input, err = payload.serviceInput()
+	}
+	var resource models.ResourceEntity
+	if err == nil {
+		resource, err = controller.service.CreateResource(etx.Request().Context(), input)
+	}
+	if err != nil {
+		return controller.renderCreateError(etx, err)
+	}
+	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Resource created")
+	return inertia.Redirect(etx, routes.ResourceShow.URL(resource.ID), http.StatusSeeOther)
+}
+
+func (controller Resources) Show(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	if err != nil {
+		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
+	}
+	return controller.renderShow(etx, resourceID, nil)
+}
+
+func (controller Resources) Edit(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	if err != nil {
+		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
+	}
+	return controller.renderEdit(etx, resourceID, nil)
+}
+
+func (controller Resources) Update(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	var payload resourcePayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	var input services.ResourceInput
+	if err == nil {
+		input, err = payload.serviceInput()
+	}
+	if err == nil {
+		_, err = controller.service.UpdateResource(etx.Request().Context(), resourceID, input)
+	}
+	if err != nil {
+		if validationErrors, ok := validation.As(err); ok {
+			return controller.renderEdit(etx, resourceID, inertia.WithValidationErrors(validationErrors.ToMap()))
+		}
+		return controller.redirectError(etx, routes.ResourceEdit.URL(resourceID), err)
+	}
+	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Resource updated")
+	return inertia.Redirect(etx, routes.ResourceShow.URL(resourceID), http.StatusSeeOther)
+}
+
+func (controller Resources) Destroy(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	if err == nil {
+		err = controller.service.ArchiveResource(etx.Request().Context(), resourceID)
+	}
+	if err != nil {
+		return controller.redirectError(etx, routes.ResourceShow.URL(resourceID), err)
+	}
+	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Resource archived")
+	return inertia.Redirect(etx, routes.Resources.URL(), http.StatusSeeOther)
+}
+
+type resourceEndpointPayload struct {
+	Name                   string          `json:"name"`
+	Role                   string          `json:"role"`
+	Address                string          `json:"address"`
+	Port                   int32           `json:"port"`
+	Protocol               string          `json:"protocol"`
+	TLSMode                string          `json:"tlsMode"`
+	Settings               json.RawMessage `json:"settings"`
+	ResourceInstallationID string          `json:"resourceInstallationId"`
+	PrivateNetworkID       string          `json:"privateNetworkId"`
+}
+
+func (payload resourceEndpointPayload) serviceInput() (services.ResourceEndpointInput, error) {
+	installationID, err := optionalUUID(payload.ResourceInstallationID)
+	if err != nil {
+		return services.ResourceEndpointInput{}, domainPayloadError("resourceInstallationId", "installation is invalid")
+	}
+	networkID, err := optionalUUID(payload.PrivateNetworkID)
+	if err != nil {
+		return services.ResourceEndpointInput{}, domainPayloadError("privateNetworkId", "private network is invalid")
+	}
+	return services.ResourceEndpointInput{
+		Name: payload.Name, Role: payload.Role, Address: payload.Address, Port: payload.Port,
+		Protocol: payload.Protocol, TLSMode: payload.TLSMode, Settings: payload.Settings,
+		ResourceInstallationID: installationID, PrivateNetworkID: networkID,
+	}, nil
+}
+
+func (controller Resources) CreateEndpoint(etx *echo.Context) error {
+	resourceID, input, err := bindResourceChild(etx, func() (services.ResourceEndpointInput, error) {
+		var payload resourceEndpointPayload
+		if bindErr := etx.Bind(&payload); bindErr != nil {
+			return services.ResourceEndpointInput{}, bindErr
+		}
+		return payload.serviceInput()
+	})
+	if err == nil {
+		_, err = controller.service.CreateEndpoint(etx.Request().Context(), resourceID, input)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Endpoint created")
+}
+
+func (controller Resources) UpdateEndpoint(etx *echo.Context) error {
+	resourceID, endpointID, err := parseChildIDs(etx, "endpointID")
+	var payload resourceEndpointPayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	var input services.ResourceEndpointInput
+	if err == nil {
+		input, err = payload.serviceInput()
+	}
+	if err == nil {
+		_, err = controller.service.UpdateEndpoint(etx.Request().Context(), resourceID, endpointID, input)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Endpoint updated")
+}
+
+func (controller Resources) DestroyEndpoint(etx *echo.Context) error {
+	resourceID, endpointID, err := parseChildIDs(etx, "endpointID")
+	if err == nil {
+		err = controller.service.ArchiveEndpoint(etx.Request().Context(), resourceID, endpointID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Endpoint archived")
+}
+
+type resourceCredentialPayload struct {
+	Name                   string            `json:"name"`
+	Role                   string            `json:"role"`
+	Username               string            `json:"username"`
+	Metadata               json.RawMessage   `json:"metadata"`
+	SecretValues           map[string]string `json:"secretValues"`
+	ResourceInstallationID string            `json:"resourceInstallationId"`
+	Rotate                 bool              `json:"rotate"`
+}
+
+func (payload resourceCredentialPayload) serviceInput() (services.ResourceCredentialInput, error) {
+	installationID, err := optionalUUID(payload.ResourceInstallationID)
+	if err != nil {
+		return services.ResourceCredentialInput{}, domainPayloadError("resourceInstallationId", "installation is invalid")
+	}
+	return services.ResourceCredentialInput{
+		Name: payload.Name, Role: payload.Role, Username: payload.Username, Metadata: payload.Metadata,
+		SecretValues: payload.SecretValues, ResourceInstallationID: installationID,
+	}, nil
+}
+
+func (controller Resources) CreateCredential(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	var payload resourceCredentialPayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	var input services.ResourceCredentialInput
+	if err == nil {
+		input, err = payload.serviceInput()
+	}
+	if err == nil {
+		_, err = controller.service.CreateCredential(etx.Request().Context(), resourceID, input)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Credential created")
+}
+
+func (controller Resources) UpdateCredential(etx *echo.Context) error {
+	resourceID, credentialID, err := parseChildIDs(etx, "credentialID")
+	var payload resourceCredentialPayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	var input services.ResourceCredentialInput
+	if err == nil {
+		input, err = payload.serviceInput()
+	}
+	if err == nil && payload.Rotate {
+		_, err = controller.service.RotateCredential(etx.Request().Context(), resourceID, credentialID, input)
+	} else if err == nil {
+		_, err = controller.service.UpdateCredentialMetadata(etx.Request().Context(), resourceID, credentialID, input)
+	}
+	message := "Credential updated"
+	if payload.Rotate {
+		message = "Credential rotated"
+	}
+	return controller.finishChildMutation(etx, resourceID, err, message)
+}
+
+func (controller Resources) DestroyCredential(etx *echo.Context) error {
+	resourceID, credentialID, err := parseChildIDs(etx, "credentialID")
+	if err == nil {
+		err = controller.service.ArchiveCredential(etx.Request().Context(), resourceID, credentialID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Credential archived")
+}
+
+type resourceInstallationPayload struct {
+	ImageReference       string          `json:"imageReference"`
+	ImageDigest          string          `json:"imageDigest"`
+	ContainerName        string          `json:"containerName"`
+	RestartPolicy        string          `json:"restartPolicy"`
+	Configuration        json.RawMessage `json:"configuration"`
+	ServerID             string          `json:"serverId"`
+	RegistryCredentialID string          `json:"registryCredentialId"`
+}
+
+func (payload resourceInstallationPayload) serviceInput() (services.ResourceInstallationInput, error) {
+	serverID, err := uuid.Parse(payload.ServerID)
+	if err != nil {
+		return services.ResourceInstallationInput{}, domainPayloadError("serverId", "server is required")
+	}
+	registryID, err := optionalUUID(payload.RegistryCredentialID)
+	if err != nil {
+		return services.ResourceInstallationInput{}, domainPayloadError("registryCredentialId", "registry credential is invalid")
+	}
+	return services.ResourceInstallationInput{
+		ImageReference: payload.ImageReference, ImageDigest: payload.ImageDigest,
+		ContainerName: payload.ContainerName, RestartPolicy: payload.RestartPolicy,
+		Configuration: payload.Configuration, ServerID: serverID, RegistryCredentialID: registryID,
+	}, nil
+}
+
+func (controller Resources) CreateInstallation(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	var payload resourceInstallationPayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	var input services.ResourceInstallationInput
+	if err == nil {
+		input, err = payload.serviceInput()
+	}
+	if err == nil {
+		_, err = controller.service.CreateInstallation(etx.Request().Context(), resourceID, input)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Installation created")
+}
+
+func (controller Resources) UpdateInstallation(etx *echo.Context) error {
+	resourceID, installationID, err := parseChildIDs(etx, "installationID")
+	var payload resourceInstallationPayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	var input services.ResourceInstallationInput
+	if err == nil {
+		input, err = payload.serviceInput()
+	}
+	if err == nil {
+		_, err = controller.service.UpdateInstallation(etx.Request().Context(), resourceID, installationID, input)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Installation updated")
+}
+
+func (controller Resources) DestroyInstallation(etx *echo.Context) error {
+	resourceID, installationID, err := parseChildIDs(etx, "installationID")
+	if err == nil {
+		err = controller.service.ArchiveInstallation(etx.Request().Context(), resourceID, installationID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Installation archived")
+}
+
+type resourceVolumePayload struct {
+	Name          string          `json:"name"`
+	Driver        string          `json:"driver"`
+	Configuration json.RawMessage `json:"configuration"`
+	ServerID      string          `json:"serverId"`
+}
+
+func (payload resourceVolumePayload) serviceInput() (services.ResourceVolumeInput, error) {
+	serverID := uuid.Nil
+	var err error
+	if strings.TrimSpace(payload.ServerID) != "" {
+		serverID, err = uuid.Parse(payload.ServerID)
+	}
+	if err != nil {
+		return services.ResourceVolumeInput{}, domainPayloadError("serverId", "server is invalid")
+	}
+	return services.ResourceVolumeInput{Name: payload.Name, Driver: payload.Driver, Configuration: payload.Configuration, ServerID: serverID}, nil
+}
+
+func (controller Resources) CreateVolume(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	var payload resourceVolumePayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	var input services.ResourceVolumeInput
+	if err == nil {
+		input, err = payload.serviceInput()
+	}
+	if err == nil {
+		_, err = controller.service.CreateVolume(etx.Request().Context(), resourceID, input)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Volume created")
+}
+
+func (controller Resources) UpdateVolume(etx *echo.Context) error {
+	resourceID, volumeID, err := parseChildIDs(etx, "volumeID")
+	var payload resourceVolumePayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	var input services.ResourceVolumeInput
+	if err == nil {
+		input, err = payload.serviceInput()
+	}
+	if err == nil {
+		_, err = controller.service.UpdateVolume(etx.Request().Context(), resourceID, volumeID, input)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Volume updated")
+}
+
+func (controller Resources) DestroyVolume(etx *echo.Context) error {
+	resourceID, volumeID, err := parseChildIDs(etx, "volumeID")
+	if err == nil {
+		err = controller.service.ArchiveVolume(etx.Request().Context(), resourceID, volumeID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Volume archived")
+}
+
+type resourceMountPayload struct {
+	MountPath              string `json:"mountPath"`
+	ReadOnly               bool   `json:"readOnly"`
+	ResourceVolumeID       string `json:"resourceVolumeId"`
+	ResourceInstallationID string `json:"resourceInstallationId"`
+}
+
+func (payload resourceMountPayload) serviceInput() (services.ResourceMountInput, error) {
+	volumeID, volumeErr := optionalUUID(payload.ResourceVolumeID)
+	installationID, installationErr := optionalUUID(payload.ResourceInstallationID)
+	if volumeErr != nil || installationErr != nil {
+		return services.ResourceMountInput{}, domainPayloadError("mount", "volume or installation is invalid")
+	}
+	input := services.ResourceMountInput{MountPath: payload.MountPath, ReadOnly: payload.ReadOnly}
+	if volumeID != nil {
+		input.ResourceVolumeID = *volumeID
+	}
+	if installationID != nil {
+		input.ResourceInstallationID = *installationID
+	}
+	return input, nil
+}
+
+func (controller Resources) CreateMount(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	var payload resourceMountPayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	var input services.ResourceMountInput
+	if err == nil {
+		input, err = payload.serviceInput()
+	}
+	if err == nil {
+		_, err = controller.service.CreateMount(etx.Request().Context(), resourceID, input)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Mount created")
+}
+
+func (controller Resources) UpdateMount(etx *echo.Context) error {
+	resourceID, mountID, err := parseChildIDs(etx, "mountID")
+	var payload resourceMountPayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	var input services.ResourceMountInput
+	if err == nil {
+		input, err = payload.serviceInput()
+	}
+	if err == nil {
+		_, err = controller.service.UpdateMount(etx.Request().Context(), resourceID, mountID, input)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Mount updated")
+}
+
+func (controller Resources) DestroyMount(etx *echo.Context) error {
+	resourceID, mountID, err := parseChildIDs(etx, "mountID")
+	if err == nil {
+		err = controller.service.ArchiveMount(etx.Request().Context(), resourceID, mountID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Mount archived")
+}
+
+type resourceHealthCheckPayload struct {
+	Name                   string          `json:"name"`
+	Kind                   string          `json:"kind"`
+	Configuration          json.RawMessage `json:"configuration"`
+	IntervalSeconds        int32           `json:"intervalSeconds"`
+	TimeoutSeconds         int32           `json:"timeoutSeconds"`
+	FailureThreshold       int32           `json:"failureThreshold"`
+	SuccessThreshold       int32           `json:"successThreshold"`
+	Enabled                bool            `json:"enabled"`
+	ResourceInstallationID string          `json:"resourceInstallationId"`
+	ResourceEndpointID     string          `json:"resourceEndpointId"`
+	ResourceCredentialID   string          `json:"resourceCredentialId"`
+}
+
+func (payload resourceHealthCheckPayload) serviceInput() (services.ResourceHealthCheckInput, error) {
+	installationID, installationErr := optionalUUID(payload.ResourceInstallationID)
+	endpointID, endpointErr := optionalUUID(payload.ResourceEndpointID)
+	credentialID, credentialErr := optionalUUID(payload.ResourceCredentialID)
+	if installationErr != nil || endpointErr != nil || credentialErr != nil {
+		return services.ResourceHealthCheckInput{}, domainPayloadError("healthCheck", "installation, endpoint, or credential is invalid")
+	}
+	input := services.ResourceHealthCheckInput{
+		Name: payload.Name, Kind: payload.Kind, Configuration: payload.Configuration,
+		IntervalSeconds: payload.IntervalSeconds, TimeoutSeconds: payload.TimeoutSeconds,
+		FailureThreshold: payload.FailureThreshold, SuccessThreshold: payload.SuccessThreshold,
+		Enabled: payload.Enabled, ResourceEndpointID: endpointID, ResourceCredentialID: credentialID,
+	}
+	if installationID != nil {
+		input.ResourceInstallationID = *installationID
+	}
+	return input, nil
+}
+
+func (controller Resources) CreateHealthCheck(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	var payload resourceHealthCheckPayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	var input services.ResourceHealthCheckInput
+	if err == nil {
+		input, err = payload.serviceInput()
+	}
+	if err == nil {
+		_, err = controller.service.CreateHealthCheck(etx.Request().Context(), resourceID, input)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Health check created")
+}
+
+func (controller Resources) UpdateHealthCheck(etx *echo.Context) error {
+	resourceID, healthCheckID, err := parseChildIDs(etx, "healthCheckID")
+	var payload resourceHealthCheckPayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	var input services.ResourceHealthCheckInput
+	if err == nil {
+		input, err = payload.serviceInput()
+	}
+	if err == nil {
+		_, err = controller.service.UpdateHealthCheck(etx.Request().Context(), resourceID, healthCheckID, input)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Health check updated")
+}
+
+func (controller Resources) DestroyHealthCheck(etx *echo.Context) error {
+	resourceID, healthCheckID, err := parseChildIDs(etx, "healthCheckID")
+	if err == nil {
+		err = controller.service.ArchiveHealthCheck(etx.Request().Context(), resourceID, healthCheckID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Health check archived")
+}
+
+func (controller Resources) renderShow(etx *echo.Context, resourceID uuid.UUID, option inertia.PageOption) error {
+	detail, err := controller.service.Details(etx.Request().Context(), resourceID)
+	if errors.Is(err, models.ErrNotFound) {
+		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
+	}
+	if err != nil {
+		return controller.renderLoadError(etx, err)
+	}
+	options, err := controller.service.Options(etx.Request().Context())
+	if err != nil {
+		return controller.renderLoadError(etx, err)
+	}
+	props := inertia.Props{"auth": authProps(etx), "resource": resourceDetailProps(detail), "options": options}
+	if option != nil {
+		return inertia.Page(etx, "Resources/Show", props, option)
+	}
+	return inertia.Page(etx, "Resources/Show", props)
+}
+
+func (controller Resources) renderEdit(etx *echo.Context, resourceID uuid.UUID, option inertia.PageOption) error {
+	detail, err := controller.service.Details(etx.Request().Context(), resourceID)
+	if errors.Is(err, models.ErrNotFound) {
+		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
+	}
+	if err != nil {
+		return controller.renderLoadError(etx, err)
+	}
+	options, err := controller.service.Options(etx.Request().Context())
+	if err != nil {
+		return controller.renderLoadError(etx, err)
+	}
+	props := inertia.Props{"auth": authProps(etx), "resource": resourceDetailProps(detail), "options": options}
+	if option != nil {
+		return inertia.Page(etx, "Resources/Edit", props, option)
+	}
+	return inertia.Page(etx, "Resources/Edit", props)
+}
+
+func (controller Resources) renderCreateError(etx *echo.Context, err error) error {
+	options, optionsErr := controller.service.Options(etx.Request().Context())
+	if optionsErr != nil {
+		return controller.renderLoadError(etx, errors.Join(err, optionsErr))
+	}
+	if validationErrors, ok := validation.As(err); ok {
+		return inertia.Page(etx, "Resources/New", inertia.Props{"auth": authProps(etx), "options": options}, inertia.WithValidationErrors(validationErrors.ToMap()))
+	}
+	return controller.redirectError(etx, routes.ResourceNew.URL(), err)
+}
+
+func (controller Resources) finishChildMutation(etx *echo.Context, resourceID uuid.UUID, err error, success string) error {
+	if err != nil {
+		if validationErrors, ok := validation.As(err); ok && resourceID != uuid.Nil {
+			return controller.renderShow(etx, resourceID, inertia.WithValidationErrors(validationErrors.ToMap()))
+		}
+		return controller.redirectError(etx, routes.ResourceShow.URL(resourceID), err)
+	}
+	_ = cookies.AddFlash(etx, cookies.FlashSuccess, success)
+	return inertia.Redirect(etx, routes.ResourceShow.URL(resourceID), http.StatusSeeOther)
+}
+
+func (controller Resources) redirectError(etx *echo.Context, location string, err error) error {
+	message := "Resource operation failed"
+	if err != nil && strings.TrimSpace(err.Error()) != "" {
+		message = err.Error()
+	}
+	if flashErr := cookies.AddFlash(etx, cookies.FlashError, message); flashErr != nil {
+		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
+	}
+	return inertia.Redirect(etx, location, http.StatusSeeOther)
+}
+
+func (controller Resources) renderLoadError(etx *echo.Context, err error) error {
+	slog.ErrorContext(etx.Request().Context(), "failed to load Resource page", "error", err)
+	return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
+}
+
+func parseChildIDs(etx *echo.Context, childParam string) (uuid.UUID, uuid.UUID, error) {
+	resourceID, resourceErr := uuid.Parse(etx.Param("id"))
+	childID, childErr := uuid.Parse(etx.Param(childParam))
+	return resourceID, childID, errors.Join(resourceErr, childErr)
+}
+
+func bindResourceChild[T any](etx *echo.Context, bind func() (T, error)) (uuid.UUID, T, error) {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	var input T
+	if err == nil {
+		input, err = bind()
+	}
+	return resourceID, input, err
+}
+
+func domainPayloadError(field, message string) error {
+	return errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: field, Code: "invalid", Message: message}})
+}

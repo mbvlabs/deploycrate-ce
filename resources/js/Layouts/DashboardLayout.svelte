@@ -73,9 +73,13 @@
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton disabled tooltipContent="Resources">
-                <DatabaseIcon />
-                <span>Resources</span>
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.resources())} tooltipContent="Resources">
+                {#snippet child({ props })}
+                  <Link {...props} href={routes.resources()}>
+                    <DatabaseIcon />
+                    <span>Resources</span>
+                  </Link>
+                {/snippet}
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
           </Sidebar.Menu>

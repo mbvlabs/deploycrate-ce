@@ -7,11 +7,16 @@ import (
 	"deploycrate-ce/internal/validation"
 	"encoding/json"
 	"errors"
+	"regexp"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 )
+
+var resourceContainerNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 
 type ResourceInstallationEntity struct {
 	bun.BaseModel        `bun:"table:resource_installations,alias:resource_installations"`
@@ -30,7 +35,35 @@ type ResourceInstallationEntity struct {
 }
 
 func (e *ResourceInstallationEntity) Validate() error {
-	return nil
+	e.ImageReference = strings.TrimSpace(e.ImageReference)
+	e.ImageDigest.String = strings.TrimSpace(e.ImageDigest.String)
+	e.ImageDigest.Valid = e.ImageDigest.String != ""
+	e.ContainerName = strings.TrimSpace(e.ContainerName)
+	e.RestartPolicy = strings.ToLower(strings.TrimSpace(e.RestartPolicy))
+	builder := validation.NewBuilder()
+	builder.Required("imageReference", e.ImageReference)
+	if strings.ContainsAny(e.ImageReference, " \t\r\n") {
+		builder.Add("imageReference", "format", "image reference must not contain whitespace")
+	}
+	builder.Required("containerName", e.ContainerName)
+	if e.ContainerName != "" && !resourceContainerNamePattern.MatchString(e.ContainerName) {
+		builder.Add("containerName", "format", "container name contains unsupported characters")
+	}
+	if !slices.Contains([]string{"no", "always", "on-failure", "unless-stopped"}, e.RestartPolicy) {
+		builder.Add("restartPolicy", "unsupported", "restart policy is not supported")
+	}
+	if len(e.Configuration) == 0 || !json.Valid(e.Configuration) {
+		builder.Add("configuration", "invalid", "configuration must be valid JSON")
+	} else if settingsContainSecret(e.Configuration) {
+		builder.Add("configuration", "secret", "configuration must not contain raw credentials")
+	}
+	if e.ResourceID == uuid.Nil {
+		builder.Add("resourceId", "required", "resource is required")
+	}
+	if e.ServerID == uuid.Nil {
+		builder.Add("serverId", "required", "server is required")
+	}
+	return builder.Err()
 }
 
 func (ri resourceInstallation) Find(

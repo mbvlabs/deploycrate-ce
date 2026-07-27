@@ -31,6 +31,7 @@ var Module = fx.Module(
 		NewGitHubConnection,
 		NewGitHubWebhook,
 		NewApplicationSetup,
+		NewResourceManagement,
 		NewResourcePrivateAccess,
 	),
 )

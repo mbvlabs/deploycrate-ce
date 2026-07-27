@@ -37,12 +37,15 @@ type ResourceEndpointEntity struct {
 }
 
 func (e *ResourceEndpointEntity) Validate() error {
+	e.Name = strings.TrimSpace(e.Name)
+	e.Role = strings.ToLower(strings.TrimSpace(e.Role))
+	e.Address = strings.TrimSpace(e.Address)
+	e.Protocol = strings.ToLower(strings.TrimSpace(e.Protocol))
+	e.TlsMode = strings.ToLower(strings.TrimSpace(e.TlsMode))
 	builder := validation.NewBuilder()
-	builder.Required("name", strings.TrimSpace(e.Name))
-	if e.Role != "primary" && e.Role != "wireguard" {
-		builder.Add("role", "unsupported", "role must be primary or wireguard")
-	}
-	builder.Required("address", strings.TrimSpace(e.Address))
+	builder.Required("name", e.Name)
+	builder.Required("role", e.Role)
+	builder.Required("address", e.Address)
 	if e.Port < 1 || e.Port > 65535 {
 		builder.Add("port", "range", "port must be between 1 and 65535")
 	}
@@ -61,6 +64,24 @@ func (e *ResourceEndpointEntity) Validate() error {
 	}
 	if e.ResourceID == uuid.Nil {
 		builder.Add("resourceId", "required", "resource is required")
+	}
+	return builder.Err()
+}
+
+func (e *ResourceEndpointEntity) ValidateForKind(kind string) error {
+	if err := e.Validate(); err != nil {
+		return err
+	}
+	definition, ok := FindResourceKind(kind)
+	if !ok {
+		return validation.ValidationErrors{{Field: "kind", Code: "unsupported", Message: "resource kind is not supported"}}
+	}
+	builder := validation.NewBuilder()
+	if !definition.SupportsEndpointRole(e.Role) {
+		builder.Add("role", "unsupported", "endpoint role is not supported by this resource kind")
+	}
+	if !definition.SupportsProtocol(e.Protocol) {
+		builder.Add("protocol", "unsupported", "protocol is not supported by this resource kind")
 	}
 	return builder.Err()
 }
@@ -224,13 +245,8 @@ func (re resourceEndpoint) CreateForSystemResource(
 }
 
 func resourceSupportsProtocol(kind, protocol string) bool {
-	supported := map[string][]string{
-		"postgresql":    {"postgresql"},
-		"redis":         {"redis"},
-		"elasticsearch": {"http", "https"},
-		"clickhouse":    {"http", "https", "clickhouse"},
-	}
-	return slices.Contains(supported[kind], protocol)
+	definition, ok := FindResourceKind(kind)
+	return ok && definition.SupportsProtocol(protocol)
 }
 
 type UpdateResourceEndpointData struct {

@@ -7,6 +7,7 @@ import (
 	"deploycrate-ce/internal/validation"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,7 +28,23 @@ type ResourceVolumeEntity struct {
 }
 
 func (e *ResourceVolumeEntity) Validate() error {
-	return nil
+	e.Name = strings.TrimSpace(e.Name)
+	e.Driver = strings.TrimSpace(e.Driver)
+	builder := validation.NewBuilder()
+	builder.Required("name", e.Name)
+	builder.Required("driver", e.Driver)
+	if len(e.Configuration) == 0 || !json.Valid(e.Configuration) {
+		builder.Add("configuration", "invalid", "configuration must be valid JSON")
+	} else if settingsContainSecret(e.Configuration) {
+		builder.Add("configuration", "secret", "configuration must not contain raw credentials")
+	}
+	if e.ResourceID == uuid.Nil {
+		builder.Add("resourceId", "required", "resource is required")
+	}
+	if e.ServerID == uuid.Nil {
+		builder.Add("serverId", "required", "server is required")
+	}
+	return builder.Err()
 }
 
 func (rv resourceVolume) Find(

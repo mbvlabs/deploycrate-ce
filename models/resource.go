@@ -6,6 +6,7 @@ import (
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,13 +21,33 @@ type ResourceEntity struct {
 	Name               string       `bun:"name"`
 	Category           string       `bun:"category"`
 	Kind               string       `bun:"kind"`
+	ManagementMode     string       `bun:"management_mode"`
 	SharingScope       string       `bun:"sharing_scope"`
 	ArchivedAt         sql.NullTime `bun:"archived_at"`
 	OwnerEnvironmentID uuid.UUID    `bun:"owner_environment_id,type:uuid"`
 }
 
 func (e *ResourceEntity) Validate() error {
-	return nil
+	e.Name = strings.TrimSpace(e.Name)
+	e.Category = strings.ToLower(strings.TrimSpace(e.Category))
+	e.Kind = strings.ToLower(strings.TrimSpace(e.Kind))
+	e.ManagementMode = strings.ToLower(strings.TrimSpace(e.ManagementMode))
+	e.SharingScope = strings.ToLower(strings.TrimSpace(e.SharingScope))
+	builder := validation.NewBuilder()
+	builder.Required("name", e.Name)
+	if !ResourceCategoryKindSupported(e.Category, e.Kind) {
+		builder.Add("kind", "unsupported", "category and kind must match a supported resource kind")
+	}
+	if e.ManagementMode != ResourceManagementManaged && e.ManagementMode != ResourceManagementExternal {
+		builder.Add("managementMode", "unsupported", "management mode must be managed or external")
+	}
+	if e.SharingScope != ResourceSharingEnvironment && e.SharingScope != ResourceSharingApplication && e.SharingScope != ResourceSharingGlobal {
+		builder.Add("sharingScope", "unsupported", "sharing scope is not supported")
+	}
+	if e.OwnerEnvironmentID == uuid.Nil {
+		builder.Add("ownerEnvironmentId", "required", "owner environment is required")
+	}
+	return builder.Err()
 }
 
 func (r resource) Find(
@@ -49,6 +70,7 @@ type CreateResourceData struct {
 	Name               string
 	Category           string
 	Kind               string
+	ManagementMode     string
 	SharingScope       string
 	ArchivedAt         sql.NullTime
 	OwnerEnvironmentID uuid.UUID
@@ -66,6 +88,7 @@ func (r resource) Create(
 		Name:               data.Name,
 		Category:           data.Category,
 		Kind:               data.Kind,
+		ManagementMode:     data.ManagementMode,
 		SharingScope:       data.SharingScope,
 		ArchivedAt:         data.ArchivedAt,
 		OwnerEnvironmentID: data.OwnerEnvironmentID,
@@ -88,6 +111,7 @@ type UpdateResourceData struct {
 	Name               string
 	Category           string
 	Kind               string
+	ManagementMode     string
 	SharingScope       string
 	ArchivedAt         sql.NullTime
 	OwnerEnvironmentID uuid.UUID
@@ -104,6 +128,7 @@ func (r resource) Update(
 		Name:               data.Name,
 		Category:           data.Category,
 		Kind:               data.Kind,
+		ManagementMode:     data.ManagementMode,
 		SharingScope:       data.SharingScope,
 		ArchivedAt:         data.ArchivedAt,
 		OwnerEnvironmentID: data.OwnerEnvironmentID,
@@ -119,6 +144,7 @@ func (r resource) Update(
 		Column("name").
 		Column("category").
 		Column("kind").
+		Column("management_mode").
 		Column("sharing_scope").
 		Column("archived_at").
 		Column("owner_environment_id").
@@ -214,6 +240,7 @@ func (r resource) Upsert(
 		Name:               data.Name,
 		Category:           data.Category,
 		Kind:               data.Kind,
+		ManagementMode:     data.ManagementMode,
 		SharingScope:       data.SharingScope,
 		ArchivedAt:         data.ArchivedAt,
 		OwnerEnvironmentID: data.OwnerEnvironmentID,
@@ -229,6 +256,7 @@ func (r resource) Upsert(
 		Set("name = excluded.name").
 		Set("category = excluded.category").
 		Set("kind = excluded.kind").
+		Set("management_mode = excluded.management_mode").
 		Set("sharing_scope = excluded.sharing_scope").
 		Set("archived_at = excluded.archived_at").
 		Set("owner_environment_id = excluded.owner_environment_id").

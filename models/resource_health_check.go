@@ -7,6 +7,7 @@ import (
 	"deploycrate-ce/internal/validation"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,6 +34,44 @@ type ResourceHealthCheckEntity struct {
 }
 
 func (e *ResourceHealthCheckEntity) Validate() error {
+	e.Name = strings.TrimSpace(e.Name)
+	e.Kind = strings.ToLower(strings.TrimSpace(e.Kind))
+	builder := validation.NewBuilder()
+	builder.Required("name", e.Name)
+	builder.Required("kind", e.Kind)
+	if len(e.Configuration) == 0 || !json.Valid(e.Configuration) {
+		builder.Add("configuration", "invalid", "configuration must be valid JSON")
+	} else if settingsContainSecret(e.Configuration) {
+		builder.Add("configuration", "secret", "configuration must not contain raw credentials")
+	}
+	if e.IntervalSeconds < 1 {
+		builder.Add("intervalSeconds", "positive", "interval must be positive")
+	}
+	if e.TimeoutSeconds < 1 {
+		builder.Add("timeoutSeconds", "positive", "timeout must be positive")
+	} else if e.IntervalSeconds > 0 && e.TimeoutSeconds > e.IntervalSeconds {
+		builder.Add("timeoutSeconds", "range", "timeout cannot exceed the interval")
+	}
+	if e.FailureThreshold < 1 {
+		builder.Add("failureThreshold", "positive", "failure threshold must be positive")
+	}
+	if e.SuccessThreshold < 1 {
+		builder.Add("successThreshold", "positive", "success threshold must be positive")
+	}
+	if e.ResourceInstallationID == uuid.Nil {
+		builder.Add("resourceInstallationId", "required", "installation is required")
+	}
+	return builder.Err()
+}
+
+func (e *ResourceHealthCheckEntity) ValidateForKind(resourceKind string) error {
+	if err := e.Validate(); err != nil {
+		return err
+	}
+	definition, ok := FindResourceKind(resourceKind)
+	if !ok || !definition.SupportsHealthCheck(e.Kind) {
+		return validation.ValidationErrors{{Field: "kind", Code: "unsupported", Message: "health check kind is not supported by this resource kind"}}
+	}
 	return nil
 }
 

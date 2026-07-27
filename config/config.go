@@ -67,26 +67,28 @@ var (
 )
 
 type Config struct {
-	App       app
-	DB        Database
-	Telemetry telemetry
-	Email     email
-	AwsSes    awsSes
-	Auth      auth
-	SSHCA     SSHCA
-	Metrics   Metrics
+	App        app
+	DB         Database
+	ClickHouse ClickHouse
+	Telemetry  telemetry
+	Email      email
+	AwsSes     awsSes
+	Auth       auth
+	SSHCA      SSHCA
+	Metrics    Metrics
 }
 
 func NewConfig() Config {
 	return Config{
-		App:       newAppConfig(),
-		DB:        newDatabaseConfig(),
-		Telemetry: newTelemetryConfig(),
-		Email:     newEmailConfig(),
-		AwsSes:    newAwsSesConfig(),
-		Auth:      newAuthConfig(),
-		SSHCA:     newSSHCAConfig(),
-		Metrics:   newMetricsConfig(),
+		App:        newAppConfig(),
+		DB:         newDatabaseConfig(),
+		ClickHouse: newClickHouseConfig(),
+		Telemetry:  newTelemetryConfig(),
+		Email:      newEmailConfig(),
+		AwsSes:     newAwsSesConfig(),
+		Auth:       newAuthConfig(),
+		SSHCA:      newSSHCAConfig(),
+		Metrics:    newMetricsConfig(),
 	}
 }
 

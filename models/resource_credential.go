@@ -7,6 +7,7 @@ import (
 	"deploycrate-ce/internal/validation"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,13 +24,35 @@ type ResourceCredentialEntity struct {
 	Username               sql.NullString  `bun:"username"`
 	Metadata               json.RawMessage `bun:"metadata,type:jsonb"`
 	EncPayload             []byte          `bun:"enc_payload"`
+	Digest                 []byte          `bun:"digest" json:"-"`
 	ArchivedAt             sql.NullTime    `bun:"archived_at"`
 	ResourceID             uuid.UUID       `bun:"resource_id,type:uuid"`
 	ResourceInstallationID *uuid.UUID      `bun:"resource_installation_id,type:uuid"`
 }
 
 func (e *ResourceCredentialEntity) Validate() error {
-	return nil
+	e.Name = strings.TrimSpace(e.Name)
+	e.Role = strings.TrimSpace(e.Role)
+	e.Username.String = strings.TrimSpace(e.Username.String)
+	e.Username.Valid = e.Username.String != ""
+	builder := validation.NewBuilder()
+	builder.Required("name", e.Name)
+	builder.Required("role", e.Role)
+	if len(e.Metadata) == 0 || !json.Valid(e.Metadata) {
+		builder.Add("metadata", "invalid", "metadata must be valid JSON")
+	} else if settingsContainSecret(e.Metadata) {
+		builder.Add("metadata", "secret", "metadata must not contain raw credentials")
+	}
+	if len(e.EncPayload) == 0 {
+		builder.Add("secretValues", "required", "at least one encrypted credential value is required")
+	}
+	if len(e.Digest) != 32 {
+		builder.Add("secretValues", "digest", "credential digest is invalid")
+	}
+	if e.ResourceID == uuid.Nil {
+		builder.Add("resourceId", "required", "resource is required")
+	}
+	return builder.Err()
 }
 
 func (rc resourceCredential) Find(
@@ -54,6 +77,7 @@ type CreateResourceCredentialData struct {
 	Username               sql.NullString
 	Metadata               json.RawMessage
 	EncPayload             []byte
+	Digest                 []byte
 	ArchivedAt             sql.NullTime
 	ResourceID             uuid.UUID
 	ResourceInstallationID *uuid.UUID
@@ -73,6 +97,7 @@ func (rc resourceCredential) Create(
 		Username:               data.Username,
 		Metadata:               data.Metadata,
 		EncPayload:             data.EncPayload,
+		Digest:                 data.Digest,
 		ArchivedAt:             data.ArchivedAt,
 		ResourceID:             data.ResourceID,
 		ResourceInstallationID: data.ResourceInstallationID,
@@ -97,6 +122,7 @@ type UpdateResourceCredentialData struct {
 	Username               sql.NullString
 	Metadata               json.RawMessage
 	EncPayload             []byte
+	Digest                 []byte
 	ArchivedAt             sql.NullTime
 	ResourceID             uuid.UUID
 	ResourceInstallationID *uuid.UUID
@@ -115,6 +141,7 @@ func (rc resourceCredential) Update(
 		Username:               data.Username,
 		Metadata:               data.Metadata,
 		EncPayload:             data.EncPayload,
+		Digest:                 data.Digest,
 		ArchivedAt:             data.ArchivedAt,
 		ResourceID:             data.ResourceID,
 		ResourceInstallationID: data.ResourceInstallationID,
@@ -132,6 +159,7 @@ func (rc resourceCredential) Update(
 		Column("username").
 		Column("metadata").
 		Column("enc_payload").
+		Column("digest").
 		Column("archived_at").
 		Column("resource_id").
 		Column("resource_installation_id").
@@ -232,6 +260,7 @@ func (rc resourceCredential) Upsert(
 		Username:               data.Username,
 		Metadata:               data.Metadata,
 		EncPayload:             data.EncPayload,
+		Digest:                 data.Digest,
 		ArchivedAt:             data.ArchivedAt,
 		ResourceID:             data.ResourceID,
 		ResourceInstallationID: data.ResourceInstallationID,
@@ -249,6 +278,7 @@ func (rc resourceCredential) Upsert(
 		Set("username = excluded.username").
 		Set("metadata = excluded.metadata").
 		Set("enc_payload = excluded.enc_payload").
+		Set("digest = excluded.digest").
 		Set("archived_at = excluded.archived_at").
 		Set("resource_id = excluded.resource_id").
 		Set("resource_installation_id = excluded.resource_installation_id").

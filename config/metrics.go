@@ -3,9 +3,8 @@ package config
 import "github.com/caarlos0/env/v11"
 
 type Metrics struct {
-	Enabled            bool   `env:"METRICS_ROLLUP_ENABLED" envDefault:"false"`
-	PrometheusURL      string `env:"PROMETHEUS_URL"         envDefault:"http://127.0.0.1:9090"`
-	ClickHousePassword string `env:"CLICKHOUSE_PASSWORD"    envDefault:""`
+	Enabled       bool   `env:"METRICS_ROLLUP_ENABLED" envDefault:"false"`
+	PrometheusURL string `env:"PROMETHEUS_URL"         envDefault:"http://127.0.0.1:9090"`
 }
 
 func newMetricsConfig() Metrics {
