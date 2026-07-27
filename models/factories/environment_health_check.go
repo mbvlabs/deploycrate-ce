@@ -20,10 +20,7 @@ type EnvironmentHealthCheckFactory struct {
 
 type EnvironmentHealthCheckOption func(*EnvironmentHealthCheckFactory)
 
-func BuildEnvironmentHealthCheck(
-	environmentID uuid.UUID,
-	opts ...EnvironmentHealthCheckOption,
-) models.EnvironmentHealthCheckEntity {
+func BuildEnvironmentHealthCheck(environmentID uuid.UUID, opts ...EnvironmentHealthCheckOption) models.EnvironmentHealthCheckEntity {
 	f := &EnvironmentHealthCheckFactory{
 		EnvironmentHealthCheckEntity: models.EnvironmentHealthCheckEntity{
 			Name:            faker.Word(),
@@ -45,12 +42,7 @@ func BuildEnvironmentHealthCheck(
 	return f.EnvironmentHealthCheckEntity
 }
 
-func CreateEnvironmentHealthCheck(
-	ctx context.Context,
-	exec storage.Executor,
-	environmentID uuid.UUID,
-	opts ...EnvironmentHealthCheckOption,
-) (models.EnvironmentHealthCheckEntity, error) {
+func CreateEnvironmentHealthCheck(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, opts ...EnvironmentHealthCheckOption) (models.EnvironmentHealthCheckEntity, error) {
 	built := BuildEnvironmentHealthCheck(environmentID, opts...)
 
 	entity := models.EnvironmentHealthCheckEntity{
@@ -75,13 +67,7 @@ func CreateEnvironmentHealthCheck(
 	return entity, nil
 }
 
-func CreateEnvironmentHealthChecks(
-	ctx context.Context,
-	exec storage.Executor,
-	environmentID uuid.UUID,
-	count int,
-	opts ...EnvironmentHealthCheckOption,
-) ([]models.EnvironmentHealthCheckEntity, error) {
+func CreateEnvironmentHealthChecks(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, count int, opts ...EnvironmentHealthCheckOption) ([]models.EnvironmentHealthCheckEntity, error) {
 	environmenthealthchecks := make([]models.EnvironmentHealthCheckEntity, 0, count)
 
 	for i := range count {

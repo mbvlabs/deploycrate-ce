@@ -7,6 +7,7 @@ import (
 	"deploycrate-ce/internal/validation"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -24,13 +25,33 @@ type EnvironmentSourceEntity struct {
 	Repository          string          `bun:"repository"`
 	Reference           string          `bun:"reference"`
 	Settings            json.RawMessage `bun:"settings,type:jsonb"`
+	AutoBuild           bool            `bun:"auto_build"`
 	EnvironmentID       uuid.UUID       `bun:"environment_id,type:uuid"`
 	CredentialID        *uuid.UUID      `bun:"credential_id,type:uuid"`
 	ContainerRegistryID *uuid.UUID      `bun:"container_registry_id,type:uuid"`
 }
 
 func (e *EnvironmentSourceEntity) Validate() error {
-	return nil
+	builder := validation.NewBuilder()
+	if e.ID == uuid.Nil {
+		builder.Add("id", "required", "source ID is required")
+	}
+	if e.EnvironmentID == uuid.Nil {
+		builder.Add("environment_id", "required", "environment is required")
+	}
+	if strings.TrimSpace(e.Kind) == "" || strings.TrimSpace(e.Provider) == "" {
+		builder.Add("provider", "required", "source kind and provider are required")
+	}
+	if e.Provider == "github" && e.Kind != "git" {
+		builder.Add("kind", "invalid", "GitHub sources must use the git kind")
+	}
+	if strings.TrimSpace(e.Repository) == "" || strings.TrimSpace(e.Reference) == "" {
+		builder.Add("repository", "required", "repository and reference are required")
+	}
+	if len(e.Settings) == 0 || !json.Valid(e.Settings) {
+		builder.Add("settings", "invalid", "source settings must be valid JSON")
+	}
+	return builder.Err()
 }
 
 func (es environmentSource) Find(
@@ -56,6 +77,7 @@ type CreateEnvironmentSourceData struct {
 	Repository          string
 	Reference           string
 	Settings            json.RawMessage
+	AutoBuild           bool
 	EnvironmentID       uuid.UUID
 	CredentialID        *uuid.UUID
 	ContainerRegistryID *uuid.UUID
@@ -76,6 +98,7 @@ func (es environmentSource) Create(
 		Repository:          data.Repository,
 		Reference:           data.Reference,
 		Settings:            data.Settings,
+		AutoBuild:           data.AutoBuild,
 		EnvironmentID:       data.EnvironmentID,
 		CredentialID:        data.CredentialID,
 		ContainerRegistryID: data.ContainerRegistryID,
@@ -101,6 +124,7 @@ type UpdateEnvironmentSourceData struct {
 	Repository          string
 	Reference           string
 	Settings            json.RawMessage
+	AutoBuild           bool
 	EnvironmentID       uuid.UUID
 	CredentialID        *uuid.UUID
 	ContainerRegistryID *uuid.UUID
@@ -120,6 +144,7 @@ func (es environmentSource) Update(
 		Repository:          data.Repository,
 		Reference:           data.Reference,
 		Settings:            data.Settings,
+		AutoBuild:           data.AutoBuild,
 		EnvironmentID:       data.EnvironmentID,
 		CredentialID:        data.CredentialID,
 		ContainerRegistryID: data.ContainerRegistryID,
@@ -138,6 +163,7 @@ func (es environmentSource) Update(
 		Column("repository").
 		Column("reference").
 		Column("settings").
+		Column("auto_build").
 		Column("environment_id").
 		Column("credential_id").
 		Column("container_registry_id").
@@ -239,6 +265,7 @@ func (es environmentSource) Upsert(
 		Repository:          data.Repository,
 		Reference:           data.Reference,
 		Settings:            data.Settings,
+		AutoBuild:           data.AutoBuild,
 		EnvironmentID:       data.EnvironmentID,
 		CredentialID:        data.CredentialID,
 		ContainerRegistryID: data.ContainerRegistryID,
@@ -257,6 +284,7 @@ func (es environmentSource) Upsert(
 		Set("repository = excluded.repository").
 		Set("reference = excluded.reference").
 		Set("settings = excluded.settings").
+		Set("auto_build = excluded.auto_build").
 		Set("environment_id = excluded.environment_id").
 		Set("credential_id = excluded.credential_id").
 		Set("container_registry_id = excluded.container_registry_id").

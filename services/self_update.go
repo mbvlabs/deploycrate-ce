@@ -31,17 +31,21 @@ import (
 )
 
 const (
-	defaultReleaseRoot   = "/opt/deploycrate-ce/releases"
-	defaultSlotsRoot     = "/opt/deploycrate-ce/slots"
-	defaultStatusPath    = "/var/lib/deploycrate-ce/self-update.json"
-	defaultCaddyAdminURL = "http://127.0.0.1:2019"
-	updateLockPath       = "/tmp/deploycrate-ce-update.lock"
-	greenInstance        = "green"
-	blueInstance         = "blue"
-	greenService         = "deploycrate-ce@green.service"
-	blueService          = "deploycrate-ce@blue.service"
-	greenPort            = 8081
-	bluePort             = 8080
+	defaultReleaseRoot    = "/opt/deploycrate-ce/releases"
+	defaultSlotsRoot      = "/opt/deploycrate-ce/slots"
+	defaultStatusPath     = "/var/lib/deploycrate-ce/self-update.json"
+	defaultCaddyAdminURL  = "http://127.0.0.1:2019"
+	updateLockPath        = "/tmp/deploycrate-ce-update.lock"
+	greenInstance         = "green"
+	blueInstance          = "blue"
+	greenService          = "deploycrate-ce@green.service"
+	blueService           = "deploycrate-ce@blue.service"
+	greenPort             = 8081
+	bluePort              = 8080
+	backendHealthInterval = "2s"
+	backendHealthTimeout  = "1s"
+	backendTryDuration    = "2s"
+	backendTryInterval    = "100ms"
 )
 
 var (
@@ -95,6 +99,7 @@ type caddyRoute struct {
 
 type caddyHandle struct {
 	Handler       string             `json:"handler"`
+	HealthChecks  caddyHealthChecks  `json:"health_checks"`
 	LoadBalancing caddyLoadBalancing `json:"load_balancing"`
 	Routes        []caddySubroute    `json:"routes,omitempty"`
 	Upstreams     []caddyUpstream    `json:"upstreams"`
@@ -106,6 +111,18 @@ type caddySubroute struct {
 
 type caddyLoadBalancing struct {
 	SelectionPolicy caddySelectionPolicy `json:"selection_policy"`
+	TryDuration     string               `json:"try_duration,omitempty"`
+	TryInterval     string               `json:"try_interval,omitempty"`
+}
+
+type caddyHealthChecks struct {
+	Active caddyActiveHealthChecks `json:"active"`
+}
+
+type caddyActiveHealthChecks struct {
+	URI      string `json:"uri"`
+	Interval string `json:"interval"`
+	Timeout  string `json:"timeout"`
 }
 
 type caddySelectionPolicy struct {
@@ -871,6 +888,13 @@ func (s *SelfUpdate) configureTraffic(ctx context.Context, routeID, activeInstan
 		{Dial: fmt.Sprintf("127.0.0.1:%d", greenPort)},
 	}
 	handle.Upstreams = upstreams
+	handle.LoadBalancing.TryDuration = backendTryDuration
+	handle.LoadBalancing.TryInterval = backendTryInterval
+	handle.HealthChecks = caddyHealthChecks{Active: caddyActiveHealthChecks{
+		URI:      "/api/health",
+		Interval: backendHealthInterval,
+		Timeout:  backendHealthTimeout,
+	}}
 	switch activeInstance {
 	case blueInstance:
 		handle.LoadBalancing.SelectionPolicy.Weights = []int{100, 0}

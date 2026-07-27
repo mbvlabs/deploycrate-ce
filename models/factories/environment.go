@@ -40,12 +40,7 @@ func BuildEnvironment(applicationID uuid.UUID, opts ...EnvironmentOption) models
 	return f.EnvironmentEntity
 }
 
-func CreateEnvironment(
-	ctx context.Context,
-	exec storage.Executor,
-	applicationID uuid.UUID,
-	opts ...EnvironmentOption,
-) (models.EnvironmentEntity, error) {
+func CreateEnvironment(ctx context.Context, exec storage.Executor, applicationID uuid.UUID, opts ...EnvironmentOption) (models.EnvironmentEntity, error) {
 	built := BuildEnvironment(applicationID, opts...)
 
 	entity := models.EnvironmentEntity{
@@ -68,13 +63,7 @@ func CreateEnvironment(
 	return entity, nil
 }
 
-func CreateEnvironments(
-	ctx context.Context,
-	exec storage.Executor,
-	applicationID uuid.UUID,
-	count int,
-	opts ...EnvironmentOption,
-) ([]models.EnvironmentEntity, error) {
+func CreateEnvironments(ctx context.Context, exec storage.Executor, applicationID uuid.UUID, count int, opts ...EnvironmentOption) ([]models.EnvironmentEntity, error) {
 	environments := make([]models.EnvironmentEntity, 0, count)
 
 	for i := range count {

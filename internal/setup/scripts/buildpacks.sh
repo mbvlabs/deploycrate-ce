@@ -2,8 +2,9 @@
 set -euo pipefail
 
 : "${SERVICE_USER:?SERVICE_USER is required}"
+: "${PACK_VERSION:?PACK_VERSION is required}"
 
-pack_version="0.40.6"
+pack_version="${PACK_VERSION}"
 architecture="$(dpkg --print-architecture)"
 
 case "${architecture}" in

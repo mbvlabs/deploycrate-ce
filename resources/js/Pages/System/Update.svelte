@@ -33,15 +33,18 @@
 
   let {
     auth,
-    currentVersion,
-    update,
+    currentVersion: initialCurrentVersion,
+    update: initialUpdate,
   }: {
     auth: { email: string }
     currentVersion: string
     update: UpdateStatus
   } = $props()
 
+  let currentVersion = $state(initialCurrentVersion)
+  let update = $state(initialUpdate)
   let starting = $state(false)
+  let reconnecting = $state(false)
   const running = $derived(update.state === 'queued' || update.state === 'in_progress')
   const canUpdate = $derived(!running)
   const updateEvents = $derived(update.events ?? [])
@@ -49,11 +52,46 @@
   $effect(() => {
     if (!running) return
 
-    const timer = window.setInterval(() => {
-      router.reload({ only: ['appVersion', 'currentVersion', 'update'], preserveScroll: true })
-    }, 1000)
+    const abortController = new AbortController()
+    let timer: number | undefined
+    let retryDelay = 1000
 
-    return () => window.clearInterval(timer)
+    async function pollStatus() {
+      try {
+        const response = await window.fetch(routes.systemUpdateStatus(), {
+          cache: 'no-store',
+          credentials: 'same-origin',
+          headers: { Accept: 'application/json' },
+          signal: abortController.signal,
+        })
+        if (!response.ok) throw new Error(`Update status returned ${response.status}`)
+
+        const status = (await response.json()) as {
+          currentVersion: string
+          update: UpdateStatus
+        }
+        if (abortController.signal.aborted) return
+
+        currentVersion = status.currentVersion
+        update = status.update
+        reconnecting = false
+        retryDelay = 1000
+        if (status.update.state !== 'queued' && status.update.state !== 'in_progress') return
+      } catch {
+        if (abortController.signal.aborted) return
+        reconnecting = true
+        retryDelay = Math.min(retryDelay * 2, 5000)
+      }
+
+      timer = window.setTimeout(pollStatus, retryDelay)
+    }
+
+    timer = window.setTimeout(pollStatus, retryDelay)
+
+    return () => {
+      abortController.abort()
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
   })
 
   function startUpdate() {
@@ -89,7 +127,7 @@
   <title>Updates</title>
 </svelte:head>
 
-<DashboardLayout email={auth.email}>
+<DashboardLayout email={auth.email} version={currentVersion}>
   <div class="space-y-8">
     <section class="max-w-3xl">
       <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">System</p>
@@ -153,7 +191,7 @@
             {#if running}
               <span class="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-primary">
                 <RefreshCwIcon class="size-3 animate-spin" />
-                Live
+                {reconnecting ? 'Reconnecting' : 'Live'}
               </span>
             {/if}
           </Card.Action>

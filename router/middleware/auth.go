@@ -22,6 +22,20 @@ func AuthOnly(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
+func AdminOnly(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c *echo.Context) error {
+		app := cookies.ExtractFromCookieApp(c)
+		if !app.IsAuthenticated {
+			return c.Redirect(http.StatusSeeOther, routes.SessionNew.URL())
+		}
+		if !app.IsAdmin {
+			return echo.NewHTTPError(http.StatusForbidden, "administrator access is required")
+		}
+
+		return next(c)
+	}
+}
+
 func IPRateLimiter(
 	limit int32,
 	redirectURL routing.Route,

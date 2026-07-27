@@ -15,6 +15,7 @@
     serverName: string
     serverAddress: string
     serverStatus: string
+    serverCapabilities: Record<string, unknown>
     operatingSystem: string
     distribution: string
     distributionVersion: string
@@ -106,6 +107,19 @@
     const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1)
     return `${(value / (1024 ** index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`
   }
+  const capabilityValue = (value: unknown): string => {
+    if (typeof value === 'boolean') return value ? 'Available' : 'Unavailable'
+    if (typeof value === 'string') return checkLabel(value)
+    if (typeof value === 'number') return String(value)
+    if (Array.isArray(value)) return value.map(capabilityValue).join(', ')
+    if (value && typeof value === 'object') {
+      return Object.entries(value as Record<string, unknown>)
+        .map(([key, nestedValue]) => `${checkLabel(key)}: ${capabilityValue(nestedValue)}`)
+        .join(' · ')
+    }
+    return 'Unknown'
+  }
+  const capabilityEntries = $derived(Object.entries(system.serverCapabilities ?? {}))
   const platformLabel = $derived(
     [system.distribution, system.distributionVersion, system.architecture].filter(Boolean).join(' ') || system.operatingSystem || 'Unknown',
   )
@@ -235,6 +249,21 @@
                   <dd class="mt-1 font-mono text-xs">127.0.0.1:{system.activePort}</dd>
                 </div>
               </dl>
+              <div class="mt-6">
+                <h4 class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Capabilities</h4>
+                {#if capabilityEntries.length}
+                  <dl class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                    {#each capabilityEntries as [key, value] (key)}
+                      <div class="border border-border/70 bg-muted/20 p-3">
+                        <dt class="text-xs text-muted-foreground">{checkLabel(key)}</dt>
+                        <dd class="mt-1 break-words text-sm font-medium">{capabilityValue(value)}</dd>
+                      </div>
+                    {/each}
+                  </dl>
+                {:else}
+                  <p class="mt-4 text-sm text-muted-foreground">No server capabilities have been reported.</p>
+                {/if}
+              </div>
             </div>
 
             <Separator />

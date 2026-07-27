@@ -247,7 +247,7 @@ func applicationEnvironmentValues(cfg Config) [][2]string {
 	return [][2]string{
 		{"ENVIRONMENT", "production"},
 		{"PROJECT_NAME", "deploycrate-ce"},
-		{"INSTALLATION_ID", cfg.InstallationID},
+		{"INSTANCE_ID", cfg.InstanceID},
 		{"DOMAIN", cfg.Domain},
 		{"PROTOCOL", "https"},
 		{"DEFAULT_SENDER_SIGNATURE", "noreply@" + cfg.Domain},

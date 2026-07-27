@@ -49,11 +49,7 @@ func BuildServer(opts ...ServerOption) models.ServerEntity {
 	return f.ServerEntity
 }
 
-func CreateServer(
-	ctx context.Context,
-	exec storage.Executor,
-	opts ...ServerOption,
-) (models.ServerEntity, error) {
+func CreateServer(ctx context.Context, exec storage.Executor, opts ...ServerOption) (models.ServerEntity, error) {
 	built := BuildServer(opts...)
 
 	entity := models.ServerEntity{
@@ -84,12 +80,7 @@ func CreateServer(
 	return entity, nil
 }
 
-func CreateServers(
-	ctx context.Context,
-	exec storage.Executor,
-	count int,
-	opts ...ServerOption,
-) ([]models.ServerEntity, error) {
+func CreateServers(ctx context.Context, exec storage.Executor, count int, opts ...ServerOption) ([]models.ServerEntity, error) {
 	servers := make([]models.ServerEntity, 0, count)
 
 	for i := range count {

@@ -21,12 +21,7 @@ type ResourceHealthCheckFactory struct {
 
 type ResourceHealthCheckOption func(*ResourceHealthCheckFactory)
 
-func BuildResourceHealthCheck(
-	resourceInstallationID uuid.UUID,
-	resourceEndpointID *uuid.UUID,
-	resourceCredentialID *uuid.UUID,
-	opts ...ResourceHealthCheckOption,
-) models.ResourceHealthCheckEntity {
+func BuildResourceHealthCheck(resourceInstallationID uuid.UUID, resourceEndpointID *uuid.UUID, resourceCredentialID *uuid.UUID, opts ...ResourceHealthCheckOption) models.ResourceHealthCheckEntity {
 	f := &ResourceHealthCheckFactory{
 		ResourceHealthCheckEntity: models.ResourceHealthCheckEntity{
 			Name:                   faker.Word(),
@@ -51,19 +46,8 @@ func BuildResourceHealthCheck(
 	return f.ResourceHealthCheckEntity
 }
 
-func CreateResourceHealthCheck(
-	ctx context.Context,
-	exec storage.Executor,
-	resourceInstallationID uuid.UUID,
-	resourceEndpointID *uuid.UUID,
-	resourceCredentialID *uuid.UUID,
-	opts ...ResourceHealthCheckOption,
-) (models.ResourceHealthCheckEntity, error) {
-	built := BuildResourceHealthCheck(
-		resourceInstallationID,
-		resourceEndpointID,
-		resourceCredentialID,
-		opts...)
+func CreateResourceHealthCheck(ctx context.Context, exec storage.Executor, resourceInstallationID uuid.UUID, resourceEndpointID *uuid.UUID, resourceCredentialID *uuid.UUID, opts ...ResourceHealthCheckOption) (models.ResourceHealthCheckEntity, error) {
+	built := BuildResourceHealthCheck(resourceInstallationID, resourceEndpointID, resourceCredentialID, opts...)
 
 	entity := models.ResourceHealthCheckEntity{
 		ID:                     uuid.New(),
@@ -90,25 +74,11 @@ func CreateResourceHealthCheck(
 	return entity, nil
 }
 
-func CreateResourceHealthChecks(
-	ctx context.Context,
-	exec storage.Executor,
-	resourceInstallationID uuid.UUID,
-	resourceEndpointID *uuid.UUID,
-	resourceCredentialID *uuid.UUID,
-	count int,
-	opts ...ResourceHealthCheckOption,
-) ([]models.ResourceHealthCheckEntity, error) {
+func CreateResourceHealthChecks(ctx context.Context, exec storage.Executor, resourceInstallationID uuid.UUID, resourceEndpointID *uuid.UUID, resourceCredentialID *uuid.UUID, count int, opts ...ResourceHealthCheckOption) ([]models.ResourceHealthCheckEntity, error) {
 	resourcehealthchecks := make([]models.ResourceHealthCheckEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateResourceHealthCheck(
-			ctx,
-			exec,
-			resourceInstallationID,
-			resourceEndpointID,
-			resourceCredentialID,
-			opts...)
+		entity, err := CreateResourceHealthCheck(ctx, exec, resourceInstallationID, resourceEndpointID, resourceCredentialID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resourcehealthcheck %d: %w", i+1, err)
 		}

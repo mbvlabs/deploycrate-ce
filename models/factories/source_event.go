@@ -21,11 +21,7 @@ type SourceEventFactory struct {
 
 type SourceEventOption func(*SourceEventFactory)
 
-func BuildSourceEvent(
-	externalID string,
-	environmentSourceID uuid.UUID,
-	opts ...SourceEventOption,
-) models.SourceEventEntity {
+func BuildSourceEvent(externalID string, environmentSourceID uuid.UUID, opts ...SourceEventOption) models.SourceEventEntity {
 	f := &SourceEventFactory{
 		SourceEventEntity: models.SourceEventEntity{
 			ExternalID:          externalID,
@@ -46,13 +42,7 @@ func BuildSourceEvent(
 	return f.SourceEventEntity
 }
 
-func CreateSourceEvent(
-	ctx context.Context,
-	exec storage.Executor,
-	externalID string,
-	environmentSourceID uuid.UUID,
-	opts ...SourceEventOption,
-) (models.SourceEventEntity, error) {
+func CreateSourceEvent(ctx context.Context, exec storage.Executor, externalID string, environmentSourceID uuid.UUID, opts ...SourceEventOption) (models.SourceEventEntity, error) {
 	built := BuildSourceEvent(externalID, environmentSourceID, opts...)
 
 	entity := models.SourceEventEntity{
@@ -76,14 +66,7 @@ func CreateSourceEvent(
 	return entity, nil
 }
 
-func CreateSourceEvents(
-	ctx context.Context,
-	exec storage.Executor,
-	externalID string,
-	environmentSourceID uuid.UUID,
-	count int,
-	opts ...SourceEventOption,
-) ([]models.SourceEventEntity, error) {
+func CreateSourceEvents(ctx context.Context, exec storage.Executor, externalID string, environmentSourceID uuid.UUID, count int, opts ...SourceEventOption) ([]models.SourceEventEntity, error) {
 	sourceevents := make([]models.SourceEventEntity, 0, count)
 
 	for i := range count {

@@ -72,7 +72,7 @@ type InsertOnly struct {
 }
 
 // Insert implements storage.InsertQueue.
-func (i *InsertOnly) Insert(
+func (i InsertOnly) Insert(
 	ctx context.Context,
 	args river.JobArgs,
 	opts *river.InsertOpts,
@@ -81,7 +81,7 @@ func (i *InsertOnly) Insert(
 }
 
 // InsertMany implements storage.InsertQueue.
-func (i *InsertOnly) InsertMany(
+func (i InsertOnly) InsertMany(
 	ctx context.Context,
 	params []river.InsertManyParams,
 ) ([]*rivertype.JobInsertResult, error) {
@@ -89,7 +89,7 @@ func (i *InsertOnly) InsertMany(
 }
 
 // InsertManyFast implements storage.InsertQueue.
-func (i *InsertOnly) InsertManyFast(
+func (i InsertOnly) InsertManyFast(
 	ctx context.Context,
 	params []river.InsertManyParams,
 ) (int, error) {
@@ -97,7 +97,7 @@ func (i *InsertOnly) InsertManyFast(
 }
 
 // InsertManyFastTx implements storage.InsertQueue.
-func (i *InsertOnly) InsertManyFastTx(
+func (i InsertOnly) InsertManyFastTx(
 	ctx context.Context,
 	tx *sql.Tx,
 	params []river.InsertManyParams,
@@ -106,7 +106,7 @@ func (i *InsertOnly) InsertManyFastTx(
 }
 
 // InsertManyTx implements storage.InsertQueue.
-func (i *InsertOnly) InsertManyTx(
+func (i InsertOnly) InsertManyTx(
 	ctx context.Context,
 	tx *sql.Tx,
 	params []river.InsertManyParams,
@@ -115,7 +115,7 @@ func (i *InsertOnly) InsertManyTx(
 }
 
 // InsertTx implements storage.InsertQueue.
-func (i *InsertOnly) InsertTx(
+func (i InsertOnly) InsertTx(
 	ctx context.Context,
 	tx *sql.Tx,
 	args river.JobArgs,
@@ -124,7 +124,7 @@ func (i *InsertOnly) InsertTx(
 	return i.client.InsertTx(ctx, tx, args, opts)
 }
 
-var _ storage.InsertQueue = (*InsertOnly)(nil)
+var _ storage.InsertQueue = InsertOnly{}
 
 func NewInsertOnly(db storage.Pool, workers *river.Workers) (InsertOnly, error) {
 	riverClient, err := river.NewClient(riverdatabasesql.New(db.Conn()), &river.Config{

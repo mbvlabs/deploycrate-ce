@@ -18,11 +18,7 @@ type ChangeReleaseFactory struct {
 
 type ChangeReleaseOption func(*ChangeReleaseFactory)
 
-func BuildChangeRelease(
-	changeID uuid.UUID,
-	releaseID uuid.UUID,
-	opts ...ChangeReleaseOption,
-) models.ChangeReleaseEntity {
+func BuildChangeRelease(changeID uuid.UUID, releaseID uuid.UUID, opts ...ChangeReleaseOption) models.ChangeReleaseEntity {
 	f := &ChangeReleaseFactory{
 		ChangeReleaseEntity: models.ChangeReleaseEntity{
 			ChangeID:  changeID,
@@ -37,13 +33,7 @@ func BuildChangeRelease(
 	return f.ChangeReleaseEntity
 }
 
-func CreateChangeRelease(
-	ctx context.Context,
-	exec storage.Executor,
-	changeID uuid.UUID,
-	releaseID uuid.UUID,
-	opts ...ChangeReleaseOption,
-) (models.ChangeReleaseEntity, error) {
+func CreateChangeRelease(ctx context.Context, exec storage.Executor, changeID uuid.UUID, releaseID uuid.UUID, opts ...ChangeReleaseOption) (models.ChangeReleaseEntity, error) {
 	built := BuildChangeRelease(changeID, releaseID, opts...)
 
 	entity := models.ChangeReleaseEntity{
@@ -61,14 +51,7 @@ func CreateChangeRelease(
 	return entity, nil
 }
 
-func CreateChangeReleases(
-	ctx context.Context,
-	exec storage.Executor,
-	changeID uuid.UUID,
-	releaseID uuid.UUID,
-	count int,
-	opts ...ChangeReleaseOption,
-) ([]models.ChangeReleaseEntity, error) {
+func CreateChangeReleases(ctx context.Context, exec storage.Executor, changeID uuid.UUID, releaseID uuid.UUID, count int, opts ...ChangeReleaseOption) ([]models.ChangeReleaseEntity, error) {
 	changereleases := make([]models.ChangeReleaseEntity, 0, count)
 
 	for i := range count {

@@ -30,6 +30,7 @@ type BootstrapInput struct {
 	Distribution        string
 	DistributionVersion string
 	Architecture        string
+	Capabilities        BootstrapCapabilitiesInput
 	DatabaseExternal    bool
 	DatabaseHost        string
 	DatabasePort        int
@@ -39,9 +40,17 @@ type BootstrapInput struct {
 	Backup              BootstrapBackupInput
 }
 
+type BootstrapCapabilitiesInput struct {
+	BuildpacksPackVersion string
+	CaddyVersion          string
+	DockerEngineVersion   string
+	ResticVersion         string
+	WireGuardToolsVersion string
+}
+
 type BootstrapBackupInput struct {
 	Enabled                    bool
-	InstallationID             string
+	InstanceID                 string
 	Provider                   string
 	Endpoint                   string
 	Region                     string
@@ -98,16 +107,27 @@ func (service BootstrapService) Bootstrap(
 	if err := validateBootstrapInput(input); err != nil {
 		return BootstrapResult{}, err
 	}
+	capabilities, err := bootstrapServerCapabilities(input.Capabilities)
+	if err != nil {
+		return BootstrapResult{}, err
+	}
 
 	result, found, err := service.findExisting(ctx, input.Domain)
 	if err != nil {
 		return BootstrapResult{}, err
 	}
 	if !found {
-		result, err = service.createGraph(ctx, input)
+		result, err = service.createGraph(ctx, input, capabilities)
 		if err != nil {
 			return BootstrapResult{}, err
 		}
+	} else if err := models.Server.UpdateCapabilities(
+		ctx,
+		service.db.Executor(),
+		result.ServerID,
+		capabilities,
+	); err != nil {
+		return BootstrapResult{}, fmt.Errorf("update bootstrap server capabilities: %w", err)
 	}
 
 	externalID, err := service.routes.Reconcile(ctx, result.CaddyRouteID)
@@ -147,9 +167,43 @@ func (service BootstrapService) findExisting(
 	}, true, nil
 }
 
+func bootstrapServerCapabilities(
+	input BootstrapCapabilitiesInput,
+) (json.RawMessage, error) {
+	capabilities, err := json.Marshal(map[string]any{
+		"container_engine": map[string]string{
+			"name":    "docker",
+			"version": input.DockerEngineVersion,
+		},
+		"buildpacks": map[string]string{
+			"tool":    "pack",
+			"version": input.BuildpacksPackVersion,
+		},
+		"filesystem_backups": map[string]string{
+			"tool":    "restic",
+			"version": input.ResticVersion,
+		},
+		"proxy": map[string]string{
+			"name":    "caddy",
+			"version": input.CaddyVersion,
+		},
+		"networking": map[string]any{
+			"wireguard": map[string]string{
+				"tool":    "wireguard-tools",
+				"version": input.WireGuardToolsVersion,
+			},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encode bootstrap server capabilities: %w", err)
+	}
+	return capabilities, nil
+}
+
 func (service BootstrapService) createGraph(
 	ctx context.Context,
 	input BootstrapInput,
+	capabilities json.RawMessage,
 ) (BootstrapResult, error) {
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -177,16 +231,10 @@ func (service BootstrapService) createGraph(
 	}
 
 	server, err := models.Server.Create(ctx, tx, models.CreateServerData{
-		Name: "DeployCrate CE Server",
-		Slug: "deploycrate-ce",
-		Kind: "self_hosted",
-		Capabilities: json.RawMessage(
-			fmt.Sprintf(
-				`{"runtime":"systemd","proxy":"caddy","wireguard":true,"deployment_strategies":["blue_green"],"slots":{"blue":%d,"green":%d}}`,
-				bootstrapBluePort,
-				bootstrapGreenPort,
-			),
-		),
+		Name:            "DeployCrate CE Server",
+		Slug:            "deploycrate-ce",
+		Kind:            "self_hosted",
+		Capabilities:    capabilities,
 		OperatingSystem: sql.NullString{String: "linux", Valid: true},
 		Distribution: sql.NullString{
 			String: input.Distribution,
@@ -506,7 +554,7 @@ func createBootstrapBackups(
 		return nil
 	}
 	metadata, err := json.Marshal(map[string]any{
-		"installation_id":  input.Backup.InstallationID,
+		"instance_id":      input.Backup.InstanceID,
 		"provider":         input.Backup.Provider,
 		"endpoint":         input.Backup.Endpoint,
 		"region":           input.Backup.Region,
@@ -594,6 +642,21 @@ func validateBootstrapInput(input BootstrapInput) error {
 	if strings.TrimSpace(input.ArtifactReference) == "" || len(input.ArtifactDigest) == 0 {
 		return errors.New("bootstrap release artifact and digest are required")
 	}
+	capabilityVersions := []struct {
+		name    string
+		version string
+	}{
+		{name: "Buildpacks pack", version: input.Capabilities.BuildpacksPackVersion},
+		{name: "Caddy", version: input.Capabilities.CaddyVersion},
+		{name: "Docker Engine", version: input.Capabilities.DockerEngineVersion},
+		{name: "Restic", version: input.Capabilities.ResticVersion},
+		{name: "WireGuard tools", version: input.Capabilities.WireGuardToolsVersion},
+	}
+	for _, capability := range capabilityVersions {
+		if strings.TrimSpace(capability.version) == "" {
+			return fmt.Errorf("bootstrap %s version is required", capability.name)
+		}
+	}
 	if strings.TrimSpace(input.DatabaseHost) == "" || input.DatabasePort < 1 ||
 		input.DatabasePort > 65535 {
 		return errors.New("bootstrap database endpoint is invalid")
@@ -618,7 +681,7 @@ func validateBootstrapInput(input BootstrapInput) error {
 		return errors.New("bootstrap encrypted WireGuard private key is required")
 	}
 	if input.Backup.Enabled {
-		if input.Backup.InstallationID == "" || input.Backup.Provider == "" || input.Backup.Region == "" ||
+		if input.Backup.InstanceID == "" || input.Backup.Provider == "" || input.Backup.Region == "" ||
 			input.Backup.Bucket == "" || len(input.Backup.EncryptedCredentialPayload) == 0 ||
 			input.Backup.ValidatedAt.IsZero() || input.Backup.ServerSchedule == "" ||
 			len(input.Backup.ServerRetention) == 0 {

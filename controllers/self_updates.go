@@ -52,6 +52,19 @@ func (s SelfUpdates) RegisterRoutes(r *router.Router) error {
 		errList = append(errList, err)
 	}
 
+	_, err = r.AddRoute(echo.Route{
+		Method:  http.MethodGet,
+		Path:    routes.SystemUpdateStatus.Path(),
+		Name:    routes.SystemUpdateStatus.Name(),
+		Handler: s.Status,
+		Middlewares: []echo.MiddlewareFunc{
+			middleware.AuthOnly,
+		},
+	})
+	if err != nil {
+		errList = append(errList, err)
+	}
+
 	return errors.Join(errList...)
 }
 
@@ -60,6 +73,14 @@ func (s SelfUpdates) Show(etx *echo.Context) error {
 		"auth": inertia.Props{
 			"email": cookies.ExtractFromCookieApp(etx).Email,
 		},
+		"currentVersion": s.service.CurrentVersion(),
+		"update":         s.service.Status(),
+	})
+}
+
+func (s SelfUpdates) Status(etx *echo.Context) error {
+	etx.Response().Header().Set("Cache-Control", "no-store")
+	return etx.JSON(http.StatusOK, map[string]any{
 		"currentVersion": s.service.CurrentVersion(),
 		"update":         s.service.Status(),
 	})

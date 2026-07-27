@@ -22,10 +22,10 @@ func NewBackupPolicyActivator(db storage.Pool) *BackupPolicyActivator {
 
 func (service *BackupPolicyActivator) Activate(
 	ctx context.Context,
-	installationID string,
+	instanceID string,
 ) (int, error) {
-	if strings.TrimSpace(installationID) == "" {
-		return 0, errors.New("backup installation ID is required")
+	if strings.TrimSpace(instanceID) == "" {
+		return 0, errors.New("backup instance ID is required")
 	}
 
 	tx, err := service.db.BeginTx(ctx, nil)
@@ -34,10 +34,10 @@ func (service *BackupPolicyActivator) Activate(
 	}
 	defer tx.Rollback()
 
-	policies, err := models.BackupPolicy.FindInactiveInstallationPoliciesForUpdate(
+	policies, err := models.BackupPolicy.FindInactiveInstancePoliciesForUpdate(
 		ctx,
 		tx,
-		installationID,
+		instanceID,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("find inactive backup policies: %w", err)

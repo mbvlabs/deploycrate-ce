@@ -21,6 +21,10 @@ const (
 	routesPath               = "/config/apps/http/servers/srv0/routes"
 	applyRouteMaxAttempts    = 3
 	applyRouteRetryBaseDelay = 250 * time.Millisecond
+	backendHealthInterval    = "2s"
+	backendHealthTimeout     = "1s"
+	backendTryDuration       = "2s"
+	backendTryInterval       = "100ms"
 )
 
 type Backend struct {
@@ -64,6 +68,11 @@ func (client *Client) ApplyRoute(ctx context.Context, route Route) error {
 			LoadBalancing: loadBalancing{SelectionPolicy: selectionPolicy{
 				Policy:  "weighted_round_robin",
 				Weights: weights(route.Backends),
+			}, TryDuration: backendTryDuration, TryInterval: backendTryInterval},
+			HealthChecks: healthChecks{Active: activeHealthChecks{
+				URI:      "/api/health",
+				Interval: backendHealthInterval,
+				Timeout:  backendHealthTimeout,
 			}},
 		}},
 	}
@@ -294,6 +303,7 @@ type routeEntry struct {
 
 type routeHandle struct {
 	Handler       string        `json:"handler"`
+	HealthChecks  healthChecks  `json:"health_checks"`
 	LoadBalancing loadBalancing `json:"load_balancing"`
 	Upstreams     []upstream    `json:"upstreams"`
 }
@@ -304,6 +314,18 @@ type routeMatch struct {
 
 type loadBalancing struct {
 	SelectionPolicy selectionPolicy `json:"selection_policy"`
+	TryDuration     string          `json:"try_duration"`
+	TryInterval     string          `json:"try_interval"`
+}
+
+type healthChecks struct {
+	Active activeHealthChecks `json:"active"`
+}
+
+type activeHealthChecks struct {
+	URI      string `json:"uri"`
+	Interval string `json:"interval"`
+	Timeout  string `json:"timeout"`
 }
 
 type selectionPolicy struct {

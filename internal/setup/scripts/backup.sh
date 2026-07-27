@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-readonly version="0.18.1"
+: "${RESTIC_VERSION:?RESTIC_VERSION is required}"
+
+readonly version="${RESTIC_VERSION}"
 temporary_directory=""
 temporary_sources=""
 temporary_excludes=""

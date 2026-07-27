@@ -3,6 +3,7 @@ package services
 
 import (
 	caddyclients "deploycrate-ce/clients/caddy"
+	githubclient "deploycrate-ce/clients/github"
 
 	"go.uber.org/fx"
 )
@@ -25,5 +26,9 @@ var Module = fx.Module(
 		NewBackupRetention,
 		NewBackupPolicyActivator,
 		NewBackupScheduler,
+		githubclient.NewClient,
+		NewGitHubConnection,
+		NewGitHubWebhook,
+		NewApplicationSetup,
 	),
 )

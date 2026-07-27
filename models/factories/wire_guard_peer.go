@@ -20,10 +20,7 @@ type WireGuardPeerFactory struct {
 
 type WireGuardPeerOption func(*WireGuardPeerFactory)
 
-func BuildWireGuardPeer(
-	serverID uuid.UUID,
-	opts ...WireGuardPeerOption,
-) models.WireGuardPeerEntity {
+func BuildWireGuardPeer(serverID uuid.UUID, opts ...WireGuardPeerOption) models.WireGuardPeerEntity {
 	f := &WireGuardPeerFactory{
 		WireGuardPeerEntity: models.WireGuardPeerEntity{
 			PublicKey:      faker.Word(),
@@ -44,12 +41,7 @@ func BuildWireGuardPeer(
 	return f.WireGuardPeerEntity
 }
 
-func CreateWireGuardPeer(
-	ctx context.Context,
-	exec storage.Executor,
-	serverID uuid.UUID,
-	opts ...WireGuardPeerOption,
-) (models.WireGuardPeerEntity, error) {
+func CreateWireGuardPeer(ctx context.Context, exec storage.Executor, serverID uuid.UUID, opts ...WireGuardPeerOption) (models.WireGuardPeerEntity, error) {
 	built := BuildWireGuardPeer(serverID, opts...)
 
 	entity := models.WireGuardPeerEntity{
@@ -73,13 +65,7 @@ func CreateWireGuardPeer(
 	return entity, nil
 }
 
-func CreateWireGuardPeers(
-	ctx context.Context,
-	exec storage.Executor,
-	serverID uuid.UUID,
-	count int,
-	opts ...WireGuardPeerOption,
-) ([]models.WireGuardPeerEntity, error) {
+func CreateWireGuardPeers(ctx context.Context, exec storage.Executor, serverID uuid.UUID, count int, opts ...WireGuardPeerOption) ([]models.WireGuardPeerEntity, error) {
 	wireguardpeers := make([]models.WireGuardPeerEntity, 0, count)
 
 	for i := range count {

@@ -20,10 +20,7 @@ type EnvironmentDomainFactory struct {
 
 type EnvironmentDomainOption func(*EnvironmentDomainFactory)
 
-func BuildEnvironmentDomain(
-	environmentID uuid.UUID,
-	opts ...EnvironmentDomainOption,
-) models.EnvironmentDomainEntity {
+func BuildEnvironmentDomain(environmentID uuid.UUID, opts ...EnvironmentDomainOption) models.EnvironmentDomainEntity {
 	f := &EnvironmentDomainFactory{
 		EnvironmentDomainEntity: models.EnvironmentDomainEntity{
 			Hostname:      faker.Word(),
@@ -40,12 +37,7 @@ func BuildEnvironmentDomain(
 	return f.EnvironmentDomainEntity
 }
 
-func CreateEnvironmentDomain(
-	ctx context.Context,
-	exec storage.Executor,
-	environmentID uuid.UUID,
-	opts ...EnvironmentDomainOption,
-) (models.EnvironmentDomainEntity, error) {
+func CreateEnvironmentDomain(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, opts ...EnvironmentDomainOption) (models.EnvironmentDomainEntity, error) {
 	built := BuildEnvironmentDomain(environmentID, opts...)
 
 	entity := models.EnvironmentDomainEntity{
@@ -65,13 +57,7 @@ func CreateEnvironmentDomain(
 	return entity, nil
 }
 
-func CreateEnvironmentDomains(
-	ctx context.Context,
-	exec storage.Executor,
-	environmentID uuid.UUID,
-	count int,
-	opts ...EnvironmentDomainOption,
-) ([]models.EnvironmentDomainEntity, error) {
+func CreateEnvironmentDomains(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, count int, opts ...EnvironmentDomainOption) ([]models.EnvironmentDomainEntity, error) {
 	environmentdomains := make([]models.EnvironmentDomainEntity, 0, count)
 
 	for i := range count {

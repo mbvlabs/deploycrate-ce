@@ -39,3 +39,9 @@ var SystemUpdateCreate = routing.NewSimpleRoute(
 	"system.update.create",
 	SystemPrefix,
 )
+
+var SystemUpdateStatus = routing.NewSimpleRoute(
+	"/update/status",
+	"system.update.status",
+	SystemPrefix,
+)

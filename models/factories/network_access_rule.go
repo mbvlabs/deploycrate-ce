@@ -20,10 +20,7 @@ type NetworkAccessRuleFactory struct {
 
 type NetworkAccessRuleOption func(*NetworkAccessRuleFactory)
 
-func BuildNetworkAccessRule(
-	environmentResourceID uuid.UUID,
-	opts ...NetworkAccessRuleOption,
-) models.NetworkAccessRuleEntity {
+func BuildNetworkAccessRule(environmentResourceID uuid.UUID, opts ...NetworkAccessRuleOption) models.NetworkAccessRuleEntity {
 	f := &NetworkAccessRuleFactory{
 		NetworkAccessRuleEntity: models.NetworkAccessRuleEntity{
 			Protocol:              faker.Word(),
@@ -42,12 +39,7 @@ func BuildNetworkAccessRule(
 	return f.NetworkAccessRuleEntity
 }
 
-func CreateNetworkAccessRule(
-	ctx context.Context,
-	exec storage.Executor,
-	environmentResourceID uuid.UUID,
-	opts ...NetworkAccessRuleOption,
-) (models.NetworkAccessRuleEntity, error) {
+func CreateNetworkAccessRule(ctx context.Context, exec storage.Executor, environmentResourceID uuid.UUID, opts ...NetworkAccessRuleOption) (models.NetworkAccessRuleEntity, error) {
 	built := BuildNetworkAccessRule(environmentResourceID, opts...)
 
 	entity := models.NetworkAccessRuleEntity{
@@ -69,13 +61,7 @@ func CreateNetworkAccessRule(
 	return entity, nil
 }
 
-func CreateNetworkAccessRules(
-	ctx context.Context,
-	exec storage.Executor,
-	environmentResourceID uuid.UUID,
-	count int,
-	opts ...NetworkAccessRuleOption,
-) ([]models.NetworkAccessRuleEntity, error) {
+func CreateNetworkAccessRules(ctx context.Context, exec storage.Executor, environmentResourceID uuid.UUID, count int, opts ...NetworkAccessRuleOption) ([]models.NetworkAccessRuleEntity, error) {
 	networkaccessrules := make([]models.NetworkAccessRuleEntity, 0, count)
 
 	for i := range count {

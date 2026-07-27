@@ -48,7 +48,7 @@ type resticSnapshot struct {
 type serverRecoveryManifest struct {
 	Version              int                      `json:"version"`
 	FormatVersion        string                   `json:"format_version"`
-	InstallationID       string                   `json:"installation_id"`
+	InstanceID           string                   `json:"instance_id"`
 	BackupID             string                   `json:"backup_id"`
 	PolicyID             string                   `json:"policy_id"`
 	ServerID             string                   `json:"server_id"`
@@ -231,7 +231,7 @@ func (service *ServerBackup) createServerRecoveryManifest(
 	manifest := serverRecoveryManifest{
 		Version:         1,
 		FormatVersion:   scope.Backup.FormatVersion,
-		InstallationID:  service.config.App.InstallationID,
+		InstanceID:      service.config.App.InstanceID,
 		BackupID:        scope.Backup.ID.String(),
 		PolicyID:        scope.Backup.BackupPolicyID.String(),
 		ServerID:        scope.Backup.ServerID.String(),

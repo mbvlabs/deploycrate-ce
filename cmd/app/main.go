@@ -10,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"deploycrate-ce/assets"
 	mailclients "deploycrate-ce/clients/email"
 	"deploycrate-ce/config"
 	"deploycrate-ce/controllers"
@@ -21,6 +22,7 @@ import (
 	"deploycrate-ce/models"
 	"deploycrate-ce/queue"
 	"deploycrate-ce/router"
+	"deploycrate-ce/router/routes"
 	"deploycrate-ce/services"
 	"deploycrate-ce/telemetry"
 
@@ -38,10 +40,25 @@ func main() {
 		return
 	}
 
+	rootHTML, err := assets.Files.ReadFile("inertia/root.go.html")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to read Inertia root template: %s\n", err)
+		os.Exit(1)
+	}
+	viteManifest, err := assets.Files.ReadFile("dist/vite/manifest.json")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "failed to read Vite manifest: %s\n", err)
+		os.Exit(1)
+	}
+
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	if err := inertia.Init(
-		"inertia/root.go.html",
+		config.ProjectName,
+		config.Env,
+		routes.ViteBuild.Path(),
+		rootHTML,
+		viteManifest,
 		inertia.WithSharedProp("appVersion", appVersion),
 	); err != nil {
 		fmt.Fprintf(os.Stderr, "failed to initialize inertia: %s\n", err)
@@ -82,7 +99,7 @@ func main() {
 
 	<-ctx.Done()
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
 
 	if err := app.Stop(shutdownCtx); err != nil {
@@ -130,7 +147,7 @@ func runCommand(ctx context.Context, arguments []string) error {
 		defer db.Close()
 		activated, err := services.NewBackupPolicyActivator(db).Activate(
 			ctx,
-			cfg.App.InstallationID,
+			cfg.App.InstanceID,
 		)
 		if err != nil {
 			return err
@@ -159,8 +176,9 @@ func startQueueProcessor(lc fx.Lifecycle, appCtx context.Context, p queue.Proces
 }
 
 func startServer(lc fx.Lifecycle, appCtx context.Context, r *router.Router, cfg config.Config) {
+	requestBaseCtx := context.WithoutCancel(appCtx)
 	srv := server.New(
-		appCtx,
+		requestBaseCtx,
 		cfg.App.Host,
 		cfg.App.Port,
 		config.Env,
