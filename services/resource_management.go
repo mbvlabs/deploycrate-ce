@@ -35,12 +35,19 @@ func NewResourceManagement(db storage.Pool, cfg config.Config) *ResourceManageme
 }
 
 type ResourceInput struct {
-	Name               string
-	Category           string
-	Kind               string
-	ManagementMode     string
-	SharingScope       string
-	OwnerEnvironmentID uuid.UUID
+	Name           string
+	Category       string
+	Kind           string
+	ManagementMode models.ResourceManagementModeEnum
+	SharingScope   models.ResourceSharingScopeEnum
+}
+
+type ResourceConnectionInput struct {
+	EnvironmentID        uuid.UUID
+	Alias                string
+	Configuration        json.RawMessage
+	ResourceEndpointID   uuid.UUID
+	ResourceCredentialID *uuid.UUID
 }
 
 type CreateResourceInput struct {
@@ -116,8 +123,8 @@ func (service *ResourceManagement) List(ctx context.Context, filters models.Reso
 	items := make([]models.ResourceListItem, 0)
 	query := service.db.Executor().NewSelect().
 		TableExpr("resources AS resource").
-		ColumnExpr("resource.id, resource.name, resource.category, resource.kind, resource.management_mode, resource.sharing_scope, resource.owner_environment_id").
-		ColumnExpr("environment.name AS owner_environment, application.name AS owner_application").
+		ColumnExpr("resource.id, resource.name, resource.category, resource.kind, resource.management_mode, resource.sharing_scope").
+		ColumnExpr("(SELECT count(*) FROM environment_resources AS connection WHERE connection.resource_id = resource.id AND connection.archived_at IS NULL) AS connection_count").
 		ColumnExpr("(SELECT count(*) FROM resource_installations AS installation WHERE installation.resource_id = resource.id AND installation.archived_at IS NULL) AS installation_count").
 		ColumnExpr("(SELECT count(*) FROM resource_endpoints AS endpoint WHERE endpoint.resource_id = resource.id AND endpoint.archived_at IS NULL) AS endpoint_count").
 		ColumnExpr(`CASE
@@ -135,10 +142,8 @@ func (service *ResourceManagement) List(ctx context.Context, filters models.Reso
 			) THEN 'healthy'
 			ELSE 'unknown'
 		END AS health`).
-		Join("JOIN environments AS environment ON environment.id = resource.owner_environment_id AND environment.archived_at IS NULL").
-		Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
 		Where("resource.archived_at IS NULL").
-		Where("application.slug <> ?", models.SystemApplicationSlug).
+		Where("resource.system_managed = FALSE").
 		OrderExpr("resource.name ASC")
 	if search := strings.TrimSpace(filters.Search); search != "" {
 		query = query.Where("resource.name ILIKE ?", "%"+search+"%")
@@ -154,9 +159,6 @@ func (service *ResourceManagement) List(ctx context.Context, filters models.Reso
 	}
 	if filters.SharingScope != "" {
 		query = query.Where("resource.sharing_scope = ?", filters.SharingScope)
-	}
-	if filters.OwnerEnvironmentID != nil {
-		query = query.Where("resource.owner_environment_id = ?", *filters.OwnerEnvironmentID)
 	}
 	return items, query.Scan(ctx, &items)
 }
@@ -178,21 +180,13 @@ func (service *ResourceManagement) Options(ctx context.Context) (models.Resource
 				OrderExpr("application.name, environment.name").Scan(ctx, &options.Environments)
 		},
 		func() error {
-			return service.db.Executor().NewSelect().TableExpr("environment_targets AS target").Distinct().
-				ColumnExpr("server.id, server.name, server.address, target.environment_id").
-				Join("JOIN servers AS server ON server.id = target.server_id AND server.archived_at IS NULL").
-				Join("JOIN environments AS environment ON environment.id = target.environment_id AND environment.archived_at IS NULL").
-				Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
-				Where("target.detached_at IS NULL").Where("application.slug <> ?", models.SystemApplicationSlug).
-				OrderExpr("server.name").Scan(ctx, &options.Servers)
+			return service.db.Executor().NewSelect().TableExpr("servers AS server").
+				ColumnExpr("server.id, server.name, server.address").
+				Where("server.archived_at IS NULL").OrderExpr("server.name").Scan(ctx, &options.Servers)
 		},
 		func() error {
-			return service.db.Executor().NewSelect().TableExpr("environment_networks AS binding").Distinct().
-				ColumnExpr("network.id, network.name, binding.environment_id").
-				Join("JOIN private_networks AS network ON network.id = binding.private_network_id AND network.archived_at IS NULL").
-				Join("JOIN environments AS environment ON environment.id = binding.environment_id AND environment.archived_at IS NULL").
-				Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
-				Where("binding.removed_at IS NULL").Where("application.slug <> ?", models.SystemApplicationSlug).
+			return service.db.Executor().NewSelect().TableExpr("private_networks AS network").
+				ColumnExpr("network.id, network.name").Where("network.archived_at IS NULL").
 				OrderExpr("network.name").Scan(ctx, &options.PrivateNetworks)
 		},
 		func() error {
@@ -206,28 +200,55 @@ func (service *ResourceManagement) Options(ctx context.Context) (models.Resource
 			return models.ResourceFormOptions{}, err
 		}
 	}
+	type networkServer struct {
+		NetworkID uuid.UUID `bun:"network_id"`
+		ServerID  uuid.UUID `bun:"server_id"`
+	}
+	var access []networkServer
+	if err := service.db.Executor().NewSelect().TableExpr("server_networks").
+		ColumnExpr("private_network_id AS network_id, server_id").Where("removed_at IS NULL").Scan(ctx, &access); err != nil {
+		return models.ResourceFormOptions{}, err
+	}
+	networkIndexes := make(map[uuid.UUID]int, len(options.PrivateNetworks))
+	for index := range options.PrivateNetworks {
+		networkIndexes[options.PrivateNetworks[index].ID] = index
+		options.PrivateNetworks[index].ServerIDs = make([]uuid.UUID, 0)
+	}
+	for _, item := range access {
+		if index, ok := networkIndexes[item.NetworkID]; ok {
+			options.PrivateNetworks[index].ServerIDs = append(options.PrivateNetworks[index].ServerIDs, item.ServerID)
+		}
+	}
 	return options, nil
 }
 
 func (service *ResourceManagement) Details(ctx context.Context, resourceID uuid.UUID) (models.ResourceDetails, error) {
-	resource, isSystem, ownerEnvironment, ownerApplication, err := service.loadResource(ctx, service.db.Executor(), resourceID, false)
+	resource, err := service.loadResource(ctx, service.db.Executor(), resourceID, false)
 	if err != nil {
 		return models.ResourceDetails{}, err
 	}
-	if isSystem {
+	if resource.SystemManaged {
 		return models.ResourceDetails{}, models.ErrNotFound
 	}
 	detail := models.ResourceDetails{
-		Resource: resource, OwnerEnvironment: ownerEnvironment, OwnerApplication: ownerApplication, IsSystem: isSystem,
+		Resource: resource, Connections: make([]models.ResourceConnectionDetail, 0),
 		Endpoints: make([]models.ResourceEndpointEntity, 0), Credentials: make([]models.ResourceCredentialEntity, 0),
 		Installations: make([]models.ResourceInstallationDetail, 0), Volumes: make([]models.ResourceVolumeDetail, 0),
 		Mounts: make([]models.ResourceMountDetail, 0), HealthChecks: make([]models.ResourceHealthCheckDetail, 0),
 	}
 	queries := []func() error{
 		func() error {
-			count, countErr := service.db.Executor().NewSelect().TableExpr("environment_resources").Where("resource_id = ?", resourceID).Where("archived_at IS NULL").Count(ctx)
-			detail.BindingCount = count
-			return countErr
+			return service.db.Executor().NewSelect().TableExpr("environment_resources AS connection").
+				ColumnExpr("connection.*").
+				ColumnExpr("environment.name AS environment_name, environment.kind AS environment_kind, environment.archived_at IS NOT NULL AS environment_archived").
+				ColumnExpr("application.name AS application_name, application.slug AS application_slug, application.archived_at IS NOT NULL AS application_archived").
+				ColumnExpr("endpoint.name AS endpoint_name, COALESCE(credential.name, '') AS credential_name").
+				Join("JOIN environments AS environment ON environment.id = connection.environment_id").
+				Join("JOIN applications AS application ON application.id = environment.application_id").
+				Join("JOIN resource_endpoints AS endpoint ON endpoint.id = connection.resource_endpoint_id AND endpoint.archived_at IS NULL").
+				Join("LEFT JOIN resource_credentials AS credential ON credential.id = connection.resource_credential_id AND credential.archived_at IS NULL").
+				Where("connection.resource_id = ?", resourceID).Where("connection.archived_at IS NULL").
+				OrderExpr("application.name, environment.name").Scan(ctx, &detail.Connections)
 		},
 		func() error {
 			return service.db.Executor().NewSelect().Model(&detail.Endpoints).Where("resource_id = ?", resourceID).Where("archived_at IS NULL").OrderExpr("name").Scan(ctx)
@@ -282,16 +303,10 @@ func (service *ResourceManagement) CreateResource(ctx context.Context, input Cre
 		return models.ResourceEntity{}, err
 	}
 	defer tx.Rollback()
-	if err := service.validateOwnerEnvironment(ctx, tx, input.Resource.OwnerEnvironmentID, true); err != nil {
-		return models.ResourceEntity{}, err
-	}
-	if err := service.lockName(ctx, tx, input.Resource.OwnerEnvironmentID, input.Resource.Name); err != nil {
-		return models.ResourceEntity{}, err
-	}
 	resource, err := models.Resource.Create(ctx, tx, models.CreateResourceData{
 		Name: input.Resource.Name, Category: input.Resource.Category, Kind: input.Resource.Kind,
 		ManagementMode: input.Resource.ManagementMode, SharingScope: input.Resource.SharingScope,
-		OwnerEnvironmentID: input.Resource.OwnerEnvironmentID,
+		SystemManaged: false,
 	})
 	if err != nil {
 		return models.ResourceEntity{}, mapResourceConflict(err)
@@ -375,23 +390,17 @@ func (service *ResourceManagement) UpdateResource(ctx context.Context, resourceI
 		return models.ResourceEntity{}, err
 	}
 	defer tx.Rollback()
-	resource, _, _, _, err := service.loadResource(ctx, tx, resourceID, true)
+	resource, err := service.loadResource(ctx, tx, resourceID, true)
 	if err != nil {
-		return models.ResourceEntity{}, err
-	}
-	if err := service.validateOwnerEnvironment(ctx, tx, input.OwnerEnvironmentID, true); err != nil {
 		return models.ResourceEntity{}, err
 	}
 	if err := service.validateResourceTransition(ctx, tx, resource, input); err != nil {
 		return models.ResourceEntity{}, err
 	}
-	if err := service.lockName(ctx, tx, input.OwnerEnvironmentID, input.Name); err != nil {
-		return models.ResourceEntity{}, err
-	}
 	updated, err := models.Resource.Update(ctx, tx, models.UpdateResourceData{
 		ID: resource.ID, Name: input.Name, Category: input.Category, Kind: input.Kind,
 		ManagementMode: input.ManagementMode, SharingScope: input.SharingScope,
-		OwnerEnvironmentID: input.OwnerEnvironmentID, ArchivedAt: resource.ArchivedAt,
+		SystemManaged: resource.SystemManaged, ArchivedAt: resource.ArchivedAt,
 	})
 	if err != nil {
 		return models.ResourceEntity{}, mapResourceConflict(err)
@@ -408,7 +417,7 @@ func (service *ResourceManagement) ArchiveResource(ctx context.Context, resource
 		return err
 	}
 	defer tx.Rollback()
-	if _, _, _, _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
+	if _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
 		return err
 	}
 	bindings, err := tx.NewSelect().TableExpr("environment_resources").Where("resource_id = ?", resourceID).Where("archived_at IS NULL").Count(ctx)
@@ -440,71 +449,26 @@ func (service *ResourceManagement) ArchiveResource(ctx context.Context, resource
 	return tx.Commit()
 }
 
-func (service *ResourceManagement) loadResource(ctx context.Context, db storage.Executor, resourceID uuid.UUID, lock bool) (models.ResourceEntity, bool, string, string, error) {
-	var result struct {
-		models.ResourceEntity
-		OwnerEnvironment string `bun:"owner_environment"`
-		OwnerApplication string `bun:"owner_application"`
-		ApplicationSlug  string `bun:"application_slug"`
-	}
+func (service *ResourceManagement) loadResource(ctx context.Context, db storage.Executor, resourceID uuid.UUID, lock bool) (models.ResourceEntity, error) {
+	var resource models.ResourceEntity
 	query := db.NewSelect().TableExpr("resources AS resource").ColumnExpr("resource.*").
-		ColumnExpr("environment.name AS owner_environment, application.name AS owner_application, application.slug AS application_slug").
-		Join("JOIN environments AS environment ON environment.id = resource.owner_environment_id").
-		Join("JOIN applications AS application ON application.id = environment.application_id").
 		Where("resource.id = ?", resourceID).Where("resource.archived_at IS NULL")
 	if lock {
 		query = query.For("UPDATE OF resource")
 	}
-	if err := query.Scan(ctx, &result); err != nil {
+	if err := query.Scan(ctx, &resource); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return models.ResourceEntity{}, false, "", "", models.ErrNotFound
+			return models.ResourceEntity{}, models.ErrNotFound
 		}
-		return models.ResourceEntity{}, false, "", "", err
+		return models.ResourceEntity{}, err
 	}
-	isSystem := result.ApplicationSlug == models.SystemApplicationSlug
-	if lock && isSystem {
-		return models.ResourceEntity{}, true, result.OwnerEnvironment, result.OwnerApplication, ErrSystemResourceImmutable
+	if lock && resource.SystemManaged {
+		return models.ResourceEntity{}, ErrSystemResourceImmutable
 	}
-	return result.ResourceEntity, isSystem, result.OwnerEnvironment, result.OwnerApplication, nil
-}
-
-func (service *ResourceManagement) validateOwnerEnvironment(ctx context.Context, db storage.Executor, environmentID uuid.UUID, rejectSystem bool) error {
-	var applicationSlug string
-	err := db.NewSelect().TableExpr("environments AS environment").ColumnExpr("application.slug").
-		Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
-		Where("environment.id = ?", environmentID).Where("environment.archived_at IS NULL").Scan(ctx, &applicationSlug)
-	if errors.Is(err, sql.ErrNoRows) {
-		return domainError("ownerEnvironmentId", "unavailable", "owner environment is unavailable")
-	}
-	if err != nil {
-		return err
-	}
-	if rejectSystem && applicationSlug == models.SystemApplicationSlug {
-		return domainError("ownerEnvironmentId", "system", "DeployCrate system environments cannot own user-managed Resources")
-	}
-	return nil
-}
-
-func (service *ResourceManagement) lockName(ctx context.Context, db storage.Executor, environmentID uuid.UUID, name string) error {
-	_, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "resource-name:"+environmentID.String()+":"+strings.ToLower(strings.TrimSpace(name)))
-	return err
+	return resource, nil
 }
 
 func (service *ResourceManagement) validateResourceTransition(ctx context.Context, db storage.Executor, current models.ResourceEntity, input ResourceInput) error {
-	if current.OwnerEnvironmentID != input.OwnerEnvironmentID {
-		children, err := db.NewSelect().TableExpr("resources AS resource").Where("resource.id = ?", current.ID).
-			Where(`EXISTS (SELECT 1 FROM resource_installations WHERE resource_id = resource.id AND archived_at IS NULL)
-				OR EXISTS (SELECT 1 FROM resource_endpoints WHERE resource_id = resource.id AND archived_at IS NULL)
-				OR EXISTS (SELECT 1 FROM resource_credentials WHERE resource_id = resource.id AND archived_at IS NULL)
-				OR EXISTS (SELECT 1 FROM resource_volumes WHERE resource_id = resource.id AND archived_at IS NULL)
-				OR EXISTS (SELECT 1 FROM environment_resources WHERE resource_id = resource.id AND archived_at IS NULL)`).Count(ctx)
-		if err != nil {
-			return err
-		}
-		if children > 0 {
-			return domainError("ownerEnvironmentId", "topology", "archive active child topology before changing the owner Environment")
-		}
-	}
 	if current.Kind != input.Kind {
 		kindDependencies, err := db.NewSelect().TableExpr("resources AS resource").Where("resource.id = ?", current.ID).
 			Where(`EXISTS (SELECT 1 FROM resource_endpoints WHERE resource_id = resource.id AND archived_at IS NULL)
@@ -555,7 +519,7 @@ func mapResourceConflict(err error) error {
 	message := "an active record already uses this value"
 	switch pgErr.ConstraintName {
 	case "resources_active_owner_name":
-		field, message = "name", "an active Resource with this name already exists in the owner Environment"
+		field, message = "name", "an active Resource with this name already exists"
 	case "resource_endpoints_active_resource_name", "resource_credentials_active_resource_name", "resource_volumes_active_resource_name", "resource_health_checks_active_installation_name":
 		field = "name"
 	case "resource_installations_active_server_container_name":
@@ -564,6 +528,154 @@ func mapResourceConflict(err error) error {
 		field = "mountPath"
 	}
 	return domainError(field, "unique", message)
+}
+
+func (service *ResourceManagement) ConnectEnvironment(ctx context.Context, resourceID uuid.UUID, input ResourceConnectionInput) (models.EnvironmentResourceEntity, error) {
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return models.EnvironmentResourceEntity{}, err
+	}
+	defer tx.Rollback()
+	if _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
+		return models.EnvironmentResourceEntity{}, err
+	}
+	if err := service.validateConnectionTopology(ctx, tx, resourceID, input); err != nil {
+		return models.EnvironmentResourceEntity{}, err
+	}
+	connection, err := models.EnvironmentResource.Create(ctx, tx, models.CreateEnvironmentResourceData{
+		Alias: input.Alias, Configuration: normalizedJSON(input.Configuration),
+		EnvironmentID: input.EnvironmentID, ResourceID: resourceID,
+		ResourceEndpointID: input.ResourceEndpointID, ResourceCredentialID: input.ResourceCredentialID,
+	})
+	if err != nil {
+		return models.EnvironmentResourceEntity{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return models.EnvironmentResourceEntity{}, err
+	}
+	return connection, nil
+}
+
+func (service *ResourceManagement) UpdateEnvironmentConnection(ctx context.Context, resourceID, connectionID uuid.UUID, input ResourceConnectionInput) (models.EnvironmentResourceEntity, error) {
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return models.EnvironmentResourceEntity{}, err
+	}
+	defer tx.Rollback()
+	if _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
+		return models.EnvironmentResourceEntity{}, err
+	}
+	var current models.EnvironmentResourceEntity
+	err = tx.NewSelect().Model(&current).Where("id = ?", connectionID).Where("resource_id = ?", resourceID).
+		Where("archived_at IS NULL").For("UPDATE").Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.EnvironmentResourceEntity{}, models.ErrNotFound
+	}
+	if err != nil {
+		return models.EnvironmentResourceEntity{}, err
+	}
+	if err := service.validateConnectionTopology(ctx, tx, resourceID, input); err != nil {
+		return models.EnvironmentResourceEntity{}, err
+	}
+	connection, err := models.EnvironmentResource.Update(ctx, tx, models.UpdateEnvironmentResourceData{
+		ID: current.ID, Alias: input.Alias, Configuration: normalizedJSON(input.Configuration),
+		ArchivedAt: current.ArchivedAt, EnvironmentID: input.EnvironmentID, ResourceID: resourceID,
+		ResourceEndpointID: input.ResourceEndpointID, ResourceCredentialID: input.ResourceCredentialID,
+	})
+	if err != nil {
+		return models.EnvironmentResourceEntity{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return models.EnvironmentResourceEntity{}, err
+	}
+	return connection, nil
+}
+
+func (service *ResourceManagement) DisconnectEnvironment(ctx context.Context, resourceID, connectionID uuid.UUID) error {
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
+		return err
+	}
+	var connection models.EnvironmentResourceEntity
+	err = tx.NewSelect().Model(&connection).Where("id = ?", connectionID).Where("resource_id = ?", resourceID).
+		Where("archived_at IS NULL").For("UPDATE").Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	dependencies, err := tx.NewSelect().TableExpr("environment_resources AS connection").Where("connection.id = ?", connectionID).
+		Where(`EXISTS (SELECT 1 FROM network_access_rules WHERE environment_resource_id = connection.id AND archived_at IS NULL)
+			OR EXISTS (SELECT 1 FROM backup_policies WHERE environment_resource_id = connection.id AND archived_at IS NULL)
+			OR EXISTS (SELECT 1 FROM backups WHERE environment_resource_id = connection.id)
+			OR EXISTS (SELECT 1 FROM resource_restores WHERE source_environment_resource_id = connection.id OR target_environment_resource_id = connection.id)`).Count(ctx)
+	if err != nil {
+		return err
+	}
+	if dependencies > 0 {
+		return domainError("connection", "dependency", "Connected Environment is required by an active network rule, backup, or restore")
+	}
+	if err := models.EnvironmentResource.Archive(ctx, tx, connection.ID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (service *ResourceManagement) validateConnectionTopology(ctx context.Context, db storage.Executor, resourceID uuid.UUID, input ResourceConnectionInput) error {
+	environments, err := db.NewSelect().TableExpr("environments AS environment").
+		Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
+		Where("environment.id = ?", input.EnvironmentID).Where("environment.archived_at IS NULL").Count(ctx)
+	if err != nil {
+		return err
+	}
+	if err := requireChild(environments, "environmentId", "Environment is unavailable"); err != nil {
+		return err
+	}
+	var endpoint struct {
+		PrivateNetworkID *uuid.UUID `bun:"private_network_id"`
+	}
+	err = db.NewSelect().TableExpr("resource_endpoints").ColumnExpr("private_network_id").
+		Where("id = ?", input.ResourceEndpointID).Where("resource_id = ?", resourceID).
+		Where("archived_at IS NULL").Scan(ctx, &endpoint)
+	if errors.Is(err, sql.ErrNoRows) {
+		return domainError("resourceEndpointId", "unavailable", "endpoint must be active and belong to this Resource")
+	}
+	if err != nil {
+		return err
+	}
+	if input.ResourceCredentialID != nil {
+		credentials, err := db.NewSelect().TableExpr("resource_credentials").Where("id = ?", *input.ResourceCredentialID).
+			Where("resource_id = ?", resourceID).Where("archived_at IS NULL").Count(ctx)
+		if err != nil {
+			return err
+		}
+		if err := requireChild(credentials, "resourceCredentialId", "credential must be active and belong to this Resource"); err != nil {
+			return err
+		}
+	}
+	if endpoint.PrivateNetworkID != nil {
+		networks, err := db.NewSelect().TableExpr("private_networks").Where("id = ?", *endpoint.PrivateNetworkID).Where("archived_at IS NULL").Count(ctx)
+		if err != nil {
+			return err
+		}
+		if err := requireChild(networks, "resourceEndpointId", "endpoint private network is unavailable"); err != nil {
+			return err
+		}
+		access, err := db.NewSelect().TableExpr("environment_networks").Where("environment_id = ?", input.EnvironmentID).
+			Where("private_network_id = ?", *endpoint.PrivateNetworkID).Where("removed_at IS NULL").Count(ctx)
+		if err != nil {
+			return err
+		}
+		if err := requireChild(access, "environmentId", "Environment cannot reach the endpoint private network"); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func normalizedJSON(value json.RawMessage) json.RawMessage {
@@ -629,7 +741,7 @@ func (service *ResourceManagement) CreateEndpoint(ctx context.Context, resourceI
 		return models.ResourceEndpointEntity{}, err
 	}
 	defer tx.Rollback()
-	resource, _, _, _, err := service.loadResource(ctx, tx, resourceID, true)
+	resource, err := service.loadResource(ctx, tx, resourceID, true)
 	if err != nil {
 		return models.ResourceEndpointEntity{}, err
 	}
@@ -657,7 +769,7 @@ func (service *ResourceManagement) createEndpoint(ctx context.Context, db storag
 	if resource.ManagementMode == models.ResourceManagementExternal && input.ResourceInstallationID != nil {
 		return models.ResourceEndpointEntity{}, domainError("resourceInstallationId", "mode", "external Resources cannot use managed installations")
 	}
-	if err := service.validateEndpointTopology(ctx, db, resource, input); err != nil {
+	if err := service.validateEndpointTopology(ctx, db, resource, nil, input); err != nil {
 		return models.ResourceEndpointEntity{}, err
 	}
 	created, err := models.ResourceEndpoint.Create(ctx, db, models.CreateResourceEndpointData{
@@ -675,7 +787,7 @@ func (service *ResourceManagement) UpdateEndpoint(ctx context.Context, resourceI
 		return models.ResourceEndpointEntity{}, err
 	}
 	defer tx.Rollback()
-	resource, _, _, _, err := service.loadResource(ctx, tx, resourceID, true)
+	resource, err := service.loadResource(ctx, tx, resourceID, true)
 	if err != nil {
 		return models.ResourceEndpointEntity{}, err
 	}
@@ -700,7 +812,7 @@ func (service *ResourceManagement) UpdateEndpoint(ctx context.Context, resourceI
 	if resource.ManagementMode == models.ResourceManagementExternal && input.ResourceInstallationID != nil {
 		return models.ResourceEndpointEntity{}, domainError("resourceInstallationId", "mode", "external Resources cannot use managed installations")
 	}
-	if err := service.validateEndpointTopology(ctx, tx, resource, input); err != nil {
+	if err := service.validateEndpointTopology(ctx, tx, resource, &current.ID, input); err != nil {
 		return models.ResourceEndpointEntity{}, err
 	}
 	updated, err := models.ResourceEndpoint.Update(ctx, tx, models.UpdateResourceEndpointData{
@@ -718,27 +830,48 @@ func (service *ResourceManagement) UpdateEndpoint(ctx context.Context, resourceI
 	return updated, nil
 }
 
-func (service *ResourceManagement) validateEndpointTopology(ctx context.Context, db storage.Executor, resource models.ResourceEntity, input ResourceEndpointInput) error {
+func (service *ResourceManagement) validateEndpointTopology(ctx context.Context, db storage.Executor, resource models.ResourceEntity, endpointID *uuid.UUID, input ResourceEndpointInput) error {
+	var installationServerID uuid.UUID
 	if input.ResourceInstallationID != nil {
-		count, err := db.NewSelect().TableExpr("resource_installations").Where("id = ?", *input.ResourceInstallationID).
-			Where("resource_id = ?", resource.ID).Where("archived_at IS NULL").Count(ctx)
-		if err != nil {
-			return err
+		err := db.NewSelect().TableExpr("resource_installations AS installation").ColumnExpr("installation.server_id").
+			Join("JOIN servers AS server ON server.id = installation.server_id AND server.archived_at IS NULL").
+			Where("installation.id = ?", *input.ResourceInstallationID).Where("installation.resource_id = ?", resource.ID).
+			Where("installation.archived_at IS NULL").Scan(ctx, &installationServerID)
+		if errors.Is(err, sql.ErrNoRows) {
+			return domainError("resourceInstallationId", "unavailable", "installation must be active and belong to this Resource")
 		}
-		if err := requireChild(count, "resourceInstallationId", "installation must be active and belong to this Resource"); err != nil {
+		if err != nil {
 			return err
 		}
 	}
 	if input.PrivateNetworkID != nil {
-		count, err := db.NewSelect().TableExpr("environment_networks AS binding").
-			Join("JOIN private_networks AS network ON network.id = binding.private_network_id AND network.archived_at IS NULL").
-			Where("binding.environment_id = ?", resource.OwnerEnvironmentID).Where("binding.private_network_id = ?", *input.PrivateNetworkID).
-			Where("binding.removed_at IS NULL").Count(ctx)
+		count, err := db.NewSelect().TableExpr("private_networks").Where("id = ?", *input.PrivateNetworkID).Where("archived_at IS NULL").Count(ctx)
 		if err != nil {
 			return err
 		}
-		if err := requireChild(count, "privateNetworkId", "private network is not available to the owner Environment"); err != nil {
+		if err := requireChild(count, "privateNetworkId", "private network is unavailable"); err != nil {
 			return err
+		}
+		if input.ResourceInstallationID != nil {
+			count, err = db.NewSelect().TableExpr("server_networks").Where("server_id = ?", installationServerID).
+				Where("private_network_id = ?", *input.PrivateNetworkID).Where("removed_at IS NULL").Count(ctx)
+			if err != nil {
+				return err
+			}
+			if err := requireChild(count, "privateNetworkId", "installation Server cannot reach this private network"); err != nil {
+				return err
+			}
+		}
+		if endpointID != nil {
+			incompatible, err := db.NewSelect().TableExpr("environment_resources AS connection").
+				Where("connection.resource_endpoint_id = ?", *endpointID).Where("connection.archived_at IS NULL").
+				Where("NOT EXISTS (SELECT 1 FROM environment_networks AS access WHERE access.environment_id = connection.environment_id AND access.private_network_id = ? AND access.removed_at IS NULL)", *input.PrivateNetworkID).Count(ctx)
+			if err != nil {
+				return err
+			}
+			if incompatible > 0 {
+				return domainError("privateNetworkId", "topology", "an existing Connected Environment cannot reach this private network")
+			}
 		}
 	}
 	return nil
@@ -750,7 +883,7 @@ func (service *ResourceManagement) ArchiveEndpoint(ctx context.Context, resource
 		return err
 	}
 	defer tx.Rollback()
-	if _, _, _, _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
+	if _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
 		return err
 	}
 	var endpoint models.ResourceEndpointEntity
@@ -774,7 +907,7 @@ func (service *ResourceManagement) ArchiveEndpoint(ctx context.Context, resource
 		if countErr != nil {
 			return countErr
 		}
-		var mode string
+		var mode models.ResourceManagementModeEnum
 		if modeErr := tx.NewSelect().TableExpr("resources").ColumnExpr("management_mode").Where("id = ?", resourceID).Scan(ctx, &mode); modeErr != nil {
 			return modeErr
 		}
@@ -795,7 +928,7 @@ func (service *ResourceManagement) CreateCredential(ctx context.Context, resourc
 		return models.ResourceCredentialEntity{}, err
 	}
 	defer tx.Rollback()
-	resource, _, _, _, err := service.loadResource(ctx, tx, resourceID, true)
+	resource, err := service.loadResource(ctx, tx, resourceID, true)
 	if err != nil {
 		return models.ResourceCredentialEntity{}, err
 	}
@@ -849,7 +982,7 @@ func (service *ResourceManagement) updateCredential(ctx context.Context, resourc
 		return models.ResourceCredentialEntity{}, err
 	}
 	defer tx.Rollback()
-	resource, _, _, _, err := service.loadResource(ctx, tx, resourceID, true)
+	resource, err := service.loadResource(ctx, tx, resourceID, true)
 	if err != nil {
 		return models.ResourceCredentialEntity{}, err
 	}
@@ -898,7 +1031,7 @@ func (service *ResourceManagement) ArchiveCredential(ctx context.Context, resour
 		return err
 	}
 	defer tx.Rollback()
-	if _, _, _, _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
+	if _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
 		return err
 	}
 	var credential models.ResourceCredentialEntity
@@ -930,7 +1063,7 @@ func (service *ResourceManagement) CreateInstallation(ctx context.Context, resou
 		return models.ResourceInstallationEntity{}, err
 	}
 	defer tx.Rollback()
-	resource, _, _, _, err := service.loadResource(ctx, tx, resourceID, true)
+	resource, err := service.loadResource(ctx, tx, resourceID, true)
 	if err != nil {
 		return models.ResourceInstallationEntity{}, err
 	}
@@ -951,7 +1084,7 @@ func (service *ResourceManagement) createInstallation(ctx context.Context, db st
 	if resource.ManagementMode != models.ResourceManagementManaged {
 		return models.ResourceInstallationEntity{}, domainError("managementMode", "mode", "installations are allowed only for managed Resources")
 	}
-	if err := service.validatePlacement(ctx, db, resource.OwnerEnvironmentID, input.ServerID); err != nil {
+	if err := service.validatePlacement(ctx, db, input.ServerID); err != nil {
 		return models.ResourceInstallationEntity{}, err
 	}
 	if input.RegistryCredentialID != nil {
@@ -978,7 +1111,7 @@ func (service *ResourceManagement) UpdateInstallation(ctx context.Context, resou
 		return models.ResourceInstallationEntity{}, err
 	}
 	defer tx.Rollback()
-	resource, _, _, _, err := service.loadResource(ctx, tx, resourceID, true)
+	resource, err := service.loadResource(ctx, tx, resourceID, true)
 	if err != nil {
 		return models.ResourceInstallationEntity{}, err
 	}
@@ -993,7 +1126,7 @@ func (service *ResourceManagement) UpdateInstallation(ctx context.Context, resou
 	if err != nil {
 		return models.ResourceInstallationEntity{}, err
 	}
-	if err := service.validatePlacement(ctx, tx, resource.OwnerEnvironmentID, input.ServerID); err != nil {
+	if err := service.validatePlacement(ctx, tx, input.ServerID); err != nil {
 		return models.ResourceInstallationEntity{}, err
 	}
 	if input.RegistryCredentialID != nil {
@@ -1006,16 +1139,8 @@ func (service *ResourceManagement) UpdateInstallation(ctx context.Context, resou
 		}
 	}
 	if current.ServerID != input.ServerID {
-		dependencies, countErr := tx.NewSelect().TableExpr("resource_installations AS installation").Where("installation.id = ?", installationID).
-			Where(`EXISTS (SELECT 1 FROM resource_endpoints WHERE resource_installation_id = installation.id AND archived_at IS NULL)
-				OR EXISTS (SELECT 1 FROM resource_credentials WHERE resource_installation_id = installation.id AND archived_at IS NULL)
-				OR EXISTS (SELECT 1 FROM resource_volume_mounts WHERE resource_installation_id = installation.id AND archived_at IS NULL)
-				OR EXISTS (SELECT 1 FROM resource_health_checks WHERE resource_installation_id = installation.id AND archived_at IS NULL)`).Count(ctx)
-		if countErr != nil {
-			return models.ResourceInstallationEntity{}, countErr
-		}
-		if dependencies > 0 {
-			return models.ResourceInstallationEntity{}, domainError("serverId", "topology", "archive or reassign installation dependencies before changing Servers")
+		if err := service.validateInstallationMove(ctx, tx, installationID, input.ServerID); err != nil {
+			return models.ResourceInstallationEntity{}, err
 		}
 	}
 	updated, err := models.ResourceInstallation.Update(ctx, tx, models.UpdateResourceInstallationData{
@@ -1033,15 +1158,36 @@ func (service *ResourceManagement) UpdateInstallation(ctx context.Context, resou
 	return updated, nil
 }
 
-func (service *ResourceManagement) validatePlacement(ctx context.Context, db storage.Executor, environmentID, serverID uuid.UUID) error {
-	count, err := db.NewSelect().TableExpr("environment_targets AS target").
-		Join("JOIN servers AS server ON server.id = target.server_id AND server.archived_at IS NULL").
-		Where("target.environment_id = ?", environmentID).Where("target.server_id = ?", serverID).
-		Where("target.detached_at IS NULL").Count(ctx)
+func (service *ResourceManagement) validatePlacement(ctx context.Context, db storage.Executor, serverID uuid.UUID) error {
+	count, err := db.NewSelect().TableExpr("servers").Where("id = ?", serverID).Where("archived_at IS NULL").Count(ctx)
 	if err != nil {
 		return err
 	}
-	return requireChild(count, "serverId", "server must be active and attached to the owner Environment")
+	return requireChild(count, "serverId", "Server must be active")
+}
+
+func (service *ResourceManagement) validateInstallationMove(ctx context.Context, db storage.Executor, installationID, targetServerID uuid.UUID) error {
+	unreachableNetworks, err := db.NewSelect().TableExpr("resource_endpoints AS endpoint").
+		Where("endpoint.resource_installation_id = ?", installationID).Where("endpoint.archived_at IS NULL").
+		Where("endpoint.private_network_id IS NOT NULL").
+		Where("NOT EXISTS (SELECT 1 FROM server_networks AS access WHERE access.server_id = ? AND access.private_network_id = endpoint.private_network_id AND access.removed_at IS NULL)", targetServerID).Count(ctx)
+	if err != nil {
+		return err
+	}
+	if unreachableNetworks > 0 {
+		return domainError("serverId", "network_topology", "target Server cannot reach every endpoint private network")
+	}
+	incompatibleVolumes, err := db.NewSelect().TableExpr("resource_volume_mounts AS mount").
+		Join("JOIN resource_volumes AS volume ON volume.id = mount.resource_volume_id AND volume.archived_at IS NULL").
+		Where("mount.resource_installation_id = ?", installationID).Where("mount.archived_at IS NULL").
+		Where("volume.server_id <> ?", targetServerID).Count(ctx)
+	if err != nil {
+		return err
+	}
+	if incompatibleVolumes > 0 {
+		return domainError("serverId", "storage_topology", "mounted server-local Volume requires explicit migration or reassignment")
+	}
+	return nil
 }
 
 func (service *ResourceManagement) ArchiveInstallation(ctx context.Context, resourceID, installationID uuid.UUID) error {
@@ -1050,7 +1196,7 @@ func (service *ResourceManagement) ArchiveInstallation(ctx context.Context, reso
 		return err
 	}
 	defer tx.Rollback()
-	if _, _, _, _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
+	if _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
 		return err
 	}
 	var installation models.ResourceInstallationEntity
@@ -1085,7 +1231,7 @@ func (service *ResourceManagement) CreateVolume(ctx context.Context, resourceID 
 		return models.ResourceVolumeEntity{}, err
 	}
 	defer tx.Rollback()
-	resource, _, _, _, err := service.loadResource(ctx, tx, resourceID, true)
+	resource, err := service.loadResource(ctx, tx, resourceID, true)
 	if err != nil {
 		return models.ResourceVolumeEntity{}, err
 	}
@@ -1106,7 +1252,7 @@ func (service *ResourceManagement) createVolume(ctx context.Context, db storage.
 	if resource.ManagementMode != models.ResourceManagementManaged {
 		return models.ResourceVolumeEntity{}, domainError("managementMode", "mode", "volumes are allowed only for managed Resources")
 	}
-	if err := service.validatePlacement(ctx, db, resource.OwnerEnvironmentID, input.ServerID); err != nil {
+	if err := service.validatePlacement(ctx, db, input.ServerID); err != nil {
 		return models.ResourceVolumeEntity{}, err
 	}
 	created, err := models.ResourceVolume.Create(ctx, db, models.CreateResourceVolumeData{
@@ -1122,7 +1268,7 @@ func (service *ResourceManagement) UpdateVolume(ctx context.Context, resourceID,
 		return models.ResourceVolumeEntity{}, err
 	}
 	defer tx.Rollback()
-	resource, _, _, _, err := service.loadResource(ctx, tx, resourceID, true)
+	resource, err := service.loadResource(ctx, tx, resourceID, true)
 	if err != nil {
 		return models.ResourceVolumeEntity{}, err
 	}
@@ -1137,7 +1283,7 @@ func (service *ResourceManagement) UpdateVolume(ctx context.Context, resourceID,
 	if err != nil {
 		return models.ResourceVolumeEntity{}, err
 	}
-	if err := service.validatePlacement(ctx, tx, resource.OwnerEnvironmentID, input.ServerID); err != nil {
+	if err := service.validatePlacement(ctx, tx, input.ServerID); err != nil {
 		return models.ResourceVolumeEntity{}, err
 	}
 	if current.ServerID != input.ServerID {
@@ -1168,7 +1314,7 @@ func (service *ResourceManagement) ArchiveVolume(ctx context.Context, resourceID
 		return err
 	}
 	defer tx.Rollback()
-	if _, _, _, _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
+	if _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
 		return err
 	}
 	var volume models.ResourceVolumeEntity
@@ -1199,7 +1345,7 @@ func (service *ResourceManagement) CreateMount(ctx context.Context, resourceID u
 		return models.ResourceVolumeMountEntity{}, err
 	}
 	defer tx.Rollback()
-	resource, _, _, _, err := service.loadResource(ctx, tx, resourceID, true)
+	resource, err := service.loadResource(ctx, tx, resourceID, true)
 	if err != nil {
 		return models.ResourceVolumeMountEntity{}, err
 	}
@@ -1249,7 +1395,7 @@ func (service *ResourceManagement) UpdateMount(ctx context.Context, resourceID, 
 		return models.ResourceVolumeMountEntity{}, err
 	}
 	defer tx.Rollback()
-	resource, _, _, _, err := service.loadResource(ctx, tx, resourceID, true)
+	resource, err := service.loadResource(ctx, tx, resourceID, true)
 	if err != nil {
 		return models.ResourceVolumeMountEntity{}, err
 	}
@@ -1321,7 +1467,7 @@ func (service *ResourceManagement) ArchiveMount(ctx context.Context, resourceID,
 		return err
 	}
 	defer tx.Rollback()
-	if _, _, _, _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
+	if _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
 		return err
 	}
 	var mount models.ResourceVolumeMountEntity
@@ -1348,7 +1494,7 @@ func (service *ResourceManagement) CreateHealthCheck(ctx context.Context, resour
 		return models.ResourceHealthCheckEntity{}, err
 	}
 	defer tx.Rollback()
-	resource, _, _, _, err := service.loadResource(ctx, tx, resourceID, true)
+	resource, err := service.loadResource(ctx, tx, resourceID, true)
 	if err != nil {
 		return models.ResourceHealthCheckEntity{}, err
 	}
@@ -1426,7 +1572,7 @@ func (service *ResourceManagement) UpdateHealthCheck(ctx context.Context, resour
 		return models.ResourceHealthCheckEntity{}, err
 	}
 	defer tx.Rollback()
-	resource, _, _, _, err := service.loadResource(ctx, tx, resourceID, true)
+	resource, err := service.loadResource(ctx, tx, resourceID, true)
 	if err != nil {
 		return models.ResourceHealthCheckEntity{}, err
 	}
@@ -1478,7 +1624,7 @@ func (service *ResourceManagement) ArchiveHealthCheck(ctx context.Context, resou
 		return err
 	}
 	defer tx.Rollback()
-	if _, _, _, _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
+	if _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
 		return err
 	}
 	var check models.ResourceHealthCheckEntity

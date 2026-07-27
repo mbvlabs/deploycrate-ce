@@ -15,7 +15,7 @@
   type Volume = { id: string; name: string; driver: string; configuration: unknown; serverId: string; serverName: string; mounts: Array<{ id: string; mountPath: string; readOnly: boolean; installationId: string }> }
   type HealthCheck = { id: string; name: string; kind: string; configuration: unknown; intervalSeconds: number; timeoutSeconds: number; failureThreshold: number; successThreshold: number; enabled: boolean; state: string; message: string; observedAt: string | null }
   type DeviceGrant = { deviceId: string; deviceName: string; ownerEmail: string; privateAddress: string; grantId: string; grantedAt: string; applicationState: string; applicationError: string; latestHandshakeAt: string | null; observedAt: string | null }
-  type Resource = { id: string; createdAt: string; updatedAt: string; name: string; category: string; kind: string; sharingScope: string; ownerEnvironmentId: string; ownerEnvironment: string; bindings: Binding[]; endpoints: Endpoint[]; credentials: Credential[]; installations: Installation[]; volumes: Volume[]; healthChecks: HealthCheck[]; deviceGrants: DeviceGrant[]; privateNetworks: Array<{ id: string; name: string }>; availableDevices: Array<{ id: string; name: string; privateAddress: string }> }
+  type Resource = { id: string; createdAt: string; updatedAt: string; name: string; category: string; kind: string; sharingScope: string; bindings: Binding[]; endpoints: Endpoint[]; credentials: Credential[]; installations: Installation[]; volumes: Volume[]; healthChecks: HealthCheck[]; deviceGrants: DeviceGrant[]; privateNetworks: Array<{ id: string; name: string }>; availableDevices: Array<{ id: string; name: string; privateAddress: string }> }
   type Enrollment = { deviceId: string; grantId: string; clientConfiguration: string }
 
   let { auth, resource, enrollment = null }: { auth: { email: string }; resource: Resource; enrollment?: Enrollment | null } = $props()
@@ -49,7 +49,7 @@
     <header>
       <Link class="text-xs text-muted-foreground hover:text-foreground" href={routes.systemResources()}>System resources</Link>
       <h1 class="mt-3 text-3xl font-semibold tracking-tight">{resource.name}</h1>
-      <p class="mt-3 text-sm text-muted-foreground">{label(resource.kind)} · {label(resource.sharingScope)} sharing · owned by {resource.ownerEnvironment}</p>
+      <p class="mt-3 text-sm text-muted-foreground">{label(resource.kind)} · {label(resource.sharingScope)} sharing · {resource.bindings.length} connected {resource.bindings.length === 1 ? 'Environment' : 'Environments'}</p>
     </header>
 
     {#if enrollment?.clientConfiguration}
@@ -61,11 +61,11 @@
 
     <Card.Root>
       <Card.Header><Card.Title>Resource identity</Card.Title></Card.Header>
-      <Card.Content><dl class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><div><dt class="text-muted-foreground">Category</dt><dd>{label(resource.category)}</dd></div><div><dt class="text-muted-foreground">Kind</dt><dd>{label(resource.kind)}</dd></div><div><dt class="text-muted-foreground">Created</dt><dd>{timestamp(resource.createdAt)}</dd></div><div><dt class="text-muted-foreground">Updated</dt><dd>{timestamp(resource.updatedAt)}</dd></div><div class="sm:col-span-2"><dt class="text-muted-foreground">Resource ID</dt><dd class="break-all font-mono text-xs">{resource.id}</dd></div><div class="sm:col-span-2"><dt class="text-muted-foreground">Owner environment ID</dt><dd class="break-all font-mono text-xs">{resource.ownerEnvironmentId}</dd></div></dl></Card.Content>
+      <Card.Content><dl class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><div><dt class="text-muted-foreground">Category</dt><dd>{label(resource.category)}</dd></div><div><dt class="text-muted-foreground">Kind</dt><dd>{label(resource.kind)}</dd></div><div><dt class="text-muted-foreground">Created</dt><dd>{timestamp(resource.createdAt)}</dd></div><div><dt class="text-muted-foreground">Updated</dt><dd>{timestamp(resource.updatedAt)}</dd></div><div class="sm:col-span-2"><dt class="text-muted-foreground">Resource ID</dt><dd class="break-all font-mono text-xs">{resource.id}</dd></div></dl></Card.Content>
     </Card.Root>
 
     <div class="grid gap-4 lg:grid-cols-2">
-      <Card.Root><Card.Header><Card.Title>Environment bindings</Card.Title></Card.Header><Card.Content class="space-y-4">{#if resource.bindings.length === 0}<p class="text-sm text-muted-foreground">No active bindings.</p>{:else}{#each resource.bindings as binding (binding.id)}<div class="border border-border p-4"><p class="font-medium">{binding.environmentName} · {binding.alias}</p><p class="mt-1 text-xs text-muted-foreground">{label(binding.environmentKind)} · endpoint {binding.endpointId}</p><div class="mt-3"><JsonCode value={binding.configuration} /></div></div>{/each}{/if}</Card.Content></Card.Root>
+      <Card.Root><Card.Header><Card.Title>Connected Environments</Card.Title></Card.Header><Card.Content class="space-y-4">{#if resource.bindings.length === 0}<p class="text-sm text-muted-foreground">No Connected Environments.</p>{:else}{#each resource.bindings as binding (binding.id)}<div class="border border-border p-4"><p class="font-medium">{binding.environmentName} · {binding.alias}</p><p class="mt-1 text-xs text-muted-foreground">{label(binding.environmentKind)} · endpoint {binding.endpointId}</p><div class="mt-3"><JsonCode value={binding.configuration} /></div></div>{/each}{/if}</Card.Content></Card.Root>
       <Card.Root><Card.Header><Card.Title>Credentials metadata</Card.Title><Card.Description>Secret payloads are never returned.</Card.Description></Card.Header><Card.Content class="space-y-4">{#if resource.credentials.length === 0}<p class="text-sm text-muted-foreground">No Resource credential records.</p>{:else}{#each resource.credentials as credential (credential.id)}<div class="border border-border p-4"><p class="font-medium">{credential.name}</p><p class="text-xs text-muted-foreground">{label(credential.role)} · {credential.username || 'No username'} · {credential.hasEncryptedPayload ? 'encrypted payload stored' : 'no payload'}</p><div class="mt-3"><JsonCode value={credential.metadata} /></div></div>{/each}{/if}</Card.Content></Card.Root>
     </div>
 

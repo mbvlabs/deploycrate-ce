@@ -88,6 +88,9 @@ func (rvm resourceVolumeMount) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceVolumeMountEntity{}, errors.Join(ErrDomainValidation, err)
 	}
+	if err := ensureActiveUnique(ctx, db, "resource-mount:"+entity.ResourceInstallationID.String()+":"+entity.MountPath, entity.ID, db.NewSelect().Model((*ResourceVolumeMountEntity)(nil)).Where("resource_installation_id = ?", entity.ResourceInstallationID).Where("mount_path = ?", entity.MountPath), "mountPath", "an active mount already uses this path on the installation"); err != nil {
+		return ResourceVolumeMountEntity{}, err
+	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
 		return ResourceVolumeMountEntity{}, err
@@ -123,6 +126,9 @@ func (rvm resourceVolumeMount) Update(
 
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceVolumeMountEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureActiveUnique(ctx, db, "resource-mount:"+entity.ResourceInstallationID.String()+":"+entity.MountPath, entity.ID, db.NewSelect().Model((*ResourceVolumeMountEntity)(nil)).Where("resource_installation_id = ?", entity.ResourceInstallationID).Where("mount_path = ?", entity.MountPath), "mountPath", "an active mount already uses this path on the installation"); err != nil {
+		return ResourceVolumeMountEntity{}, err
 	}
 
 	if err := db.NewUpdate().
@@ -238,6 +244,9 @@ func (rvm resourceVolumeMount) Upsert(
 
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceVolumeMountEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureActiveUnique(ctx, db, "resource-mount:"+entity.ResourceInstallationID.String()+":"+entity.MountPath, entity.ID, db.NewSelect().Model((*ResourceVolumeMountEntity)(nil)).Where("resource_installation_id = ?", entity.ResourceInstallationID).Where("mount_path = ?", entity.MountPath), "mountPath", "an active mount already uses this path on the installation"); err != nil {
+		return ResourceVolumeMountEntity{}, err
 	}
 
 	if err := db.NewInsert().

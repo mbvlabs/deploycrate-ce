@@ -144,32 +144,29 @@ type systemWireGuardDeviceOptionProp struct {
 }
 
 type systemResourceDetailProp struct {
-	ID                 string                            `json:"id"`
-	CreatedAt          time.Time                         `json:"createdAt"`
-	UpdatedAt          time.Time                         `json:"updatedAt"`
-	Name               string                            `json:"name"`
-	Category           string                            `json:"category"`
-	Kind               string                            `json:"kind"`
-	SharingScope       string                            `json:"sharingScope"`
-	OwnerEnvironmentID string                            `json:"ownerEnvironmentId"`
-	OwnerEnvironment   string                            `json:"ownerEnvironment"`
-	Bindings           []systemResourceBindingProp       `json:"bindings"`
-	Endpoints          []systemResourceEndpointProp      `json:"endpoints"`
-	Credentials        []systemResourceCredentialProp    `json:"credentials"`
-	Installations      []systemResourceInstallationProp  `json:"installations"`
-	Volumes            []systemResourceVolumeProp        `json:"volumes"`
-	HealthChecks       []systemResourceHealthCheckProp   `json:"healthChecks"`
-	DeviceGrants       []systemWireGuardDeviceGrantProp  `json:"deviceGrants"`
-	PrivateNetworks    []systemPrivateNetworkProp        `json:"privateNetworks"`
-	AvailableDevices   []systemWireGuardDeviceOptionProp `json:"availableDevices"`
+	ID               string                            `json:"id"`
+	CreatedAt        time.Time                         `json:"createdAt"`
+	UpdatedAt        time.Time                         `json:"updatedAt"`
+	Name             string                            `json:"name"`
+	Category         string                            `json:"category"`
+	Kind             string                            `json:"kind"`
+	SharingScope     string                            `json:"sharingScope"`
+	Bindings         []systemResourceBindingProp       `json:"bindings"`
+	Endpoints        []systemResourceEndpointProp      `json:"endpoints"`
+	Credentials      []systemResourceCredentialProp    `json:"credentials"`
+	Installations    []systemResourceInstallationProp  `json:"installations"`
+	Volumes          []systemResourceVolumeProp        `json:"volumes"`
+	HealthChecks     []systemResourceHealthCheckProp   `json:"healthChecks"`
+	DeviceGrants     []systemWireGuardDeviceGrantProp  `json:"deviceGrants"`
+	PrivateNetworks  []systemPrivateNetworkProp        `json:"privateNetworks"`
+	AvailableDevices []systemWireGuardDeviceOptionProp `json:"availableDevices"`
 }
 
 func systemResourceDetailProps(detail models.SystemResourceDetail) systemResourceDetailProp {
 	prop := systemResourceDetailProp{
 		ID: detail.ID, CreatedAt: detail.CreatedAt, UpdatedAt: detail.UpdatedAt,
 		Name: detail.Name, Category: detail.Category, Kind: detail.Kind,
-		SharingScope: detail.SharingScope, OwnerEnvironmentID: detail.OwnerEnvironmentID,
-		OwnerEnvironment: detail.OwnerEnvironment,
+		SharingScope:     detail.SharingScope,
 		Bindings:         make([]systemResourceBindingProp, 0, len(detail.Bindings)),
 		Endpoints:        make([]systemResourceEndpointProp, 0, len(detail.Endpoints)),
 		Credentials:      make([]systemResourceCredentialProp, 0, len(detail.Credentials)),

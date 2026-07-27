@@ -6,15 +6,16 @@
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
-  type Kind = { kind: string; label: string; protocols: string[]; endpointRoles: string[]; tlsModes: string[]; credentialFields: Array<{ name: string; label: string; required: boolean }>; healthCheckKinds: string[]; defaultPort: number; defaultProtocol: string; defaultTLSMode: string }
-  type Options = { kinds: Kind[]; servers: Array<{ id: string; name: string; address: string; environmentId: string }>; privateNetworks: Array<{ id: string; name: string; environmentId: string }>; registryCredentials: Array<{ id: string; name: string }> }
-  let { auth, resource, options }: { auth: { email: string }; resource: any; options: Options } = $props()
+  type Kind = { kind: string; label: string; protocols: string[]; endpointRoles: string[]; tlsModes: string[]; credentialFields: Array<{ name: string; label: string; required: boolean }>; healthCheckKinds: string[]; defaultPort: number; defaultProtocol: string; defaultTlsMode: string }
+  type Options = { kinds: Kind[]; environments: Array<{ id: string; name: string; applicationName: string }>; servers: Array<{ id: string; name: string; address: string }>; privateNetworks: Array<{ id: string; name: string; serverIds: string[] }>; registryCredentials: Array<{ id: string; name: string }> }
+  let { auth, resource, options, errors = {} }: { auth: { email: string }; resource: any; options: Options; errors?: Record<string, string> } = $props()
   const definition = $derived(options.kinds.find((kind) => kind.kind === resource.kind) ?? options.kinds[0])
-  const servers = $derived(options.servers.filter((server) => server.environmentId === resource.ownerEnvironmentId))
-  const networks = $derived(options.privateNetworks.filter((network) => network.environmentId === resource.ownerEnvironmentId))
+  const servers = $derived(options.servers)
+  const networks = $derived(options.privateNetworks)
   const credentialFields = $derived(definition.credentialFields.length ? definition.credentialFields : [{ name: 'secret', label: 'Secret value', required: true }])
   const selectClass = 'h-9 w-full border border-input bg-background px-3 text-sm'
   const textareaClass = 'min-h-20 w-full border border-input bg-background px-3 py-2 font-mono text-xs'
+  const connectionHasErrors = $derived(Boolean(errors.environmentId || errors.alias || errors.resourceEndpointId || errors.resourceCredentialId))
   let jsonError = $state('')
 
   let endpointNew = $state<any>(initialEndpoint())
@@ -29,18 +30,28 @@
   let mountDrafts = $state<any>(initialMountDrafts())
   let healthNew = $state<any>(initialHealthCheck())
   let healthDrafts = $state<any>(initialHealthCheckDrafts())
+  let connectionNew = $state<any>(initialConnection())
+  let connectionDrafts = $state<any>(initialConnectionDrafts())
 
   function currentDefinition() {
     return options.kinds.find((kind) => kind.kind === resource.kind) ?? options.kinds[0]
   }
 
+  function initialConnection() {
+    return { environmentId: options.environments[0]?.id ?? '', alias: '', resourceEndpointId: resource.endpoints[0]?.id ?? '', resourceCredentialId: '', configurationText: '{}' }
+  }
+
+  function initialConnectionDrafts() {
+    return Object.fromEntries(resource.connections.map((item: any) => [item.id, { ...item, configurationText: JSON.stringify(item.configuration ?? {}, null, 2), resourceCredentialId: item.resourceCredentialId ?? '' }]))
+  }
+
   function firstServerID() {
-    return options.servers.find((server) => server.environmentId === resource.ownerEnvironmentId)?.id ?? ''
+    return options.servers[0]?.id ?? ''
   }
 
   function initialEndpoint() {
     const current = currentDefinition()
-    return { name: 'Primary', role: current.endpointRoles[0] ?? 'primary', address: '', port: current.defaultPort, protocol: current.defaultProtocol, tlsMode: current.defaultTLSMode, settingsText: '{}', resourceInstallationId: '', privateNetworkId: '' }
+    return { name: 'Primary', role: current.endpointRoles[0] ?? 'primary', address: '', port: current.defaultPort, protocol: current.defaultProtocol, tlsMode: current.defaultTlsMode, settingsText: '{}', resourceInstallationId: '', privateNetworkId: '' }
   }
 
   function initialEndpointDrafts() {
@@ -102,18 +113,51 @@
   function patchMount(id: string) { router.patch(routes.resourceMountUpdate(resource.id, id), mountDrafts[id]) }
   function postHealth() { submit(() => router.post(routes.resourceHealthCheckCreate(resource.id), { ...healthNew, configuration: json(healthNew.configurationText) })) }
   function patchHealth(id: string) { const value = healthDrafts[id]; submit(() => router.patch(routes.resourceHealthCheckUpdate(resource.id, id), { ...value, configuration: json(value.configurationText) })) }
+  function postConnection() { submit(() => router.post(routes.resourceConnectionCreate(resource.id), { ...connectionNew, configuration: json(connectionNew.configurationText) })) }
+  function patchConnection(id: string) { const value = connectionDrafts[id]; submit(() => router.patch(routes.resourceConnectionUpdate(resource.id, id), { ...value, configuration: json(value.configurationText) })) }
 </script>
 
 <svelte:head><title>{resource.name}</title></svelte:head>
 <DashboardLayout email={auth.email}>
   <div class="space-y-8">
     <header class="flex flex-wrap items-end justify-between gap-4">
-      <div><p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">{resource.ownerApplication} / {resource.ownerEnvironment}</p><h1 class="mt-3 text-3xl font-semibold">{resource.name}</h1><p class="mt-2 text-sm capitalize text-muted-foreground">{resource.kind} · {resource.category} · {resource.managementMode} · {resource.sharingScope}</p></div>
-      {#if !resource.isSystem}<div class="flex gap-2"><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.resourceEdit(resource.id)}>Edit identity</Link>{/snippet}</Button><Button variant="destructive" onclick={() => router.delete(routes.resourceDestroy(resource.id))}>Archive Resource</Button></div>{/if}
+      <div><p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">{resource.connectionCount === 0 ? 'Unattached' : `${resource.connectionCount} Connected ${resource.connectionCount === 1 ? 'Environment' : 'Environments'}`}</p><h1 class="mt-3 text-3xl font-semibold">{resource.name}</h1><p class="mt-2 text-sm capitalize text-muted-foreground">{resource.kind} · {resource.category} · {resource.managementMode} · {resource.sharingScope}</p></div>
+      <div class="flex gap-2"><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.resourceEdit(resource.id)}>Edit identity</Link>{/snippet}</Button><Button variant="destructive" onclick={() => router.delete(routes.resourceDestroy(resource.id))}>Archive Resource</Button></div>
     </header>
 
     {#if resource.managementMode === 'managed'}<div class="border border-primary/30 bg-primary/5 p-4 text-sm"><strong>Desired topology only.</strong> Installation and placement changes are recorded for a future reconciler. They do not start, recreate, stop, or remove containers.</div>{/if}
     {#if jsonError}<div class="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{jsonError}</div>{/if}
+
+    <Card.Root>
+      <Card.Header><Card.Action><span class="text-xs">{resource.connectionCount} active</span></Card.Action><Card.Title>Connected Environments</Card.Title><Card.Description>Each Environment selects an alias, endpoint, and optional credential.</Card.Description></Card.Header>
+      <Card.Content class="space-y-3">
+        {#if connectionHasErrors}<div class="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">The Environment connection could not be saved. Review the fields below.</div>{/if}
+        <details open={connectionHasErrors}>
+          <summary class="cursor-pointer text-xs text-primary">Connect an Environment</summary>
+          <div class="mt-3 grid gap-3 border border-border p-4 sm:grid-cols-2">
+            <label class="grid gap-1 text-xs">Environment<select bind:value={connectionNew.environmentId} class={selectClass} aria-invalid={Boolean(errors.environmentId)}>{#each options.environments as environment}<option value={environment.id}>{environment.applicationName} / {environment.name}</option>{/each}</select>{#if errors.environmentId}<span class="text-destructive">{errors.environmentId}</span>{/if}</label>
+            <label class="grid gap-1 text-xs">Alias<Input bind:value={connectionNew.alias} placeholder="Alias" aria-invalid={Boolean(errors.alias)} />{#if errors.alias}<span class="text-destructive">{errors.alias}</span>{/if}</label>
+            <label class="grid gap-1 text-xs">Endpoint<select bind:value={connectionNew.resourceEndpointId} class={selectClass} aria-invalid={Boolean(errors.resourceEndpointId)}><option value="">Select endpoint</option>{#each resource.endpoints as endpoint}<option value={endpoint.id}>{endpoint.name}</option>{/each}</select>{#if errors.resourceEndpointId}<span class="text-destructive">{errors.resourceEndpointId}</span>{/if}</label>
+            <label class="grid gap-1 text-xs">Credential<select bind:value={connectionNew.resourceCredentialId} class={selectClass} aria-invalid={Boolean(errors.resourceCredentialId)}><option value="">No credential</option>{#each resource.credentials as credential}<option value={credential.id}>{credential.name}</option>{/each}</select>{#if errors.resourceCredentialId}<span class="text-destructive">{errors.resourceCredentialId}</span>{/if}</label>
+            <textarea class={textareaClass + ' sm:col-span-2'} bind:value={connectionNew.configurationText} aria-label="Connection configuration"></textarea>
+            <Button onclick={postConnection}>Connect Environment</Button>
+          </div>
+        </details>
+        {#if resource.connections.length === 0}<p class="text-sm text-muted-foreground">This Resource is unattached.</p>{/if}
+        {#each resource.connections as connection}
+          <details class="border border-border p-3">
+            <summary class="cursor-pointer"><span class="font-medium">{connection.applicationName} / {connection.environmentName}</span><span class="ml-2 text-xs text-muted-foreground">{connection.alias} · {connection.endpointName}</span>{#if connection.environmentArchived || connection.applicationArchived}<span class="ml-2 text-xs text-destructive">Archived owner</span>{/if}</summary>
+            {#if connection.environmentArchived || connection.applicationArchived}
+              <div class="mt-4 space-y-3"><p class="text-sm text-muted-foreground">This connection belongs to an archived Application or Environment. It cannot be edited, but it can still be disconnected.</p><Button size="sm" variant="destructive" onclick={() => router.delete(routes.resourceConnectionDestroy(resource.id, connection.id))}>Disconnect</Button></div>
+            {:else}
+              <div class="mt-4 grid gap-3 sm:grid-cols-2">
+                <select bind:value={connectionDrafts[connection.id].environmentId} class={selectClass}>{#each options.environments as environment}<option value={environment.id}>{environment.applicationName} / {environment.name}</option>{/each}</select><Input bind:value={connectionDrafts[connection.id].alias} /><select bind:value={connectionDrafts[connection.id].resourceEndpointId} class={selectClass}>{#each resource.endpoints as endpoint}<option value={endpoint.id}>{endpoint.name}</option>{/each}</select><select bind:value={connectionDrafts[connection.id].resourceCredentialId} class={selectClass}><option value="">No credential</option>{#each resource.credentials as credential}<option value={credential.id}>{credential.name}</option>{/each}</select><textarea class={textareaClass + ' sm:col-span-2'} bind:value={connectionDrafts[connection.id].configurationText}></textarea><div class="flex gap-2"><Button size="sm" onclick={() => patchConnection(connection.id)}>Save</Button><Button size="sm" variant="destructive" onclick={() => router.delete(routes.resourceConnectionDestroy(resource.id, connection.id))}>Disconnect</Button></div>
+              </div>
+            {/if}
+          </details>
+        {/each}
+      </Card.Content>
+    </Card.Root>
 
     <Card.Root>
       <Card.Header><Card.Action><span class="text-xs">{resource.endpoints.length} active</span></Card.Action><Card.Title>Connections</Card.Title><Card.Description>Endpoints and write-only encrypted credentials.</Card.Description></Card.Header>
@@ -170,6 +214,6 @@
       {#each resource.healthChecks as check}<details class="border border-border p-3"><summary class="cursor-pointer"><span class="font-medium">{check.name}</span><span class:text-success={check.state === 'healthy' || check.state === 'passing'} class:text-destructive={check.state === 'unhealthy' || check.state === 'failed'} class="ml-2 text-xs">observed {check.state || 'unknown'}</span></summary><p class="mt-2 border-l-2 border-muted pl-3 text-xs text-muted-foreground">{check.message || 'No observation message.'} This status cannot be edited here.</p><div class="mt-4 grid gap-3 sm:grid-cols-2"><Input bind:value={healthDrafts[check.id].name} /><Input bind:value={healthDrafts[check.id].kind} /><select bind:value={healthDrafts[check.id].resourceInstallationId} class={selectClass}>{#each resource.installations as installation}<option value={installation.id}>{installation.containerName}</option>{/each}</select><select bind:value={healthDrafts[check.id].resourceEndpointId} class={selectClass}><option value="">No endpoint</option>{#each resource.endpoints as endpoint}<option value={endpoint.id}>{endpoint.name}</option>{/each}</select><select bind:value={healthDrafts[check.id].resourceCredentialId} class={selectClass}><option value="">No credential</option>{#each resource.credentials as credential}<option value={credential.id}>{credential.name}</option>{/each}</select><Input type="number" bind:value={healthDrafts[check.id].intervalSeconds} min="1" /><Input type="number" bind:value={healthDrafts[check.id].timeoutSeconds} min="1" /><Input type="number" bind:value={healthDrafts[check.id].failureThreshold} min="1" /><Input type="number" bind:value={healthDrafts[check.id].successThreshold} min="1" /><label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={healthDrafts[check.id].enabled} /> Enabled</label><textarea class={textareaClass + ' sm:col-span-2'} bind:value={healthDrafts[check.id].configurationText}></textarea><div class="flex gap-2"><Button size="sm" onclick={() => patchHealth(check.id)}>Save</Button><Button size="sm" variant="destructive" onclick={() => router.delete(routes.resourceHealthCheckDestroy(resource.id, check.id))}>Archive</Button></div></div></details>{/each}</Card.Content>
     </Card.Root>
 
-    <Card.Root><Card.Header><Card.Title>Dependencies</Card.Title><Card.Description>Archive protection is evaluated again under a row lock when an operation runs.</Card.Description></Card.Header><Card.Content><p class="text-sm"><span class="font-medium">{resource.bindingCount}</span> active Environment binding{resource.bindingCount === 1 ? '' : 's'}.</p><p class="mt-2 text-xs text-muted-foreground">Endpoints and credentials selected by bindings or health checks cannot be archived. Installations and volumes must be detached from dependent topology first.</p></Card.Content></Card.Root>
+    <Card.Root><Card.Header><Card.Title>Dependencies</Card.Title><Card.Description>Archive protection is evaluated again under a row lock when an operation runs.</Card.Description></Card.Header><Card.Content><p class="text-sm"><span class="font-medium">{resource.connectionCount}</span> Connected Environment{resource.connectionCount === 1 ? '' : 's'}.</p><p class="mt-2 text-xs text-muted-foreground">Endpoints and credentials selected by connections or health checks cannot be archived. Installations and volumes must be detached from dependent topology first.</p></Card.Content></Card.Root>
   </div>
 </DashboardLayout>

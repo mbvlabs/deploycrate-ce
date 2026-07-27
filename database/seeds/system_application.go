@@ -126,11 +126,12 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		return fmt.Errorf("create DeployCrate CE target network: %w", err)
 	}
 
-	resource, err := factories.CreateResource(ctx, exec, environment.ID,
+	resource, err := factories.CreateResource(ctx, exec,
 		factories.WithResourcesName("DeployCrate CE PostgreSQL"),
 		factories.WithResourcesCategory("database"),
 		factories.WithResourcesKind("postgresql"),
-		factories.WithResourcesSharingScope("environment"),
+		factories.WithResourcesSharingScope(models.ResourceSharingEnvironment),
+		factories.WithResourcesSystemManaged(true),
 		factories.WithResourcesArchivedAt(sql.NullTime{}),
 	)
 	if err != nil {
@@ -190,11 +191,12 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		return fmt.Errorf("bind DeployCrate CE database resource: %w", err)
 	}
 
-	clickHouse, err := factories.CreateResource(ctx, exec, environment.ID,
+	clickHouse, err := factories.CreateResource(ctx, exec,
 		factories.WithResourcesName("DeployCrate CE ClickHouse"),
 		factories.WithResourcesCategory("database"),
 		factories.WithResourcesKind("clickhouse"),
-		factories.WithResourcesSharingScope("environment"),
+		factories.WithResourcesSharingScope(models.ResourceSharingEnvironment),
+		factories.WithResourcesSystemManaged(true),
 		factories.WithResourcesArchivedAt(sql.NullTime{}),
 	)
 	if err != nil {

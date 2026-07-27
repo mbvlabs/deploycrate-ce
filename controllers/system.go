@@ -188,16 +188,26 @@ func (s System) CreateResourceEndpoint(etx *echo.Context) error {
 		if len(payload.Settings) == 0 {
 			payload.Settings = json.RawMessage(`{}`)
 		}
-		_, err = models.ResourceEndpoint.CreateForSystemResource(
-			etx.Request().Context(),
-			s.db.Executor(),
-			models.CreateResourceEndpointData{
-				Name: payload.Name, Role: payload.Role, Address: payload.Address,
-				Port: payload.Port, Protocol: payload.Protocol, TlsMode: payload.TLSMode,
-				Settings: payload.Settings, ResourceID: resourceID,
-				ResourceInstallationID: installationID, PrivateNetworkID: networkID,
-			},
-		)
+		err = func() error {
+			tx, txErr := s.db.BeginTx(etx.Request().Context(), nil)
+			if txErr != nil {
+				return txErr
+			}
+			defer tx.Rollback()
+			if _, txErr = models.ResourceEndpoint.CreateForSystemResource(
+				etx.Request().Context(),
+				tx,
+				models.CreateResourceEndpointData{
+					Name: payload.Name, Role: payload.Role, Address: payload.Address,
+					Port: payload.Port, Protocol: payload.Protocol, TlsMode: payload.TLSMode,
+					Settings: payload.Settings, ResourceID: resourceID,
+					ResourceInstallationID: installationID, PrivateNetworkID: networkID,
+				},
+			); txErr != nil {
+				return txErr
+			}
+			return tx.Commit()
+		}()
 	}
 	if err != nil {
 		if validationErrors, ok := validation.As(err); ok {

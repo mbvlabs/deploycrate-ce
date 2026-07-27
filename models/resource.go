@@ -14,38 +14,35 @@ import (
 )
 
 type ResourceEntity struct {
-	bun.BaseModel      `bun:"table:resources,alias:resources"`
-	ID                 uuid.UUID    `bun:"id,pk,type:uuid"`
-	CreatedAt          time.Time    `bun:"created_at"`
-	UpdatedAt          time.Time    `bun:"updated_at"`
-	Name               string       `bun:"name"`
-	Category           string       `bun:"category"`
-	Kind               string       `bun:"kind"`
-	ManagementMode     string       `bun:"management_mode"`
-	SharingScope       string       `bun:"sharing_scope"`
-	ArchivedAt         sql.NullTime `bun:"archived_at"`
-	OwnerEnvironmentID uuid.UUID    `bun:"owner_environment_id,type:uuid"`
+	bun.BaseModel  `bun:"table:resources,alias:resources"`
+	ID             uuid.UUID                  `bun:"id,pk,type:uuid"`
+	CreatedAt      time.Time                  `bun:"created_at"`
+	UpdatedAt      time.Time                  `bun:"updated_at"`
+	Name           string                     `bun:"name"`
+	Category       string                     `bun:"category"`
+	Kind           string                     `bun:"kind"`
+	ManagementMode ResourceManagementModeEnum `bun:"management_mode"`
+	SharingScope   ResourceSharingScopeEnum   `bun:"sharing_scope"`
+	SystemManaged  bool                       `bun:"system_managed"`
+	ArchivedAt     sql.NullTime               `bun:"archived_at"`
 }
 
 func (e *ResourceEntity) Validate() error {
 	e.Name = strings.TrimSpace(e.Name)
 	e.Category = strings.ToLower(strings.TrimSpace(e.Category))
 	e.Kind = strings.ToLower(strings.TrimSpace(e.Kind))
-	e.ManagementMode = strings.ToLower(strings.TrimSpace(e.ManagementMode))
-	e.SharingScope = strings.ToLower(strings.TrimSpace(e.SharingScope))
+	e.ManagementMode = ResourceManagementModeEnum(strings.ToLower(strings.TrimSpace(e.ManagementMode.String())))
+	e.SharingScope = ResourceSharingScopeEnum(strings.ToLower(strings.TrimSpace(e.SharingScope.String())))
 	builder := validation.NewBuilder()
 	builder.Required("name", e.Name)
 	if !ResourceCategoryKindSupported(e.Category, e.Kind) {
 		builder.Add("kind", "unsupported", "category and kind must match a supported resource kind")
 	}
-	if e.ManagementMode != ResourceManagementManaged && e.ManagementMode != ResourceManagementExternal {
+	if !e.ManagementMode.IsValid() {
 		builder.Add("managementMode", "unsupported", "management mode must be managed or external")
 	}
-	if e.SharingScope != ResourceSharingEnvironment && e.SharingScope != ResourceSharingApplication && e.SharingScope != ResourceSharingGlobal {
+	if !e.SharingScope.IsValid() {
 		builder.Add("sharingScope", "unsupported", "sharing scope is not supported")
-	}
-	if e.OwnerEnvironmentID == uuid.Nil {
-		builder.Add("ownerEnvironmentId", "required", "owner environment is required")
 	}
 	return builder.Err()
 }
@@ -67,13 +64,13 @@ func (r resource) Find(
 }
 
 type CreateResourceData struct {
-	Name               string
-	Category           string
-	Kind               string
-	ManagementMode     string
-	SharingScope       string
-	ArchivedAt         sql.NullTime
-	OwnerEnvironmentID uuid.UUID
+	Name           string
+	Category       string
+	Kind           string
+	ManagementMode ResourceManagementModeEnum
+	SharingScope   ResourceSharingScopeEnum
+	SystemManaged  bool
+	ArchivedAt     sql.NullTime
 }
 
 func (r resource) Create(
@@ -82,20 +79,23 @@ func (r resource) Create(
 	data CreateResourceData,
 ) (ResourceEntity, error) {
 	entity := ResourceEntity{
-		ID:                 uuid.New(),
-		CreatedAt:          time.Now(),
-		UpdatedAt:          time.Now(),
-		Name:               data.Name,
-		Category:           data.Category,
-		Kind:               data.Kind,
-		ManagementMode:     data.ManagementMode,
-		SharingScope:       data.SharingScope,
-		ArchivedAt:         data.ArchivedAt,
-		OwnerEnvironmentID: data.OwnerEnvironmentID,
+		ID:             uuid.New(),
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+		Name:           data.Name,
+		Category:       data.Category,
+		Kind:           data.Kind,
+		ManagementMode: data.ManagementMode,
+		SharingScope:   data.SharingScope,
+		ArchivedAt:     data.ArchivedAt,
+		SystemManaged:  data.SystemManaged,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := r.ensureActiveNameAvailable(ctx, db, entity.Name, nil); err != nil {
+		return ResourceEntity{}, err
 	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
@@ -106,15 +106,15 @@ func (r resource) Create(
 }
 
 type UpdateResourceData struct {
-	ID                 uuid.UUID
-	UpdatedAt          time.Time
-	Name               string
-	Category           string
-	Kind               string
-	ManagementMode     string
-	SharingScope       string
-	ArchivedAt         sql.NullTime
-	OwnerEnvironmentID uuid.UUID
+	ID             uuid.UUID
+	UpdatedAt      time.Time
+	Name           string
+	Category       string
+	Kind           string
+	ManagementMode ResourceManagementModeEnum
+	SharingScope   ResourceSharingScopeEnum
+	SystemManaged  bool
+	ArchivedAt     sql.NullTime
 }
 
 func (r resource) Update(
@@ -123,19 +123,22 @@ func (r resource) Update(
 	data UpdateResourceData,
 ) (ResourceEntity, error) {
 	entity := ResourceEntity{
-		ID:                 data.ID,
-		UpdatedAt:          time.Now(),
-		Name:               data.Name,
-		Category:           data.Category,
-		Kind:               data.Kind,
-		ManagementMode:     data.ManagementMode,
-		SharingScope:       data.SharingScope,
-		ArchivedAt:         data.ArchivedAt,
-		OwnerEnvironmentID: data.OwnerEnvironmentID,
+		ID:             data.ID,
+		UpdatedAt:      time.Now(),
+		Name:           data.Name,
+		Category:       data.Category,
+		Kind:           data.Kind,
+		ManagementMode: data.ManagementMode,
+		SharingScope:   data.SharingScope,
+		ArchivedAt:     data.ArchivedAt,
+		SystemManaged:  data.SystemManaged,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := r.ensureActiveNameAvailable(ctx, db, entity.Name, &entity.ID); err != nil {
+		return ResourceEntity{}, err
 	}
 
 	if err := db.NewUpdate().
@@ -146,8 +149,8 @@ func (r resource) Update(
 		Column("kind").
 		Column("management_mode").
 		Column("sharing_scope").
+		Column("system_managed").
 		Column("archived_at").
-		Column("owner_environment_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -234,20 +237,23 @@ func (r resource) Upsert(
 	data CreateResourceData,
 ) (ResourceEntity, error) {
 	entity := ResourceEntity{
-		ID:                 uuid.New(),
-		CreatedAt:          time.Now(),
-		UpdatedAt:          time.Now(),
-		Name:               data.Name,
-		Category:           data.Category,
-		Kind:               data.Kind,
-		ManagementMode:     data.ManagementMode,
-		SharingScope:       data.SharingScope,
-		ArchivedAt:         data.ArchivedAt,
-		OwnerEnvironmentID: data.OwnerEnvironmentID,
+		ID:             uuid.New(),
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+		Name:           data.Name,
+		Category:       data.Category,
+		Kind:           data.Kind,
+		ManagementMode: data.ManagementMode,
+		SharingScope:   data.SharingScope,
+		ArchivedAt:     data.ArchivedAt,
+		SystemManaged:  data.SystemManaged,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := r.ensureActiveNameAvailable(ctx, db, entity.Name, &entity.ID); err != nil {
+		return ResourceEntity{}, err
 	}
 
 	if err := db.NewInsert().
@@ -258,12 +264,33 @@ func (r resource) Upsert(
 		Set("kind = excluded.kind").
 		Set("management_mode = excluded.management_mode").
 		Set("sharing_scope = excluded.sharing_scope").
+		Set("system_managed = excluded.system_managed").
 		Set("archived_at = excluded.archived_at").
-		Set("owner_environment_id = excluded.owner_environment_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ResourceEntity{}, err
 	}
 
 	return entity, nil
+}
+
+func (r resource) ensureActiveNameAvailable(ctx context.Context, db storage.Executor, name string, exceptID *uuid.UUID) error {
+	normalizedName := strings.ToLower(strings.TrimSpace(name))
+	if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "resource-name:"+normalizedName); err != nil {
+		return err
+	}
+	query := db.NewSelect().Model((*ResourceEntity)(nil)).
+		Where("lower(name) = ?", normalizedName).
+		Where("archived_at IS NULL")
+	if exceptID != nil {
+		query = query.Where("id <> ?", *exceptID)
+	}
+	count, err := query.Count(ctx)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "name", Code: "taken", Message: "an active Resource already uses this name"}})
+	}
+	return nil
 }

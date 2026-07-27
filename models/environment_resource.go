@@ -7,6 +7,7 @@ import (
 	"deploycrate-ce/internal/validation"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -38,7 +39,19 @@ type EnvironmentResourceConnection struct {
 }
 
 func (e *EnvironmentResourceEntity) Validate() error {
-	return nil
+	e.Alias = strings.TrimSpace(e.Alias)
+	builder := validation.NewBuilder()
+	builder.Required("alias", e.Alias)
+	if e.EnvironmentID == uuid.Nil {
+		builder.Add("environmentId", "required", "environment is required")
+	}
+	if e.ResourceID == uuid.Nil {
+		builder.Add("resourceId", "required", "Resource is required")
+	}
+	if e.ResourceEndpointID == uuid.Nil {
+		builder.Add("resourceEndpointId", "required", "endpoint is required")
+	}
+	return builder.Err()
 }
 
 func (er environmentResource) Find(
@@ -119,6 +132,9 @@ func (er environmentResource) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return EnvironmentResourceEntity{}, errors.Join(ErrDomainValidation, err)
 	}
+	if err := er.ensureActiveConnectionAvailable(ctx, db, entity, nil); err != nil {
+		return EnvironmentResourceEntity{}, err
+	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
 		return EnvironmentResourceEntity{}, err
@@ -159,6 +175,9 @@ func (er environmentResource) Update(
 	if err := validation.Validate(&entity); err != nil {
 		return EnvironmentResourceEntity{}, errors.Join(ErrDomainValidation, err)
 	}
+	if err := er.ensureActiveConnectionAvailable(ctx, db, entity, &entity.ID); err != nil {
+		return EnvironmentResourceEntity{}, err
+	}
 
 	if err := db.NewUpdate().
 		Model(&entity).
@@ -190,6 +209,61 @@ func (er environmentResource) Destroy(
 		Exec(ctx)
 
 	return err
+}
+
+func (er environmentResource) Archive(ctx context.Context, db storage.Executor, id uuid.UUID) error {
+	now := time.Now().UTC()
+	result, err := db.NewUpdate().Model((*EnvironmentResourceEntity)(nil)).
+		Set("archived_at = ?", now).
+		Set("updated_at = ?", now).
+		Where("id = ?", id).
+		Where("archived_at IS NULL").
+		Exec(ctx)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (er environmentResource) ensureActiveConnectionAvailable(ctx context.Context, db storage.Executor, entity EnvironmentResourceEntity, exceptID *uuid.UUID) error {
+	lockKeys := []string{
+		"environment-resource:" + entity.EnvironmentID.String() + ":" + entity.ResourceID.String(),
+		"environment-resource-alias:" + entity.EnvironmentID.String() + ":" + strings.ToLower(entity.Alias),
+	}
+	for _, lockKey := range lockKeys {
+		if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", lockKey); err != nil {
+			return err
+		}
+	}
+	base := func() *bun.SelectQuery {
+		query := db.NewSelect().Model((*EnvironmentResourceEntity)(nil)).Where("archived_at IS NULL")
+		if exceptID != nil {
+			query = query.Where("id <> ?", *exceptID)
+		}
+		return query
+	}
+	count, err := base().Where("environment_id = ?", entity.EnvironmentID).Where("resource_id = ?", entity.ResourceID).Count(ctx)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "environmentId", Code: "taken", Message: "Environment is already connected to this Resource"}})
+	}
+	count, err = base().Where("environment_id = ?", entity.EnvironmentID).Where("lower(alias) = ?", strings.ToLower(entity.Alias)).Count(ctx)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "alias", Code: "taken", Message: "alias is already in use in this Environment"}})
+	}
+	return nil
 }
 
 func (er environmentResource) All(
@@ -277,6 +351,9 @@ func (er environmentResource) Upsert(
 
 	if err := validation.Validate(&entity); err != nil {
 		return EnvironmentResourceEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := er.ensureActiveConnectionAvailable(ctx, db, entity, &entity.ID); err != nil {
+		return EnvironmentResourceEntity{}, err
 	}
 
 	if err := db.NewInsert().

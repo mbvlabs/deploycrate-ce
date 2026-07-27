@@ -44,10 +44,7 @@ func BuildEnvironmentResource(environmentID uuid.UUID, resourceID uuid.UUID, res
 func CreateEnvironmentResource(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, resourceID uuid.UUID, resourceEndpointID uuid.UUID, resourceCredentialID *uuid.UUID, opts ...EnvironmentResourceOption) (models.EnvironmentResourceEntity, error) {
 	built := BuildEnvironmentResource(environmentID, resourceID, resourceEndpointID, resourceCredentialID, opts...)
 
-	entity := models.EnvironmentResourceEntity{
-		ID:                   uuid.New(),
-		CreatedAt:            time.Now(),
-		UpdatedAt:            time.Now(),
+	entity, err := models.EnvironmentResource.Create(ctx, exec, models.CreateEnvironmentResourceData{
 		Alias:                built.Alias,
 		Configuration:        built.Configuration,
 		ArchivedAt:           built.ArchivedAt,
@@ -55,9 +52,8 @@ func CreateEnvironmentResource(ctx context.Context, exec storage.Executor, envir
 		ResourceID:           built.ResourceID,
 		ResourceEndpointID:   built.ResourceEndpointID,
 		ResourceCredentialID: built.ResourceCredentialID,
-	}
-
-	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
+	})
+	if err != nil {
 		return models.EnvironmentResourceEntity{}, err
 	}
 

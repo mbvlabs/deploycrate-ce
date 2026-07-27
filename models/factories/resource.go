@@ -7,7 +7,6 @@ import (
 	"deploycrate-ce/models"
 	"fmt"
 	"github.com/go-faker/faker/v4"
-	"github.com/google/uuid"
 	"time"
 )
 
@@ -19,16 +18,16 @@ type ResourceFactory struct {
 
 type ResourceOption func(*ResourceFactory)
 
-func BuildResource(ownerEnvironmentID uuid.UUID, opts ...ResourceOption) models.ResourceEntity {
+func BuildResource(opts ...ResourceOption) models.ResourceEntity {
 	f := &ResourceFactory{
 		ResourceEntity: models.ResourceEntity{
-			Name:               faker.Word(),
-			Category:           faker.Word(),
-			Kind:               faker.Word(),
-			ManagementMode:     models.ResourceManagementManaged,
-			SharingScope:       models.ResourceSharingEnvironment,
-			ArchivedAt:         sql.NullTime{Time: time.Now(), Valid: true},
-			OwnerEnvironmentID: ownerEnvironmentID,
+			Name:           faker.Word(),
+			Category:       "database",
+			Kind:           "postgresql",
+			ManagementMode: models.ResourceManagementManaged,
+			SharingScope:   models.ResourceSharingEnvironment,
+			SystemManaged:  false,
+			ArchivedAt:     sql.NullTime{Time: time.Now(), Valid: true},
 		},
 	}
 
@@ -39,34 +38,30 @@ func BuildResource(ownerEnvironmentID uuid.UUID, opts ...ResourceOption) models.
 	return f.ResourceEntity
 }
 
-func CreateResource(ctx context.Context, exec storage.Executor, ownerEnvironmentID uuid.UUID, opts ...ResourceOption) (models.ResourceEntity, error) {
-	built := BuildResource(ownerEnvironmentID, opts...)
+func CreateResource(ctx context.Context, exec storage.Executor, opts ...ResourceOption) (models.ResourceEntity, error) {
+	built := BuildResource(opts...)
 
-	entity := models.ResourceEntity{
-		ID:                 uuid.New(),
-		CreatedAt:          time.Now(),
-		UpdatedAt:          time.Now(),
-		Name:               built.Name,
-		Category:           built.Category,
-		Kind:               built.Kind,
-		ManagementMode:     built.ManagementMode,
-		SharingScope:       built.SharingScope,
-		ArchivedAt:         built.ArchivedAt,
-		OwnerEnvironmentID: built.OwnerEnvironmentID,
-	}
-
-	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
+	entity, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
+		Name:           built.Name,
+		Category:       built.Category,
+		Kind:           built.Kind,
+		ManagementMode: built.ManagementMode,
+		SharingScope:   built.SharingScope,
+		SystemManaged:  built.SystemManaged,
+		ArchivedAt:     built.ArchivedAt,
+	})
+	if err != nil {
 		return models.ResourceEntity{}, err
 	}
 
 	return entity, nil
 }
 
-func CreateResources(ctx context.Context, exec storage.Executor, ownerEnvironmentID uuid.UUID, count int, opts ...ResourceOption) ([]models.ResourceEntity, error) {
+func CreateResources(ctx context.Context, exec storage.Executor, count int, opts ...ResourceOption) ([]models.ResourceEntity, error) {
 	resources := make([]models.ResourceEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateResource(ctx, exec, ownerEnvironmentID, opts...)
+		entity, err := CreateResource(ctx, exec, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resource %d: %w", i+1, err)
 		}
@@ -94,26 +89,26 @@ func WithResourcesKind(value string) ResourceOption {
 	}
 }
 
-func WithResourcesManagementMode(value string) ResourceOption {
+func WithResourcesManagementMode(value models.ResourceManagementModeEnum) ResourceOption {
 	return func(f *ResourceFactory) {
 		f.ResourceEntity.ManagementMode = value
 	}
 }
 
-func WithResourcesSharingScope(value string) ResourceOption {
+func WithResourcesSharingScope(value models.ResourceSharingScopeEnum) ResourceOption {
 	return func(f *ResourceFactory) {
 		f.ResourceEntity.SharingScope = value
+	}
+}
+
+func WithResourcesSystemManaged(value bool) ResourceOption {
+	return func(f *ResourceFactory) {
+		f.ResourceEntity.SystemManaged = value
 	}
 }
 
 func WithResourcesArchivedAt(value sql.NullTime) ResourceOption {
 	return func(f *ResourceFactory) {
 		f.ResourceEntity.ArchivedAt = value
-	}
-}
-
-func WithResourcesOwnerEnvironmentID(value uuid.UUID) ResourceOption {
-	return func(f *ResourceFactory) {
-		f.ResourceEntity.OwnerEnvironmentID = value
 	}
 }

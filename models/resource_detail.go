@@ -9,113 +9,118 @@ import (
 )
 
 type ResourceListFilters struct {
-	Search             string
-	Kind               string
-	Category           string
-	ManagementMode     string
-	SharingScope       string
-	OwnerEnvironmentID *uuid.UUID
+	Search         string
+	Kind           string
+	Category       string
+	ManagementMode string
+	SharingScope   string
 }
 
 type ResourceListItem struct {
-	ID                 uuid.UUID `bun:"id" json:"id"`
-	Name               string    `bun:"name" json:"name"`
-	Category           string    `bun:"category" json:"category"`
-	Kind               string    `bun:"kind" json:"kind"`
-	ManagementMode     string    `bun:"management_mode" json:"managementMode"`
-	SharingScope       string    `bun:"sharing_scope" json:"sharingScope"`
-	OwnerEnvironmentID uuid.UUID `bun:"owner_environment_id" json:"ownerEnvironmentId"`
-	OwnerEnvironment   string    `bun:"owner_environment" json:"ownerEnvironment"`
-	OwnerApplication   string    `bun:"owner_application" json:"ownerApplication"`
-	InstallationCount  int       `bun:"installation_count" json:"installationCount"`
-	EndpointCount      int       `bun:"endpoint_count" json:"endpointCount"`
-	Health             string    `bun:"health" json:"health"`
+	ID                uuid.UUID                  `bun:"id"`
+	Name              string                     `bun:"name"`
+	Category          string                     `bun:"category"`
+	Kind              string                     `bun:"kind"`
+	ManagementMode    ResourceManagementModeEnum `bun:"management_mode"`
+	SharingScope      ResourceSharingScopeEnum   `bun:"sharing_scope"`
+	ConnectionCount   int                        `bun:"connection_count"`
+	InstallationCount int                        `bun:"installation_count"`
+	EndpointCount     int                        `bun:"endpoint_count"`
+	Health            string                     `bun:"health"`
 }
 
 type ResourceInstallationDetail struct {
 	ResourceInstallationEntity
-	ServerName    string       `bun:"server_name" json:"serverName"`
-	ServerAddress string       `bun:"server_address" json:"serverAddress"`
-	State         string       `bun:"state" json:"state"`
-	ServiceState  string       `bun:"service_state" json:"serviceState"`
-	Health        string       `bun:"health" json:"health"`
-	HealthReason  string       `bun:"health_reason" json:"healthReason"`
-	ObservedAt    sql.NullTime `bun:"observed_at" json:"observedAt"`
+	ServerName    string       `bun:"server_name"`
+	ServerAddress string       `bun:"server_address"`
+	State         string       `bun:"state"`
+	ServiceState  string       `bun:"service_state"`
+	Health        string       `bun:"health"`
+	HealthReason  string       `bun:"health_reason"`
+	ObservedAt    sql.NullTime `bun:"observed_at"`
 }
 
 type ResourceVolumeDetail struct {
 	ResourceVolumeEntity
-	ServerName string `bun:"server_name" json:"serverName"`
+	ServerName string `bun:"server_name"`
 }
 
 type ResourceMountDetail struct {
 	ResourceVolumeMountEntity
-	VolumeName    string `bun:"volume_name" json:"volumeName"`
-	ContainerName string `bun:"container_name" json:"containerName"`
+	VolumeName    string `bun:"volume_name"`
+	ContainerName string `bun:"container_name"`
 }
 
 type ResourceHealthCheckDetail struct {
 	ResourceHealthCheckEntity
-	State      string       `bun:"state" json:"state"`
-	Message    string       `bun:"message" json:"message"`
-	ObservedAt sql.NullTime `bun:"observed_at" json:"observedAt"`
+	State      string       `bun:"state"`
+	Message    string       `bun:"message"`
+	ObservedAt sql.NullTime `bun:"observed_at"`
 }
 
 type ResourceDetails struct {
-	Resource         ResourceEntity               `json:"resource"`
-	OwnerEnvironment string                       `json:"ownerEnvironment"`
-	OwnerApplication string                       `json:"ownerApplication"`
-	IsSystem         bool                         `json:"isSystem"`
-	BindingCount     int                          `json:"bindingCount"`
-	Endpoints        []ResourceEndpointEntity     `json:"endpoints"`
-	Credentials      []ResourceCredentialEntity   `json:"-"`
-	Installations    []ResourceInstallationDetail `json:"installations"`
-	Volumes          []ResourceVolumeDetail       `json:"volumes"`
-	Mounts           []ResourceMountDetail        `json:"mounts"`
-	HealthChecks     []ResourceHealthCheckDetail  `json:"healthChecks"`
+	Resource      ResourceEntity
+	Connections   []ResourceConnectionDetail
+	Endpoints     []ResourceEndpointEntity
+	Credentials   []ResourceCredentialEntity
+	Installations []ResourceInstallationDetail
+	Volumes       []ResourceVolumeDetail
+	Mounts        []ResourceMountDetail
+	HealthChecks  []ResourceHealthCheckDetail
+}
+
+type ResourceConnectionDetail struct {
+	EnvironmentResourceEntity
+	EnvironmentName     string `bun:"environment_name"`
+	EnvironmentKind     string `bun:"environment_kind"`
+	EnvironmentArchived bool   `bun:"environment_archived"`
+	ApplicationName     string `bun:"application_name"`
+	ApplicationSlug     string `bun:"application_slug"`
+	ApplicationArchived bool   `bun:"application_archived"`
+	EndpointName        string `bun:"endpoint_name"`
+	CredentialName      string `bun:"credential_name"`
 }
 
 type ResourceCredentialSummary struct {
-	ID                     uuid.UUID       `json:"id"`
-	CreatedAt              time.Time       `json:"createdAt"`
-	UpdatedAt              time.Time       `json:"updatedAt"`
-	Name                   string          `json:"name"`
-	Role                   string          `json:"role"`
-	Username               string          `json:"username"`
-	Metadata               json.RawMessage `json:"metadata"`
-	HasEncryptedPayload    bool            `json:"hasEncryptedPayload"`
-	ResourceInstallationID *uuid.UUID      `json:"resourceInstallationId"`
+	ID                     uuid.UUID
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
+	Name                   string
+	Role                   string
+	Username               string
+	Metadata               json.RawMessage
+	HasEncryptedPayload    bool
+	ResourceInstallationID *uuid.UUID
 }
 
 type ResourceEnvironmentOption struct {
-	ID              uuid.UUID `bun:"id" json:"id"`
-	Name            string    `bun:"name" json:"name"`
-	Kind            string    `bun:"kind" json:"kind"`
-	ApplicationName string    `bun:"application_name" json:"applicationName"`
+	ID              uuid.UUID `bun:"id"`
+	Name            string    `bun:"name"`
+	Kind            string    `bun:"kind"`
+	ApplicationName string    `bun:"application_name"`
 }
 
 type ResourceServerOption struct {
-	ID            uuid.UUID `bun:"id" json:"id"`
-	Name          string    `bun:"name" json:"name"`
-	Address       string    `bun:"address" json:"address"`
-	EnvironmentID uuid.UUID `bun:"environment_id" json:"environmentId"`
+	ID      uuid.UUID `bun:"id"`
+	Name    string    `bun:"name"`
+	Address string    `bun:"address"`
 }
 
 type ResourceNetworkOption struct {
-	ID            uuid.UUID `bun:"id" json:"id"`
-	Name          string    `bun:"name" json:"name"`
-	EnvironmentID uuid.UUID `bun:"environment_id" json:"environmentId"`
+	ID        uuid.UUID   `bun:"id"`
+	Name      string      `bun:"name"`
+	ServerIDs []uuid.UUID `bun:"-"`
 }
 
 type ResourceRegistryCredentialOption struct {
-	ID   uuid.UUID `bun:"id" json:"id"`
-	Name string    `bun:"name" json:"name"`
+	ID   uuid.UUID `bun:"id"`
+	Name string    `bun:"name"`
 }
 
 type ResourceFormOptions struct {
-	Kinds               []ResourceKindDefinition           `json:"kinds"`
-	Environments        []ResourceEnvironmentOption        `json:"environments"`
-	Servers             []ResourceServerOption             `json:"servers"`
-	PrivateNetworks     []ResourceNetworkOption            `json:"privateNetworks"`
-	RegistryCredentials []ResourceRegistryCredentialOption `json:"registryCredentials"`
+	Kinds               []ResourceKindDefinition
+	Environments        []ResourceEnvironmentOption
+	Servers             []ResourceServerOption
+	PrivateNetworks     []ResourceNetworkOption
+	RegistryCredentials []ResourceRegistryCredentialOption
 }

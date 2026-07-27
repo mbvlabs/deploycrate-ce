@@ -92,6 +92,9 @@ func (rv resourceVolume) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceVolumeEntity{}, errors.Join(ErrDomainValidation, err)
 	}
+	if err := ensureActiveUnique(ctx, db, "resource-volume:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceVolumeEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active Volume already uses this name"); err != nil {
+		return ResourceVolumeEntity{}, err
+	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
 		return ResourceVolumeEntity{}, err
@@ -129,6 +132,9 @@ func (rv resourceVolume) Update(
 
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceVolumeEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureActiveUnique(ctx, db, "resource-volume:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceVolumeEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active Volume already uses this name"); err != nil {
+		return ResourceVolumeEntity{}, err
 	}
 
 	if err := db.NewUpdate().
@@ -242,6 +248,9 @@ func (rv resourceVolume) Upsert(
 
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceVolumeEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureActiveUnique(ctx, db, "resource-volume:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceVolumeEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active Volume already uses this name"); err != nil {
+		return ResourceVolumeEntity{}, err
 	}
 
 	if err := db.NewInsert().

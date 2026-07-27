@@ -9,10 +9,10 @@ CREATE TABLE resources (
     name TEXT NOT NULL,
     category TEXT NOT NULL,
     kind TEXT NOT NULL,
+    management_mode TEXT NOT NULL,
     sharing_scope TEXT NOT NULL,
-    archived_at TIMESTAMPTZ,
-
-    owner_environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE RESTRICT
+    system_managed BOOLEAN NOT NULL,
+    archived_at TIMESTAMPTZ
 );
 -- +goose StatementEnd
 

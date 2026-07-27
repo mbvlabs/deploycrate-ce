@@ -2,34 +2,25 @@ package models
 
 import "slices"
 
-const (
-	ResourceManagementManaged  = "managed"
-	ResourceManagementExternal = "external"
-
-	ResourceSharingEnvironment = "environment"
-	ResourceSharingApplication = "application"
-	ResourceSharingGlobal      = "global"
-)
-
 type ResourceCredentialField struct {
-	Name     string `json:"name"`
-	Label    string `json:"label"`
-	Required bool   `json:"required"`
-	Secret   bool   `json:"secret"`
+	Name     string
+	Label    string
+	Required bool
+	Secret   bool
 }
 
 type ResourceKindDefinition struct {
-	Kind             string                    `json:"kind"`
-	Label            string                    `json:"label"`
-	Category         string                    `json:"category"`
-	Protocols        []string                  `json:"protocols"`
-	EndpointRoles    []string                  `json:"endpointRoles"`
-	TLSModes         []string                  `json:"tlsModes"`
-	CredentialFields []ResourceCredentialField `json:"credentialFields"`
-	HealthCheckKinds []string                  `json:"healthCheckKinds"`
-	DefaultPort      int32                     `json:"defaultPort"`
-	DefaultProtocol  string                    `json:"defaultProtocol"`
-	DefaultTLSMode   string                    `json:"defaultTlsMode"`
+	Kind             string
+	Label            string
+	Category         string
+	Protocols        []string
+	EndpointRoles    []string
+	TLSModes         []string
+	CredentialFields []ResourceCredentialField
+	HealthCheckKinds []string
+	DefaultPort      int32
+	DefaultProtocol  string
+	DefaultTLSMode   string
 }
 
 var resourceKindCatalog = []ResourceKindDefinition{

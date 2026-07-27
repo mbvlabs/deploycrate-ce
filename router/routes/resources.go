@@ -12,6 +12,15 @@ var ResourceEdit = routing.NewRouteWithUUIDID("/:id/edit", "resources.edit", Res
 var ResourceUpdate = routing.NewRouteWithUUIDID("/:id", "resources.update", ResourcesPrefix)
 var ResourceDestroy = routing.NewRouteWithUUIDID("/:id", "resources.destroy", ResourcesPrefix)
 
+type ResourceConnectionParams struct {
+	ResourceID   string `param:"id"`
+	ConnectionID string `param:"connectionID"`
+}
+
+var ResourceConnectionCreate = routing.NewRouteWithUUIDID("/:id/connections", "resources.connections.create", ResourcesPrefix)
+var ResourceConnectionUpdate = routing.NewRouteWithParams[ResourceConnectionParams]("/:id/connections/:connectionID", "resources.connections.update", ResourcesPrefix)
+var ResourceConnectionDestroy = routing.NewRouteWithParams[ResourceConnectionParams]("/:id/connections/:connectionID", "resources.connections.destroy", ResourcesPrefix)
+
 type ResourceEndpointParams struct {
 	ResourceID string `param:"id"`
 	EndpointID string `param:"endpointID"`

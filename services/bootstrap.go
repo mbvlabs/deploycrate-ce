@@ -478,7 +478,7 @@ func createBootstrapClickHouseResource(
 	resource, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
 		Name: "DeployCrate CE ClickHouse", Category: "database", Kind: "clickhouse",
 		ManagementMode: models.ResourceManagementManaged,
-		SharingScope:   "environment", OwnerEnvironmentID: environmentID,
+		SharingScope:   models.ResourceSharingEnvironment, SystemManaged: true,
 	})
 	if err != nil {
 		return fmt.Errorf("create bootstrap ClickHouse resource: %w", err)
@@ -577,7 +577,7 @@ func createBootstrapDatabaseResource(
 	resource, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
 		Name: "DeployCrate CE PostgreSQL", Category: "database", Kind: "postgresql",
 		ManagementMode: managementMode,
-		SharingScope:   "environment", OwnerEnvironmentID: environmentID,
+		SharingScope:   models.ResourceSharingEnvironment, SystemManaged: true,
 	})
 	if err != nil {
 		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap database resource: %w", err)

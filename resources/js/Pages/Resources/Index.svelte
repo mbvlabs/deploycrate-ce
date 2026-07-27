@@ -5,7 +5,7 @@
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
-  type Resource = { id: string; name: string; category: string; kind: string; managementMode: string; sharingScope: string; ownerEnvironment: string; ownerApplication: string; installationCount: number; endpointCount: number; health: string }
+  type Resource = { id: string; name: string; category: string; kind: string; managementMode: string; sharingScope: string; connectionCount: number; installationCount: number; endpointCount: number; health: string }
   let { auth, resources }: { auth: { email: string }; resources: Resource[] } = $props()
 </script>
 
@@ -23,7 +23,7 @@
       <div class="grid gap-4 md:grid-cols-2">
         {#each resources as resource (resource.id)}
           <Card.Root>
-            <Card.Header><Card.Action><span class:text-success={resource.health === 'healthy'} class:text-destructive={resource.health === 'unhealthy'} class="text-xs capitalize">{resource.health}</span></Card.Action><Card.Title>{resource.name}</Card.Title><Card.Description>{resource.ownerApplication} / {resource.ownerEnvironment}</Card.Description></Card.Header>
+            <Card.Header><Card.Action><span class:text-success={resource.health === 'healthy'} class:text-destructive={resource.health === 'unhealthy'} class="text-xs capitalize">{resource.health}</span></Card.Action><Card.Title>{resource.name}</Card.Title><Card.Description>{resource.connectionCount === 0 ? 'Unattached' : `${resource.connectionCount} Connected ${resource.connectionCount === 1 ? 'Environment' : 'Environments'}`}</Card.Description></Card.Header>
             <Card.Content class="grid grid-cols-2 gap-4 text-xs sm:grid-cols-4"><div><p class="text-muted-foreground">Kind</p><p class="mt-1 font-medium">{resource.kind}</p></div><div><p class="text-muted-foreground">Mode</p><p class="mt-1 capitalize">{resource.managementMode}</p></div><div><p class="text-muted-foreground">Installations</p><p class="mt-1">{resource.installationCount}</p></div><div><p class="text-muted-foreground">Endpoints</p><p class="mt-1">{resource.endpointCount}</p></div></Card.Content>
             <Card.Footer class="justify-between border-t border-border"><span class="text-xs capitalize text-muted-foreground">{resource.category} · {resource.sharingScope}</span><Button href={routes.resourceShow(resource.id)} size="sm" variant="outline">Open</Button></Card.Footer>
           </Card.Root>

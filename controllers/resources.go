@@ -44,6 +44,9 @@ func (controller Resources) RegisterRoutes(r *router.Router) error {
 		{http.MethodGet, routes.ResourceEdit, controller.Edit},
 		{http.MethodPatch, routes.ResourceUpdate, controller.Update},
 		{http.MethodDelete, routes.ResourceDestroy, controller.Destroy},
+		{http.MethodPost, routes.ResourceConnectionCreate, controller.CreateConnection},
+		{http.MethodPatch, routes.ResourceConnectionUpdate, controller.UpdateConnection},
+		{http.MethodDelete, routes.ResourceConnectionDestroy, controller.DestroyConnection},
 		{http.MethodPost, routes.ResourceEndpointCreate, controller.CreateEndpoint},
 		{http.MethodPatch, routes.ResourceEndpointUpdate, controller.UpdateEndpoint},
 		{http.MethodDelete, routes.ResourceEndpointDestroy, controller.DestroyEndpoint},
@@ -81,13 +84,6 @@ func (controller Resources) Index(etx *echo.Context) error {
 		Search: etx.QueryParam("search"), Kind: etx.QueryParam("kind"), Category: etx.QueryParam("category"),
 		ManagementMode: etx.QueryParam("managementMode"), SharingScope: etx.QueryParam("sharingScope"),
 	}
-	if value := strings.TrimSpace(etx.QueryParam("ownerEnvironmentId")); value != "" {
-		ownerID, err := uuid.Parse(value)
-		if err != nil {
-			return inertia.Page(etx, "Errors/BadRequest", inertia.Props{})
-		}
-		filters.OwnerEnvironmentID = &ownerID
-	}
 	items, err := controller.service.List(etx.Request().Context(), filters)
 	if err != nil {
 		return controller.renderLoadError(etx, err)
@@ -97,10 +93,9 @@ func (controller Resources) Index(etx *echo.Context) error {
 		return controller.renderLoadError(etx, err)
 	}
 	return inertia.Page(etx, "Resources/Index", inertia.Props{
-		"auth": authProps(etx), "resources": items, "options": options, "filters": inertia.Props{
+		"auth": authProps(etx), "resources": resourceListProps(items), "options": resourceOptionsProps(options), "filters": inertia.Props{
 			"search": filters.Search, "kind": filters.Kind, "category": filters.Category,
 			"managementMode": filters.ManagementMode, "sharingScope": filters.SharingScope,
-			"ownerEnvironmentId": etx.QueryParam("ownerEnvironmentId"),
 		},
 	})
 }
@@ -110,28 +105,97 @@ func (controller Resources) New(etx *echo.Context) error {
 	if err != nil {
 		return controller.renderLoadError(etx, err)
 	}
-	return inertia.Page(etx, "Resources/New", inertia.Props{"auth": authProps(etx), "options": options})
+	return inertia.Page(etx, "Resources/New", inertia.Props{"auth": authProps(etx), "options": resourceOptionsProps(options)})
 }
 
 type resourcePayload struct {
-	Name               string `json:"name"`
-	Category           string `json:"category"`
-	Kind               string `json:"kind"`
-	ManagementMode     string `json:"managementMode"`
-	SharingScope       string `json:"sharingScope"`
-	OwnerEnvironmentID string `json:"ownerEnvironmentId"`
+	Name           string `json:"name"`
+	Category       string `json:"category"`
+	Kind           string `json:"kind"`
+	ManagementMode string `json:"managementMode"`
+	SharingScope   string `json:"sharingScope"`
 }
 
 func (payload resourcePayload) serviceInput() (services.ResourceInput, error) {
-	ownerID, err := uuid.Parse(payload.OwnerEnvironmentID)
+	managementMode, err := models.ParseResourceManagementModeEnum(strings.ToLower(strings.TrimSpace(payload.ManagementMode)))
 	if err != nil {
-		return services.ResourceInput{}, domainPayloadError("ownerEnvironmentId", "owner environment is required")
+		return services.ResourceInput{}, domainPayloadError("managementMode", "management mode is invalid")
+	}
+	sharingScope, err := models.ParseResourceSharingScopeEnum(strings.ToLower(strings.TrimSpace(payload.SharingScope)))
+	if err != nil {
+		return services.ResourceInput{}, domainPayloadError("sharingScope", "sharing scope is invalid")
 	}
 	return services.ResourceInput{
 		Name: payload.Name, Category: payload.Category, Kind: payload.Kind,
-		ManagementMode: payload.ManagementMode, SharingScope: payload.SharingScope,
-		OwnerEnvironmentID: ownerID,
+		ManagementMode: managementMode, SharingScope: sharingScope,
 	}, nil
+}
+
+type resourceConnectionPayload struct {
+	EnvironmentID        string          `json:"environmentId"`
+	Alias                string          `json:"alias"`
+	Configuration        json.RawMessage `json:"configuration"`
+	ResourceEndpointID   string          `json:"resourceEndpointId"`
+	ResourceCredentialID string          `json:"resourceCredentialId"`
+}
+
+func (payload resourceConnectionPayload) serviceInput() (services.ResourceConnectionInput, error) {
+	environmentID, err := uuid.Parse(payload.EnvironmentID)
+	if err != nil {
+		return services.ResourceConnectionInput{}, domainPayloadError("environmentId", "Environment is required")
+	}
+	endpointID, err := uuid.Parse(payload.ResourceEndpointID)
+	if err != nil {
+		return services.ResourceConnectionInput{}, domainPayloadError("resourceEndpointId", "endpoint is required")
+	}
+	credentialID, err := optionalUUID(payload.ResourceCredentialID)
+	if err != nil {
+		return services.ResourceConnectionInput{}, domainPayloadError("resourceCredentialId", "credential is invalid")
+	}
+	return services.ResourceConnectionInput{
+		EnvironmentID: environmentID, Alias: payload.Alias, Configuration: payload.Configuration,
+		ResourceEndpointID: endpointID, ResourceCredentialID: credentialID,
+	}, nil
+}
+
+func (controller Resources) CreateConnection(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	var payload resourceConnectionPayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	var input services.ResourceConnectionInput
+	if err == nil {
+		input, err = payload.serviceInput()
+	}
+	if err == nil {
+		_, err = controller.service.ConnectEnvironment(etx.Request().Context(), resourceID, input)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Environment connected")
+}
+
+func (controller Resources) UpdateConnection(etx *echo.Context) error {
+	resourceID, connectionID, err := parseChildIDs(etx, "connectionID")
+	var payload resourceConnectionPayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	var input services.ResourceConnectionInput
+	if err == nil {
+		input, err = payload.serviceInput()
+	}
+	if err == nil {
+		_, err = controller.service.UpdateEnvironmentConnection(etx.Request().Context(), resourceID, connectionID, input)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Environment connection updated")
+}
+
+func (controller Resources) DestroyConnection(etx *echo.Context) error {
+	resourceID, connectionID, err := parseChildIDs(etx, "connectionID")
+	if err == nil {
+		err = controller.service.DisconnectEnvironment(etx.Request().Context(), resourceID, connectionID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Environment disconnected")
 }
 
 type resourceCreatePayload struct {
@@ -673,7 +737,7 @@ func (controller Resources) renderShow(etx *echo.Context, resourceID uuid.UUID, 
 	if err != nil {
 		return controller.renderLoadError(etx, err)
 	}
-	props := inertia.Props{"auth": authProps(etx), "resource": resourceDetailProps(detail), "options": options}
+	props := inertia.Props{"auth": authProps(etx), "resource": resourceDetailProps(detail), "options": resourceOptionsProps(options)}
 	if option != nil {
 		return inertia.Page(etx, "Resources/Show", props, option)
 	}
@@ -692,7 +756,7 @@ func (controller Resources) renderEdit(etx *echo.Context, resourceID uuid.UUID, 
 	if err != nil {
 		return controller.renderLoadError(etx, err)
 	}
-	props := inertia.Props{"auth": authProps(etx), "resource": resourceDetailProps(detail), "options": options}
+	props := inertia.Props{"auth": authProps(etx), "resource": resourceDetailProps(detail), "options": resourceOptionsProps(options)}
 	if option != nil {
 		return inertia.Page(etx, "Resources/Edit", props, option)
 	}
@@ -705,7 +769,7 @@ func (controller Resources) renderCreateError(etx *echo.Context, err error) erro
 		return controller.renderLoadError(etx, errors.Join(err, optionsErr))
 	}
 	if validationErrors, ok := validation.As(err); ok {
-		return inertia.Page(etx, "Resources/New", inertia.Props{"auth": authProps(etx), "options": options}, inertia.WithValidationErrors(validationErrors.ToMap()))
+		return inertia.Page(etx, "Resources/New", inertia.Props{"auth": authProps(etx), "options": resourceOptionsProps(options)}, inertia.WithValidationErrors(validationErrors.ToMap()))
 	}
 	return controller.redirectError(etx, routes.ResourceNew.URL(), err)
 }

@@ -24,7 +24,7 @@ type ResourceCredentialEntity struct {
 	Username               sql.NullString  `bun:"username"`
 	Metadata               json.RawMessage `bun:"metadata,type:jsonb"`
 	EncPayload             []byte          `bun:"enc_payload"`
-	Digest                 []byte          `bun:"digest" json:"-"`
+	Digest                 []byte          `bun:"digest"`
 	ArchivedAt             sql.NullTime    `bun:"archived_at"`
 	ResourceID             uuid.UUID       `bun:"resource_id,type:uuid"`
 	ResourceInstallationID *uuid.UUID      `bun:"resource_installation_id,type:uuid"`
@@ -106,6 +106,9 @@ func (rc resourceCredential) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceCredentialEntity{}, errors.Join(ErrDomainValidation, err)
 	}
+	if err := ensureActiveUnique(ctx, db, "resource-credential:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceCredentialEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active credential already uses this name"); err != nil {
+		return ResourceCredentialEntity{}, err
+	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
 		return ResourceCredentialEntity{}, err
@@ -149,6 +152,9 @@ func (rc resourceCredential) Update(
 
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceCredentialEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureActiveUnique(ctx, db, "resource-credential:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceCredentialEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active credential already uses this name"); err != nil {
+		return ResourceCredentialEntity{}, err
 	}
 
 	if err := db.NewUpdate().
@@ -268,6 +274,9 @@ func (rc resourceCredential) Upsert(
 
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceCredentialEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureActiveUnique(ctx, db, "resource-credential:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceCredentialEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active credential already uses this name"); err != nil {
+		return ResourceCredentialEntity{}, err
 	}
 
 	if err := db.NewInsert().

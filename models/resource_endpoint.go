@@ -171,6 +171,9 @@ func (re resourceEndpoint) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceEndpointEntity{}, errors.Join(ErrDomainValidation, err)
 	}
+	if err := ensureActiveUnique(ctx, db, "resource-endpoint:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceEndpointEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active endpoint already uses this name"); err != nil {
+		return ResourceEndpointEntity{}, err
+	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
 		return ResourceEndpointEntity{}, err
@@ -190,12 +193,9 @@ func (re resourceEndpoint) CreateForSystemResource(
 	err := db.NewSelect().
 		TableExpr("resources AS resource").
 		ColumnExpr("resource.kind AS kind").
-		Join("JOIN environment_resources AS binding ON binding.resource_id = resource.id AND binding.archived_at IS NULL").
-		Join("JOIN environments AS environment ON environment.id = binding.environment_id AND environment.archived_at IS NULL").
-		Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
 		Where("resource.id = ?", data.ResourceID).
 		Where("resource.archived_at IS NULL").
-		Where("application.slug = ?", SystemApplicationSlug).
+		Where("resource.system_managed = TRUE").
 		Limit(1).
 		Scan(ctx, &resource)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -288,6 +288,9 @@ func (re resourceEndpoint) Update(
 
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceEndpointEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureActiveUnique(ctx, db, "resource-endpoint:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceEndpointEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active endpoint already uses this name"); err != nil {
+		return ResourceEndpointEntity{}, err
 	}
 
 	if err := db.NewUpdate().
@@ -411,6 +414,9 @@ func (re resourceEndpoint) Upsert(
 
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceEndpointEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureActiveUnique(ctx, db, "resource-endpoint:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceEndpointEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active endpoint already uses this name"); err != nil {
+		return ResourceEndpointEntity{}, err
 	}
 
 	if err := db.NewInsert().

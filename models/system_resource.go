@@ -36,12 +36,9 @@ func (application) FindSystemResourceIndex(ctx context.Context, db storage.Execu
 		ColumnExpr("COALESCE(origin.address, '') AS origin_address").
 		ColumnExpr("COALESCE(origin.port, 0) AS origin_port").
 		ColumnExpr("COALESCE(installation_status.health, 'unknown') AS health").
-		Join("JOIN environment_resources AS binding ON binding.resource_id = resource.id AND binding.archived_at IS NULL").
-		Join("JOIN environments AS environment ON environment.id = binding.environment_id AND environment.archived_at IS NULL").
-		Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
 		Join("LEFT JOIN LATERAL (SELECT address, port, resource_installation_id FROM resource_endpoints WHERE resource_id = resource.id AND role = 'primary' AND archived_at IS NULL ORDER BY created_at LIMIT 1) AS origin ON TRUE").
 		Join("LEFT JOIN resource_installation_statuses AS installation_status ON installation_status.resource_installation_id = origin.resource_installation_id").
-		Where("application.slug = ?", SystemApplicationSlug).
+		Where("resource.system_managed = TRUE").
 		Where("resource.archived_at IS NULL").
 		OrderExpr("resource.name").
 		Scan(ctx, &items)
@@ -189,35 +186,31 @@ func (application) FindSystemWireGuardDevices(ctx context.Context, db storage.Ex
 }
 
 type SystemResourceDetail struct {
-	ID                 string                        `bun:"id"`
-	CreatedAt          time.Time                     `bun:"created_at"`
-	UpdatedAt          time.Time                     `bun:"updated_at"`
-	Name               string                        `bun:"name"`
-	Category           string                        `bun:"category"`
-	Kind               string                        `bun:"kind"`
-	SharingScope       string                        `bun:"sharing_scope"`
-	OwnerEnvironmentID string                        `bun:"owner_environment_id"`
-	OwnerEnvironment   string                        `bun:"owner_environment"`
-	Bindings           []SystemResourceBinding       `bun:"-"`
-	Endpoints          []SystemResourceEndpoint      `bun:"-"`
-	Credentials        []SystemResourceCredential    `bun:"-"`
-	Installations      []SystemResourceInstallation  `bun:"-"`
-	Volumes            []SystemResourceVolume        `bun:"-"`
-	HealthChecks       []SystemResourceCheck         `bun:"-"`
-	DeviceGrants       []SystemWireGuardDeviceGrant  `bun:"-"`
-	PrivateNetworks    []SystemPrivateNetworkOption  `bun:"-"`
-	AvailableDevices   []SystemWireGuardDeviceOption `bun:"-"`
+	ID               string                        `bun:"id"`
+	CreatedAt        time.Time                     `bun:"created_at"`
+	UpdatedAt        time.Time                     `bun:"updated_at"`
+	Name             string                        `bun:"name"`
+	Category         string                        `bun:"category"`
+	Kind             string                        `bun:"kind"`
+	SharingScope     string                        `bun:"sharing_scope"`
+	Bindings         []SystemResourceBinding       `bun:"-"`
+	Endpoints        []SystemResourceEndpoint      `bun:"-"`
+	Credentials      []SystemResourceCredential    `bun:"-"`
+	Installations    []SystemResourceInstallation  `bun:"-"`
+	Volumes          []SystemResourceVolume        `bun:"-"`
+	HealthChecks     []SystemResourceCheck         `bun:"-"`
+	DeviceGrants     []SystemWireGuardDeviceGrant  `bun:"-"`
+	PrivateNetworks  []SystemPrivateNetworkOption  `bun:"-"`
+	AvailableDevices []SystemWireGuardDeviceOption `bun:"-"`
 }
 
 func (application) FindSystemResourceDetail(ctx context.Context, db storage.Executor, resourceID, currentUserID uuid.UUID) (SystemResourceDetail, error) {
 	var detail SystemResourceDetail
 	err := db.NewSelect().TableExpr("resources AS resource").
 		ColumnExpr("resource.id::text AS id, resource.created_at, resource.updated_at, resource.name, resource.category, resource.kind, resource.sharing_scope").
-		ColumnExpr("resource.owner_environment_id::text AS owner_environment_id, owner.name AS owner_environment").
-		Join("JOIN environments AS owner ON owner.id = resource.owner_environment_id").
 		Where("resource.id = ?", resourceID).
 		Where("resource.archived_at IS NULL").
-		Where("EXISTS (SELECT 1 FROM environment_resources binding JOIN environments environment ON environment.id = binding.environment_id JOIN applications application ON application.id = environment.application_id WHERE binding.resource_id = resource.id AND binding.archived_at IS NULL AND environment.archived_at IS NULL AND application.archived_at IS NULL AND application.slug = ?)", SystemApplicationSlug).
+		Where("resource.system_managed = TRUE").
 		Scan(ctx, &detail)
 	if errors.Is(err, sql.ErrNoRows) {
 		return SystemResourceDetail{}, ErrNotFound
@@ -306,7 +299,7 @@ func (application) FindSystemResourceAccessTarget(ctx context.Context, db storag
 		Join("JOIN wireguard_peers AS peer ON peer.server_id = installation.server_id AND peer.retired_at IS NULL").
 		Where("resource.id = ?", resourceID).
 		Where("resource.archived_at IS NULL").
-		Where("EXISTS (SELECT 1 FROM environment_resources binding JOIN environments environment ON environment.id = binding.environment_id JOIN applications application ON application.id = environment.application_id WHERE binding.resource_id = resource.id AND binding.archived_at IS NULL AND environment.archived_at IS NULL AND application.archived_at IS NULL AND application.slug = ?)", SystemApplicationSlug).
+		Where("resource.system_managed = TRUE").
 		Limit(1).
 		Scan(ctx, &target)
 	if errors.Is(err, sql.ErrNoRows) {

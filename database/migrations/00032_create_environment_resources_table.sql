@@ -13,9 +13,7 @@ CREATE TABLE environment_resources (
     environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE RESTRICT,
     resource_id UUID NOT NULL REFERENCES resources (id) ON DELETE RESTRICT,
     resource_endpoint_id UUID NOT NULL REFERENCES resource_endpoints (id) ON DELETE RESTRICT,
-    resource_credential_id UUID REFERENCES resource_credentials (id) ON DELETE RESTRICT,
-
-    UNIQUE (environment_id, alias)
+    resource_credential_id UUID REFERENCES resource_credentials (id) ON DELETE RESTRICT
 );
 -- +goose StatementEnd
 

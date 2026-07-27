@@ -132,6 +132,9 @@ func (rhc resourceHealthCheck) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceHealthCheckEntity{}, errors.Join(ErrDomainValidation, err)
 	}
+	if err := ensureActiveUnique(ctx, db, "resource-health-check:"+entity.ResourceInstallationID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceHealthCheckEntity)(nil)).Where("resource_installation_id = ?", entity.ResourceInstallationID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active health check already uses this name on the installation"); err != nil {
+		return ResourceHealthCheckEntity{}, err
+	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
 		return ResourceHealthCheckEntity{}, err
@@ -181,6 +184,9 @@ func (rhc resourceHealthCheck) Update(
 
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceHealthCheckEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureActiveUnique(ctx, db, "resource-health-check:"+entity.ResourceInstallationID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceHealthCheckEntity)(nil)).Where("resource_installation_id = ?", entity.ResourceInstallationID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active health check already uses this name on the installation"); err != nil {
+		return ResourceHealthCheckEntity{}, err
 	}
 
 	if err := db.NewUpdate().
@@ -310,6 +316,9 @@ func (rhc resourceHealthCheck) Upsert(
 
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceHealthCheckEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureActiveUnique(ctx, db, "resource-health-check:"+entity.ResourceInstallationID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceHealthCheckEntity)(nil)).Where("resource_installation_id = ?", entity.ResourceInstallationID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active health check already uses this name on the installation"); err != nil {
+		return ResourceHealthCheckEntity{}, err
 	}
 
 	if err := db.NewInsert().

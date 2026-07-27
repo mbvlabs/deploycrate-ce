@@ -28,7 +28,7 @@
       <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">System</p>
       <h1 class="mt-3 text-3xl font-semibold tracking-tight">Resources</h1>
       <p class="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
-        Durable infrastructure services bound to the DeployCrate system environment.
+        Durable infrastructure services managed by DeployCrate.
       </p>
     </header>
 

@@ -10,6 +10,19 @@ import (
 
 func resourceDetailProps(detail models.ResourceDetails) inertia.Props {
 	resource := detail.Resource
+	connections := make([]inertia.Props, 0, len(detail.Connections))
+	for _, connection := range detail.Connections {
+		connections = append(connections, inertia.Props{
+			"id": connection.ID, "createdAt": connection.CreatedAt, "updatedAt": connection.UpdatedAt,
+			"alias": connection.Alias, "configuration": connection.Configuration,
+			"environmentId": connection.EnvironmentID, "environmentName": connection.EnvironmentName,
+			"environmentKind": connection.EnvironmentKind, "environmentArchived": connection.EnvironmentArchived,
+			"applicationName": connection.ApplicationName, "applicationSlug": connection.ApplicationSlug,
+			"applicationArchived": connection.ApplicationArchived, "resourceEndpointId": connection.ResourceEndpointID,
+			"endpointName": connection.EndpointName, "resourceCredentialId": connection.ResourceCredentialID,
+			"credentialName": connection.CredentialName,
+		})
+	}
 	endpoints := make([]inertia.Props, 0, len(detail.Endpoints))
 	for _, endpoint := range detail.Endpoints {
 		endpoints = append(endpoints, inertia.Props{
@@ -74,11 +87,59 @@ func resourceDetailProps(detail models.ResourceDetails) inertia.Props {
 	return inertia.Props{
 		"id": resource.ID, "createdAt": resource.CreatedAt, "updatedAt": resource.UpdatedAt,
 		"name": resource.Name, "category": resource.Category, "kind": resource.Kind,
-		"managementMode": resource.ManagementMode, "sharingScope": resource.SharingScope,
-		"ownerEnvironmentId": resource.OwnerEnvironmentID, "ownerEnvironment": detail.OwnerEnvironment,
-		"ownerApplication": detail.OwnerApplication, "isSystem": detail.IsSystem, "bindingCount": detail.BindingCount,
+		"managementMode": resource.ManagementMode.String(), "sharingScope": resource.SharingScope.String(),
+		"connectionCount": len(connections), "connections": connections,
 		"endpoints": endpoints, "credentials": credentials, "installations": installations,
 		"volumes": volumes, "mounts": mounts, "healthChecks": healthChecks,
+	}
+}
+
+func resourceListProps(items []models.ResourceListItem) []inertia.Props {
+	props := make([]inertia.Props, 0, len(items))
+	for _, item := range items {
+		props = append(props, inertia.Props{
+			"id": item.ID, "name": item.Name, "category": item.Category, "kind": item.Kind,
+			"managementMode": item.ManagementMode.String(), "sharingScope": item.SharingScope.String(),
+			"connectionCount": item.ConnectionCount, "installationCount": item.InstallationCount,
+			"endpointCount": item.EndpointCount, "health": item.Health,
+		})
+	}
+	return props
+}
+
+func resourceOptionsProps(options models.ResourceFormOptions) inertia.Props {
+	kinds := make([]inertia.Props, 0, len(options.Kinds))
+	for _, kind := range options.Kinds {
+		fields := make([]inertia.Props, 0, len(kind.CredentialFields))
+		for _, field := range kind.CredentialFields {
+			fields = append(fields, inertia.Props{"name": field.Name, "label": field.Label, "required": field.Required, "secret": field.Secret})
+		}
+		kinds = append(kinds, inertia.Props{
+			"kind": kind.Kind, "label": kind.Label, "category": kind.Category,
+			"protocols": kind.Protocols, "endpointRoles": kind.EndpointRoles, "tlsModes": kind.TLSModes,
+			"credentialFields": fields, "healthCheckKinds": kind.HealthCheckKinds,
+			"defaultPort": kind.DefaultPort, "defaultProtocol": kind.DefaultProtocol, "defaultTlsMode": kind.DefaultTLSMode,
+		})
+	}
+	environments := make([]inertia.Props, 0, len(options.Environments))
+	for _, environment := range options.Environments {
+		environments = append(environments, inertia.Props{"id": environment.ID, "name": environment.Name, "kind": environment.Kind, "applicationName": environment.ApplicationName})
+	}
+	servers := make([]inertia.Props, 0, len(options.Servers))
+	for _, server := range options.Servers {
+		servers = append(servers, inertia.Props{"id": server.ID, "name": server.Name, "address": server.Address})
+	}
+	networks := make([]inertia.Props, 0, len(options.PrivateNetworks))
+	for _, network := range options.PrivateNetworks {
+		networks = append(networks, inertia.Props{"id": network.ID, "name": network.Name, "serverIds": network.ServerIDs})
+	}
+	credentials := make([]inertia.Props, 0, len(options.RegistryCredentials))
+	for _, credential := range options.RegistryCredentials {
+		credentials = append(credentials, inertia.Props{"id": credential.ID, "name": credential.Name})
+	}
+	return inertia.Props{
+		"kinds": kinds, "environments": environments, "servers": servers,
+		"privateNetworks": networks, "registryCredentials": credentials,
 	}
 }
 

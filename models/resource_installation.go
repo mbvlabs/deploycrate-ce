@@ -117,6 +117,9 @@ func (ri resourceInstallation) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceInstallationEntity{}, errors.Join(ErrDomainValidation, err)
 	}
+	if err := ensureActiveUnique(ctx, db, "resource-installation:"+entity.ServerID.String()+":"+strings.ToLower(entity.ContainerName), entity.ID, db.NewSelect().Model((*ResourceInstallationEntity)(nil)).Where("server_id = ?", entity.ServerID).Where("lower(container_name) = ?", strings.ToLower(entity.ContainerName)), "containerName", "an active installation already uses this container name on the Server"); err != nil {
+		return ResourceInstallationEntity{}, err
+	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
 		return ResourceInstallationEntity{}, err
@@ -160,6 +163,9 @@ func (ri resourceInstallation) Update(
 
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceInstallationEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureActiveUnique(ctx, db, "resource-installation:"+entity.ServerID.String()+":"+strings.ToLower(entity.ContainerName), entity.ID, db.NewSelect().Model((*ResourceInstallationEntity)(nil)).Where("server_id = ?", entity.ServerID).Where("lower(container_name) = ?", strings.ToLower(entity.ContainerName)), "containerName", "an active installation already uses this container name on the Server"); err != nil {
+		return ResourceInstallationEntity{}, err
 	}
 
 	if err := db.NewUpdate().
@@ -283,6 +289,9 @@ func (ri resourceInstallation) Upsert(
 
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceInstallationEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureActiveUnique(ctx, db, "resource-installation:"+entity.ServerID.String()+":"+strings.ToLower(entity.ContainerName), entity.ID, db.NewSelect().Model((*ResourceInstallationEntity)(nil)).Where("server_id = ?", entity.ServerID).Where("lower(container_name) = ?", strings.ToLower(entity.ContainerName)), "containerName", "an active installation already uses this container name on the Server"); err != nil {
+		return ResourceInstallationEntity{}, err
 	}
 
 	if err := db.NewInsert().
