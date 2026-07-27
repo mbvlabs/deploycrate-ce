@@ -31,6 +31,11 @@
     events: UpdateEvent[] | null
   }
 
+  type UpdateStatusResponse = {
+    currentVersion: string
+    update: UpdateStatus
+  }
+
   let {
     auth,
     currentVersion: initialCurrentVersion,
@@ -41,10 +46,11 @@
     update: UpdateStatus
   } = $props()
 
-  let currentVersion = $state(initialCurrentVersion)
-  let update = $state(initialUpdate)
+  let liveStatus = $state<UpdateStatusResponse | null>(null)
   let starting = $state(false)
   let reconnecting = $state(false)
+  const currentVersion = $derived(liveStatus?.currentVersion ?? initialCurrentVersion)
+  const update = $derived(liveStatus?.update ?? initialUpdate)
   const running = $derived(update.state === 'queued' || update.state === 'in_progress')
   const canUpdate = $derived(!running)
   const updateEvents = $derived(update.events ?? [])
@@ -66,14 +72,10 @@
         })
         if (!response.ok) throw new Error(`Update status returned ${response.status}`)
 
-        const status = (await response.json()) as {
-          currentVersion: string
-          update: UpdateStatus
-        }
+        const status = (await response.json()) as UpdateStatusResponse
         if (abortController.signal.aborted) return
 
-        currentVersion = status.currentVersion
-        update = status.update
+        liveStatus = status
         reconnecting = false
         retryDelay = 1000
         if (status.update.state !== 'queued' && status.update.state !== 'in_progress') return
@@ -95,6 +97,7 @@
   })
 
   function startUpdate() {
+    liveStatus = null
     router.post(
       routes.systemUpdateCreate(),
       {},
