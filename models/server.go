@@ -182,6 +182,21 @@ func (s server) Update(
 	return entity, nil
 }
 
+func (s server) UpdateCapabilities(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	capabilities json.RawMessage,
+) error {
+	_, err := db.NewUpdate().
+		Model((*ServerEntity)(nil)).
+		Set("capabilities = ?", capabilities).
+		Set("updated_at = ?", time.Now()).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
 func (s server) Destroy(ctx context.Context, db storage.Executor, id uuid.UUID) error {
 	_, err := db.NewDelete().
 		Model((*ServerEntity)(nil)).
