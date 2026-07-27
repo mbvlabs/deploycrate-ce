@@ -2,7 +2,6 @@ package setup
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,12 +10,7 @@ import (
 	"runtime"
 	"time"
 
-	caddyclients "deploycrate-ce/clients/caddy"
-	"deploycrate-ce/database"
 	"deploycrate-ce/internal/secretcrypto"
-	"deploycrate-ce/internal/storage"
-	"deploycrate-ce/models"
-	"deploycrate-ce/services"
 )
 
 type setupStep struct {
@@ -65,7 +59,7 @@ func scriptSetupStep(
 	}
 }
 
-func DefaultSteps() []Step {
+func DefaultSteps(operations Operations) []Step {
 	return []Step{
 		scriptSetupStep("host-packages", "Install baseline host packages", "packages.sh", nil),
 		scriptSetupStep(
@@ -142,11 +136,11 @@ func DefaultSteps() []Step {
 				return map[string]string{"SERVICE_USER": cfg.ServiceUser}
 			},
 		),
-		databaseStep(),
+		databaseStep(operations.ValidateDatabase),
 		applicationBinaryStep(),
 		applicationConfigStep(),
-		migrationStep(),
-		adminStep(),
+		migrationStep(operations.RunMigrations),
+		adminStep(operations.EnsureAdmin),
 		scriptSetupStep(
 			"application-service-caddy-2-11-4",
 			"Configure blue-green systemd slots and start pinned Caddy",
@@ -156,7 +150,7 @@ func DefaultSteps() []Step {
 			},
 		),
 		healthStep(),
-		controlPlaneBootstrapStep(),
+		controlPlaneBootstrapStep(operations.BootstrapControlPlane, operations.VerifyControlPlaneRoute),
 		scriptSetupStep(
 			"ssh-hardening",
 			"Harden SSH and configure the firewall",
@@ -219,7 +213,7 @@ func sshCASetupStep() Step {
 	}
 }
 
-func databaseStep() Step {
+func databaseStep(validateDatabase func(context.Context, string) error) Step {
 	return setupStep{
 		id: "database", description: "Configure local or external PostgreSQL",
 		apply: func(ctx context.Context, cfg Config, runtime Runtime, report Reporter) error {
@@ -244,11 +238,13 @@ func databaseStep() Step {
 					"DB_PASSWORD": cfg.Secrets.DatabasePassword,
 				}, report)
 			}
-			db, err := storage.NewPostgres(ctx, cfg.DatabaseURL())
-			if err != nil {
+			if validateDatabase == nil {
+				return errors.New("external database validation is unavailable")
+			}
+			if err := validateDatabase(ctx, cfg.DatabaseURL()); err != nil {
 				return fmt.Errorf("connect to external PostgreSQL: %w", err)
 			}
-			return db.Close()
+			return nil
 		},
 	}
 }
@@ -285,7 +281,10 @@ func applicationBinaryStep() Step {
 	}
 }
 
-func controlPlaneBootstrapStep() Step {
+func controlPlaneBootstrapStep(
+	bootstrapControlPlane func(context.Context, BootstrapInput) (string, error),
+	verifyControlPlaneRoute func(context.Context, string, string) error,
+) Step {
 	return setupStep{
 		id:          "control-plane-topology",
 		description: "Create the control-plane topology and apply the Caddy route",
@@ -313,21 +312,17 @@ func controlPlaneBootstrapStep() Step {
 			if err != nil {
 				return err
 			}
-			db, err := storage.NewPostgres(ctx, cfg.DatabaseURL())
-			if err != nil {
-				return err
+			if bootstrapControlPlane == nil || verifyControlPlaneRoute == nil {
+				return errors.New("control-plane bootstrap operations are unavailable")
 			}
-			defer db.Close()
-
-			routes := services.NewCaddyRouteService(db, caddyclients.New(""))
-			bootstrap := services.NewBootstrapService(db, routes)
 			backupInput, err := encryptedBootstrapBackupInput(cfg)
 			if err != nil {
 				return err
 			}
-			result, err := bootstrap.Bootstrap(ctx, services.BootstrapInput{
-				Domain:  cfg.Domain,
-				Version: cfg.Version,
+			externalRouteID, err := bootstrapControlPlane(ctx, BootstrapInput{
+				DatabaseURL: cfg.DatabaseURL(),
+				Domain:      cfg.Domain,
+				Version:     cfg.Version,
 				ArtifactReference: ApplicationReleaseBinaryPath(
 					cfg.Version,
 				),
@@ -341,7 +336,7 @@ func controlPlaneBootstrapStep() Step {
 				DatabaseName:        cfg.Database.Name,
 				DatabaseSSLMode:     cfg.Database.SSLMode,
 				Backup:              backupInput,
-				WireGuard: services.BootstrapWireGuardInput{
+				WireGuard: BootstrapWireGuardInput{
 					Interface:           WireGuardInterface,
 					NetworkCIDR:         WireGuardNetworkCIDR,
 					PrivateAddress:      WireGuardPrivateAddress,
@@ -377,7 +372,7 @@ func controlPlaneBootstrapStep() Step {
 			); err != nil {
 				return err
 			}
-			if err := bootstrap.VerifyRoute(ctx, result.ExternalRouteID); err != nil {
+			if err := verifyControlPlaneRoute(ctx, cfg.DatabaseURL(), externalRouteID); err != nil {
 				return fmt.Errorf("verify Caddy route after restart: %w", err)
 			}
 			return nil
@@ -385,9 +380,9 @@ func controlPlaneBootstrapStep() Step {
 	}
 }
 
-func encryptedBootstrapBackupInput(cfg Config) (services.BootstrapBackupInput, error) {
+func encryptedBootstrapBackupInput(cfg Config) (BootstrapBackupInput, error) {
 	if !cfg.S3.Enabled {
-		return services.BootstrapBackupInput{}, nil
+		return BootstrapBackupInput{}, nil
 	}
 	payload, err := json.Marshal(struct {
 		AccessKeyID     string `json:"access_key_id"`
@@ -401,24 +396,24 @@ func encryptedBootstrapBackupInput(cfg Config) (services.BootstrapBackupInput, e
 		AgeIdentity:     cfg.Secrets.AgeIdentity,
 	})
 	if err != nil {
-		return services.BootstrapBackupInput{}, fmt.Errorf("encode backup credential: %w", err)
+		return BootstrapBackupInput{}, fmt.Errorf("encode backup credential: %w", err)
 	}
 	defer clear(payload)
 	encrypted, err := secretcrypto.Encrypt(payload, cfg.Secrets.SessionEncryptionKey)
 	if err != nil {
-		return services.BootstrapBackupInput{}, fmt.Errorf("encrypt backup credential: %w", err)
+		return BootstrapBackupInput{}, fmt.Errorf("encrypt backup credential: %w", err)
 	}
 	serverRetention, err := json.Marshal(cfg.S3.ServerPolicy.Retention)
 	if err != nil {
-		return services.BootstrapBackupInput{}, err
+		return BootstrapBackupInput{}, err
 	}
 	databaseRetention, err := json.Marshal(cfg.S3.DatabasePolicy.Retention)
 	if err != nil {
-		return services.BootstrapBackupInput{}, err
+		return BootstrapBackupInput{}, err
 	}
-	return services.BootstrapBackupInput{
+	return BootstrapBackupInput{
 		Enabled:                    true,
-		InstallationID:             cfg.InstallationID,
+		InstanceID:                 cfg.InstanceID,
 		Provider:                   cfg.S3.Provider,
 		Endpoint:                   cfg.S3.Endpoint,
 		Region:                     cfg.S3.Region,
@@ -454,7 +449,7 @@ func applicationConfigStep() Step {
 	}
 }
 
-func migrationStep() Step {
+func migrationStep(runMigrations func(context.Context, string) error) Step {
 	return setupStep{
 		id: "database-migrations", description: "Apply embedded database migrations",
 		apply: func(ctx context.Context, cfg Config, runtime Runtime, report Reporter) error {
@@ -468,17 +463,15 @@ func migrationStep() Step {
 				)
 				return nil
 			}
-			db, err := storage.NewPostgres(ctx, cfg.DatabaseURL())
-			if err != nil {
-				return err
+			if runMigrations == nil {
+				return errors.New("database migration operation is unavailable")
 			}
-			defer db.Close()
-			return storage.RunMigrations(ctx, db.Conn(), database.Migrations, "migrations")
+			return runMigrations(ctx, cfg.DatabaseURL())
 		},
 	}
 }
 
-func adminStep() Step {
+func adminStep(ensureAdmin func(context.Context, AdminInput) error) Step {
 	return setupStep{
 		id: "application-admin", description: "Create or update the application administrator",
 		apply: func(ctx context.Context, cfg Config, runtime Runtime, report Reporter) error {
@@ -492,44 +485,10 @@ func adminStep() Step {
 				)
 				return nil
 			}
-			db, err := storage.NewPostgres(ctx, cfg.DatabaseURL())
-			if err != nil {
-				return err
+			if ensureAdmin == nil {
+				return errors.New("administrator setup operation is unavailable")
 			}
-			defer db.Close()
-			hashedPassword, err := models.HashPassword(
-				cfg.Secrets.AdminPassword,
-				cfg.Secrets.Pepper,
-			)
-			if err != nil {
-				return fmt.Errorf("hash administrator password: %w", err)
-			}
-			admin, err := models.User.FindByEmail(ctx, db.Executor(), cfg.AdminEmail)
-			if errors.Is(err, models.ErrNotFound) {
-				admin, err = models.User.Create(
-					ctx,
-					db.Executor(),
-					cfg.Secrets.Pepper,
-					models.CreateUserData{
-						Email: cfg.AdminEmail,
-						PasswordPair: models.PasswordPair{
-							Password:        cfg.Secrets.AdminPassword,
-							ConfirmPassword: cfg.Secrets.AdminPassword,
-						},
-					},
-				)
-			}
-			if err != nil {
-				return fmt.Errorf("find or create administrator: %w", err)
-			}
-			_, err = models.User.Update(ctx, db.Executor(), models.UpdateUserData{
-				ID:               admin.ID,
-				Email:            cfg.AdminEmail,
-				Password:         []byte(hashedPassword),
-				IsAdmin:          true,
-				EmailValidatedAt: sql.NullTime{Time: time.Now(), Valid: true},
-			})
-			return err
+			return ensureAdmin(ctx, AdminInput{DatabaseURL: cfg.DatabaseURL(), Email: cfg.AdminEmail, Password: cfg.Secrets.AdminPassword, Pepper: cfg.Secrets.Pepper})
 		},
 	}
 }
@@ -577,9 +536,9 @@ func healthStep() Step {
 	}
 }
 
-func NewRunner(cfg Config, dryRun bool) Runner {
+func NewRunner(cfg Config, dryRun bool, operations Operations) Runner {
 	return Runner{
-		Steps: DefaultSteps(),
+		Steps: DefaultSteps(operations),
 		Store: NewStateStore(),
 		Run:   Runtime{DryRun: dryRun, Shell: NewShell(dryRun, cfg.SecretValues())},
 	}

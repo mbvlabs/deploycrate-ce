@@ -7,6 +7,9 @@ import (
 	"deploycrate-ce/internal/validation"
 	"encoding/json"
 	"errors"
+	"path"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,14 +23,71 @@ type BuildpackConfigurationEntity struct {
 	UpdatedAt           time.Time       `bun:"updated_at"`
 	ContextPath         string          `bun:"context_path"`
 	BuilderReference    sql.NullString  `bun:"builder_reference"`
-	Repository          string          `bun:"repository"`
+	ImageRepository     string          `bun:"image_repository"`
 	Settings            json.RawMessage `bun:"settings,type:jsonb"`
 	EnvironmentSourceID uuid.UUID       `bun:"environment_source_id,type:uuid"`
 	ContainerRegistryID uuid.UUID       `bun:"container_registry_id,type:uuid"`
 }
 
 func (e *BuildpackConfigurationEntity) Validate() error {
-	return nil
+	builder := validation.NewBuilder()
+	contextPath, err := normalizeBuildContextPath(e.ContextPath)
+	if err != nil {
+		builder.Add("context_path", "invalid", err.Error())
+	} else {
+		e.ContextPath = contextPath
+	}
+	if strings.TrimSpace(e.ImageRepository) == "" {
+		builder.Add("image_repository", "required", "image repository is required")
+	}
+	if e.EnvironmentSourceID == uuid.Nil || e.ContainerRegistryID == uuid.Nil {
+		builder.Add("environment_source_id", "required", "source and container registry are required")
+	}
+	if len(e.Settings) == 0 || !json.Valid(e.Settings) {
+		builder.Add("settings", "invalid", "Buildpacks settings must be valid JSON")
+	} else {
+		var settings any
+		if json.Unmarshal(e.Settings, &settings) != nil || containsSecretSetting(settings) {
+			builder.Add("settings", "secret", "Buildpacks settings cannot contain secret values")
+		}
+	}
+	return builder.Err()
+}
+
+func normalizeBuildContextPath(value string) (string, error) {
+	value = strings.TrimSpace(value)
+	if value == "" || value == "." {
+		return ".", nil
+	}
+	if strings.HasPrefix(value, "/") {
+		return "", errors.New("build context must be relative")
+	}
+	cleaned := path.Clean(value)
+	if cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", errors.New("build context cannot traverse outside the repository")
+	}
+	return cleaned, nil
+}
+
+func containsSecretSetting(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, nested := range typed {
+			key = strings.ToLower(key)
+			if strings.Contains(key, "secret") || strings.Contains(key, "token") ||
+				strings.Contains(key, "password") || strings.Contains(key, "private_key") {
+				return true
+			}
+			if containsSecretSetting(nested) {
+				return true
+			}
+		}
+	case []any:
+		if slices.ContainsFunc(typed, containsSecretSetting) {
+			return true
+		}
+	}
+	return false
 }
 
 func (bc buildpackConfiguration) Find(
@@ -49,7 +109,7 @@ func (bc buildpackConfiguration) Find(
 type CreateBuildpackConfigurationData struct {
 	ContextPath         string
 	BuilderReference    sql.NullString
-	Repository          string
+	ImageRepository     string
 	Settings            json.RawMessage
 	EnvironmentSourceID uuid.UUID
 	ContainerRegistryID uuid.UUID
@@ -65,7 +125,7 @@ func (bc buildpackConfiguration) Create(
 		UpdatedAt:           time.Now(),
 		ContextPath:         data.ContextPath,
 		BuilderReference:    data.BuilderReference,
-		Repository:          data.Repository,
+		ImageRepository:     data.ImageRepository,
 		Settings:            data.Settings,
 		EnvironmentSourceID: data.EnvironmentSourceID,
 		ContainerRegistryID: data.ContainerRegistryID,
@@ -87,7 +147,7 @@ type UpdateBuildpackConfigurationData struct {
 	UpdatedAt           time.Time
 	ContextPath         string
 	BuilderReference    sql.NullString
-	Repository          string
+	ImageRepository     string
 	Settings            json.RawMessage
 	EnvironmentSourceID uuid.UUID
 	ContainerRegistryID uuid.UUID
@@ -103,7 +163,7 @@ func (bc buildpackConfiguration) Update(
 		UpdatedAt:           time.Now(),
 		ContextPath:         data.ContextPath,
 		BuilderReference:    data.BuilderReference,
-		Repository:          data.Repository,
+		ImageRepository:     data.ImageRepository,
 		Settings:            data.Settings,
 		EnvironmentSourceID: data.EnvironmentSourceID,
 		ContainerRegistryID: data.ContainerRegistryID,
@@ -118,7 +178,7 @@ func (bc buildpackConfiguration) Update(
 		Column("updated_at").
 		Column("context_path").
 		Column("builder_reference").
-		Column("repository").
+		Column("image_repository").
 		Column("settings").
 		Column("environment_source_id").
 		Column("container_registry_id").
@@ -215,7 +275,7 @@ func (bc buildpackConfiguration) Upsert(
 		UpdatedAt:           time.Now(),
 		ContextPath:         data.ContextPath,
 		BuilderReference:    data.BuilderReference,
-		Repository:          data.Repository,
+		ImageRepository:     data.ImageRepository,
 		Settings:            data.Settings,
 		EnvironmentSourceID: data.EnvironmentSourceID,
 		ContainerRegistryID: data.ContainerRegistryID,
@@ -230,7 +290,7 @@ func (bc buildpackConfiguration) Upsert(
 		On("CONFLICT (id) DO UPDATE").
 		Set("context_path = excluded.context_path").
 		Set("builder_reference = excluded.builder_reference").
-		Set("repository = excluded.repository").
+		Set("image_repository = excluded.image_repository").
 		Set("settings = excluded.settings").
 		Set("environment_source_id = excluded.environment_source_id").
 		Set("container_registry_id = excluded.container_registry_id").

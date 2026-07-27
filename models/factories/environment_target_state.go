@@ -21,13 +21,7 @@ type EnvironmentTargetStateFactory struct {
 
 type EnvironmentTargetStateOption func(*EnvironmentTargetStateFactory)
 
-func BuildEnvironmentTargetState(
-	environmentTargetID uuid.UUID,
-	desiredRevisionID *uuid.UUID,
-	applyingRevisionID *uuid.UUID,
-	appliedRevisionID *uuid.UUID,
-	opts ...EnvironmentTargetStateOption,
-) models.EnvironmentTargetStateEntity {
+func BuildEnvironmentTargetState(environmentTargetID uuid.UUID, desiredRevisionID *uuid.UUID, applyingRevisionID *uuid.UUID, appliedRevisionID *uuid.UUID, opts ...EnvironmentTargetStateOption) models.EnvironmentTargetStateEntity {
 	f := &EnvironmentTargetStateFactory{
 		EnvironmentTargetStateEntity: models.EnvironmentTargetStateEntity{
 			ObservedState:       json.RawMessage{},
@@ -47,21 +41,8 @@ func BuildEnvironmentTargetState(
 	return f.EnvironmentTargetStateEntity
 }
 
-func CreateEnvironmentTargetState(
-	ctx context.Context,
-	exec storage.Executor,
-	environmentTargetID uuid.UUID,
-	desiredRevisionID *uuid.UUID,
-	applyingRevisionID *uuid.UUID,
-	appliedRevisionID *uuid.UUID,
-	opts ...EnvironmentTargetStateOption,
-) (models.EnvironmentTargetStateEntity, error) {
-	built := BuildEnvironmentTargetState(
-		environmentTargetID,
-		desiredRevisionID,
-		applyingRevisionID,
-		appliedRevisionID,
-		opts...)
+func CreateEnvironmentTargetState(ctx context.Context, exec storage.Executor, environmentTargetID uuid.UUID, desiredRevisionID *uuid.UUID, applyingRevisionID *uuid.UUID, appliedRevisionID *uuid.UUID, opts ...EnvironmentTargetStateOption) (models.EnvironmentTargetStateEntity, error) {
+	built := BuildEnvironmentTargetState(environmentTargetID, desiredRevisionID, applyingRevisionID, appliedRevisionID, opts...)
 
 	entity := models.EnvironmentTargetStateEntity{
 		ID:                  built.ID,
@@ -83,27 +64,11 @@ func CreateEnvironmentTargetState(
 	return entity, nil
 }
 
-func CreateEnvironmentTargetStates(
-	ctx context.Context,
-	exec storage.Executor,
-	environmentTargetID uuid.UUID,
-	desiredRevisionID *uuid.UUID,
-	applyingRevisionID *uuid.UUID,
-	appliedRevisionID *uuid.UUID,
-	count int,
-	opts ...EnvironmentTargetStateOption,
-) ([]models.EnvironmentTargetStateEntity, error) {
+func CreateEnvironmentTargetStates(ctx context.Context, exec storage.Executor, environmentTargetID uuid.UUID, desiredRevisionID *uuid.UUID, applyingRevisionID *uuid.UUID, appliedRevisionID *uuid.UUID, count int, opts ...EnvironmentTargetStateOption) ([]models.EnvironmentTargetStateEntity, error) {
 	environmenttargetstates := make([]models.EnvironmentTargetStateEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateEnvironmentTargetState(
-			ctx,
-			exec,
-			environmentTargetID,
-			desiredRevisionID,
-			applyingRevisionID,
-			appliedRevisionID,
-			opts...)
+		entity, err := CreateEnvironmentTargetState(ctx, exec, environmentTargetID, desiredRevisionID, applyingRevisionID, appliedRevisionID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create environmenttargetstate %d: %w", i+1, err)
 		}

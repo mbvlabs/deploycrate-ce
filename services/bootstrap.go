@@ -41,7 +41,7 @@ type BootstrapInput struct {
 
 type BootstrapBackupInput struct {
 	Enabled                    bool
-	InstallationID             string
+	InstanceID                 string
 	Provider                   string
 	Endpoint                   string
 	Region                     string
@@ -506,7 +506,7 @@ func createBootstrapBackups(
 		return nil
 	}
 	metadata, err := json.Marshal(map[string]any{
-		"installation_id":  input.Backup.InstallationID,
+		"instance_id":      input.Backup.InstanceID,
 		"provider":         input.Backup.Provider,
 		"endpoint":         input.Backup.Endpoint,
 		"region":           input.Backup.Region,
@@ -618,7 +618,7 @@ func validateBootstrapInput(input BootstrapInput) error {
 		return errors.New("bootstrap encrypted WireGuard private key is required")
 	}
 	if input.Backup.Enabled {
-		if input.Backup.InstallationID == "" || input.Backup.Provider == "" || input.Backup.Region == "" ||
+		if input.Backup.InstanceID == "" || input.Backup.Provider == "" || input.Backup.Region == "" ||
 			input.Backup.Bucket == "" || len(input.Backup.EncryptedCredentialPayload) == 0 ||
 			input.Backup.ValidatedAt.IsZero() || input.Backup.ServerSchedule == "" ||
 			len(input.Backup.ServerRetention) == 0 {

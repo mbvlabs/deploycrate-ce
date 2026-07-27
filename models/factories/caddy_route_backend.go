@@ -19,11 +19,7 @@ type CaddyRouteBackendFactory struct {
 
 type CaddyRouteBackendOption func(*CaddyRouteBackendFactory)
 
-func BuildCaddyRouteBackend(
-	caddyRouteID uuid.UUID,
-	instanceID uuid.UUID,
-	opts ...CaddyRouteBackendOption,
-) models.CaddyRouteBackendEntity {
+func BuildCaddyRouteBackend(caddyRouteID uuid.UUID, instanceID uuid.UUID, opts ...CaddyRouteBackendOption) models.CaddyRouteBackendEntity {
 	f := &CaddyRouteBackendFactory{
 		CaddyRouteBackendEntity: models.CaddyRouteBackendEntity{
 			Weight:       randomInt(1, 1000, 100),
@@ -40,13 +36,7 @@ func BuildCaddyRouteBackend(
 	return f.CaddyRouteBackendEntity
 }
 
-func CreateCaddyRouteBackend(
-	ctx context.Context,
-	exec storage.Executor,
-	caddyRouteID uuid.UUID,
-	instanceID uuid.UUID,
-	opts ...CaddyRouteBackendOption,
-) (models.CaddyRouteBackendEntity, error) {
+func CreateCaddyRouteBackend(ctx context.Context, exec storage.Executor, caddyRouteID uuid.UUID, instanceID uuid.UUID, opts ...CaddyRouteBackendOption) (models.CaddyRouteBackendEntity, error) {
 	built := BuildCaddyRouteBackend(caddyRouteID, instanceID, opts...)
 
 	entity := models.CaddyRouteBackendEntity{
@@ -66,14 +56,7 @@ func CreateCaddyRouteBackend(
 	return entity, nil
 }
 
-func CreateCaddyRouteBackends(
-	ctx context.Context,
-	exec storage.Executor,
-	caddyRouteID uuid.UUID,
-	instanceID uuid.UUID,
-	count int,
-	opts ...CaddyRouteBackendOption,
-) ([]models.CaddyRouteBackendEntity, error) {
+func CreateCaddyRouteBackends(ctx context.Context, exec storage.Executor, caddyRouteID uuid.UUID, instanceID uuid.UUID, count int, opts ...CaddyRouteBackendOption) ([]models.CaddyRouteBackendEntity, error) {
 	caddyroutebackends := make([]models.CaddyRouteBackendEntity, 0, count)
 
 	for i := range count {

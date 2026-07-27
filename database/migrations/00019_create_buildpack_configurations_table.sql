@@ -8,7 +8,7 @@ CREATE TABLE buildpack_configurations (
 
     context_path TEXT NOT NULL,
     builder_reference TEXT,
-    repository TEXT NOT NULL,
+    image_repository TEXT NOT NULL,
     settings JSONB NOT NULL,
 
     environment_source_id UUID NOT NULL REFERENCES environment_sources (id) ON DELETE RESTRICT,

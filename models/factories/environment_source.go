@@ -21,12 +21,7 @@ type EnvironmentSourceFactory struct {
 
 type EnvironmentSourceOption func(*EnvironmentSourceFactory)
 
-func BuildEnvironmentSource(
-	environmentID uuid.UUID,
-	credentialID *uuid.UUID,
-	containerRegistryID *uuid.UUID,
-	opts ...EnvironmentSourceOption,
-) models.EnvironmentSourceEntity {
+func BuildEnvironmentSource(environmentID uuid.UUID, credentialID *uuid.UUID, containerRegistryID *uuid.UUID, opts ...EnvironmentSourceOption) models.EnvironmentSourceEntity {
 	f := &EnvironmentSourceFactory{
 		EnvironmentSourceEntity: models.EnvironmentSourceEntity{
 			ArchivedAt:          sql.NullTime{Time: time.Now(), Valid: true},
@@ -35,6 +30,7 @@ func BuildEnvironmentSource(
 			Repository:          faker.Word(),
 			Reference:           faker.Word(),
 			Settings:            json.RawMessage{},
+			AutoBuild:           randomBool(),
 			EnvironmentID:       environmentID,
 			CredentialID:        credentialID,
 			ContainerRegistryID: containerRegistryID,
@@ -48,14 +44,7 @@ func BuildEnvironmentSource(
 	return f.EnvironmentSourceEntity
 }
 
-func CreateEnvironmentSource(
-	ctx context.Context,
-	exec storage.Executor,
-	environmentID uuid.UUID,
-	credentialID *uuid.UUID,
-	containerRegistryID *uuid.UUID,
-	opts ...EnvironmentSourceOption,
-) (models.EnvironmentSourceEntity, error) {
+func CreateEnvironmentSource(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, credentialID *uuid.UUID, containerRegistryID *uuid.UUID, opts ...EnvironmentSourceOption) (models.EnvironmentSourceEntity, error) {
 	built := BuildEnvironmentSource(environmentID, credentialID, containerRegistryID, opts...)
 
 	entity := models.EnvironmentSourceEntity{
@@ -68,6 +57,7 @@ func CreateEnvironmentSource(
 		Repository:          built.Repository,
 		Reference:           built.Reference,
 		Settings:            built.Settings,
+		AutoBuild:           built.AutoBuild,
 		EnvironmentID:       built.EnvironmentID,
 		CredentialID:        built.CredentialID,
 		ContainerRegistryID: built.ContainerRegistryID,
@@ -80,25 +70,11 @@ func CreateEnvironmentSource(
 	return entity, nil
 }
 
-func CreateEnvironmentSources(
-	ctx context.Context,
-	exec storage.Executor,
-	environmentID uuid.UUID,
-	credentialID *uuid.UUID,
-	containerRegistryID *uuid.UUID,
-	count int,
-	opts ...EnvironmentSourceOption,
-) ([]models.EnvironmentSourceEntity, error) {
+func CreateEnvironmentSources(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, credentialID *uuid.UUID, containerRegistryID *uuid.UUID, count int, opts ...EnvironmentSourceOption) ([]models.EnvironmentSourceEntity, error) {
 	environmentsources := make([]models.EnvironmentSourceEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateEnvironmentSource(
-			ctx,
-			exec,
-			environmentID,
-			credentialID,
-			containerRegistryID,
-			opts...)
+		entity, err := CreateEnvironmentSource(ctx, exec, environmentID, credentialID, containerRegistryID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create environmentsource %d: %w", i+1, err)
 		}
@@ -141,6 +117,12 @@ func WithEnvironmentSourcesReference(value string) EnvironmentSourceOption {
 func WithEnvironmentSourcesSettings(value json.RawMessage) EnvironmentSourceOption {
 	return func(f *EnvironmentSourceFactory) {
 		f.EnvironmentSourceEntity.Settings = value
+	}
+}
+
+func WithEnvironmentSourcesAutoBuild(value bool) EnvironmentSourceOption {
+	return func(f *EnvironmentSourceFactory) {
+		f.EnvironmentSourceEntity.AutoBuild = value
 	}
 }
 

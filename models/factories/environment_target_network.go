@@ -21,12 +21,7 @@ type EnvironmentTargetNetworkFactory struct {
 
 type EnvironmentTargetNetworkOption func(*EnvironmentTargetNetworkFactory)
 
-func BuildEnvironmentTargetNetwork(
-	externalID sql.NullString,
-	environmentTargetID uuid.UUID,
-	privateNetworkID uuid.UUID,
-	opts ...EnvironmentTargetNetworkOption,
-) models.EnvironmentTargetNetworkEntity {
+func BuildEnvironmentTargetNetwork(externalID sql.NullString, environmentTargetID uuid.UUID, privateNetworkID uuid.UUID, opts ...EnvironmentTargetNetworkOption) models.EnvironmentTargetNetworkEntity {
 	f := &EnvironmentTargetNetworkFactory{
 		EnvironmentTargetNetworkEntity: models.EnvironmentTargetNetworkEntity{
 			Driver:              faker.Word(),
@@ -49,19 +44,8 @@ func BuildEnvironmentTargetNetwork(
 	return f.EnvironmentTargetNetworkEntity
 }
 
-func CreateEnvironmentTargetNetwork(
-	ctx context.Context,
-	exec storage.Executor,
-	externalID sql.NullString,
-	environmentTargetID uuid.UUID,
-	privateNetworkID uuid.UUID,
-	opts ...EnvironmentTargetNetworkOption,
-) (models.EnvironmentTargetNetworkEntity, error) {
-	built := BuildEnvironmentTargetNetwork(
-		externalID,
-		environmentTargetID,
-		privateNetworkID,
-		opts...)
+func CreateEnvironmentTargetNetwork(ctx context.Context, exec storage.Executor, externalID sql.NullString, environmentTargetID uuid.UUID, privateNetworkID uuid.UUID, opts ...EnvironmentTargetNetworkOption) (models.EnvironmentTargetNetworkEntity, error) {
+	built := BuildEnvironmentTargetNetwork(externalID, environmentTargetID, privateNetworkID, opts...)
 
 	entity := models.EnvironmentTargetNetworkEntity{
 		ID:                  built.ID,
@@ -86,25 +70,11 @@ func CreateEnvironmentTargetNetwork(
 	return entity, nil
 }
 
-func CreateEnvironmentTargetNetworks(
-	ctx context.Context,
-	exec storage.Executor,
-	externalID sql.NullString,
-	environmentTargetID uuid.UUID,
-	privateNetworkID uuid.UUID,
-	count int,
-	opts ...EnvironmentTargetNetworkOption,
-) ([]models.EnvironmentTargetNetworkEntity, error) {
+func CreateEnvironmentTargetNetworks(ctx context.Context, exec storage.Executor, externalID sql.NullString, environmentTargetID uuid.UUID, privateNetworkID uuid.UUID, count int, opts ...EnvironmentTargetNetworkOption) ([]models.EnvironmentTargetNetworkEntity, error) {
 	environmenttargetnetworks := make([]models.EnvironmentTargetNetworkEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateEnvironmentTargetNetwork(
-			ctx,
-			exec,
-			externalID,
-			environmentTargetID,
-			privateNetworkID,
-			opts...)
+		entity, err := CreateEnvironmentTargetNetwork(ctx, exec, externalID, environmentTargetID, privateNetworkID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create environmenttargetnetwork %d: %w", i+1, err)
 		}
@@ -126,9 +96,7 @@ func WithEnvironmentTargetNetworksExternalID(value sql.NullString) EnvironmentTa
 	}
 }
 
-func WithEnvironmentTargetNetworksConfiguration(
-	value json.RawMessage,
-) EnvironmentTargetNetworkOption {
+func WithEnvironmentTargetNetworksConfiguration(value json.RawMessage) EnvironmentTargetNetworkOption {
 	return func(f *EnvironmentTargetNetworkFactory) {
 		f.EnvironmentTargetNetworkEntity.Configuration = value
 	}
@@ -164,9 +132,7 @@ func WithEnvironmentTargetNetworksRemovedAt(value sql.NullTime) EnvironmentTarge
 	}
 }
 
-func WithEnvironmentTargetNetworksEnvironmentTargetID(
-	value uuid.UUID,
-) EnvironmentTargetNetworkOption {
+func WithEnvironmentTargetNetworksEnvironmentTargetID(value uuid.UUID) EnvironmentTargetNetworkOption {
 	return func(f *EnvironmentTargetNetworkFactory) {
 		f.EnvironmentTargetNetworkEntity.EnvironmentTargetID = value
 	}

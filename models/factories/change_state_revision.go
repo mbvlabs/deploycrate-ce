@@ -19,11 +19,7 @@ type ChangeStateRevisionFactory struct {
 
 type ChangeStateRevisionOption func(*ChangeStateRevisionFactory)
 
-func BuildChangeStateRevision(
-	changeID uuid.UUID,
-	environmentStateRevisionID uuid.UUID,
-	opts ...ChangeStateRevisionOption,
-) models.ChangeStateRevisionEntity {
+func BuildChangeStateRevision(changeID uuid.UUID, environmentStateRevisionID uuid.UUID, opts ...ChangeStateRevisionOption) models.ChangeStateRevisionEntity {
 	f := &ChangeStateRevisionFactory{
 		ChangeStateRevisionEntity: models.ChangeStateRevisionEntity{
 			Role:                       faker.Word(),
@@ -39,13 +35,7 @@ func BuildChangeStateRevision(
 	return f.ChangeStateRevisionEntity
 }
 
-func CreateChangeStateRevision(
-	ctx context.Context,
-	exec storage.Executor,
-	changeID uuid.UUID,
-	environmentStateRevisionID uuid.UUID,
-	opts ...ChangeStateRevisionOption,
-) (models.ChangeStateRevisionEntity, error) {
+func CreateChangeStateRevision(ctx context.Context, exec storage.Executor, changeID uuid.UUID, environmentStateRevisionID uuid.UUID, opts ...ChangeStateRevisionOption) (models.ChangeStateRevisionEntity, error) {
 	built := BuildChangeStateRevision(changeID, environmentStateRevisionID, opts...)
 
 	entity := models.ChangeStateRevisionEntity{
@@ -64,23 +54,11 @@ func CreateChangeStateRevision(
 	return entity, nil
 }
 
-func CreateChangeStateRevisions(
-	ctx context.Context,
-	exec storage.Executor,
-	changeID uuid.UUID,
-	environmentStateRevisionID uuid.UUID,
-	count int,
-	opts ...ChangeStateRevisionOption,
-) ([]models.ChangeStateRevisionEntity, error) {
+func CreateChangeStateRevisions(ctx context.Context, exec storage.Executor, changeID uuid.UUID, environmentStateRevisionID uuid.UUID, count int, opts ...ChangeStateRevisionOption) ([]models.ChangeStateRevisionEntity, error) {
 	changestaterevisions := make([]models.ChangeStateRevisionEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateChangeStateRevision(
-			ctx,
-			exec,
-			changeID,
-			environmentStateRevisionID,
-			opts...)
+		entity, err := CreateChangeStateRevision(ctx, exec, changeID, environmentStateRevisionID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create changestaterevision %d: %w", i+1, err)
 		}

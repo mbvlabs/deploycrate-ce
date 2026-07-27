@@ -20,14 +20,7 @@ type ChangeTaskFactory struct {
 
 type ChangeTaskOption func(*ChangeTaskFactory)
 
-func BuildChangeTask(
-	subjectID uuid.UUID,
-	changeID uuid.UUID,
-	parentTaskID *uuid.UUID,
-	serverID *uuid.UUID,
-	environmentTargetID *uuid.UUID,
-	opts ...ChangeTaskOption,
-) models.ChangeTaskEntity {
+func BuildChangeTask(subjectID uuid.UUID, changeID uuid.UUID, parentTaskID *uuid.UUID, serverID *uuid.UUID, environmentTargetID *uuid.UUID, opts ...ChangeTaskOption) models.ChangeTaskEntity {
 	f := &ChangeTaskFactory{
 		ChangeTaskEntity: models.ChangeTaskEntity{
 			Kind:                faker.Word(),
@@ -52,23 +45,8 @@ func BuildChangeTask(
 	return f.ChangeTaskEntity
 }
 
-func CreateChangeTask(
-	ctx context.Context,
-	exec storage.Executor,
-	subjectID uuid.UUID,
-	changeID uuid.UUID,
-	parentTaskID *uuid.UUID,
-	serverID *uuid.UUID,
-	environmentTargetID *uuid.UUID,
-	opts ...ChangeTaskOption,
-) (models.ChangeTaskEntity, error) {
-	built := BuildChangeTask(
-		subjectID,
-		changeID,
-		parentTaskID,
-		serverID,
-		environmentTargetID,
-		opts...)
+func CreateChangeTask(ctx context.Context, exec storage.Executor, subjectID uuid.UUID, changeID uuid.UUID, parentTaskID *uuid.UUID, serverID *uuid.UUID, environmentTargetID *uuid.UUID, opts ...ChangeTaskOption) (models.ChangeTaskEntity, error) {
+	built := BuildChangeTask(subjectID, changeID, parentTaskID, serverID, environmentTargetID, opts...)
 
 	entity := models.ChangeTaskEntity{
 		ID:                  uuid.New(),
@@ -95,29 +73,11 @@ func CreateChangeTask(
 	return entity, nil
 }
 
-func CreateChangeTasks(
-	ctx context.Context,
-	exec storage.Executor,
-	subjectID uuid.UUID,
-	changeID uuid.UUID,
-	parentTaskID *uuid.UUID,
-	serverID *uuid.UUID,
-	environmentTargetID *uuid.UUID,
-	count int,
-	opts ...ChangeTaskOption,
-) ([]models.ChangeTaskEntity, error) {
+func CreateChangeTasks(ctx context.Context, exec storage.Executor, subjectID uuid.UUID, changeID uuid.UUID, parentTaskID *uuid.UUID, serverID *uuid.UUID, environmentTargetID *uuid.UUID, count int, opts ...ChangeTaskOption) ([]models.ChangeTaskEntity, error) {
 	changetasks := make([]models.ChangeTaskEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateChangeTask(
-			ctx,
-			exec,
-			subjectID,
-			changeID,
-			parentTaskID,
-			serverID,
-			environmentTargetID,
-			opts...)
+		entity, err := CreateChangeTask(ctx, exec, subjectID, changeID, parentTaskID, serverID, environmentTargetID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create changetask %d: %w", i+1, err)
 		}

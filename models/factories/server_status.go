@@ -35,12 +35,7 @@ func BuildServerStatus(serverID uuid.UUID, opts ...ServerStatusOption) models.Se
 	return f.ServerStatusEntity
 }
 
-func CreateServerStatus(
-	ctx context.Context,
-	exec storage.Executor,
-	serverID uuid.UUID,
-	opts ...ServerStatusOption,
-) (models.ServerStatusEntity, error) {
+func CreateServerStatus(ctx context.Context, exec storage.Executor, serverID uuid.UUID, opts ...ServerStatusOption) (models.ServerStatusEntity, error) {
 	built := BuildServerStatus(serverID, opts...)
 
 	entity := models.ServerStatusEntity{
@@ -59,13 +54,7 @@ func CreateServerStatus(
 	return entity, nil
 }
 
-func CreateServerStatuss(
-	ctx context.Context,
-	exec storage.Executor,
-	serverID uuid.UUID,
-	count int,
-	opts ...ServerStatusOption,
-) ([]models.ServerStatusEntity, error) {
+func CreateServerStatuss(ctx context.Context, exec storage.Executor, serverID uuid.UUID, count int, opts ...ServerStatusOption) ([]models.ServerStatusEntity, error) {
 	serverstatuss := make([]models.ServerStatusEntity, 0, count)
 
 	for i := range count {

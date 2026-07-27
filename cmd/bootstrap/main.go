@@ -121,7 +121,7 @@ func install(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	_, err = tea.NewProgram(setupui.NewModel(cfg, host, *dryRun)).Run()
+	_, err = tea.NewProgram(setupui.NewModel(cfg, host, *dryRun, newSetupOperations())).Run()
 	return err
 }
 
@@ -163,7 +163,7 @@ func resume(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := setup.NewRunner(cfg, *dryRun).Execute(ctx, cfg, func(event setup.Event) {
+	if err := setup.NewRunner(cfg, *dryRun, newSetupOperations()).Execute(ctx, cfg, func(event setup.Event) {
 		switch event.Kind {
 		case setup.EventStarted:
 			fmt.Fprintf(stdout, "[%d/%d] %s\n", event.Index, event.Total, event.Description)

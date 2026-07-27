@@ -20,10 +20,7 @@ type BackupDestinationFactory struct {
 
 type BackupDestinationOption func(*BackupDestinationFactory)
 
-func BuildBackupDestination(
-	credentialID uuid.UUID,
-	opts ...BackupDestinationOption,
-) models.BackupDestinationEntity {
+func BuildBackupDestination(credentialID uuid.UUID, opts ...BackupDestinationOption) models.BackupDestinationEntity {
 	f := &BackupDestinationFactory{
 		BackupDestinationEntity: models.BackupDestinationEntity{
 			Name:           faker.Word(),
@@ -45,12 +42,7 @@ func BuildBackupDestination(
 	return f.BackupDestinationEntity
 }
 
-func CreateBackupDestination(
-	ctx context.Context,
-	exec storage.Executor,
-	credentialID uuid.UUID,
-	opts ...BackupDestinationOption,
-) (models.BackupDestinationEntity, error) {
+func CreateBackupDestination(ctx context.Context, exec storage.Executor, credentialID uuid.UUID, opts ...BackupDestinationOption) (models.BackupDestinationEntity, error) {
 	built := BuildBackupDestination(credentialID, opts...)
 
 	entity := models.BackupDestinationEntity{
@@ -75,13 +67,7 @@ func CreateBackupDestination(
 	return entity, nil
 }
 
-func CreateBackupDestinations(
-	ctx context.Context,
-	exec storage.Executor,
-	credentialID uuid.UUID,
-	count int,
-	opts ...BackupDestinationOption,
-) ([]models.BackupDestinationEntity, error) {
+func CreateBackupDestinations(ctx context.Context, exec storage.Executor, credentialID uuid.UUID, count int, opts ...BackupDestinationOption) ([]models.BackupDestinationEntity, error) {
 	backupdestinations := make([]models.BackupDestinationEntity, 0, count)
 
 	for i := range count {

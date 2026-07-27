@@ -21,12 +21,7 @@ type ResourceInstallationFactory struct {
 
 type ResourceInstallationOption func(*ResourceInstallationFactory)
 
-func BuildResourceInstallation(
-	resourceID uuid.UUID,
-	serverID uuid.UUID,
-	registryCredentialID *uuid.UUID,
-	opts ...ResourceInstallationOption,
-) models.ResourceInstallationEntity {
+func BuildResourceInstallation(resourceID uuid.UUID, serverID uuid.UUID, registryCredentialID *uuid.UUID, opts ...ResourceInstallationOption) models.ResourceInstallationEntity {
 	f := &ResourceInstallationFactory{
 		ResourceInstallationEntity: models.ResourceInstallationEntity{
 			ImageReference:       faker.Word(),
@@ -48,14 +43,7 @@ func BuildResourceInstallation(
 	return f.ResourceInstallationEntity
 }
 
-func CreateResourceInstallation(
-	ctx context.Context,
-	exec storage.Executor,
-	resourceID uuid.UUID,
-	serverID uuid.UUID,
-	registryCredentialID *uuid.UUID,
-	opts ...ResourceInstallationOption,
-) (models.ResourceInstallationEntity, error) {
+func CreateResourceInstallation(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, serverID uuid.UUID, registryCredentialID *uuid.UUID, opts ...ResourceInstallationOption) (models.ResourceInstallationEntity, error) {
 	built := BuildResourceInstallation(resourceID, serverID, registryCredentialID, opts...)
 
 	entity := models.ResourceInstallationEntity{
@@ -80,25 +68,11 @@ func CreateResourceInstallation(
 	return entity, nil
 }
 
-func CreateResourceInstallations(
-	ctx context.Context,
-	exec storage.Executor,
-	resourceID uuid.UUID,
-	serverID uuid.UUID,
-	registryCredentialID *uuid.UUID,
-	count int,
-	opts ...ResourceInstallationOption,
-) ([]models.ResourceInstallationEntity, error) {
+func CreateResourceInstallations(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, serverID uuid.UUID, registryCredentialID *uuid.UUID, count int, opts ...ResourceInstallationOption) ([]models.ResourceInstallationEntity, error) {
 	resourceinstallations := make([]models.ResourceInstallationEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateResourceInstallation(
-			ctx,
-			exec,
-			resourceID,
-			serverID,
-			registryCredentialID,
-			opts...)
+		entity, err := CreateResourceInstallation(ctx, exec, resourceID, serverID, registryCredentialID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resourceinstallation %d: %w", i+1, err)
 		}

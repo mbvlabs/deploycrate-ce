@@ -17,9 +17,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"deploycrate-ce/clients/objectstorage"
 	"deploycrate-ce/internal/setup"
-	"deploycrate-ce/internal/storage"
 )
 
 type screen int
@@ -71,6 +69,7 @@ type Model struct {
 	copyRequested       bool
 	rebootStarted       bool
 	activity            spinner.Model
+	operations          setup.Operations
 }
 
 var (
@@ -95,19 +94,20 @@ var (
 	warnStyle  = lipgloss.NewStyle().Foreground(colorAmber)
 )
 
-func NewModel(cfg setup.Config, host setup.HostInfo, dryRun bool) Model {
+func NewModel(cfg setup.Config, host setup.HostInfo, dryRun bool, operations setup.Operations) Model {
 	activity := spinner.New(
 		spinner.WithSpinner(spinner.MiniDot),
 		spinner.WithStyle(lipgloss.NewStyle().Foreground(colorPink)),
 	)
 	return Model{
-		config:   cfg,
-		host:     host,
-		dryRun:   dryRun,
-		screen:   screenWelcome,
-		width:    88,
-		height:   30,
-		activity: activity,
+		config:     cfg,
+		host:       host,
+		dryRun:     dryRun,
+		screen:     screenWelcome,
+		width:      88,
+		height:     30,
+		activity:   activity,
+		operations: operations,
 	}
 }
 
@@ -477,15 +477,18 @@ func (m *Model) commitForm() error {
 		if value(1) == "" || value(2) == "" || value(5) == "" || value(6) == "" {
 			return errors.New("region, bucket, access key, and secret key are required")
 		}
-		normalized, err := objectstorage.Normalize(objectstorage.Config{
+		if m.operations.NormalizeObjectStorage == nil {
+			return errors.New("object storage normalization is unavailable")
+		}
+		normalized, err := m.operations.NormalizeObjectStorage(setup.S3Config{
 			Provider: m.config.S3.Provider, Endpoint: value(0), Region: value(1),
-			Bucket: value(2), Prefix: value(3), ForcePathStyle: pathStyle,
+			Bucket: value(2), Prefix: value(3), UsePathStyle: pathStyle,
 		})
 		if err != nil {
 			return err
 		}
 		m.config.S3.Endpoint, m.config.S3.Region, m.config.S3.Bucket = normalized.Endpoint, normalized.Region, normalized.Bucket
-		m.config.S3.Prefix, m.config.S3.UsePathStyle = normalized.Prefix, normalized.ForcePathStyle
+		m.config.S3.Prefix, m.config.S3.UsePathStyle = normalized.Prefix, normalized.UsePathStyle
 		m.config.Secrets.S3AccessKeyID, m.config.Secrets.S3SecretAccessKey = value(5), value(6)
 	case screenServerBackupPolicy:
 		retention, err := parseRetention(0, value(1), value(2), value(3))
@@ -547,10 +550,10 @@ func (m Model) advanceAfterForm() (tea.Model, tea.Cmd) {
 			return m, textinput.Blink
 		}
 		m.screen = screenValidating
-		return m, tea.Batch(validateRemoteServices(m.config, m.dryRun), m.activity.Tick)
+		return m, tea.Batch(validateRemoteServices(m.config, m.dryRun, m.operations.ValidateRemoteServices), m.activity.Tick)
 	case screenDatabaseBackupPolicy:
 		m.screen = screenValidating
-		return m, tea.Batch(validateRemoteServices(m.config, m.dryRun), m.activity.Tick)
+		return m, tea.Batch(validateRemoteServices(m.config, m.dryRun, m.operations.ValidateRemoteServices), m.activity.Tick)
 	}
 	return m, textinput.Blink
 }
@@ -599,46 +602,32 @@ func (m Model) updateChoice(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.screen = screenValidating
-	return m, tea.Batch(validateRemoteServices(m.config, m.dryRun), m.activity.Tick)
+	return m, tea.Batch(validateRemoteServices(m.config, m.dryRun, m.operations.ValidateRemoteServices), m.activity.Tick)
 }
 
-func validateRemoteServices(cfg setup.Config, dryRun bool) tea.Cmd {
+func validateRemoteServices(
+	cfg setup.Config,
+	dryRun bool,
+	validate func(context.Context, setup.Config) error,
+) tea.Cmd {
 	return func() tea.Msg {
 		if dryRun {
 			return validationMsg{}
 		}
+		if validate == nil {
+			return validationMsg{err: errors.New("remote service validation is unavailable")}
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		if cfg.Database.External {
-			db, err := storage.NewPostgres(ctx, cfg.DatabaseURL())
-			if err != nil {
-				return validationMsg{err: fmt.Errorf("external database validation failed: %w", err)}
-			}
-			if err := db.Close(); err != nil {
-				return validationMsg{err: fmt.Errorf("close external database validation connection: %w", err)}
-			}
-		}
-		if cfg.S3.Enabled {
-			client, err := objectstorage.New(ctx, objectstorage.Config{
-				Provider: cfg.S3.Provider, Endpoint: cfg.S3.Endpoint, Region: cfg.S3.Region,
-				Bucket: cfg.S3.Bucket, Prefix: cfg.S3.Prefix, ForcePathStyle: cfg.S3.UsePathStyle,
-			}, objectstorage.Credentials{
-				AccessKeyID:     cfg.Secrets.S3AccessKeyID,
-				SecretAccessKey: cfg.Secrets.S3SecretAccessKey,
-			})
-			if err != nil {
-				return validationMsg{err: fmt.Errorf("object storage validation failed: %w", err)}
-			}
-			if err := client.Probe(ctx, cfg.InstallationID); err != nil {
-				return validationMsg{err: fmt.Errorf("object storage validation failed: %w", err)}
-			}
+		if err := validate(ctx, cfg); err != nil {
+			return validationMsg{err: err}
 		}
 		return validationMsg{}
 	}
 }
 
 func (m Model) startInstall() (tea.Model, tea.Cmd) {
-	if err := m.config.Validate(); err != nil {
+	if err := m.config.Validate(m.operations.NormalizeObjectStorage); err != nil {
 		m.err = err
 		return m, nil
 	}
@@ -660,7 +649,7 @@ func (m Model) startInstall() (tea.Model, tea.Cmd) {
 			cfg = normalized
 			stream <- setup.Event{Kind: setup.EventCompleted, StepID: installerConfigStepID, Description: "Persist installer configuration"}
 		}
-		runner := setup.NewRunner(cfg, m.dryRun)
+		runner := setup.NewRunner(cfg, m.dryRun, m.operations)
 		err := runner.Execute(ctx, cfg, func(event setup.Event) { stream <- event })
 		if err != nil {
 			stream <- setup.Event{Kind: setup.EventFailed, Description: "Installation stopped", Err: err}

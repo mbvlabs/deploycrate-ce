@@ -237,17 +237,17 @@ func (bp backupPolicy) FindForUpdate(
 	return policy, nil
 }
 
-func (bp backupPolicy) FindInactiveInstallationPoliciesForUpdate(
+func (bp backupPolicy) FindInactiveInstancePoliciesForUpdate(
 	ctx context.Context,
 	db storage.Executor,
-	installationID string,
+	instanceID string,
 ) ([]BackupPolicyEntity, error) {
 	var policies []BackupPolicyEntity
 	if err := db.NewSelect().
 		Model(&policies).
 		Join("JOIN backup_destinations AS destination ON destination.id = backup_policies.backup_destination_id AND destination.archived_at IS NULL").
 		Join("JOIN credentials AS credential ON credential.id = destination.credential_id AND credential.archived_at IS NULL").
-		Where("credential.metadata ->> 'installation_id' = ?", installationID).
+		Where("credential.metadata ->> 'instance_id' = ?", instanceID).
 		Where("backup_policies.archived_at IS NULL").
 		Where("backup_policies.activated_at IS NULL").
 		OrderExpr("backup_policies.created_at ASC").

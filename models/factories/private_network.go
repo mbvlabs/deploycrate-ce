@@ -20,10 +20,7 @@ type PrivateNetworkFactory struct {
 
 type PrivateNetworkOption func(*PrivateNetworkFactory)
 
-func BuildPrivateNetwork(
-	ownerEnvironmentID *uuid.UUID,
-	opts ...PrivateNetworkOption,
-) models.PrivateNetworkEntity {
+func BuildPrivateNetwork(ownerEnvironmentID *uuid.UUID, opts ...PrivateNetworkOption) models.PrivateNetworkEntity {
 	f := &PrivateNetworkFactory{
 		PrivateNetworkEntity: models.PrivateNetworkEntity{
 			Name:               faker.Word(),
@@ -39,12 +36,7 @@ func BuildPrivateNetwork(
 	return f.PrivateNetworkEntity
 }
 
-func CreatePrivateNetwork(
-	ctx context.Context,
-	exec storage.Executor,
-	ownerEnvironmentID *uuid.UUID,
-	opts ...PrivateNetworkOption,
-) (models.PrivateNetworkEntity, error) {
+func CreatePrivateNetwork(ctx context.Context, exec storage.Executor, ownerEnvironmentID *uuid.UUID, opts ...PrivateNetworkOption) (models.PrivateNetworkEntity, error) {
 	built := BuildPrivateNetwork(ownerEnvironmentID, opts...)
 
 	entity := models.PrivateNetworkEntity{
@@ -63,13 +55,7 @@ func CreatePrivateNetwork(
 	return entity, nil
 }
 
-func CreatePrivateNetworks(
-	ctx context.Context,
-	exec storage.Executor,
-	ownerEnvironmentID *uuid.UUID,
-	count int,
-	opts ...PrivateNetworkOption,
-) ([]models.PrivateNetworkEntity, error) {
+func CreatePrivateNetworks(ctx context.Context, exec storage.Executor, ownerEnvironmentID *uuid.UUID, count int, opts ...PrivateNetworkOption) ([]models.PrivateNetworkEntity, error) {
 	privatenetworks := make([]models.PrivateNetworkEntity, 0, count)
 
 	for i := range count {

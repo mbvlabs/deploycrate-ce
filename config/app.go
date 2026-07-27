@@ -3,7 +3,7 @@ package config
 import "github.com/caarlos0/env/v11"
 
 type app struct {
-	InstallationID       string   `env:"INSTALLATION_ID"`
+	InstanceID           string   `env:"INSTANCE_ID"`
 	Host                 string   `env:"HOST"                   envDefault:"localhost"`
 	Port                 string   `env:"PORT"                   envDefault:"8080"`
 	SessionKey           string   `env:"SESSION_KEY"`

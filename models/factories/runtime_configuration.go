@@ -21,10 +21,7 @@ type RuntimeConfigurationFactory struct {
 
 type RuntimeConfigurationOption func(*RuntimeConfigurationFactory)
 
-func BuildRuntimeConfiguration(
-	environmentID uuid.UUID,
-	opts ...RuntimeConfigurationOption,
-) models.RuntimeConfigurationEntity {
+func BuildRuntimeConfiguration(environmentID uuid.UUID, opts ...RuntimeConfigurationOption) models.RuntimeConfigurationEntity {
 	f := &RuntimeConfigurationFactory{
 		RuntimeConfigurationEntity: models.RuntimeConfigurationEntity{
 			Runtime:        faker.Word(),
@@ -46,12 +43,7 @@ func BuildRuntimeConfiguration(
 	return f.RuntimeConfigurationEntity
 }
 
-func CreateRuntimeConfiguration(
-	ctx context.Context,
-	exec storage.Executor,
-	environmentID uuid.UUID,
-	opts ...RuntimeConfigurationOption,
-) (models.RuntimeConfigurationEntity, error) {
+func CreateRuntimeConfiguration(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, opts ...RuntimeConfigurationOption) (models.RuntimeConfigurationEntity, error) {
 	built := BuildRuntimeConfiguration(environmentID, opts...)
 
 	entity := models.RuntimeConfigurationEntity{
@@ -76,13 +68,7 @@ func CreateRuntimeConfiguration(
 	return entity, nil
 }
 
-func CreateRuntimeConfigurations(
-	ctx context.Context,
-	exec storage.Executor,
-	environmentID uuid.UUID,
-	count int,
-	opts ...RuntimeConfigurationOption,
-) ([]models.RuntimeConfigurationEntity, error) {
+func CreateRuntimeConfigurations(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, count int, opts ...RuntimeConfigurationOption) ([]models.RuntimeConfigurationEntity, error) {
 	runtimeconfigurations := make([]models.RuntimeConfigurationEntity, 0, count)
 
 	for i := range count {

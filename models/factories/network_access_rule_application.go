@@ -21,12 +21,7 @@ type NetworkAccessRuleApplicationFactory struct {
 
 type NetworkAccessRuleApplicationOption func(*NetworkAccessRuleApplicationFactory)
 
-func BuildNetworkAccessRuleApplication(
-	externalID sql.NullString,
-	networkAccessRuleID uuid.UUID,
-	environmentTargetNetworkID int32,
-	opts ...NetworkAccessRuleApplicationOption,
-) models.NetworkAccessRuleApplicationEntity {
+func BuildNetworkAccessRuleApplication(externalID sql.NullString, networkAccessRuleID uuid.UUID, environmentTargetNetworkID int32, opts ...NetworkAccessRuleApplicationOption) models.NetworkAccessRuleApplicationEntity {
 	f := &NetworkAccessRuleApplicationFactory{
 		NetworkAccessRuleApplicationEntity: models.NetworkAccessRuleApplicationEntity{
 			Driver:                     faker.Word(),
@@ -49,19 +44,8 @@ func BuildNetworkAccessRuleApplication(
 	return f.NetworkAccessRuleApplicationEntity
 }
 
-func CreateNetworkAccessRuleApplication(
-	ctx context.Context,
-	exec storage.Executor,
-	externalID sql.NullString,
-	networkAccessRuleID uuid.UUID,
-	environmentTargetNetworkID int32,
-	opts ...NetworkAccessRuleApplicationOption,
-) (models.NetworkAccessRuleApplicationEntity, error) {
-	built := BuildNetworkAccessRuleApplication(
-		externalID,
-		networkAccessRuleID,
-		environmentTargetNetworkID,
-		opts...)
+func CreateNetworkAccessRuleApplication(ctx context.Context, exec storage.Executor, externalID sql.NullString, networkAccessRuleID uuid.UUID, environmentTargetNetworkID int32, opts ...NetworkAccessRuleApplicationOption) (models.NetworkAccessRuleApplicationEntity, error) {
+	built := BuildNetworkAccessRuleApplication(externalID, networkAccessRuleID, environmentTargetNetworkID, opts...)
 
 	entity := models.NetworkAccessRuleApplicationEntity{
 		ID:                         uuid.New(),
@@ -86,25 +70,11 @@ func CreateNetworkAccessRuleApplication(
 	return entity, nil
 }
 
-func CreateNetworkAccessRuleApplications(
-	ctx context.Context,
-	exec storage.Executor,
-	externalID sql.NullString,
-	networkAccessRuleID uuid.UUID,
-	environmentTargetNetworkID int32,
-	count int,
-	opts ...NetworkAccessRuleApplicationOption,
-) ([]models.NetworkAccessRuleApplicationEntity, error) {
+func CreateNetworkAccessRuleApplications(ctx context.Context, exec storage.Executor, externalID sql.NullString, networkAccessRuleID uuid.UUID, environmentTargetNetworkID int32, count int, opts ...NetworkAccessRuleApplicationOption) ([]models.NetworkAccessRuleApplicationEntity, error) {
 	networkaccessruleapplications := make([]models.NetworkAccessRuleApplicationEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateNetworkAccessRuleApplication(
-			ctx,
-			exec,
-			externalID,
-			networkAccessRuleID,
-			environmentTargetNetworkID,
-			opts...)
+		entity, err := CreateNetworkAccessRuleApplication(ctx, exec, externalID, networkAccessRuleID, environmentTargetNetworkID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create networkaccessruleapplication %d: %w", i+1, err)
 		}
@@ -120,17 +90,13 @@ func WithNetworkAccessRuleApplicationsDriver(value string) NetworkAccessRuleAppl
 	}
 }
 
-func WithNetworkAccessRuleApplicationsExternalID(
-	value sql.NullString,
-) NetworkAccessRuleApplicationOption {
+func WithNetworkAccessRuleApplicationsExternalID(value sql.NullString) NetworkAccessRuleApplicationOption {
 	return func(f *NetworkAccessRuleApplicationFactory) {
 		f.NetworkAccessRuleApplicationEntity.ExternalID = value
 	}
 }
 
-func WithNetworkAccessRuleApplicationsConfiguration(
-	value json.RawMessage,
-) NetworkAccessRuleApplicationOption {
+func WithNetworkAccessRuleApplicationsConfiguration(value json.RawMessage) NetworkAccessRuleApplicationOption {
 	return func(f *NetworkAccessRuleApplicationFactory) {
 		f.NetworkAccessRuleApplicationEntity.Configuration = value
 	}
@@ -142,49 +108,37 @@ func WithNetworkAccessRuleApplicationsState(value string) NetworkAccessRuleAppli
 	}
 }
 
-func WithNetworkAccessRuleApplicationsAppliedAt(
-	value sql.NullTime,
-) NetworkAccessRuleApplicationOption {
+func WithNetworkAccessRuleApplicationsAppliedAt(value sql.NullTime) NetworkAccessRuleApplicationOption {
 	return func(f *NetworkAccessRuleApplicationFactory) {
 		f.NetworkAccessRuleApplicationEntity.AppliedAt = value
 	}
 }
 
-func WithNetworkAccessRuleApplicationsObservedAt(
-	value sql.NullTime,
-) NetworkAccessRuleApplicationOption {
+func WithNetworkAccessRuleApplicationsObservedAt(value sql.NullTime) NetworkAccessRuleApplicationOption {
 	return func(f *NetworkAccessRuleApplicationFactory) {
 		f.NetworkAccessRuleApplicationEntity.ObservedAt = value
 	}
 }
 
-func WithNetworkAccessRuleApplicationsRemovedAt(
-	value sql.NullTime,
-) NetworkAccessRuleApplicationOption {
+func WithNetworkAccessRuleApplicationsRemovedAt(value sql.NullTime) NetworkAccessRuleApplicationOption {
 	return func(f *NetworkAccessRuleApplicationFactory) {
 		f.NetworkAccessRuleApplicationEntity.RemovedAt = value
 	}
 }
 
-func WithNetworkAccessRuleApplicationsError(
-	value sql.NullString,
-) NetworkAccessRuleApplicationOption {
+func WithNetworkAccessRuleApplicationsError(value sql.NullString) NetworkAccessRuleApplicationOption {
 	return func(f *NetworkAccessRuleApplicationFactory) {
 		f.NetworkAccessRuleApplicationEntity.Error = value
 	}
 }
 
-func WithNetworkAccessRuleApplicationsNetworkAccessRuleID(
-	value uuid.UUID,
-) NetworkAccessRuleApplicationOption {
+func WithNetworkAccessRuleApplicationsNetworkAccessRuleID(value uuid.UUID) NetworkAccessRuleApplicationOption {
 	return func(f *NetworkAccessRuleApplicationFactory) {
 		f.NetworkAccessRuleApplicationEntity.NetworkAccessRuleID = value
 	}
 }
 
-func WithNetworkAccessRuleApplicationsEnvironmentTargetNetworkID(
-	value int32,
-) NetworkAccessRuleApplicationOption {
+func WithNetworkAccessRuleApplicationsEnvironmentTargetNetworkID(value int32) NetworkAccessRuleApplicationOption {
 	return func(f *NetworkAccessRuleApplicationFactory) {
 		f.NetworkAccessRuleApplicationEntity.EnvironmentTargetNetworkID = value
 	}

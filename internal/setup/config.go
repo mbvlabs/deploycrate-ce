@@ -14,8 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"deploycrate-ce/clients/objectstorage"
-
 	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/robfig/cron/v3"
@@ -79,7 +77,7 @@ type Secrets struct {
 }
 
 type Config struct {
-	InstallationID    string         `json:"installation_id"`
+	InstanceID        string         `json:"instance_id"`
 	Version           string         `json:"version"`
 	Domain            string         `json:"domain"`
 	SSHPort           int            `json:"ssh_port"`
@@ -134,12 +132,12 @@ func NewConfig(version string) (Config, error) {
 	}
 
 	return Config{
-		InstallationID: uuid.NewString(),
-		Version:        version,
-		SSHPort:        22,
-		Timezone:       "UTC",
-		AdminUser:      "admin",
-		ServiceUser:    "deploycrate",
+		InstanceID:  uuid.NewString(),
+		Version:     version,
+		SSHPort:     22,
+		Timezone:    "UTC",
+		AdminUser:   "admin",
+		ServiceUser: "deploycrate",
 		Database: DatabaseConfig{
 			Host:    "127.0.0.1",
 			Port:    5432,
@@ -172,10 +170,10 @@ func NewConfig(version string) (Config, error) {
 	}, nil
 }
 
-func (c Config) Validate() error {
+func (c Config) Validate(normalizeObjectStorage func(S3Config) (S3Config, error)) error {
 	var errs []error
-	if _, err := uuid.Parse(c.InstallationID); err != nil {
-		errs = append(errs, errors.New("installation ID is invalid"))
+	if _, err := uuid.Parse(c.InstanceID); err != nil {
+		errs = append(errs, errors.New("instance ID is invalid"))
 	}
 	if c.AdminUser != "admin" {
 		errs = append(errs, errors.New("server administrator user must be admin"))
@@ -242,10 +240,9 @@ func (c Config) Validate() error {
 		errs = append(errs, errors.New("complete S3-compatible storage details are required"))
 	}
 	if c.S3.Enabled {
-		if _, err := objectstorage.Normalize(objectstorage.Config{
-			Provider: c.S3.Provider, Endpoint: c.S3.Endpoint, Region: c.S3.Region,
-			Bucket: c.S3.Bucket, Prefix: c.S3.Prefix, ForcePathStyle: c.S3.UsePathStyle,
-		}); err != nil {
+		if normalizeObjectStorage == nil {
+			errs = append(errs, errors.New("object storage normalization is unavailable"))
+		} else if _, err := normalizeObjectStorage(c.S3); err != nil {
 			errs = append(errs, err)
 		}
 		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)

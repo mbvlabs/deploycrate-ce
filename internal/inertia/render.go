@@ -5,16 +5,10 @@ package inertia
 import (
 	"errors"
 	"fmt"
-	"io/fs"
 	"net/http"
 
 	"github.com/labstack/echo/v5"
 	gonertia "github.com/romsar/gonertia/v3"
-
-	"deploycrate-ce/assets"
-	"deploycrate-ce/config"
-	"deploycrate-ce/internal/request"
-	"deploycrate-ce/router/cookies"
 )
 
 type Props = gonertia.Props
@@ -22,20 +16,8 @@ type Option = gonertia.Option
 
 var gInertia *gonertia.Inertia
 
-func Init(rootPath string, opts ...Option) error {
-	rootHTML, err := assets.Files.ReadFile(rootPath)
-	if errors.Is(err, fs.ErrNotExist) {
-		return fmt.Errorf(
-			"inertia: embedded root template %q not found; add it at assets/%s and rebuild",
-			rootPath,
-			rootPath,
-		)
-	}
-	if err != nil {
-		return fmt.Errorf("inertia: read embedded root template %q: %w", rootPath, err)
-	}
-
-	tags, err := initVite()
+func Init(projectName, env, buildPathURL string, rootHTML, viteManifest []byte, opts ...Option) error {
+	tags, err := initVite(env, buildPathURL, viteManifest)
 	if err != nil {
 		return fmt.Errorf("inertia: vite init: %w", err)
 	}
@@ -47,7 +29,7 @@ func Init(rootPath string, opts ...Option) error {
 
 	i.ShareTemplateData("viteHead", tags.ViteHead)
 	i.ShareTemplateData("viteBody", tags.ViteBody)
-	i.ShareTemplateData("appName", config.ProjectName)
+	i.ShareTemplateData("appName", projectName)
 
 	gInertia = i
 	return nil
@@ -71,14 +53,14 @@ func Page(etx *echo.Context, component string, props Props, opts ...PageOption) 
 		)))
 	}
 
-	if flashes := request.ExtractContext[[]cookies.FlashMessage](
-		etx.Request().Context(), request.SessionFlashesKey,
-	); len(flashes) > 0 {
-		if props == nil {
-			props = make(Props)
-		}
-		props["flash"] = flashes
-	}
+	// if flashes := request.ExtractContext[[]cookies.FlashMessage](
+	// 	etx.Request().Context(), request.SessionFlashesKey,
+	// ); len(flashes) > 0 {
+	// 	if props == nil {
+	// 		props = make(Props)
+	// 	}
+	// 	props["flash"] = flashes
+	// }
 
 	if err := gInertia.Render(etx.Response(), etx.Request(), component, props); err != nil {
 		return fmt.Errorf("inertia: render page: %v", err)

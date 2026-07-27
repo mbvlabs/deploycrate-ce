@@ -21,12 +21,7 @@ type BuildFactory struct {
 
 type BuildOption func(*BuildFactory)
 
-func BuildBuild(
-	environmentID uuid.UUID,
-	environmentSourceID uuid.UUID,
-	changeID uuid.UUID,
-	opts ...BuildOption,
-) models.BuildEntity {
+func BuildBuild(environmentID uuid.UUID, environmentSourceID uuid.UUID, changeID uuid.UUID, opts ...BuildOption) models.BuildEntity {
 	f := &BuildFactory{
 		BuildEntity: models.BuildEntity{
 			SourceRevision:      faker.Word(),
@@ -51,14 +46,7 @@ func BuildBuild(
 	return f.BuildEntity
 }
 
-func CreateBuild(
-	ctx context.Context,
-	exec storage.Executor,
-	environmentID uuid.UUID,
-	environmentSourceID uuid.UUID,
-	changeID uuid.UUID,
-	opts ...BuildOption,
-) (models.BuildEntity, error) {
+func CreateBuild(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, environmentSourceID uuid.UUID, changeID uuid.UUID, opts ...BuildOption) (models.BuildEntity, error) {
 	built := BuildBuild(environmentID, environmentSourceID, changeID, opts...)
 
 	entity := models.BuildEntity{
@@ -86,15 +74,7 @@ func CreateBuild(
 	return entity, nil
 }
 
-func CreateBuilds(
-	ctx context.Context,
-	exec storage.Executor,
-	environmentID uuid.UUID,
-	environmentSourceID uuid.UUID,
-	changeID uuid.UUID,
-	count int,
-	opts ...BuildOption,
-) ([]models.BuildEntity, error) {
+func CreateBuilds(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, environmentSourceID uuid.UUID, changeID uuid.UUID, count int, opts ...BuildOption) ([]models.BuildEntity, error) {
 	builds := make([]models.BuildEntity, 0, count)
 
 	for i := range count {

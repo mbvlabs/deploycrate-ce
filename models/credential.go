@@ -50,18 +50,32 @@ func (e *CredentialEntity) Validate() error {
 			builder.Add("provider", "unsupported", "backup credential provider must be backup_s3 or backup_r2")
 		}
 		var metadata struct {
-			InstallationID string `json:"installation_id"`
-			Provider       string `json:"provider"`
-			Endpoint       string `json:"endpoint"`
-			Region         string `json:"region"`
-			Bucket         string `json:"bucket"`
+			InstanceID string `json:"instance_id"`
+			Provider   string `json:"provider"`
+			Endpoint   string `json:"endpoint"`
+			Region     string `json:"region"`
+			Bucket     string `json:"bucket"`
 		}
 		if json.Unmarshal(e.Metadata, &metadata) != nil ||
-			strings.TrimSpace(metadata.InstallationID) == "" ||
+			strings.TrimSpace(metadata.InstanceID) == "" ||
 			metadata.Provider != strings.TrimPrefix(e.Provider, "backup_") ||
 			strings.TrimSpace(metadata.Region) == "" || strings.TrimSpace(metadata.Bucket) == "" ||
 			(metadata.Provider == "r2" && strings.TrimSpace(metadata.Endpoint) == "") {
 			builder.Add("metadata", "invalid", "backup credential metadata is incomplete or incompatible")
+		}
+	}
+	if e.Provider == "github_app" {
+		var metadata struct {
+			SchemaVersion  int    `json:"schema_version"`
+			InstanceID     string `json:"instance_id"`
+			CredentialKind string `json:"credential_kind"`
+		}
+		unmarshalErr := json.Unmarshal(e.Metadata, &metadata)
+		instanceID, parseErr := uuid.Parse(metadata.InstanceID)
+		if unmarshalErr != nil ||
+			metadata.SchemaVersion != 1 || instanceID == uuid.Nil || parseErr != nil ||
+			metadata.CredentialKind != "github_app" {
+			builder.Add("metadata", "invalid", "GitHub App credential metadata is incomplete or incompatible")
 		}
 	}
 	if e.ArchivedAt.Valid && e.VerifiedAt.Valid && e.VerifiedAt.Time.After(e.ArchivedAt.Time) {

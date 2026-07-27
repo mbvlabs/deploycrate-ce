@@ -272,7 +272,7 @@ func (service *BackupVerifier) verifyServerBackup(
 		return fmt.Errorf("decode server backup manifest: %w", err)
 	}
 	if manifest.Version != 1 || manifest.FormatVersion != scope.Backup.FormatVersion ||
-		manifest.InstallationID != service.config.App.InstallationID ||
+		manifest.InstanceID != service.config.App.InstanceID ||
 		manifest.BackupID != scope.Backup.ID.String() ||
 		manifest.PolicyID != scope.Backup.BackupPolicyID.String() ||
 		manifest.ServerID != scope.Backup.ServerID.String() ||
@@ -447,12 +447,12 @@ func (service *BackupVerifier) verifyDatabaseBackup(
 		return errors.New("database backup record is missing its resource identity")
 	}
 	expectedMetadata := map[string]string{
-		"backup-id":       scope.Backup.ID.String(),
-		"policy-id":       scope.Backup.BackupPolicyID.String(),
-		"resource-id":     scope.Backup.ResourceID.String(),
-		"installation-id": service.config.App.InstallationID,
-		"sha256":          fmt.Sprintf("%x", scope.Backup.Digest),
-		"format-version":  scope.Backup.FormatVersion,
+		"backup-id":      scope.Backup.ID.String(),
+		"policy-id":      scope.Backup.BackupPolicyID.String(),
+		"resource-id":    scope.Backup.ResourceID.String(),
+		"instance-id":    service.config.App.InstanceID,
+		"sha256":         fmt.Sprintf("%x", scope.Backup.Digest),
+		"format-version": scope.Backup.FormatVersion,
 	}
 	for key, expected := range expectedMetadata {
 		if remote.Metadata[key] != expected {
@@ -532,7 +532,7 @@ func (service *BackupVerifier) verifyDatabaseBackup(
 	}
 	var manifest struct {
 		ArtifactVersion string    `json:"artifact_version"`
-		InstallationID  string    `json:"installation_id"`
+		InstanceID      string    `json:"instance_id"`
 		BackupID        string    `json:"backup_id"`
 		PolicyID        string    `json:"policy_id"`
 		ResourceID      string    `json:"resource_id"`
@@ -545,7 +545,7 @@ func (service *BackupVerifier) verifyDatabaseBackup(
 		return fmt.Errorf("decode database backup manifest: %w", err)
 	}
 	if manifest.ArtifactVersion != scope.Backup.FormatVersion ||
-		manifest.InstallationID != service.config.App.InstallationID ||
+		manifest.InstanceID != service.config.App.InstanceID ||
 		manifest.BackupID != scope.Backup.ID.String() ||
 		manifest.PolicyID != scope.Backup.BackupPolicyID.String() ||
 		manifest.ResourceID != scope.Backup.ResourceID.String() ||

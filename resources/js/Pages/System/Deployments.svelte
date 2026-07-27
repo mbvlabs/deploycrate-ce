@@ -52,7 +52,10 @@
   }
 
   let { auth, deployments }: { auth: { email: string }; deployments: Deployment[] } = $props()
-  let selectedDeploymentId = $state(deployments[0]?.id ?? '')
+  let selectedDeploymentId = $state('')
+  const selectedDeployment = $derived(
+    deployments.find((deployment) => deployment.id === selectedDeploymentId) ?? deployments[0],
+  )
 
   const stateLabel = (value: string) => value ? value.replaceAll('_', ' ') : 'Unknown'
   const versionLabel = (version: string) => version ? `v${version.replace(/^v/, '')}` : 'Development build'
@@ -92,7 +95,7 @@
           <Card.Content class="grid gap-2">
             {#each deployments as option (option.id)}
               <Button
-                variant={selectedDeploymentId === option.id ? 'secondary' : 'ghost'}
+                variant={selectedDeployment?.id === option.id ? 'secondary' : 'ghost'}
                 class="h-auto w-full justify-start whitespace-normal p-3 text-left"
                 onclick={() => (selectedDeploymentId = option.id)}
               >
@@ -109,7 +112,7 @@
           </Card.Content>
         </Card.Root>
 
-        {#each deployments.filter((deployment) => deployment.id === selectedDeploymentId) as deployment (deployment.id)}
+        {#each selectedDeployment ? [selectedDeployment] : [] as deployment (deployment.id)}
           <Card.Root class="min-w-0 lg:col-span-3">
             <Card.Header>
               <Card.Title>{versionLabel(deployment.releaseVersion)}</Card.Title>

@@ -21,11 +21,7 @@ type ResourceCredentialFactory struct {
 
 type ResourceCredentialOption func(*ResourceCredentialFactory)
 
-func BuildResourceCredential(
-	resourceID uuid.UUID,
-	resourceInstallationID *uuid.UUID,
-	opts ...ResourceCredentialOption,
-) models.ResourceCredentialEntity {
+func BuildResourceCredential(resourceID uuid.UUID, resourceInstallationID *uuid.UUID, opts ...ResourceCredentialOption) models.ResourceCredentialEntity {
 	f := &ResourceCredentialFactory{
 		ResourceCredentialEntity: models.ResourceCredentialEntity{
 			Name:                   faker.Word(),
@@ -46,13 +42,7 @@ func BuildResourceCredential(
 	return f.ResourceCredentialEntity
 }
 
-func CreateResourceCredential(
-	ctx context.Context,
-	exec storage.Executor,
-	resourceID uuid.UUID,
-	resourceInstallationID *uuid.UUID,
-	opts ...ResourceCredentialOption,
-) (models.ResourceCredentialEntity, error) {
+func CreateResourceCredential(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, resourceInstallationID *uuid.UUID, opts ...ResourceCredentialOption) (models.ResourceCredentialEntity, error) {
 	built := BuildResourceCredential(resourceID, resourceInstallationID, opts...)
 
 	entity := models.ResourceCredentialEntity{
@@ -76,23 +66,11 @@ func CreateResourceCredential(
 	return entity, nil
 }
 
-func CreateResourceCredentials(
-	ctx context.Context,
-	exec storage.Executor,
-	resourceID uuid.UUID,
-	resourceInstallationID *uuid.UUID,
-	count int,
-	opts ...ResourceCredentialOption,
-) ([]models.ResourceCredentialEntity, error) {
+func CreateResourceCredentials(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, resourceInstallationID *uuid.UUID, count int, opts ...ResourceCredentialOption) ([]models.ResourceCredentialEntity, error) {
 	resourcecredentials := make([]models.ResourceCredentialEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateResourceCredential(
-			ctx,
-			exec,
-			resourceID,
-			resourceInstallationID,
-			opts...)
+		entity, err := CreateResourceCredential(ctx, exec, resourceID, resourceInstallationID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resourcecredential %d: %w", i+1, err)
 		}

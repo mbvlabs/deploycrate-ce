@@ -3,6 +3,7 @@
   import ChevronDownIcon from '@lucide/svelte/icons/chevron-down'
   import DatabaseIcon from '@lucide/svelte/icons/database'
   import GitBranchIcon from '@lucide/svelte/icons/git-branch'
+  import GithubIcon from '@lucide/svelte/icons/git-fork'
   import KeyRoundIcon from '@lucide/svelte/icons/key-round'
   import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard'
   import LogOutIcon from '@lucide/svelte/icons/log-out'
@@ -67,9 +68,8 @@
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton disabled tooltipContent="Applications">
-                <AppWindowIcon />
-                <span>Applications</span>
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.applications())} tooltipContent="Applications">
+                {#snippet child({ props })}<Link {...props} href={routes.applications()}><AppWindowIcon /><span>Applications</span></Link>{/snippet}
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>
@@ -110,6 +110,11 @@
               <Sidebar.MenuButton disabled tooltipContent="Provider Credentials">
                 <KeyRoundIcon />
                 <span>Provider Credentials</span>
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.gitHubConnection())} tooltipContent="GitHub">
+                {#snippet child({ props })}<Link {...props} href={routes.gitHubConnection()}><GithubIcon /><span>GitHub</span></Link>{/snippet}
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>

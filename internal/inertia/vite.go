@@ -8,10 +8,7 @@ import (
 	"html/template"
 	"strings"
 
-	"deploycrate-ce/assets"
-	"deploycrate-ce/config"
 	"deploycrate-ce/internal/server"
-	"deploycrate-ce/router/routes"
 )
 
 type viteTags struct {
@@ -26,8 +23,8 @@ type viteManifestEntry struct {
 	IsEntry bool     `json:"isEntry"`
 }
 
-func initVite() (*viteTags, error) {
-	if config.Env != server.ProdEnvironment {
+func initVite(env, buildPath string, manifestData []byte) (*viteTags, error) {
+	if env != server.ProdEnvironment {
 		tags := &viteTags{
 			ViteHead: template.HTML(`<script type="module" src="http://localhost:5173/assets/dist/@vite/client"></script>`),
 		}
@@ -37,13 +34,8 @@ func initVite() (*viteTags, error) {
 		return tags, nil
 	}
 
-	data, err := assets.Files.ReadFile("dist/vite/manifest.json")
-	if err != nil {
-		return nil, fmt.Errorf("vite: read manifest: %w", err)
-	}
-
 	var manifest map[string]viteManifestEntry
-	if err := json.Unmarshal(data, &manifest); err != nil {
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		return nil, fmt.Errorf("vite: parse manifest: %w", err)
 	}
 
@@ -53,7 +45,7 @@ func initVite() (*viteTags, error) {
 	}
 
 	tags := &viteTags{}
-	viteBuildPrefix := strings.TrimSuffix(routes.ViteBuild.Path(), "*")
+	viteBuildPrefix := strings.TrimSuffix(buildPath, "*")
 	for _, css := range entry.CSS {
 		tags.ViteHead += template.HTML(`<link rel="stylesheet" href="` + viteBuildPrefix + css + `">`)
 	}

@@ -83,7 +83,7 @@ func (service *DatabaseBackup) Run(
 	}
 	manifest := map[string]any{
 		"artifact_version":          scope.Backup.FormatVersion,
-		"installation_id":           service.config.App.InstallationID,
+		"instance_id":               service.config.App.InstanceID,
 		"backup_id":                 scope.Backup.ID.String(),
 		"policy_id":                 scope.Backup.BackupPolicyID.String(),
 		"resource_id":               scope.Backup.ResourceID.String(),
@@ -122,12 +122,12 @@ func (service *DatabaseBackup) Run(
 	}
 	digestBytes := digest.Sum(nil)
 	metadata := map[string]string{
-		"backup-id":       scope.Backup.ID.String(),
-		"policy-id":       scope.Backup.BackupPolicyID.String(),
-		"resource-id":     scope.Backup.ResourceID.String(),
-		"installation-id": service.config.App.InstallationID,
-		"sha256":          hex.EncodeToString(digestBytes),
-		"format-version":  scope.Backup.FormatVersion,
+		"backup-id":      scope.Backup.ID.String(),
+		"policy-id":      scope.Backup.BackupPolicyID.String(),
+		"resource-id":    scope.Backup.ResourceID.String(),
+		"instance-id":    service.config.App.InstanceID,
+		"sha256":         hex.EncodeToString(digestBytes),
+		"format-version": scope.Backup.FormatVersion,
 	}
 	remote, uploadErr := store.Put(ctx, objectKey, file, metadata)
 	closeErr := file.Close()

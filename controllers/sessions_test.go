@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"deploycrate-ce/assets"
 	"deploycrate-ce/config"
 	"deploycrate-ce/database"
 	"deploycrate-ce/internal/inertia"
@@ -34,7 +35,15 @@ func TestSignIn(t *testing.T) {
 	)
 
 	gob.Register(cookies.FlashMessage{})
-	if err := inertia.Init("inertia/root.go.html"); err != nil {
+	rootHTML, err := assets.Files.ReadFile("inertia/root.go.html")
+	if err != nil {
+		t.Fatalf("read Inertia root template: %v", err)
+	}
+	viteManifest, err := assets.Files.ReadFile("dist/vite/manifest.json")
+	if err != nil {
+		t.Fatalf("read Vite manifest: %v", err)
+	}
+	if err := inertia.Init(config.ProjectName, config.Env, routes.ViteBuild.Path(), rootHTML, viteManifest); err != nil {
 		t.Fatalf("initialize Inertia: %v", err)
 	}
 

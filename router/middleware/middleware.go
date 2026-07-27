@@ -28,7 +28,7 @@ func RegisterRequestMeta(
 	next echo.HandlerFunc,
 ) echo.HandlerFunc {
 	return func(c *echo.Context) error {
-		if isAssetsPath(c.Request().URL.Path) || isAPIPath(c.Request().URL.Path) {
+		if isAssetsPath(c.Request().URL.Path) || isAPIPath(c.Request().URL.Path) || isGitHubWebhookPath(c.Request().URL.Path) {
 			return next(c)
 		}
 
@@ -110,7 +110,7 @@ func ValidateSession(
 ) echo.HandlerFunc {
 	return func(c *echo.Context) error {
 		// Skip session validation for static assets and API routes
-		if isAssetsPath(c.Request().URL.Path) || isAPIPath(c.Request().URL.Path) {
+		if isAssetsPath(c.Request().URL.Path) || isAPIPath(c.Request().URL.Path) || isGitHubWebhookPath(c.Request().URL.Path) {
 			return next(c)
 		}
 		if err := cookies.RecoverInvalidSessions(c); err != nil {
@@ -127,6 +127,10 @@ func isAPIPath(path string) bool {
 
 func isAssetsPath(path string) bool {
 	return matchesPathPrefix(path, routes.AssetsPrefix)
+}
+
+func isGitHubWebhookPath(path string) bool {
+	return path == routes.GitHubWebhook.Path()
 }
 
 func matchesPathPrefix(path, prefix string) bool {
@@ -149,6 +153,9 @@ func hasApplicationSessionCookie(request *http.Request) bool {
 }
 
 func mayBypassCSRF(request *http.Request) bool {
+	if isGitHubWebhookPath(request.URL.Path) {
+		return true
+	}
 	return isAPIPath(request.URL.Path) &&
 		hasNonEmptyBearerToken(request.Header.Get("Authorization")) &&
 		!hasApplicationSessionCookie(request)
