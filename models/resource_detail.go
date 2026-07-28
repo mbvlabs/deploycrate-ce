@@ -31,13 +31,15 @@ type ResourceListItem struct {
 
 type ResourceInstallationDetail struct {
 	ResourceInstallationEntity
-	ServerName    string       `bun:"server_name"`
-	ServerAddress string       `bun:"server_address"`
-	State         string       `bun:"state"`
-	ServiceState  string       `bun:"service_state"`
-	Health        string       `bun:"health"`
-	HealthReason  string       `bun:"health_reason"`
-	ObservedAt    sql.NullTime `bun:"observed_at"`
+	ServerName       string          `bun:"server_name"`
+	ServerAddress    string          `bun:"server_address"`
+	State            string          `bun:"state"`
+	ServiceState     string          `bun:"service_state"`
+	Health           string          `bun:"health"`
+	HealthReason     string          `bun:"health_reason"`
+	ContainerDetails json.RawMessage `bun:"container_details"`
+	ObservedAt       sql.NullTime    `bun:"observed_at"`
+	CanControl       bool            `bun:"-"`
 }
 
 type ResourceVolumeDetail struct {
@@ -69,6 +71,11 @@ type ResourceDetails struct {
 	HealthChecks  []ResourceHealthCheckDetail
 }
 
+type ResourcePrivateAccessDetails struct {
+	DeviceGrants     []SystemWireGuardDeviceGrant
+	AvailableDevices []SystemWireGuardDeviceOption
+}
+
 type ResourceConnectionDetail struct {
 	EnvironmentResourceEntity
 	EnvironmentName     string `bun:"environment_name"`
@@ -86,7 +93,6 @@ type ResourceCredentialSummary struct {
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
 	Name                   string
-	Role                   string
 	Username               string
 	Metadata               json.RawMessage
 	HasEncryptedPayload    bool
@@ -107,9 +113,10 @@ type ResourceServerOption struct {
 }
 
 type ResourceNetworkOption struct {
-	ID        uuid.UUID   `bun:"id"`
-	Name      string      `bun:"name"`
-	ServerIDs []uuid.UUID `bun:"-"`
+	ID              uuid.UUID            `bun:"id"`
+	Name            string               `bun:"name"`
+	ServerIDs       []uuid.UUID          `bun:"-"`
+	ServerAddresses map[uuid.UUID]string `bun:"-"`
 }
 
 type ResourceRegistryCredentialOption struct {

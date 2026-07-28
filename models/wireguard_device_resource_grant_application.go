@@ -47,6 +47,8 @@ func (wireGuardGrantApplication) Mark(ctx context.Context, db storage.Executor, 
 		Where("id = ?", id)
 	if state == "applied" || state == "removed" {
 		query = query.Set("applied_at = COALESCE(applied_at, ?)", now).Set("error = NULL")
+	} else if state == "pending" {
+		query = query.Set("error = NULL")
 	} else if operationErr != nil {
 		query = query.Set("error = ?", operationErr.Error())
 	}

@@ -132,6 +132,21 @@ func RunHostCommand(arguments []string) error {
 			return errors.New("resource ID must be a UUID")
 		}
 		return removeListener(resourceID)
+	case "container-run":
+		if len(arguments) != 1 {
+			return errors.New("usage: host-resource-access container-run")
+		}
+		return runContainer(os.Stdin)
+	case "container-inspect":
+		if len(arguments) != 3 {
+			return errors.New("usage: host-resource-access container-inspect INSTALLATION_ID CONTAINER_NAME")
+		}
+		return printContainerInspection(arguments[1], arguments[2])
+	case "container-start", "container-stop", "container-restart", "container-remove":
+		if len(arguments) != 3 {
+			return errors.New("usage: host-resource-access container-(start|stop|restart|remove) INSTALLATION_ID CONTAINER_NAME")
+		}
+		return controlContainer(strings.TrimPrefix(arguments[0], "container-"), arguments[1], arguments[2])
 	default:
 		return fmt.Errorf("unknown host resource access operation %q", arguments[0])
 	}

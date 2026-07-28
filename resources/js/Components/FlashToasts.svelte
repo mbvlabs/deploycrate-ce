@@ -8,9 +8,9 @@
   import * as Alert from '@/Components/ui/alert'
 
   type FlashMessage = {
-    ID?: string
-    Type: string
-    Message: string
+    id?: string
+    type: string
+    message: string
   }
 
   type Toast = FlashMessage & { id: number }
@@ -20,19 +20,25 @@
   let nextId = 0
   const seenFlashIds = new Set<string>()
 
-  function isFlashMessage(value: unknown): value is FlashMessage {
-    if (!value || typeof value !== 'object') return false
+  function flashMessage(value: unknown): FlashMessage | null {
+    if (!value || typeof value !== 'object') return null
 
     const flash = value as Record<string, unknown>
-    return typeof flash.Type === 'string' && typeof flash.Message === 'string'
+    const type = typeof flash.type === 'string' ? flash.type : flash.Type
+    const message = typeof flash.message === 'string' ? flash.message : flash.Message
+    const id = typeof flash.id === 'string' ? flash.id : flash.ID
+    if (typeof type !== 'string' || typeof message !== 'string') return null
+    return { id: typeof id === 'string' ? id : undefined, type, message }
   }
 
-  function pushFlashes(value: unknown) {
-    if (!Array.isArray(value)) return
+  function pushFlashes(flashes: unknown) {
+    if (!Array.isArray(flashes)) return
 
-    for (const flash of value.filter(isFlashMessage)) {
-      if (flash.ID && seenFlashIds.has(flash.ID)) continue
-      if (flash.ID) seenFlashIds.add(flash.ID)
+    for (const value of flashes) {
+      const flash = flashMessage(value)
+      if (!flash) continue
+      if (flash.id && seenFlashIds.has(flash.id)) continue
+      if (flash.id) seenFlashIds.add(flash.id)
 
       const id = nextId++
       toasts.push({ ...flash, id })
@@ -54,22 +60,22 @@
   <div class="fixed bottom-4 right-4 z-50 w-[min(24rem,calc(100vw-2rem))]" aria-live="polite">
     {#each toasts as toast (toast.id)}
       <Alert.Root
-        variant={toast.Type === 'error' ? 'destructive' : 'default'}
-        class={`${toast.Type === 'success'
+        variant={toast.type === 'error' ? 'destructive' : 'default'}
+        class={`${toast.type === 'success'
           ? 'border-success/50 bg-success/10 text-success'
-          : toast.Type === 'error'
+          : toast.type === 'error'
             ? 'border-destructive/50 bg-destructive/10'
             : 'border-primary/50 bg-primary/10 text-primary'} mb-2`}
       >
-        {#if toast.Type === 'success'}
+        {#if toast.type === 'success'}
           <CircleCheckIcon />
-        {:else if toast.Type === 'error'}
+        {:else if toast.type === 'error'}
           <CircleXIcon />
         {:else}
           <InfoIcon />
         {/if}
-        <Alert.Title class="capitalize">{toast.Type || 'Notice'}</Alert.Title>
-        <Alert.Description class="text-current/80">{toast.Message}</Alert.Description>
+        <Alert.Title class="capitalize">{toast.type || 'Notice'}</Alert.Title>
+        <Alert.Description class="text-current/80">{toast.message}</Alert.Description>
       </Alert.Root>
     {/each}
   </div>

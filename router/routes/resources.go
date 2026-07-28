@@ -8,6 +8,7 @@ var Resources = routing.NewSimpleRoute("", "resources.index", ResourcesPrefix)
 var ResourceNew = routing.NewSimpleRoute("/new", "resources.new", ResourcesPrefix)
 var ResourceCreate = routing.NewSimpleRoute("", "resources.create", ResourcesPrefix)
 var ResourceShow = routing.NewRouteWithUUIDID("/:id", "resources.show", ResourcesPrefix)
+var ResourceDeploy = routing.NewRouteWithUUIDID("/:id/deploy", "resources.deploy", ResourcesPrefix)
 var ResourceEdit = routing.NewRouteWithUUIDID("/:id/edit", "resources.edit", ResourcesPrefix)
 var ResourceUpdate = routing.NewRouteWithUUIDID("/:id", "resources.update", ResourcesPrefix)
 var ResourceDestroy = routing.NewRouteWithUUIDID("/:id", "resources.destroy", ResourcesPrefix)
@@ -30,6 +31,17 @@ var ResourceEndpointCreate = routing.NewRouteWithUUIDID("/:id/endpoints", "resou
 var ResourceEndpointUpdate = routing.NewRouteWithParams[ResourceEndpointParams]("/:id/endpoints/:endpointID", "resources.endpoints.update", ResourcesPrefix)
 var ResourceEndpointDestroy = routing.NewRouteWithParams[ResourceEndpointParams]("/:id/endpoints/:endpointID", "resources.endpoints.destroy", ResourcesPrefix)
 
+var ResourcePrivateAccessCreate = routing.NewRouteWithUUIDID("/:id/private-access", "resources.private-access.create", ResourcesPrefix)
+var ResourcePrivateAccessDestroy = routing.NewRouteWithUUIDID("/:id/private-access", "resources.private-access.destroy", ResourcesPrefix)
+
+type ResourcePrivateAccessDeviceParams struct {
+	ResourceID string `param:"id"`
+	DeviceID   string `param:"deviceID"`
+}
+
+var ResourcePrivateAccessDeviceCreate = routing.NewRouteWithUUIDID("/:id/private-access/devices", "resources.private-access.devices.create", ResourcesPrefix)
+var ResourcePrivateAccessDeviceDestroy = routing.NewRouteWithParams[ResourcePrivateAccessDeviceParams]("/:id/private-access/devices/:deviceID", "resources.private-access.devices.destroy", ResourcesPrefix)
+
 type ResourceCredentialParams struct {
 	ResourceID   string `param:"id"`
 	CredentialID string `param:"credentialID"`
@@ -47,6 +59,10 @@ type ResourceInstallationParams struct {
 var ResourceInstallationCreate = routing.NewRouteWithUUIDID("/:id/installations", "resources.installations.create", ResourcesPrefix)
 var ResourceInstallationUpdate = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID", "resources.installations.update", ResourcesPrefix)
 var ResourceInstallationDestroy = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID", "resources.installations.destroy", ResourcesPrefix)
+var ResourceInstallationStart = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID/start", "resources.installations.start", ResourcesPrefix)
+var ResourceInstallationStop = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID/stop", "resources.installations.stop", ResourcesPrefix)
+var ResourceInstallationRestart = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID/restart", "resources.installations.restart", ResourcesPrefix)
+var ResourceInstallationRemove = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID/remove", "resources.installations.remove", ResourcesPrefix)
 
 type ResourceVolumeParams struct {
 	ResourceID string `param:"id"`

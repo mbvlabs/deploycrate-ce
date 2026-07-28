@@ -7,7 +7,6 @@ CREATE TABLE resource_credentials (
     updated_at TIMESTAMPTZ NOT NULL,
 
     name TEXT NOT NULL,
-    role TEXT NOT NULL,
     username TEXT,
     metadata JSONB NOT NULL,
     enc_payload BYTEA NOT NULL,

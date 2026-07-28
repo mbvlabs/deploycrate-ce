@@ -8,9 +8,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/netip"
 	"strings"
 	"time"
 
+	containerclient "deploycrate-ce/clients/container"
+	postgresqlclient "deploycrate-ce/clients/postgresql"
 	"deploycrate-ce/config"
 	"deploycrate-ce/internal/secretcrypto"
 	"deploycrate-ce/internal/storage"
@@ -26,12 +30,14 @@ const resourceCredentialPurpose = "resource-credential/v1"
 var ErrSystemResourceImmutable = errors.New("DeployCrate system Resources cannot be modified")
 
 type ResourceManagement struct {
-	db     storage.Pool
-	config config.Config
+	db        storage.Pool
+	config    config.Config
+	container containerclient.Client
+	postgres  postgresqlclient.Client
 }
 
 func NewResourceManagement(db storage.Pool, cfg config.Config) *ResourceManagement {
-	return &ResourceManagement{db: db, config: cfg}
+	return &ResourceManagement{db: db, config: cfg, container: containerclient.New(), postgres: postgresqlclient.New()}
 }
 
 type ResourceInput struct {
@@ -74,7 +80,6 @@ type ResourceEndpointInput struct {
 
 type ResourceCredentialInput struct {
 	Name                   string
-	Role                   string
 	Username               string
 	Metadata               json.RawMessage
 	SecretValues           map[string]string
@@ -87,6 +92,7 @@ type ResourceInstallationInput struct {
 	ContainerName        string
 	RestartPolicy        string
 	Configuration        json.RawMessage
+	PortMappings         *[]models.ResourceInstallationPortMapping
 	ServerID             uuid.UUID
 	RegistryCredentialID *uuid.UUID
 }
@@ -203,20 +209,26 @@ func (service *ResourceManagement) Options(ctx context.Context) (models.Resource
 	type networkServer struct {
 		NetworkID uuid.UUID `bun:"network_id"`
 		ServerID  uuid.UUID `bun:"server_id"`
+		Address   string    `bun:"address"`
 	}
 	var access []networkServer
 	if err := service.db.Executor().NewSelect().TableExpr("server_networks").
-		ColumnExpr("private_network_id AS network_id, server_id").Where("removed_at IS NULL").Scan(ctx, &access); err != nil {
+		ColumnExpr("private_network_id AS network_id, server_id, COALESCE(configuration ->> 'address', '') AS address").
+		Where("driver = 'wireguard'").Where("removed_at IS NULL").Scan(ctx, &access); err != nil {
 		return models.ResourceFormOptions{}, err
 	}
 	networkIndexes := make(map[uuid.UUID]int, len(options.PrivateNetworks))
 	for index := range options.PrivateNetworks {
 		networkIndexes[options.PrivateNetworks[index].ID] = index
 		options.PrivateNetworks[index].ServerIDs = make([]uuid.UUID, 0)
+		options.PrivateNetworks[index].ServerAddresses = make(map[uuid.UUID]string)
 	}
 	for _, item := range access {
 		if index, ok := networkIndexes[item.NetworkID]; ok {
 			options.PrivateNetworks[index].ServerIDs = append(options.PrivateNetworks[index].ServerIDs, item.ServerID)
+			if item.Address != "" {
+				options.PrivateNetworks[index].ServerAddresses[item.ServerID] = item.Address
+			}
 		}
 	}
 	return options, nil
@@ -259,7 +271,7 @@ func (service *ResourceManagement) Details(ctx context.Context, resourceID uuid.
 		func() error {
 			return service.db.Executor().NewSelect().TableExpr("resource_installations AS installation").
 				ColumnExpr("installation.*").ColumnExpr("server.name AS server_name, server.address AS server_address").
-				ColumnExpr("COALESCE(status.state, '') AS state, COALESCE(status.service_state, '') AS service_state, COALESCE(status.health, '') AS health, COALESCE(status.health_reason, '') AS health_reason, status.observed_at").
+				ColumnExpr("COALESCE(status.state, '') AS state, COALESCE(status.service_state, '') AS service_state, COALESCE(status.health, '') AS health, COALESCE(status.health_reason, '') AS health_reason, COALESCE(status.details, '{}'::jsonb) AS container_details, status.observed_at").
 				Join("JOIN servers AS server ON server.id = installation.server_id").
 				Join("LEFT JOIN resource_installation_statuses AS status ON status.resource_installation_id = installation.id").
 				Where("installation.resource_id = ?", resourceID).Where("installation.archived_at IS NULL").OrderExpr("installation.created_at").Scan(ctx, &detail.Installations)
@@ -288,15 +300,30 @@ func (service *ResourceManagement) Details(ctx context.Context, resourceID uuid.
 			return models.ResourceDetails{}, err
 		}
 	}
+	for index := range detail.Installations {
+		service.observeInstallation(ctx, &detail.Installations[index])
+	}
 	return detail, nil
 }
 
 func (service *ResourceManagement) CreateResource(ctx context.Context, input CreateResourceInput) (models.ResourceEntity, error) {
 	if input.Resource.ManagementMode == models.ResourceManagementExternal && input.Endpoint == nil {
-		return models.ResourceEntity{}, domainError("endpoint", "required", "external Resources require an active endpoint")
+		return models.ResourceEntity{}, domainError("endpoint", "required", "external Resources require a primary endpoint")
 	}
 	if input.Resource.ManagementMode == models.ResourceManagementExternal && (input.Installation != nil || input.Volume != nil || input.Mount != nil || input.HealthCheck != nil) {
 		return models.ResourceEntity{}, domainError("managementMode", "topology", "external Resources cannot have managed placement topology")
+	}
+	if input.Resource.ManagementMode == models.ResourceManagementManaged && input.Installation == nil {
+		return models.ResourceEntity{}, domainError("installation", "required", "managed Resources require a Docker installation")
+	}
+	if input.Resource.ManagementMode == models.ResourceManagementManaged && input.Endpoint != nil {
+		return models.ResourceEntity{}, domainError("endpoint", "derived", "managed Resource primary endpoints are derived from their Docker installation")
+	}
+	if input.Resource.ManagementMode == models.ResourceManagementExternal && (input.Endpoint.Role != "primary" || input.Endpoint.PrivateNetworkID != nil || input.Endpoint.ResourceInstallationID != nil) {
+		return models.ResourceEntity{}, domainError("endpoint", "primary", "external Resources require a primary origin endpoint")
+	}
+	if input.Resource.ManagementMode == models.ResourceManagementManaged && input.Resource.Kind == "postgresql" && input.Credential == nil {
+		return models.ResourceEntity{}, domainError("credential", "required", "managed PostgreSQL Resources require a Resource administrator credential")
 	}
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -315,15 +342,23 @@ func (service *ResourceManagement) CreateResource(ctx context.Context, input Cre
 	if input.Installation != nil {
 		created, createErr := service.createInstallation(ctx, tx, resource, *input.Installation)
 		if createErr != nil {
-			return models.ResourceEntity{}, createErr
+			return models.ResourceEntity{}, prefixResourceValidation(createErr, "installation")
 		}
 		installation = &created
+	}
+	var endpoint *models.ResourceEndpointEntity
+	if installation != nil {
+		created, createErr := service.createManagedPrimaryEndpoint(ctx, tx, resource, *installation)
+		if createErr != nil {
+			return models.ResourceEntity{}, prefixResourceValidation(createErr, "endpoint")
+		}
+		endpoint = &created
 	}
 	var volume *models.ResourceVolumeEntity
 	if input.Volume != nil {
 		created, createErr := service.createVolume(ctx, tx, resource, *input.Volume)
 		if createErr != nil {
-			return models.ResourceEntity{}, createErr
+			return models.ResourceEntity{}, prefixResourceValidation(createErr, "volume")
 		}
 		volume = &created
 	}
@@ -335,30 +370,27 @@ func (service *ResourceManagement) CreateResource(ctx context.Context, input Cre
 		mountInput.ResourceInstallationID = installation.ID
 		mountInput.ResourceVolumeID = volume.ID
 		if _, err := service.createMount(ctx, tx, resource, mountInput); err != nil {
-			return models.ResourceEntity{}, err
+			return models.ResourceEntity{}, prefixResourceValidation(err, "mount")
 		}
 	}
-	var endpoint *models.ResourceEndpointEntity
 	if input.Endpoint != nil {
 		endpointInput := *input.Endpoint
-		if installation != nil {
-			endpointInput.ResourceInstallationID = &installation.ID
-		}
 		created, createErr := service.createEndpoint(ctx, tx, resource, endpointInput)
 		if createErr != nil {
-			return models.ResourceEntity{}, createErr
+			return models.ResourceEntity{}, prefixResourceValidation(createErr, "endpoint")
 		}
 		endpoint = &created
 	}
 	var credential *models.ResourceCredentialEntity
 	if input.Credential != nil {
 		credentialInput := *input.Credential
-		if installation != nil {
+		if installation != nil && resource.Kind == "postgresql" {
 			credentialInput.ResourceInstallationID = &installation.ID
+			credentialInput.Name = "Resource administrator"
 		}
 		created, createErr := service.createCredential(ctx, tx, resource, credentialInput)
 		if createErr != nil {
-			return models.ResourceEntity{}, createErr
+			return models.ResourceEntity{}, prefixResourceValidation(createErr, "credential")
 		}
 		credential = &created
 	}
@@ -375,7 +407,7 @@ func (service *ResourceManagement) CreateResource(ctx context.Context, input Cre
 			healthInput.ResourceCredentialID = &credential.ID
 		}
 		if _, err := service.createHealthCheck(ctx, tx, resource, healthInput); err != nil {
-			return models.ResourceEntity{}, err
+			return models.ResourceEntity{}, prefixResourceValidation(err, "healthCheck")
 		}
 	}
 	if err := tx.Commit(); err != nil {
@@ -427,6 +459,14 @@ func (service *ResourceManagement) ArchiveResource(ctx context.Context, resource
 	if bindings > 0 {
 		return domainError("resource", "dependency", "archive active Environment bindings before archiving this Resource")
 	}
+	privateAccess, err := tx.NewSelect().TableExpr("resource_endpoints").Where("resource_id = ?", resourceID).
+		Where("private_network_id IS NOT NULL").Where("archived_at IS NULL").Count(ctx)
+	if err != nil {
+		return err
+	}
+	if privateAccess > 0 {
+		return domainError("resource", "private_access", "remove this Resource from its private network before archiving it")
+	}
 	now := time.Now().UTC()
 	statements := []struct {
 		table string
@@ -469,6 +509,9 @@ func (service *ResourceManagement) loadResource(ctx context.Context, db storage.
 }
 
 func (service *ResourceManagement) validateResourceTransition(ctx context.Context, db storage.Executor, current models.ResourceEntity, input ResourceInput) error {
+	if current.ManagementMode != input.ManagementMode {
+		return domainError("managementMode", "immutable", "Resource management mode cannot be changed after creation")
+	}
 	if current.Kind != input.Kind {
 		kindDependencies, err := db.NewSelect().TableExpr("resources AS resource").Where("resource.id = ?", current.ID).
 			Where(`EXISTS (SELECT 1 FROM resource_endpoints WHERE resource_id = resource.id AND archived_at IS NULL)
@@ -508,6 +551,14 @@ func (service *ResourceManagement) validateResourceTransition(ctx context.Contex
 
 func domainError(field, code, message string) error {
 	return errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: field, Code: code, Message: message}})
+}
+
+func prefixResourceValidation(err error, prefix string) error {
+	validationErrors, ok := validation.As(err)
+	if !ok {
+		return err
+	}
+	return errors.Join(models.ErrDomainValidation, validation.WithFieldPrefix(validationErrors, prefix))
 }
 
 func mapResourceConflict(err error) error {
@@ -650,11 +701,11 @@ func (service *ResourceManagement) validateConnectionTopology(ctx context.Contex
 	}
 	if input.ResourceCredentialID != nil {
 		credentials, err := db.NewSelect().TableExpr("resource_credentials").Where("id = ?", *input.ResourceCredentialID).
-			Where("resource_id = ?", resourceID).Where("archived_at IS NULL").Count(ctx)
+			Where("resource_id = ?", resourceID).Where("resource_installation_id IS NULL").Where("archived_at IS NULL").Count(ctx)
 		if err != nil {
 			return err
 		}
-		if err := requireChild(credentials, "resourceCredentialId", "credential must be active and belong to this Resource"); err != nil {
+		if err := requireChild(credentials, "resourceCredentialId", "application credential must be active and belong to this Resource"); err != nil {
 			return err
 		}
 	}
@@ -685,6 +736,180 @@ func normalizedJSON(value json.RawMessage) json.RawMessage {
 	return value
 }
 
+func resourceInstallationConfiguration(input ResourceInstallationInput) (json.RawMessage, error) {
+	configuration := normalizedJSON(input.Configuration)
+	if input.PortMappings == nil {
+		return configuration, nil
+	}
+
+	values := make(map[string]any)
+	if err := json.Unmarshal(configuration, &values); err != nil {
+		return nil, domainError("configuration", "invalid", "configuration must be a JSON object")
+	}
+	if values == nil {
+		values = make(map[string]any)
+	}
+
+	mappings := make([]models.ResourceInstallationPortMapping, len(*input.PortMappings))
+	seenHostPorts := make(map[string]struct{}, len(mappings))
+	for index, mapping := range *input.PortMappings {
+		mapping.Protocol = strings.ToLower(strings.TrimSpace(mapping.Protocol))
+		if mapping.Protocol == "" {
+			mapping.Protocol = "tcp"
+		}
+		if mapping.HostPort < 1 || mapping.HostPort > 65535 {
+			return nil, domainError(fmt.Sprintf("portMappings.%d.hostPort", index), "range", "host port must be between 1 and 65535")
+		}
+		if mapping.ContainerPort < 1 || mapping.ContainerPort > 65535 {
+			return nil, domainError(fmt.Sprintf("portMappings.%d.containerPort", index), "range", "container port must be between 1 and 65535")
+		}
+		if mapping.Protocol != "tcp" && mapping.Protocol != "udp" {
+			return nil, domainError(fmt.Sprintf("portMappings.%d.protocol", index), "unsupported", "port mapping protocol must be TCP or UDP")
+		}
+		hostKey := fmt.Sprintf("%d/%s", mapping.HostPort, mapping.Protocol)
+		if _, exists := seenHostPorts[hostKey]; exists {
+			return nil, domainError(fmt.Sprintf("portMappings.%d.hostPort", index), "duplicate", "host port is mapped more than once")
+		}
+		seenHostPorts[hostKey] = struct{}{}
+		mappings[index] = mapping
+	}
+
+	if len(mappings) == 0 {
+		delete(values, "portMappings")
+	} else {
+		values["portMappings"] = mappings
+	}
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return nil, err
+	}
+	return encoded, nil
+}
+
+func primaryPortMapping(configuration json.RawMessage) (models.ResourceInstallationPortMapping, error) {
+	var decoded struct {
+		PortMappings []models.ResourceInstallationPortMapping `json:"portMappings"`
+	}
+	if err := json.Unmarshal(configuration, &decoded); err != nil {
+		return models.ResourceInstallationPortMapping{}, domainError("configuration", "invalid", "installation configuration must be valid JSON")
+	}
+	if len(decoded.PortMappings) != 1 {
+		return models.ResourceInstallationPortMapping{}, domainError("portMappings", "topology", "managed Resources require exactly one Docker port mapping")
+	}
+	return decoded.PortMappings[0], nil
+}
+
+func managedPrimaryPortMapping(kind string, configuration json.RawMessage) (models.ResourceInstallationPortMapping, error) {
+	definition, ok := models.FindResourceKind(kind)
+	if !ok {
+		return models.ResourceInstallationPortMapping{}, domainError("kind", "unsupported", "resource kind is not supported")
+	}
+	mapping, err := primaryPortMapping(configuration)
+	if err != nil {
+		return models.ResourceInstallationPortMapping{}, err
+	}
+	if mapping.ContainerPort != definition.DefaultPort {
+		return models.ResourceInstallationPortMapping{}, domainError(
+			"portMappings.0.containerPort",
+			"default",
+			fmt.Sprintf("%s Docker installations must use container port %d", definition.Label, definition.DefaultPort),
+		)
+	}
+	return mapping, nil
+}
+
+func (service *ResourceManagement) createManagedPrimaryEndpoint(ctx context.Context, db storage.Executor, resource models.ResourceEntity, installation models.ResourceInstallationEntity) (models.ResourceEndpointEntity, error) {
+	definition, ok := models.FindResourceKind(resource.Kind)
+	if !ok {
+		return models.ResourceEndpointEntity{}, domainError("kind", "unsupported", "resource kind is not supported")
+	}
+	mapping, err := managedPrimaryPortMapping(resource.Kind, installation.Configuration)
+	if err != nil {
+		return models.ResourceEndpointEntity{}, err
+	}
+	active, err := db.NewSelect().TableExpr("resource_endpoints").
+		Where("resource_id = ?", resource.ID).
+		Where("role = 'primary'").
+		Where("private_network_id IS NULL").
+		Where("archived_at IS NULL").
+		Count(ctx)
+	if err != nil {
+		return models.ResourceEndpointEntity{}, err
+	}
+	if active != 0 {
+		return models.ResourceEndpointEntity{}, domainError("endpoint", "primary", "managed Resource already has a primary origin endpoint")
+	}
+	installationID := installation.ID
+	return models.ResourceEndpoint.Create(ctx, db, models.CreateResourceEndpointData{
+		Name: "Primary service", Role: "primary", Address: "127.0.0.1", Port: mapping.HostPort,
+		Protocol: definition.DefaultProtocol, TlsMode: definition.DefaultTLSMode, Settings: json.RawMessage(`{}`),
+		ResourceID: resource.ID, ResourceInstallationID: &installationID,
+	})
+}
+
+func (service *ResourceManagement) syncManagedEndpoints(ctx context.Context, db storage.Executor, resource models.ResourceEntity, installation models.ResourceInstallationEntity) error {
+	definition, ok := models.FindResourceKind(resource.Kind)
+	if !ok {
+		return domainError("kind", "unsupported", "resource kind is not supported")
+	}
+	mapping, err := managedPrimaryPortMapping(resource.Kind, installation.Configuration)
+	if err != nil {
+		return err
+	}
+	endpoints := make([]models.ResourceEndpointEntity, 0, 2)
+	if err := db.NewSelect().Model(&endpoints).
+		Where("resource_id = ?", resource.ID).
+		Where("resource_installation_id = ?", installation.ID).
+		Where("archived_at IS NULL").
+		OrderExpr("created_at").
+		Scan(ctx); err != nil {
+		return err
+	}
+	origins := 0
+	privateEndpoints := 0
+	for _, endpoint := range endpoints {
+		address := "127.0.0.1"
+		if endpoint.PrivateNetworkID == nil {
+			if endpoint.Role != "primary" {
+				return domainError("endpoint", "primary", "managed Resource origin endpoint must use the primary role")
+			}
+			origins++
+		} else {
+			privateEndpoints++
+			var attachmentAddress string
+			err := db.NewSelect().TableExpr("server_networks").ColumnExpr("COALESCE(configuration ->> 'address', '')").
+				Where("server_id = ?", installation.ServerID).
+				Where("private_network_id = ?", *endpoint.PrivateNetworkID).
+				Where("driver = 'wireguard'").Where("removed_at IS NULL").Limit(1).Scan(ctx, &attachmentAddress)
+			if errors.Is(err, sql.ErrNoRows) || strings.TrimSpace(attachmentAddress) == "" {
+				return domainError("serverId", "network_topology", "installation Server has no active attachment for private access")
+			}
+			if err != nil {
+				return err
+			}
+			address = strings.TrimSpace(attachmentAddress)
+			if address != WireGuardPrivateAddress || address != endpoint.Address {
+				return domainError("serverId", "private_access", "remove this Resource from its private network before changing its WireGuard attachment address")
+			}
+		}
+		if _, err := models.ResourceEndpoint.Update(ctx, db, models.UpdateResourceEndpointData{
+			ID: endpoint.ID, Name: endpoint.Name, Role: "primary", Address: address,
+			Port: mapping.HostPort, Protocol: definition.DefaultProtocol, TlsMode: endpoint.TlsMode,
+			Settings: json.RawMessage(`{}`), ArchivedAt: endpoint.ArchivedAt, ResourceID: resource.ID,
+			ResourceInstallationID: &installation.ID, PrivateNetworkID: endpoint.PrivateNetworkID,
+		}); err != nil {
+			return err
+		}
+	}
+	if origins != 1 {
+		return domainError("endpoint", "primary", "managed Resource requires exactly one primary origin endpoint")
+	}
+	if privateEndpoints > 1 {
+		return domainError("endpoint", "private", "managed Resource supports at most one private endpoint")
+	}
+	return nil
+}
+
 func nullableString(value string) sql.NullString {
 	value = strings.TrimSpace(value)
 	return sql.NullString{String: value, Valid: value != ""}
@@ -701,18 +926,16 @@ func (service *ResourceManagement) credentialPayload(input ResourceCredentialInp
 	if len(values) == 0 {
 		return nil, nil, domainError("secretValues", "required", "at least one credential value is required")
 	}
-	if definition.Kind != "custom" {
-		allowed := make(map[string]models.ResourceCredentialField, len(definition.CredentialFields))
-		for _, field := range definition.CredentialFields {
-			allowed[field.Name] = field
-			if field.Required && values[field.Name] == "" {
-				return nil, nil, domainError("secretValues."+field.Name, "required", field.Label+" is required")
-			}
+	allowed := make(map[string]models.ResourceCredentialField, len(definition.CredentialFields))
+	for _, field := range definition.CredentialFields {
+		allowed[field.Name] = field
+		if field.Required && values[field.Name] == "" {
+			return nil, nil, domainError("secretValues."+field.Name, "required", field.Label+" is required")
 		}
-		for key := range values {
-			if _, ok := allowed[key]; !ok {
-				return nil, nil, domainError("secretValues."+key, "unsupported", "credential field is not supported by this resource kind")
-			}
+	}
+	for key := range values {
+		if _, ok := allowed[key]; !ok {
+			return nil, nil, domainError("secretValues."+key, "unsupported", "credential field is not supported by this resource kind")
 		}
 	}
 	payload, err := json.Marshal(struct {
@@ -735,6 +958,100 @@ func (service *ResourceManagement) credentialPayload(input ResourceCredentialInp
 	return encrypted, digest.Sum(nil), nil
 }
 
+func (service *ResourceManagement) credentialSecretValues(credential models.ResourceCredentialEntity) (map[string]string, error) {
+	plaintext, err := secretcrypto.DecryptForPurpose(
+		credential.EncPayload,
+		service.config.App.SessionEncryptionKey,
+		resourceCredentialPurpose,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt Resource credential: %w", err)
+	}
+	var payload struct {
+		SchemaVersion int               `json:"schema_version"`
+		Values        map[string]string `json:"values"`
+	}
+	if err := json.Unmarshal(plaintext, &payload); err != nil || payload.SchemaVersion != 1 {
+		return nil, errors.New("Resource credential payload is invalid")
+	}
+	return payload.Values, nil
+}
+
+func (service *ResourceManagement) reconcilePostgreSQLCredential(ctx context.Context, db storage.Executor, resource models.ResourceEntity, credential models.ResourceCredentialEntity, administrator *models.ResourceCredentialEntity) error {
+	var installationID uuid.UUID
+	if credential.ResourceInstallationID != nil {
+		installationID = *credential.ResourceInstallationID
+	} else {
+		installations := make([]uuid.UUID, 0, 2)
+		if err := db.NewSelect().TableExpr("resource_installations").ColumnExpr("id").Where("resource_id = ?", resource.ID).Where("archived_at IS NULL").Limit(2).Scan(ctx, &installations); err != nil {
+			return err
+		}
+		if len(installations) != 1 {
+			return errors.New("PostgreSQL role reconciliation requires exactly one active Resource installation")
+		}
+		installationID = installations[0]
+	}
+
+	if administrator == nil {
+		administrators := make([]models.ResourceCredentialEntity, 0, 2)
+		if err := db.NewSelect().Model(&administrators).
+			Where("resource_id = ?", resource.ID).
+			Where("resource_installation_id = ?", installationID).
+			Where("archived_at IS NULL").
+			Limit(2).
+			Scan(ctx); err != nil {
+			return err
+		}
+		if len(administrators) != 1 {
+			return errors.New("PostgreSQL role reconciliation requires exactly one Resource administrator credential")
+		}
+		administrator = &administrators[0]
+	}
+	if !administrator.Username.Valid {
+		return errors.New("Resource administrator credential has no PostgreSQL username")
+	}
+	administratorValues, err := service.credentialSecretValues(*administrator)
+	if err != nil {
+		return fmt.Errorf("load Resource administrator credential: %w", err)
+	}
+	administratorPassword := administratorValues["password"]
+	if administratorPassword == "" {
+		return errors.New("Resource administrator credential has no PostgreSQL password")
+	}
+	targetValues, err := service.credentialSecretValues(credential)
+	if err != nil {
+		return fmt.Errorf("load PostgreSQL login credential: %w", err)
+	}
+	if !credential.Username.Valid || targetValues["password"] == "" {
+		return errors.New("PostgreSQL login credential requires a username and password")
+	}
+
+	var origin struct {
+		Address string `bun:"address"`
+		Port    int32  `bun:"port"`
+	}
+	err = db.NewSelect().TableExpr("resource_endpoints").ColumnExpr("address, port").
+		Where("resource_id = ?", resource.ID).
+		Where("resource_installation_id = ?", installationID).
+		Where("role = 'primary'").
+		Where("private_network_id IS NULL").
+		Where("archived_at IS NULL").
+		Scan(ctx, &origin)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errors.New("PostgreSQL Resource has no primary runtime origin")
+	}
+	if err != nil {
+		return err
+	}
+	if err := service.postgres.ReconcileLoginRole(ctx, postgresqlclient.Connection{
+		Host: origin.Address, Port: origin.Port,
+		Username: administrator.Username.String, Password: administratorPassword,
+	}, credential.Username.String, targetValues["password"]); err != nil {
+		return fmt.Errorf("reconcile PostgreSQL login role %q: %w", credential.Username.String, err)
+	}
+	return nil
+}
+
 func (service *ResourceManagement) CreateEndpoint(ctx context.Context, resourceID uuid.UUID, input ResourceEndpointInput) (models.ResourceEndpointEntity, error) {
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -744,6 +1061,9 @@ func (service *ResourceManagement) CreateEndpoint(ctx context.Context, resourceI
 	resource, err := service.loadResource(ctx, tx, resourceID, true)
 	if err != nil {
 		return models.ResourceEndpointEntity{}, err
+	}
+	if resource.ManagementMode == models.ResourceManagementManaged {
+		return models.ResourceEndpointEntity{}, domainError("endpoint", "derived", "managed Resource endpoints are created through installation and private-access workflows")
 	}
 	endpoint, err := service.createEndpoint(ctx, tx, resource, input)
 	if err != nil {
@@ -769,6 +1089,20 @@ func (service *ResourceManagement) createEndpoint(ctx context.Context, db storag
 	if resource.ManagementMode == models.ResourceManagementExternal && input.ResourceInstallationID != nil {
 		return models.ResourceEndpointEntity{}, domainError("resourceInstallationId", "mode", "external Resources cannot use managed installations")
 	}
+	if input.Role == "primary" && input.PrivateNetworkID == nil {
+		primaryEndpoints, err := db.NewSelect().TableExpr("resource_endpoints").
+			Where("resource_id = ?", resource.ID).
+			Where("role = 'primary'").
+			Where("private_network_id IS NULL").
+			Where("archived_at IS NULL").
+			Count(ctx)
+		if err != nil {
+			return models.ResourceEndpointEntity{}, err
+		}
+		if primaryEndpoints != 0 {
+			return models.ResourceEndpointEntity{}, domainError("role", "primary", "Resource already has a primary origin endpoint")
+		}
+	}
 	if err := service.validateEndpointTopology(ctx, db, resource, nil, input); err != nil {
 		return models.ResourceEndpointEntity{}, err
 	}
@@ -791,6 +1125,9 @@ func (service *ResourceManagement) UpdateEndpoint(ctx context.Context, resourceI
 	if err != nil {
 		return models.ResourceEndpointEntity{}, err
 	}
+	if resource.ManagementMode == models.ResourceManagementManaged {
+		return models.ResourceEndpointEntity{}, domainError("endpoint", "derived", "managed Resource endpoints are changed through installation and private-access workflows")
+	}
 	var current models.ResourceEndpointEntity
 	err = tx.NewSelect().Model(&current).Where("id = ?", endpointID).Where("resource_id = ?", resourceID).Where("archived_at IS NULL").For("UPDATE").Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -798,6 +1135,18 @@ func (service *ResourceManagement) UpdateEndpoint(ctx context.Context, resourceI
 	}
 	if err != nil {
 		return models.ResourceEndpointEntity{}, err
+	}
+	if current.Role == "primary" && current.PrivateNetworkID == nil && (input.Role != "primary" || input.PrivateNetworkID != nil) {
+		return models.ResourceEndpointEntity{}, domainError("role", "primary", "external Resource primary origin cannot be changed into another endpoint type")
+	}
+	if input.Role == "primary" && input.PrivateNetworkID == nil && (current.Role != "primary" || current.PrivateNetworkID != nil) {
+		primaryEndpoints, countErr := tx.NewSelect().TableExpr("resource_endpoints").Where("resource_id = ?", resourceID).Where("role = 'primary'").Where("private_network_id IS NULL").Where("archived_at IS NULL").Count(ctx)
+		if countErr != nil {
+			return models.ResourceEndpointEntity{}, countErr
+		}
+		if primaryEndpoints != 0 {
+			return models.ResourceEndpointEntity{}, domainError("role", "primary", "Resource already has a primary origin endpoint")
+		}
 	}
 	input.Settings = normalizedJSON(input.Settings)
 	entity := models.ResourceEndpointEntity{
@@ -883,8 +1232,12 @@ func (service *ResourceManagement) ArchiveEndpoint(ctx context.Context, resource
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
+	resource, err := service.loadResource(ctx, tx, resourceID, true)
+	if err != nil {
 		return err
+	}
+	if resource.ManagementMode == models.ResourceManagementManaged {
+		return domainError("endpoint", "derived", "managed Resource endpoints are removed through the private-access workflow")
 	}
 	var endpoint models.ResourceEndpointEntity
 	err = tx.NewSelect().Model(&endpoint).Where("id = ?", endpointID).Where("resource_id = ?", resourceID).Where("archived_at IS NULL").For("UPDATE").Scan(ctx)
@@ -902,17 +1255,13 @@ func (service *ResourceManagement) ArchiveEndpoint(ctx context.Context, resource
 	if dependencies > 0 {
 		return domainError("endpoint", "dependency", "endpoint is selected by an active binding or health check")
 	}
-	if resourceID != uuid.Nil {
-		endpoints, countErr := tx.NewSelect().TableExpr("resource_endpoints").Where("resource_id = ?", resourceID).Where("archived_at IS NULL").Count(ctx)
+	if endpoint.Role == "primary" && endpoint.PrivateNetworkID == nil {
+		primaryEndpoints, countErr := tx.NewSelect().TableExpr("resource_endpoints").Where("resource_id = ?", resourceID).Where("role = 'primary'").Where("private_network_id IS NULL").Where("archived_at IS NULL").Count(ctx)
 		if countErr != nil {
 			return countErr
 		}
-		var mode models.ResourceManagementModeEnum
-		if modeErr := tx.NewSelect().TableExpr("resources").ColumnExpr("management_mode").Where("id = ?", resourceID).Scan(ctx, &mode); modeErr != nil {
-			return modeErr
-		}
-		if mode == models.ResourceManagementExternal && endpoints == 1 {
-			return domainError("endpoint", "required", "external Resources must retain at least one active endpoint")
+		if primaryEndpoints == 1 {
+			return domainError("endpoint", "required", "external Resources must retain one primary origin endpoint")
 		}
 	}
 	now := time.Now().UTC()
@@ -936,6 +1285,11 @@ func (service *ResourceManagement) CreateCredential(ctx context.Context, resourc
 	if err != nil {
 		return models.ResourceCredentialEntity{}, err
 	}
+	if resource.ManagementMode == models.ResourceManagementManaged && resource.Kind == "postgresql" && credential.ResourceInstallationID == nil {
+		if err := service.reconcilePostgreSQLCredential(ctx, tx, resource, credential, nil); err != nil {
+			return models.ResourceCredentialEntity{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return models.ResourceCredentialEntity{}, mapResourceConflict(err)
 	}
@@ -947,7 +1301,13 @@ func (service *ResourceManagement) createCredential(ctx context.Context, db stor
 	if !ok {
 		return models.ResourceCredentialEntity{}, domainError("kind", "unsupported", "resource kind is not supported")
 	}
+	if resource.Kind == "postgresql" && strings.TrimSpace(input.Username) == "" {
+		return models.ResourceCredentialEntity{}, domainError("username", "required", "PostgreSQL credentials require a username")
+	}
 	if input.ResourceInstallationID != nil {
+		if resource.ManagementMode != models.ResourceManagementManaged || resource.Kind != "postgresql" {
+			return models.ResourceCredentialEntity{}, domainError("resourceInstallationId", "administrator", "installation-specific credentials are reserved for managed PostgreSQL Resource administrators")
+		}
 		count, err := db.NewSelect().TableExpr("resource_installations").Where("id = ?", *input.ResourceInstallationID).
 			Where("resource_id = ?", resource.ID).Where("archived_at IS NULL").Count(ctx)
 		if err != nil {
@@ -956,13 +1316,31 @@ func (service *ResourceManagement) createCredential(ctx context.Context, db stor
 		if err := requireChild(count, "resourceInstallationId", "installation must be active and belong to this Resource"); err != nil {
 			return models.ResourceCredentialEntity{}, err
 		}
+		administrators, err := db.NewSelect().TableExpr("resource_credentials").Where("resource_id = ?", resource.ID).
+			Where("resource_installation_id = ?", *input.ResourceInstallationID).Where("archived_at IS NULL").Count(ctx)
+		if err != nil {
+			return models.ResourceCredentialEntity{}, err
+		}
+		if administrators != 0 {
+			return models.ResourceCredentialEntity{}, domainError("resourceInstallationId", "administrator", "PostgreSQL installation already has a Resource administrator credential")
+		}
+	}
+	if resource.Kind == "postgresql" {
+		usernames, err := db.NewSelect().TableExpr("resource_credentials").Where("resource_id = ?", resource.ID).
+			Where("username = ?", strings.TrimSpace(input.Username)).Where("archived_at IS NULL").Count(ctx)
+		if err != nil {
+			return models.ResourceCredentialEntity{}, err
+		}
+		if usernames != 0 {
+			return models.ResourceCredentialEntity{}, domainError("username", "unique", "an active PostgreSQL credential already uses this username")
+		}
 	}
 	encrypted, digest, err := service.credentialPayload(input, definition)
 	if err != nil {
 		return models.ResourceCredentialEntity{}, err
 	}
 	created, err := models.ResourceCredential.Create(ctx, db, models.CreateResourceCredentialData{
-		Name: input.Name, Role: input.Role, Username: nullableString(input.Username), Metadata: normalizedJSON(input.Metadata),
+		Name: input.Name, Username: nullableString(input.Username), Metadata: normalizedJSON(input.Metadata),
 		EncPayload: encrypted, Digest: digest, ResourceID: resource.ID, ResourceInstallationID: input.ResourceInstallationID,
 	})
 	return created, mapResourceConflict(err)
@@ -994,13 +1372,20 @@ func (service *ResourceManagement) updateCredential(ctx context.Context, resourc
 	if err != nil {
 		return models.ResourceCredentialEntity{}, err
 	}
-	if input.ResourceInstallationID != nil {
-		count, countErr := tx.NewSelect().TableExpr("resource_installations").Where("id = ?", *input.ResourceInstallationID).Where("resource_id = ?", resourceID).Where("archived_at IS NULL").Count(ctx)
+	if resource.Kind == "postgresql" && strings.TrimSpace(input.Username) == "" {
+		return models.ResourceCredentialEntity{}, domainError("username", "required", "PostgreSQL credentials require a username")
+	}
+	if current.ResourceInstallationID != nil && strings.TrimSpace(input.Username) != current.Username.String {
+		return models.ResourceCredentialEntity{}, domainError("username", "immutable", "Resource administrator username cannot be changed after PostgreSQL initialization")
+	}
+	if resource.Kind == "postgresql" {
+		usernames, countErr := tx.NewSelect().TableExpr("resource_credentials").Where("resource_id = ?", resourceID).
+			Where("username = ?", strings.TrimSpace(input.Username)).Where("id <> ?", current.ID).Where("archived_at IS NULL").Count(ctx)
 		if countErr != nil {
 			return models.ResourceCredentialEntity{}, countErr
 		}
-		if err := requireChild(count, "resourceInstallationId", "installation must be active and belong to this Resource"); err != nil {
-			return models.ResourceCredentialEntity{}, err
+		if usernames != 0 {
+			return models.ResourceCredentialEntity{}, domainError("username", "unique", "an active PostgreSQL credential already uses this username")
 		}
 	}
 	encrypted, digest := current.EncPayload, current.Digest
@@ -1011,10 +1396,27 @@ func (service *ResourceManagement) updateCredential(ctx context.Context, resourc
 			return models.ResourceCredentialEntity{}, err
 		}
 	}
-	updated, err := models.ResourceCredential.Update(ctx, tx, models.UpdateResourceCredentialData{
-		ID: current.ID, Name: input.Name, Role: input.Role, Username: nullableString(input.Username),
+	candidate := models.ResourceCredentialEntity{
+		ID: current.ID, Name: input.Name, Username: nullableString(input.Username),
 		Metadata: normalizedJSON(input.Metadata), EncPayload: encrypted, Digest: digest,
-		ArchivedAt: current.ArchivedAt, ResourceID: resourceID, ResourceInstallationID: input.ResourceInstallationID,
+		ArchivedAt: current.ArchivedAt, ResourceID: resourceID, ResourceInstallationID: current.ResourceInstallationID,
+	}
+	if err := candidate.Validate(); err != nil {
+		return models.ResourceCredentialEntity{}, errors.Join(models.ErrDomainValidation, err)
+	}
+	if resource.ManagementMode == models.ResourceManagementManaged && resource.Kind == "postgresql" {
+		var administrator *models.ResourceCredentialEntity
+		if current.ResourceInstallationID != nil {
+			administrator = &current
+		}
+		if err := service.reconcilePostgreSQLCredential(ctx, tx, resource, candidate, administrator); err != nil {
+			return models.ResourceCredentialEntity{}, err
+		}
+	}
+	updated, err := models.ResourceCredential.Update(ctx, tx, models.UpdateResourceCredentialData{
+		ID: current.ID, Name: input.Name, Username: nullableString(input.Username),
+		Metadata: normalizedJSON(input.Metadata), EncPayload: encrypted, Digest: digest,
+		ArchivedAt: current.ArchivedAt, ResourceID: resourceID, ResourceInstallationID: current.ResourceInstallationID,
 	})
 	if err != nil {
 		return models.ResourceCredentialEntity{}, mapResourceConflict(err)
@@ -1041,6 +1443,9 @@ func (service *ResourceManagement) ArchiveCredential(ctx context.Context, resour
 	}
 	if err != nil {
 		return err
+	}
+	if credential.ResourceInstallationID != nil {
+		return domainError("credential", "administrator", "Resource administrator credential cannot be archived while its PostgreSQL installation is active")
 	}
 	dependencies, err := tx.NewSelect().TableExpr("resource_credentials AS credential").Where("credential.id = ?", credentialID).
 		Where("EXISTS (SELECT 1 FROM environment_resources WHERE resource_credential_id = credential.id AND archived_at IS NULL) OR EXISTS (SELECT 1 FROM resource_health_checks WHERE resource_credential_id = credential.id AND archived_at IS NULL)").Count(ctx)
@@ -1070,8 +1475,14 @@ func (service *ResourceManagement) CreateInstallation(ctx context.Context, resou
 	if resource.ManagementMode != models.ResourceManagementManaged {
 		return models.ResourceInstallationEntity{}, domainError("managementMode", "mode", "installations are allowed only for managed Resources")
 	}
+	if resource.Kind == "postgresql" {
+		return models.ResourceInstallationEntity{}, domainError("installation", "administrator", "managed PostgreSQL installation and Resource administrator credential must be created together")
+	}
 	installation, err := service.createInstallation(ctx, tx, resource, input)
 	if err != nil {
+		return models.ResourceInstallationEntity{}, err
+	}
+	if _, err := service.createManagedPrimaryEndpoint(ctx, tx, resource, installation); err != nil {
 		return models.ResourceInstallationEntity{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1083,6 +1494,13 @@ func (service *ResourceManagement) CreateInstallation(ctx context.Context, resou
 func (service *ResourceManagement) createInstallation(ctx context.Context, db storage.Executor, resource models.ResourceEntity, input ResourceInstallationInput) (models.ResourceInstallationEntity, error) {
 	if resource.ManagementMode != models.ResourceManagementManaged {
 		return models.ResourceInstallationEntity{}, domainError("managementMode", "mode", "installations are allowed only for managed Resources")
+	}
+	installations, err := db.NewSelect().TableExpr("resource_installations").Where("resource_id = ?", resource.ID).Where("archived_at IS NULL").Count(ctx)
+	if err != nil {
+		return models.ResourceInstallationEntity{}, err
+	}
+	if installations > 0 {
+		return models.ResourceInstallationEntity{}, domainError("installation", "topology", "only one active Docker installation is supported for a Resource right now")
 	}
 	if err := service.validatePlacement(ctx, db, input.ServerID); err != nil {
 		return models.ResourceInstallationEntity{}, err
@@ -1096,10 +1514,17 @@ func (service *ResourceManagement) createInstallation(ctx context.Context, db st
 			return models.ResourceInstallationEntity{}, err
 		}
 	}
+	configuration, err := resourceInstallationConfiguration(input)
+	if err != nil {
+		return models.ResourceInstallationEntity{}, err
+	}
+	if _, err := managedPrimaryPortMapping(resource.Kind, configuration); err != nil {
+		return models.ResourceInstallationEntity{}, err
+	}
 	created, err := models.ResourceInstallation.Create(ctx, db, models.CreateResourceInstallationData{
 		ImageReference: input.ImageReference, ImageDigest: nullableString(input.ImageDigest),
 		ContainerName: input.ContainerName, RestartPolicy: input.RestartPolicy,
-		Configuration: normalizedJSON(input.Configuration), ResourceID: resource.ID,
+		Configuration: configuration, ResourceID: resource.ID,
 		ServerID: input.ServerID, RegistryCredentialID: input.RegistryCredentialID,
 	})
 	return created, mapResourceConflict(err)
@@ -1143,19 +1568,310 @@ func (service *ResourceManagement) UpdateInstallation(ctx context.Context, resou
 			return models.ResourceInstallationEntity{}, err
 		}
 	}
+	configuration, err := resourceInstallationConfiguration(input)
+	if err != nil {
+		return models.ResourceInstallationEntity{}, err
+	}
+	currentMapping, err := managedPrimaryPortMapping(resource.Kind, current.Configuration)
+	if err != nil {
+		return models.ResourceInstallationEntity{}, err
+	}
+	nextMapping, err := managedPrimaryPortMapping(resource.Kind, configuration)
+	if err != nil {
+		return models.ResourceInstallationEntity{}, err
+	}
+	privateEndpoints, err := tx.NewSelect().TableExpr("resource_endpoints").Where("resource_installation_id = ?", installationID).
+		Where("private_network_id IS NOT NULL").Where("archived_at IS NULL").Count(ctx)
+	if err != nil {
+		return models.ResourceInstallationEntity{}, err
+	}
+	if privateEndpoints > 0 && (current.ServerID != input.ServerID || currentMapping.HostPort != nextMapping.HostPort) {
+		return models.ResourceInstallationEntity{}, domainError("installation", "private_access", "remove this Resource from its private network before changing the installation Server or host port")
+	}
 	updated, err := models.ResourceInstallation.Update(ctx, tx, models.UpdateResourceInstallationData{
 		ID: current.ID, ImageReference: input.ImageReference, ImageDigest: nullableString(input.ImageDigest),
 		ContainerName: input.ContainerName, RestartPolicy: input.RestartPolicy,
-		Configuration: normalizedJSON(input.Configuration), ArchivedAt: current.ArchivedAt,
+		Configuration: configuration, ArchivedAt: current.ArchivedAt,
 		ResourceID: resourceID, ServerID: input.ServerID, RegistryCredentialID: input.RegistryCredentialID,
 	})
 	if err != nil {
 		return models.ResourceInstallationEntity{}, mapResourceConflict(err)
 	}
+	if err := service.syncManagedEndpoints(ctx, tx, resource, updated); err != nil {
+		return models.ResourceInstallationEntity{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return models.ResourceInstallationEntity{}, mapResourceConflict(err)
 	}
 	return updated, nil
+}
+
+func (service *ResourceManagement) RunInstallation(ctx context.Context, resourceID, installationID uuid.UUID) error {
+	resource, err := service.loadResource(ctx, service.db.Executor(), resourceID, false)
+	if err != nil {
+		return err
+	}
+	if resource.ManagementMode != models.ResourceManagementManaged {
+		return domainError("managementMode", "mode", "only managed Resources have runnable installations")
+	}
+
+	var installation models.ResourceInstallationEntity
+	err = service.db.Executor().NewSelect().Model(&installation).
+		Where("id = ?", installationID).
+		Where("resource_id = ?", resourceID).
+		Where("archived_at IS NULL").
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if installation.RegistryCredentialID != nil {
+		return errors.New("running an installation with a registry credential is not supported yet")
+	}
+
+	server, err := models.Server.Find(ctx, service.db.Executor(), installation.ServerID)
+	if err != nil {
+		return err
+	}
+	serverAddress, addressErr := netip.ParseAddr(strings.TrimSpace(server.Ipv4Address))
+	if addressErr != nil || !serverAddress.IsLoopback() {
+		return errors.New("this Server is not the local DeployCrate CE host and does not have a container executor")
+	}
+
+	mapping, err := managedPrimaryPortMapping(resource.Kind, installation.Configuration)
+	if err != nil {
+		return err
+	}
+	portMappings := []containerclient.PortMapping{{
+		HostPort: mapping.HostPort, ContainerPort: mapping.ContainerPort, Protocol: mapping.Protocol,
+	}}
+
+	type volumeMount struct {
+		Name      string `bun:"name"`
+		MountPath string `bun:"mount_path"`
+		ReadOnly  bool   `bun:"read_only"`
+	}
+	volumeMounts := make([]volumeMount, 0)
+	if err := service.db.Executor().NewSelect().TableExpr("resource_volume_mounts AS mount").
+		ColumnExpr("volume.name, mount.mount_path, mount.read_only").
+		Join("JOIN resource_volumes AS volume ON volume.id = mount.resource_volume_id AND volume.archived_at IS NULL").
+		Where("mount.resource_installation_id = ?", installationID).
+		Where("mount.archived_at IS NULL").
+		OrderExpr("mount.mount_path").
+		Scan(ctx, &volumeMounts); err != nil {
+		return err
+	}
+	mounts := make([]containerclient.VolumeMount, 0, len(volumeMounts))
+	for _, mount := range volumeMounts {
+		mounts = append(mounts, containerclient.VolumeMount{
+			Name: mount.Name, MountPath: mount.MountPath, ReadOnly: mount.ReadOnly,
+		})
+	}
+
+	environment := make(map[string]string)
+	if resource.Kind == "postgresql" {
+		environment, err = service.postgreSQLContainerEnvironment(ctx, resourceID, installationID)
+		if err != nil {
+			return err
+		}
+	}
+	imageReference := installation.ImageReference
+	if installation.ImageDigest.Valid && !strings.Contains(imageReference, "@") {
+		imageReference += "@" + installation.ImageDigest.String
+	}
+	if err := service.container.Run(ctx, containerclient.RunSpec{
+		InstallationID: installation.ID.String(), ContainerName: installation.ContainerName,
+		ImageReference: imageReference, RestartPolicy: installation.RestartPolicy,
+		PortMappings: portMappings, VolumeMounts: mounts, Environment: environment,
+	}); err != nil {
+		return err
+	}
+	_, err = service.observeDockerInstallation(ctx, installation)
+	return err
+}
+
+func (service *ResourceManagement) StopInstallation(ctx context.Context, resourceID, installationID uuid.UUID) error {
+	return service.controlInstallation(ctx, resourceID, installationID, "stop")
+}
+
+func (service *ResourceManagement) RestartInstallation(ctx context.Context, resourceID, installationID uuid.UUID) error {
+	return service.controlInstallation(ctx, resourceID, installationID, "restart")
+}
+
+func (service *ResourceManagement) RemoveInstallationContainer(ctx context.Context, resourceID, installationID uuid.UUID) error {
+	return service.controlInstallation(ctx, resourceID, installationID, "remove")
+}
+
+func (service *ResourceManagement) controlInstallation(ctx context.Context, resourceID, installationID uuid.UUID, action string) error {
+	installation, err := service.loadInstallationForControl(ctx, resourceID, installationID)
+	if err != nil {
+		return err
+	}
+	if err := service.requireLocalInstallationServer(ctx, installation.ServerID); err != nil {
+		return err
+	}
+	switch action {
+	case "stop":
+		err = service.container.Stop(ctx, installation.ID.String(), installation.ContainerName)
+	case "restart":
+		err = service.container.Restart(ctx, installation.ID.String(), installation.ContainerName)
+	case "remove":
+		err = service.container.Remove(ctx, installation.ID.String(), installation.ContainerName)
+	default:
+		err = errors.New("unsupported container action")
+	}
+	if err != nil {
+		return err
+	}
+	_, err = service.observeDockerInstallation(ctx, installation)
+	return err
+}
+
+func (service *ResourceManagement) loadInstallationForControl(ctx context.Context, resourceID, installationID uuid.UUID) (models.ResourceInstallationEntity, error) {
+	if _, err := service.loadResource(ctx, service.db.Executor(), resourceID, false); err != nil {
+		return models.ResourceInstallationEntity{}, err
+	}
+	var installation models.ResourceInstallationEntity
+	err := service.db.Executor().NewSelect().Model(&installation).
+		Where("id = ?", installationID).
+		Where("resource_id = ?", resourceID).
+		Where("archived_at IS NULL").
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.ResourceInstallationEntity{}, models.ErrNotFound
+	}
+	return installation, err
+}
+
+func (service *ResourceManagement) requireLocalInstallationServer(ctx context.Context, serverID uuid.UUID) error {
+	server, err := models.Server.Find(ctx, service.db.Executor(), serverID)
+	if err != nil {
+		return err
+	}
+	address, parseErr := netip.ParseAddr(strings.TrimSpace(server.Ipv4Address))
+	if parseErr != nil || !address.IsLoopback() {
+		return errors.New("this Server is not the local DeployCrate CE host and does not have a Resource container executor")
+	}
+	return nil
+}
+
+func (service *ResourceManagement) observeInstallation(ctx context.Context, detail *models.ResourceInstallationDetail) {
+	if err := service.requireLocalInstallationServer(ctx, detail.ServerID); err != nil {
+		if detail.ServiceState == "" {
+			detail.State = "unavailable"
+			detail.ServiceState = "not-observed"
+			detail.Health = "unknown"
+			detail.HealthReason = err.Error()
+		}
+		return
+	}
+	detail.CanControl = true
+	status, err := service.observeDockerInstallation(ctx, detail.ResourceInstallationEntity)
+	if err != nil {
+		detail.State = "unavailable"
+		detail.ServiceState = "unknown"
+		detail.Health = "unknown"
+		detail.HealthReason = err.Error()
+		detail.ObservedAt = sql.NullTime{Time: time.Now().UTC(), Valid: true}
+		return
+	}
+	detail.State = status.State
+	detail.ServiceState = status.ServiceState
+	detail.Health = status.Health
+	detail.HealthReason = status.HealthReason.String
+	detail.ContainerDetails = status.Details
+	detail.ObservedAt = sql.NullTime{Time: status.ObservedAt, Valid: true}
+}
+
+func (service *ResourceManagement) observeDockerInstallation(ctx context.Context, installation models.ResourceInstallationEntity) (models.ResourceInstallationStatusEntity, error) {
+	state, err := service.container.Inspect(ctx, installation.ID.String(), installation.ContainerName)
+	if err != nil {
+		return models.ResourceInstallationStatusEntity{}, err
+	}
+	details, err := json.Marshal(state)
+	if err != nil {
+		return models.ResourceInstallationStatusEntity{}, err
+	}
+	now := time.Now().UTC()
+	serviceState := state.Status
+	stateValue := "installed"
+	health := state.Health
+	reason := state.Error
+	if !state.Exists {
+		stateValue = "missing"
+		serviceState = "not-created"
+		health = "unknown"
+		reason = "No Docker container exists for this installation."
+	} else if health == "" {
+		health = "unknown"
+	}
+	status, err := models.ResourceInstallationStatus.Upsert(ctx, service.db.Executor(), models.CreateResourceInstallationStatusData{
+		ResourceInstallationID: installation.ID,
+		ExternalID:             nullableString(state.ID), State: stateValue,
+		InstalledVersion: nullableString(state.ImageID), ServiceState: serviceState,
+		Health: health, Source: "docker", HealthReason: nullableString(reason),
+		Details: details, ObservedAt: now, ExpiresAt: now.Add(30 * time.Second),
+	})
+	return status, err
+}
+
+func (service *ResourceManagement) DeployResource(ctx context.Context, resourceID uuid.UUID) error {
+	resource, err := service.loadResource(ctx, service.db.Executor(), resourceID, false)
+	if err != nil {
+		return err
+	}
+	if resource.ManagementMode != models.ResourceManagementManaged {
+		return errors.New("only managed Resources can be deployed")
+	}
+	installations := make([]models.ResourceInstallationEntity, 0)
+	if err := service.db.Executor().NewSelect().Model(&installations).
+		Where("resource_id = ?", resourceID).
+		Where("archived_at IS NULL").
+		OrderExpr("created_at").
+		Scan(ctx); err != nil {
+		return err
+	}
+	if len(installations) == 0 {
+		return errors.New("Resource has no active installations to deploy")
+	}
+	for _, installation := range installations {
+		if err := service.RunInstallation(ctx, resourceID, installation.ID); err != nil {
+			return fmt.Errorf("deploy installation %q: %w", installation.ContainerName, err)
+		}
+	}
+	return nil
+}
+
+func (service *ResourceManagement) postgreSQLContainerEnvironment(ctx context.Context, resourceID, installationID uuid.UUID) (map[string]string, error) {
+	credentials := make([]models.ResourceCredentialEntity, 0)
+	if err := service.db.Executor().NewSelect().Model(&credentials).
+		Where("resource_id = ?", resourceID).
+		Where("archived_at IS NULL").
+		Where("resource_installation_id = ?", installationID).
+		OrderExpr("created_at").
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	if len(credentials) != 1 {
+		return nil, errors.New("PostgreSQL installation requires exactly one Resource administrator credential")
+	}
+	values, err := service.credentialSecretValues(credentials[0])
+	if err != nil {
+		return nil, fmt.Errorf("load PostgreSQL Resource administrator credential: %w", err)
+	}
+	password := values["password"]
+	if password == "" {
+		return nil, errors.New("PostgreSQL Resource administrator credential does not contain a password")
+	}
+	environment := map[string]string{"POSTGRES_PASSWORD": password}
+	if credentials[0].Username.Valid {
+		environment["POSTGRES_USER"] = credentials[0].Username.String
+	} else {
+		return nil, errors.New("PostgreSQL Resource administrator credential does not contain a username")
+	}
+	return environment, nil
 }
 
 func (service *ResourceManagement) validatePlacement(ctx context.Context, db storage.Executor, serverID uuid.UUID) error {
@@ -1251,6 +1967,13 @@ func (service *ResourceManagement) CreateVolume(ctx context.Context, resourceID 
 func (service *ResourceManagement) createVolume(ctx context.Context, db storage.Executor, resource models.ResourceEntity, input ResourceVolumeInput) (models.ResourceVolumeEntity, error) {
 	if resource.ManagementMode != models.ResourceManagementManaged {
 		return models.ResourceVolumeEntity{}, domainError("managementMode", "mode", "volumes are allowed only for managed Resources")
+	}
+	volumes, err := db.NewSelect().TableExpr("resource_volumes").Where("resource_id = ?", resource.ID).Where("archived_at IS NULL").Count(ctx)
+	if err != nil {
+		return models.ResourceVolumeEntity{}, err
+	}
+	if volumes > 0 {
+		return models.ResourceVolumeEntity{}, domainError("volume", "topology", "only one active volume is supported for a Resource right now")
 	}
 	if err := service.validatePlacement(ctx, db, input.ServerID); err != nil {
 		return models.ResourceVolumeEntity{}, err
@@ -1363,13 +2086,22 @@ func (service *ResourceManagement) createMount(ctx context.Context, db storage.E
 	if resource.ManagementMode != models.ResourceManagementManaged {
 		return models.ResourceVolumeMountEntity{}, domainError("managementMode", "mode", "mounts are allowed only for managed Resources")
 	}
+	mounts, err := db.NewSelect().TableExpr("resource_volume_mounts AS mount").
+		Join("JOIN resource_installations AS installation ON installation.id = mount.resource_installation_id AND installation.archived_at IS NULL").
+		Where("installation.resource_id = ?", resource.ID).Where("mount.archived_at IS NULL").Count(ctx)
+	if err != nil {
+		return models.ResourceVolumeMountEntity{}, err
+	}
+	if mounts > 0 {
+		return models.ResourceVolumeMountEntity{}, domainError("mount", "topology", "only one active volume mount is supported for a Resource right now")
+	}
 	var topology struct {
 		VolumeResourceID       uuid.UUID `bun:"volume_resource_id"`
 		VolumeServerID         uuid.UUID `bun:"volume_server_id"`
 		InstallationResourceID uuid.UUID `bun:"installation_resource_id"`
 		InstallationServerID   uuid.UUID `bun:"installation_server_id"`
 	}
-	err := db.NewSelect().TableExpr("resource_volumes AS volume").
+	err = db.NewSelect().TableExpr("resource_volumes AS volume").
 		ColumnExpr("volume.resource_id AS volume_resource_id, volume.server_id AS volume_server_id, installation.resource_id AS installation_resource_id, installation.server_id AS installation_server_id").
 		Join("JOIN resource_installations AS installation ON installation.id = ? AND installation.archived_at IS NULL", input.ResourceInstallationID).
 		Where("volume.id = ?", input.ResourceVolumeID).Where("volume.archived_at IS NULL").Scan(ctx, &topology)

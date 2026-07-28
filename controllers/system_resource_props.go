@@ -61,7 +61,6 @@ type systemResourceEndpointProp struct {
 type systemResourceCredentialProp struct {
 	ID                  string          `json:"id"`
 	Name                string          `json:"name"`
-	Role                string          `json:"role"`
 	Username            string          `json:"username"`
 	Metadata            json.RawMessage `json:"metadata"`
 	HasEncryptedPayload bool            `json:"hasEncryptedPayload"`
@@ -184,7 +183,7 @@ func systemResourceDetailProps(detail models.SystemResourceDetail) systemResourc
 		prop.Endpoints = append(prop.Endpoints, systemResourceEndpointProp{ID: item.ID, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, Name: item.Name, Role: item.Role, Address: item.Address, Port: item.Port, Protocol: item.Protocol, TLSMode: item.TLSMode, Settings: item.Settings, InstallationID: item.InstallationID, PrivateNetworkID: item.PrivateNetworkID})
 	}
 	for _, item := range detail.Credentials {
-		prop.Credentials = append(prop.Credentials, systemResourceCredentialProp{ID: item.ID, Name: item.Name, Role: item.Role, Username: item.Username, Metadata: item.Metadata, HasEncryptedPayload: item.HasEncryptedPayload, InstallationID: item.InstallationID})
+		prop.Credentials = append(prop.Credentials, systemResourceCredentialProp{ID: item.ID, Name: item.Name, Username: item.Username, Metadata: item.Metadata, HasEncryptedPayload: item.HasEncryptedPayload, InstallationID: item.InstallationID})
 	}
 	for _, item := range detail.Installations {
 		prop.Installations = append(prop.Installations, systemResourceInstallationProp{ID: item.ID, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, ImageReference: item.ImageReference, ImageDigest: item.ImageDigest, ContainerName: item.ContainerName, RestartPolicy: item.RestartPolicy, Configuration: item.Configuration, ServerID: item.ServerID, ServerName: item.ServerName, ServerAddress: item.ServerAddress, State: item.State, ServiceState: item.ServiceState, Health: item.Health, HealthReason: item.HealthReason, ObservedAt: item.ObservedAt})

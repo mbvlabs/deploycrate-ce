@@ -24,7 +24,6 @@ func BuildResourceCredential(resourceID uuid.UUID, resourceInstallationID *uuid.
 	f := &ResourceCredentialFactory{
 		ResourceCredentialEntity: models.ResourceCredentialEntity{
 			Name:                   faker.Word(),
-			Role:                   faker.Word(),
 			Username:               sql.NullString{String: faker.Word(), Valid: true},
 			Metadata:               json.RawMessage{},
 			EncPayload:             []byte{},
@@ -50,7 +49,6 @@ func CreateResourceCredential(ctx context.Context, exec storage.Executor, resour
 		CreatedAt:              time.Now(),
 		UpdatedAt:              time.Now(),
 		Name:                   built.Name,
-		Role:                   built.Role,
 		Username:               built.Username,
 		Metadata:               built.Metadata,
 		EncPayload:             built.EncPayload,
@@ -84,12 +82,6 @@ func CreateResourceCredentials(ctx context.Context, exec storage.Executor, resou
 func WithResourceCredentialsName(value string) ResourceCredentialOption {
 	return func(f *ResourceCredentialFactory) {
 		f.ResourceCredentialEntity.Name = value
-	}
-}
-
-func WithResourceCredentialsRole(value string) ResourceCredentialOption {
-	return func(f *ResourceCredentialFactory) {
-		f.ResourceCredentialEntity.Role = value
 	}
 }
 

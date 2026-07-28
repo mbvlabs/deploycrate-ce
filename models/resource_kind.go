@@ -30,7 +30,6 @@ var resourceKindCatalog = []ResourceKindDefinition{
 	{Kind: "clickhouse", Label: "ClickHouse", Category: "database", Protocols: []string{"clickhouse", "http", "https", "tcp"}, EndpointRoles: []string{"primary", "replica", "wireguard"}, TLSModes: resourceTLSModes(), CredentialFields: databaseCredentialFields(), HealthCheckKinds: []string{"tcp", "http", "clickhouse"}, DefaultPort: 8123, DefaultProtocol: "http", DefaultTLSMode: "disable"},
 	{Kind: "http", Label: "HTTP", Category: "service", Protocols: []string{"http", "https"}, EndpointRoles: []string{"primary", "replica"}, TLSModes: resourceTLSModes(), CredentialFields: []ResourceCredentialField{{Name: "token", Label: "Token", Required: false, Secret: true}}, HealthCheckKinds: []string{"http", "tcp"}, DefaultPort: 80, DefaultProtocol: "http", DefaultTLSMode: "disable"},
 	{Kind: "tcp", Label: "Generic TCP", Category: "service", Protocols: []string{"tcp"}, EndpointRoles: []string{"primary", "replica"}, TLSModes: resourceTLSModes(), CredentialFields: []ResourceCredentialField{}, HealthCheckKinds: []string{"tcp"}, DefaultPort: 1, DefaultProtocol: "tcp", DefaultTLSMode: "disable"},
-	{Kind: "custom", Label: "Custom", Category: "custom", Protocols: []string{}, EndpointRoles: []string{}, TLSModes: resourceTLSModes(), CredentialFields: []ResourceCredentialField{}, HealthCheckKinds: []string{}, DefaultPort: 1, DefaultTLSMode: "disable"},
 }
 
 func resourceTLSModes() []string {
@@ -64,13 +63,13 @@ func ResourceCategoryKindSupported(category, kind string) bool {
 }
 
 func (definition ResourceKindDefinition) SupportsProtocol(protocol string) bool {
-	return definition.Kind == "custom" && protocol != "" || slices.Contains(definition.Protocols, protocol)
+	return slices.Contains(definition.Protocols, protocol)
 }
 
 func (definition ResourceKindDefinition) SupportsEndpointRole(role string) bool {
-	return definition.Kind == "custom" && role != "" || slices.Contains(definition.EndpointRoles, role)
+	return slices.Contains(definition.EndpointRoles, role)
 }
 
 func (definition ResourceKindDefinition) SupportsHealthCheck(kind string) bool {
-	return definition.Kind == "custom" && kind != "" || slices.Contains(definition.HealthCheckKinds, kind)
+	return slices.Contains(definition.HealthCheckKinds, kind)
 }

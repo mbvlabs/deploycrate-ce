@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"deploycrate-ce/internal/inertia"
+	"deploycrate-ce/internal/request"
 	"deploycrate-ce/internal/validation"
 	"deploycrate-ce/models"
 	"deploycrate-ce/router"
@@ -22,10 +23,11 @@ import (
 
 type Resources struct {
 	service *services.ResourceManagement
+	access  *services.ResourcePrivateAccess
 }
 
-func NewResources(service *services.ResourceManagement) Resources {
-	return Resources{service: service}
+func NewResources(service *services.ResourceManagement, access *services.ResourcePrivateAccess) Resources {
+	return Resources{service: service, access: access}
 }
 
 func (controller Resources) RegisterRoutes(r *router.Router) error {
@@ -41,6 +43,7 @@ func (controller Resources) RegisterRoutes(r *router.Router) error {
 		{http.MethodGet, routes.ResourceNew, controller.New},
 		{http.MethodPost, routes.ResourceCreate, controller.Create},
 		{http.MethodGet, routes.ResourceShow, controller.Show},
+		{http.MethodPost, routes.ResourceDeploy, controller.Deploy},
 		{http.MethodGet, routes.ResourceEdit, controller.Edit},
 		{http.MethodPatch, routes.ResourceUpdate, controller.Update},
 		{http.MethodDelete, routes.ResourceDestroy, controller.Destroy},
@@ -50,10 +53,18 @@ func (controller Resources) RegisterRoutes(r *router.Router) error {
 		{http.MethodPost, routes.ResourceEndpointCreate, controller.CreateEndpoint},
 		{http.MethodPatch, routes.ResourceEndpointUpdate, controller.UpdateEndpoint},
 		{http.MethodDelete, routes.ResourceEndpointDestroy, controller.DestroyEndpoint},
+		{http.MethodPost, routes.ResourcePrivateAccessCreate, controller.EnablePrivateAccess},
+		{http.MethodDelete, routes.ResourcePrivateAccessDestroy, controller.DisablePrivateAccess},
+		{http.MethodPost, routes.ResourcePrivateAccessDeviceCreate, controller.CreatePrivateAccessDevice},
+		{http.MethodDelete, routes.ResourcePrivateAccessDeviceDestroy, controller.DestroyPrivateAccessDevice},
 		{http.MethodPost, routes.ResourceCredentialCreate, controller.CreateCredential},
 		{http.MethodPatch, routes.ResourceCredentialUpdate, controller.UpdateCredential},
 		{http.MethodDelete, routes.ResourceCredentialDestroy, controller.DestroyCredential},
 		{http.MethodPost, routes.ResourceInstallationCreate, controller.CreateInstallation},
+		{http.MethodPost, routes.ResourceInstallationStart, controller.StartInstallation},
+		{http.MethodPost, routes.ResourceInstallationStop, controller.StopInstallation},
+		{http.MethodPost, routes.ResourceInstallationRestart, controller.RestartInstallation},
+		{http.MethodDelete, routes.ResourceInstallationRemove, controller.RemoveInstallationContainer},
 		{http.MethodPatch, routes.ResourceInstallationUpdate, controller.UpdateInstallation},
 		{http.MethodDelete, routes.ResourceInstallationDestroy, controller.DestroyInstallation},
 		{http.MethodPost, routes.ResourceVolumeCreate, controller.CreateVolume},
@@ -105,7 +116,7 @@ func (controller Resources) New(etx *echo.Context) error {
 	if err != nil {
 		return controller.renderLoadError(etx, err)
 	}
-	return inertia.Page(etx, "Resources/New", inertia.Props{"auth": authProps(etx), "options": resourceOptionsProps(options)})
+	return inertia.Page(etx, "Resources/New", inertia.Props{"auth": authProps(etx), "options": resourceOptionsProps(options), "flash": resourceFlashProps(etx)})
 }
 
 type resourcePayload struct {
@@ -217,28 +228,28 @@ func (payload resourceCreatePayload) serviceInput() (services.CreateResourceInpu
 	if payload.Installation != nil {
 		value, valueErr := payload.Installation.serviceInput()
 		if valueErr != nil {
-			return services.CreateResourceInput{}, valueErr
+			return services.CreateResourceInput{}, prefixResourceValidation(valueErr, "installation")
 		}
 		input.Installation = &value
 	}
 	if payload.Endpoint != nil {
 		value, valueErr := payload.Endpoint.serviceInput()
 		if valueErr != nil {
-			return services.CreateResourceInput{}, valueErr
+			return services.CreateResourceInput{}, prefixResourceValidation(valueErr, "endpoint")
 		}
 		input.Endpoint = &value
 	}
 	if payload.Credential != nil {
 		value, valueErr := payload.Credential.serviceInput()
 		if valueErr != nil {
-			return services.CreateResourceInput{}, valueErr
+			return services.CreateResourceInput{}, prefixResourceValidation(valueErr, "credential")
 		}
 		input.Credential = &value
 	}
 	if payload.Volume != nil {
 		value, valueErr := payload.Volume.serviceInput()
 		if valueErr != nil {
-			return services.CreateResourceInput{}, valueErr
+			return services.CreateResourceInput{}, prefixResourceValidation(valueErr, "volume")
 		}
 		if value.ServerID == uuid.Nil && input.Installation != nil {
 			value.ServerID = input.Installation.ServerID
@@ -248,14 +259,14 @@ func (payload resourceCreatePayload) serviceInput() (services.CreateResourceInpu
 	if payload.Mount != nil {
 		value, valueErr := payload.Mount.serviceInput()
 		if valueErr != nil {
-			return services.CreateResourceInput{}, valueErr
+			return services.CreateResourceInput{}, prefixResourceValidation(valueErr, "mount")
 		}
 		input.Mount = &value
 	}
 	if payload.HealthCheck != nil {
 		value, valueErr := payload.HealthCheck.serviceInput()
 		if valueErr != nil {
-			return services.CreateResourceInput{}, valueErr
+			return services.CreateResourceInput{}, prefixResourceValidation(valueErr, "healthCheck")
 		}
 		input.HealthCheck = &value
 	}
@@ -286,6 +297,14 @@ func (controller Resources) Show(etx *echo.Context) error {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
 	return controller.renderShow(etx, resourceID, nil)
+}
+
+func (controller Resources) Deploy(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	if err == nil {
+		err = controller.service.DeployResource(etx.Request().Context(), resourceID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Resource deployed")
 }
 
 func (controller Resources) Edit(etx *echo.Context) error {
@@ -397,24 +416,90 @@ func (controller Resources) DestroyEndpoint(etx *echo.Context) error {
 	return controller.finishChildMutation(etx, resourceID, err, "Endpoint archived")
 }
 
+type resourcePrivateAccessPayload struct {
+	PrivateNetworkID string `json:"privateNetworkId"`
+}
+
+func (controller Resources) EnablePrivateAccess(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	var payload resourcePrivateAccessPayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	var privateNetworkID uuid.UUID
+	if err == nil {
+		privateNetworkID, err = uuid.Parse(payload.PrivateNetworkID)
+		if err != nil {
+			err = domainPayloadError("privateNetworkId", "private network is required")
+		}
+	}
+	if err == nil {
+		_, err = controller.access.Enable(etx.Request().Context(), resourceID, privateNetworkID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Resource added to private network")
+}
+
+func (controller Resources) DisablePrivateAccess(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	if err == nil {
+		err = controller.access.Disable(etx.Request().Context(), resourceID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Resource removed from private network")
+}
+
+type resourcePrivateAccessDevicePayload struct {
+	Name     string `json:"name"`
+	DeviceID string `json:"deviceId"`
+}
+
+func (controller Resources) CreatePrivateAccessDevice(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	var payload resourcePrivateAccessDevicePayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	deviceID := uuid.Nil
+	if err == nil && strings.TrimSpace(payload.DeviceID) != "" {
+		deviceID, err = uuid.Parse(payload.DeviceID)
+	}
+	var result services.ResourcePrivateAccessResult
+	if err == nil {
+		result, err = controller.access.EnrollManaged(etx.Request().Context(), resourceID, services.ResourcePrivateAccessEnrollment{
+			DeviceID: deviceID, Name: payload.Name, UserID: cookies.ExtractFromCookieApp(etx).UserID,
+		})
+	}
+	if err != nil {
+		return controller.finishChildMutation(etx, resourceID, err, "")
+	}
+	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Private Resource access granted")
+	etx.Response().Header().Set("Cache-Control", "no-store")
+	enrollment := inertia.Props{
+		"deviceId": result.DeviceID.String(), "grantId": result.GrantID.String(),
+		"clientConfiguration": result.ClientConfiguration,
+	}
+	return controller.renderShowPage(etx, resourceID, enrollment, nil)
+}
+
+func (controller Resources) DestroyPrivateAccessDevice(etx *echo.Context) error {
+	resourceID, deviceID, err := parseChildIDs(etx, "deviceID")
+	if err == nil {
+		err = controller.access.RevokeManagedGrant(etx.Request().Context(), resourceID, deviceID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Private Resource access revoked")
+}
+
 type resourceCredentialPayload struct {
-	Name                   string            `json:"name"`
-	Role                   string            `json:"role"`
-	Username               string            `json:"username"`
-	Metadata               json.RawMessage   `json:"metadata"`
-	SecretValues           map[string]string `json:"secretValues"`
-	ResourceInstallationID string            `json:"resourceInstallationId"`
-	Rotate                 bool              `json:"rotate"`
+	Name         string            `json:"name"`
+	Username     string            `json:"username"`
+	Metadata     json.RawMessage   `json:"metadata"`
+	SecretValues map[string]string `json:"secretValues"`
+	Rotate       bool              `json:"rotate"`
 }
 
 func (payload resourceCredentialPayload) serviceInput() (services.ResourceCredentialInput, error) {
-	installationID, err := optionalUUID(payload.ResourceInstallationID)
-	if err != nil {
-		return services.ResourceCredentialInput{}, domainPayloadError("resourceInstallationId", "installation is invalid")
-	}
 	return services.ResourceCredentialInput{
-		Name: payload.Name, Role: payload.Role, Username: payload.Username, Metadata: payload.Metadata,
-		SecretValues: payload.SecretValues, ResourceInstallationID: installationID,
+		Name: payload.Name, Username: payload.Username, Metadata: payload.Metadata,
+		SecretValues: payload.SecretValues,
 	}, nil
 }
 
@@ -465,13 +550,14 @@ func (controller Resources) DestroyCredential(etx *echo.Context) error {
 }
 
 type resourceInstallationPayload struct {
-	ImageReference       string          `json:"imageReference"`
-	ImageDigest          string          `json:"imageDigest"`
-	ContainerName        string          `json:"containerName"`
-	RestartPolicy        string          `json:"restartPolicy"`
-	Configuration        json.RawMessage `json:"configuration"`
-	ServerID             string          `json:"serverId"`
-	RegistryCredentialID string          `json:"registryCredentialId"`
+	ImageReference       string                                    `json:"imageReference"`
+	ImageDigest          string                                    `json:"imageDigest"`
+	ContainerName        string                                    `json:"containerName"`
+	RestartPolicy        string                                    `json:"restartPolicy"`
+	Configuration        json.RawMessage                           `json:"configuration"`
+	PortMappings         *[]models.ResourceInstallationPortMapping `json:"portMappings"`
+	ServerID             string                                    `json:"serverId"`
+	RegistryCredentialID string                                    `json:"registryCredentialId"`
 }
 
 func (payload resourceInstallationPayload) serviceInput() (services.ResourceInstallationInput, error) {
@@ -486,7 +572,8 @@ func (payload resourceInstallationPayload) serviceInput() (services.ResourceInst
 	return services.ResourceInstallationInput{
 		ImageReference: payload.ImageReference, ImageDigest: payload.ImageDigest,
 		ContainerName: payload.ContainerName, RestartPolicy: payload.RestartPolicy,
-		Configuration: payload.Configuration, ServerID: serverID, RegistryCredentialID: registryID,
+		Configuration: payload.Configuration, PortMappings: payload.PortMappings,
+		ServerID: serverID, RegistryCredentialID: registryID,
 	}, nil
 }
 
@@ -504,6 +591,38 @@ func (controller Resources) CreateInstallation(etx *echo.Context) error {
 		_, err = controller.service.CreateInstallation(etx.Request().Context(), resourceID, input)
 	}
 	return controller.finishChildMutation(etx, resourceID, err, "Installation created")
+}
+
+func (controller Resources) StartInstallation(etx *echo.Context) error {
+	resourceID, installationID, err := parseChildIDs(etx, "installationID")
+	if err == nil {
+		err = controller.service.RunInstallation(etx.Request().Context(), resourceID, installationID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Container is running")
+}
+
+func (controller Resources) StopInstallation(etx *echo.Context) error {
+	resourceID, installationID, err := parseChildIDs(etx, "installationID")
+	if err == nil {
+		err = controller.service.StopInstallation(etx.Request().Context(), resourceID, installationID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Container stopped")
+}
+
+func (controller Resources) RestartInstallation(etx *echo.Context) error {
+	resourceID, installationID, err := parseChildIDs(etx, "installationID")
+	if err == nil {
+		err = controller.service.RestartInstallation(etx.Request().Context(), resourceID, installationID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Container restarted")
+}
+
+func (controller Resources) RemoveInstallationContainer(etx *echo.Context) error {
+	resourceID, installationID, err := parseChildIDs(etx, "installationID")
+	if err == nil {
+		err = controller.service.RemoveInstallationContainer(etx.Request().Context(), resourceID, installationID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Container removed")
 }
 
 func (controller Resources) UpdateInstallation(etx *echo.Context) error {
@@ -726,6 +845,13 @@ func (controller Resources) DestroyHealthCheck(etx *echo.Context) error {
 }
 
 func (controller Resources) renderShow(etx *echo.Context, resourceID uuid.UUID, option inertia.PageOption) error {
+	return controller.renderShowPage(etx, resourceID, nil, option)
+}
+
+func (controller Resources) renderShowPage(etx *echo.Context, resourceID uuid.UUID, enrollment inertia.Props, option inertia.PageOption) error {
+	if err := controller.access.ObserveResource(etx.Request().Context(), resourceID); err != nil {
+		slog.WarnContext(etx.Request().Context(), "failed to observe Resource WireGuard device handshakes", "resource_id", resourceID, "error", err)
+	}
 	detail, err := controller.service.Details(etx.Request().Context(), resourceID)
 	if errors.Is(err, models.ErrNotFound) {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
@@ -737,7 +863,14 @@ func (controller Resources) renderShow(etx *echo.Context, resourceID uuid.UUID, 
 	if err != nil {
 		return controller.renderLoadError(etx, err)
 	}
-	props := inertia.Props{"auth": authProps(etx), "resource": resourceDetailProps(detail), "options": resourceOptionsProps(options)}
+	privateAccess, err := controller.access.Details(etx.Request().Context(), resourceID, cookies.ExtractFromCookieApp(etx).UserID)
+	if err != nil {
+		return controller.renderLoadError(etx, err)
+	}
+	props := inertia.Props{"auth": authProps(etx), "resource": resourceDetailProps(detail, privateAccess), "options": resourceOptionsProps(options), "flash": resourceFlashProps(etx)}
+	if enrollment != nil {
+		props["enrollment"] = enrollment
+	}
 	if option != nil {
 		return inertia.Page(etx, "Resources/Show", props, option)
 	}
@@ -756,7 +889,7 @@ func (controller Resources) renderEdit(etx *echo.Context, resourceID uuid.UUID, 
 	if err != nil {
 		return controller.renderLoadError(etx, err)
 	}
-	props := inertia.Props{"auth": authProps(etx), "resource": resourceDetailProps(detail), "options": resourceOptionsProps(options)}
+	props := inertia.Props{"auth": authProps(etx), "resource": resourceDetailProps(detail, models.ResourcePrivateAccessDetails{}), "options": resourceOptionsProps(options), "flash": resourceFlashProps(etx)}
 	if option != nil {
 		return inertia.Page(etx, "Resources/Edit", props, option)
 	}
@@ -775,14 +908,37 @@ func (controller Resources) renderCreateError(etx *echo.Context, err error) erro
 }
 
 func (controller Resources) finishChildMutation(etx *echo.Context, resourceID uuid.UUID, err error, success string) error {
+	returnToEdit := etx.QueryParam("returnTo") == "edit"
 	if err != nil {
 		if validationErrors, ok := validation.As(err); ok && resourceID != uuid.Nil {
+			if returnToEdit {
+				return controller.renderEdit(etx, resourceID, inertia.WithValidationErrors(validationErrors.ToMap()))
+			}
 			return controller.renderShow(etx, resourceID, inertia.WithValidationErrors(validationErrors.ToMap()))
 		}
-		return controller.redirectError(etx, routes.ResourceShow.URL(resourceID), err)
+		location := routes.ResourceShow.URL(resourceID)
+		if returnToEdit {
+			location = routes.ResourceEdit.URL(resourceID)
+		}
+		return controller.redirectError(etx, location, err)
 	}
-	_ = cookies.AddFlash(etx, cookies.FlashSuccess, success)
-	return inertia.Redirect(etx, routes.ResourceShow.URL(resourceID), http.StatusSeeOther)
+	if flashErr := cookies.AddFlash(etx, cookies.FlashSuccess, success); flashErr != nil {
+		return controller.renderLoadError(etx, flashErr)
+	}
+	location := routes.ResourceShow.URL(resourceID)
+	if returnToEdit {
+		location = routes.ResourceEdit.URL(resourceID)
+	}
+	return inertia.Redirect(etx, location, http.StatusSeeOther)
+}
+
+func resourceFlashProps(etx *echo.Context) []inertia.Props {
+	flashes := request.ExtractContext[[]cookies.FlashMessage](etx.Request().Context(), request.SessionFlashesKey)
+	props := make([]inertia.Props, 0, len(flashes))
+	for _, flash := range flashes {
+		props = append(props, inertia.Props{"type": flash.Type, "message": flash.Message})
+	}
+	return props
 }
 
 func (controller Resources) redirectError(etx *echo.Context, location string, err error) error {
@@ -818,4 +974,12 @@ func bindResourceChild[T any](etx *echo.Context, bind func() (T, error)) (uuid.U
 
 func domainPayloadError(field, message string) error {
 	return errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: field, Code: "invalid", Message: message}})
+}
+
+func prefixResourceValidation(err error, prefix string) error {
+	validationErrors, ok := validation.As(err)
+	if !ok {
+		return err
+	}
+	return errors.Join(models.ErrDomainValidation, validation.WithFieldPrefix(validationErrors, prefix))
 }

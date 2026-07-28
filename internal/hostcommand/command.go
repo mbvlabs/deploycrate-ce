@@ -1,6 +1,7 @@
 package hostcommand
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -10,12 +11,24 @@ import (
 )
 
 func Run(ctx context.Context, arguments ...string) (string, error) {
+	return run(ctx, nil, arguments...)
+}
+
+func RunWithInput(ctx context.Context, input []byte, arguments ...string) (string, error) {
+	return run(ctx, input, arguments...)
+}
+
+func run(ctx context.Context, input []byte, arguments ...string) (string, error) {
 	executable, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("resolve DeployCrate executable: %w", err)
 	}
 	commandArguments := append([]string{"host-resource-access"}, arguments...)
-	output, err := sudo.CommandContext(ctx, executable, commandArguments...).CombinedOutput()
+	command := sudo.CommandContext(ctx, executable, commandArguments...)
+	if input != nil {
+		command.Stdin = bytes.NewReader(input)
+	}
+	output, err := command.CombinedOutput()
 	if err != nil {
 		message := strings.TrimSpace(string(output))
 		if message == "" {

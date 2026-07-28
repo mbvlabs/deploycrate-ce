@@ -76,7 +76,6 @@ type SystemResourceEndpoint struct {
 type SystemResourceCredential struct {
 	ID                  string          `bun:"id"`
 	Name                string          `bun:"name"`
-	Role                string          `bun:"role"`
 	Username            string          `bun:"username"`
 	Metadata            json.RawMessage `bun:"metadata"`
 	HasEncryptedPayload bool            `bun:"has_encrypted_payload"`
@@ -235,7 +234,7 @@ func (application) FindSystemResourceDetail(ctx context.Context, db storage.Exec
 			return db.NewSelect().TableExpr("resource_endpoints AS endpoint").ColumnExpr("endpoint.id::text AS id, endpoint.created_at, endpoint.updated_at, endpoint.name, endpoint.role, endpoint.address, endpoint.port, endpoint.protocol, endpoint.tls_mode, endpoint.settings, COALESCE(endpoint.resource_installation_id::text, '') AS installation_id, COALESCE(endpoint.private_network_id::text, '') AS private_network_id").Where("endpoint.resource_id = ?", resourceID).Where("endpoint.archived_at IS NULL").OrderExpr("endpoint.role, endpoint.created_at").Scan(ctx, &detail.Endpoints)
 		},
 		func() error {
-			return db.NewSelect().TableExpr("resource_credentials AS credential").ColumnExpr("credential.id::text AS id, credential.name, credential.role, COALESCE(credential.username, '') AS username, credential.metadata, octet_length(credential.enc_payload) > 0 AS has_encrypted_payload, COALESCE(credential.resource_installation_id::text, '') AS installation_id").Where("credential.resource_id = ?", resourceID).Where("credential.archived_at IS NULL").OrderExpr("credential.created_at").Scan(ctx, &detail.Credentials)
+			return db.NewSelect().TableExpr("resource_credentials AS credential").ColumnExpr("credential.id::text AS id, credential.name, COALESCE(credential.username, '') AS username, credential.metadata, octet_length(credential.enc_payload) > 0 AS has_encrypted_payload, COALESCE(credential.resource_installation_id::text, '') AS installation_id").Where("credential.resource_id = ?", resourceID).Where("credential.archived_at IS NULL").OrderExpr("credential.created_at").Scan(ctx, &detail.Credentials)
 		},
 		func() error {
 			return db.NewSelect().TableExpr("resource_installations AS installation").ColumnExpr("installation.id::text AS id, installation.created_at, installation.updated_at, installation.image_reference, COALESCE(installation.image_digest, '') AS image_digest, installation.container_name, installation.restart_policy, installation.configuration, server.id::text AS server_id, server.name AS server_name, server.address AS server_address, COALESCE(status.state, '') AS state, COALESCE(status.service_state, '') AS service_state, COALESCE(status.health, '') AS health, COALESCE(status.health_reason, '') AS health_reason, status.observed_at AS observed_at").Join("JOIN servers AS server ON server.id = installation.server_id AND server.archived_at IS NULL").Join("LEFT JOIN resource_installation_statuses AS status ON status.resource_installation_id = installation.id").Where("installation.resource_id = ?", resourceID).Where("installation.archived_at IS NULL").OrderExpr("installation.created_at").Scan(ctx, &detail.Installations)
@@ -270,7 +269,7 @@ func (application) FindSystemResourceDetail(ctx context.Context, db storage.Exec
 	return detail, nil
 }
 
-type SystemResourceAccessTarget struct {
+type ResourceAccessTarget struct {
 	ResourceID          uuid.UUID `bun:"resource_id"`
 	ResourceName        string    `bun:"resource_name"`
 	ResourceKind        string    `bun:"resource_kind"`
@@ -286,24 +285,24 @@ type SystemResourceAccessTarget struct {
 	ServerEndpoint      string    `bun:"server_endpoint"`
 }
 
-func (application) FindSystemResourceAccessTarget(ctx context.Context, db storage.Executor, resourceID uuid.UUID) (SystemResourceAccessTarget, error) {
-	var target SystemResourceAccessTarget
+func (application) FindResourceAccessTarget(ctx context.Context, db storage.Executor, resourceID uuid.UUID) (ResourceAccessTarget, error) {
+	var target ResourceAccessTarget
 	err := db.NewSelect().TableExpr("resources AS resource").
 		ColumnExpr("resource.id AS resource_id, resource.name AS resource_name, resource.kind AS resource_kind").
 		ColumnExpr("origin.address AS origin_address, origin.port AS origin_port").
 		ColumnExpr("wireguard.id AS wireguard_endpoint_id, wireguard.address AS wireguard_address, wireguard.port AS wireguard_port, wireguard.protocol AS protocol").
 		ColumnExpr("installation.server_id AS server_id, wireguard.private_network_id AS private_network_id, peer.public_key AS server_public_key, peer.endpoint AS server_endpoint").
-		Join("JOIN resource_endpoints AS wireguard ON wireguard.resource_id = resource.id AND wireguard.role = 'wireguard' AND wireguard.archived_at IS NULL").
-		Join("JOIN resource_endpoints AS origin ON origin.resource_id = resource.id AND origin.role = 'primary' AND origin.resource_installation_id = wireguard.resource_installation_id AND origin.archived_at IS NULL AND origin.address IN ('127.0.0.1', '::1', 'localhost')").
+		Join("JOIN resource_endpoints AS wireguard ON wireguard.resource_id = resource.id AND wireguard.private_network_id IS NOT NULL AND wireguard.archived_at IS NULL AND wireguard.address NOT IN ('127.0.0.1', '::1', 'localhost')").
+		Join("JOIN resource_endpoints AS origin ON origin.resource_id = resource.id AND origin.role = 'primary' AND (wireguard.role = origin.role OR wireguard.role = 'wireguard') AND origin.resource_installation_id = wireguard.resource_installation_id AND origin.archived_at IS NULL AND origin.address IN ('127.0.0.1', '::1', 'localhost') AND origin.port = wireguard.port AND origin.protocol = wireguard.protocol AND origin.tls_mode = wireguard.tls_mode AND origin.id <> wireguard.id").
 		Join("JOIN resource_installations AS installation ON installation.id = wireguard.resource_installation_id AND installation.resource_id = resource.id AND installation.archived_at IS NULL").
 		Join("JOIN wireguard_peers AS peer ON peer.server_id = installation.server_id AND peer.retired_at IS NULL").
 		Where("resource.id = ?", resourceID).
 		Where("resource.archived_at IS NULL").
-		Where("resource.system_managed = TRUE").
+		Where("resource.management_mode = 'managed'").
 		Limit(1).
 		Scan(ctx, &target)
 	if errors.Is(err, sql.ErrNoRows) {
-		return SystemResourceAccessTarget{}, ErrNotFound
+		return ResourceAccessTarget{}, ErrNotFound
 	}
 	return target, err
 }

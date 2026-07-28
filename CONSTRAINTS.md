@@ -120,14 +120,17 @@ Rules local to one entity belong in `models/`. Rules involving multiple records,
 - Sharing a server or resource never grants access to unrelated environments, endpoints, or services.
 - Applied and observed access state cannot claim success until the responsible target or server reports the intended rule.
 
-## Container resources, installations, volumes, endpoints, dependencies, and bindings
+## Resources, installations, volumes, endpoints, dependencies, and bindings
 
-- A resource is a stable logical supporting service delivered by a container image. Application release images remain part of the release and deployment lifecycle, not the resource lifecycle.
-- DeployCrate CE resource installations are Docker containers only. Native packages, externally managed services, clusters, and orchestration providers are outside the CE resource model.
+- A resource is a stable logical supporting service. Application release images remain part of the release and deployment lifecycle, not the resource lifecycle.
+- The current resource installation record describes a Docker container and therefore requires its image and container fields.
+- Native Server installations are planned, but their persistence shape and lifecycle are intentionally deferred rather than forced into the Docker installation record.
+- Externally managed services, clusters, and orchestration providers remain outside the managed CE resource installation model.
 - The desired image reference, optional resolved digest, container name, restart policy, registry credential, configuration, and server placement belong to the installation.
 - Container configuration stores credential and secret references only. It never stores plaintext or encrypted secret values.
 - Installations, volumes, endpoints, credentials, dependencies, and bindings cannot disagree about their resource identity.
-- A resource's owner environment controls its lifecycle. Archiving the owner environment does not destroy a resource while active dependencies or bindings still use it.
+- A Resource exists independently of Environments. Its active name is globally unique without regard to case.
+- `system_managed` explicitly identifies DeployCrate-owned Resources and makes them immutable through user Resource workflows.
 - An installation belongs to one resource.
 - An installation selects one Docker-capable server. Its image reference and digest determine the desired container artifact.
 - Resource installation status is a current projection. Older observations cannot replace newer observations.
@@ -137,9 +140,9 @@ Rules local to one entity belong in `models/`. Rules involving multiple records,
 - An endpoint belongs to its resource and, when installation-backed, to an installation of that same resource.
 - An endpoint attached to a private network uses an address reachable through that network.
 - A resource credential belongs to its resource and, when installation-specific, to an installation of the same resource.
-- A dependency belongs to one environment and names the resource capability that environment needs.
+- An Environment consumes a Resource only through an active `environment_resources` connection.
 - A dependency endpoint belongs to the dependency's resource. Its network is available to both the environment and endpoint.
-- Dependency aliases are unique among active dependencies in an environment.
+- Connection aliases are unique among active connections in an Environment, and an Environment connects to a Resource at most once.
 - A binding belongs to one dependency. Its resource and endpoint agree with the dependency.
 - The application defines whether a dependency permits one active binding or several named bindings and rejects ambiguous access provisioning.
 - Managed and self-managed provisioning and secret modes have separate, explicit model workflows.

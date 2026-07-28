@@ -263,6 +263,7 @@ func (ris resourceInstallationStatus) Upsert(
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (resource_installation_id) DO UPDATE").
+		Set("updated_at = excluded.updated_at").
 		Set("external_id = excluded.external_id").
 		Set("state = excluded.state").
 		Set("installed_version = excluded.installed_version").

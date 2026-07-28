@@ -8,7 +8,7 @@ import (
 	"deploycrate-ce/models"
 )
 
-func resourceDetailProps(detail models.ResourceDetails) inertia.Props {
+func resourceDetailProps(detail models.ResourceDetails, privateAccess models.ResourcePrivateAccessDetails) inertia.Props {
 	resource := detail.Resource
 	connections := make([]inertia.Props, 0, len(detail.Connections))
 	for _, connection := range detail.Connections {
@@ -37,7 +37,7 @@ func resourceDetailProps(detail models.ResourceDetails) inertia.Props {
 	for _, credential := range detail.Credentials {
 		credentials = append(credentials, inertia.Props{
 			"id": credential.ID, "createdAt": credential.CreatedAt, "updatedAt": credential.UpdatedAt,
-			"name": credential.Name, "role": credential.Role, "username": nullString(credential.Username),
+			"name": credential.Name, "username": nullString(credential.Username),
 			"metadata": credential.Metadata, "hasEncryptedPayload": len(credential.EncPayload) > 0,
 			"resourceInstallationId": credential.ResourceInstallationID,
 		})
@@ -53,6 +53,7 @@ func resourceDetailProps(detail models.ResourceDetails) inertia.Props {
 			"registryCredentialId": installation.RegistryCredentialID, "state": installation.State,
 			"serviceState": installation.ServiceState, "health": installation.Health,
 			"healthReason": installation.HealthReason, "observedAt": nullTime(installation.ObservedAt),
+			"containerDetails": installation.ContainerDetails, "canControl": installation.CanControl,
 		})
 	}
 	volumes := make([]inertia.Props, 0, len(detail.Volumes))
@@ -84,6 +85,41 @@ func resourceDetailProps(detail models.ResourceDetails) inertia.Props {
 			"state": healthCheck.State, "message": healthCheck.Message, "observedAt": nullTime(healthCheck.ObservedAt),
 		})
 	}
+	deviceGrants := make([]inertia.Props, 0, len(privateAccess.DeviceGrants))
+	privateAccessState := ""
+	for _, endpoint := range detail.Endpoints {
+		if endpoint.PrivateNetworkID != nil {
+			privateAccessState = "configured"
+			break
+		}
+	}
+	allApplied := len(privateAccess.DeviceGrants) > 0
+	for _, grant := range privateAccess.DeviceGrants {
+		deviceGrants = append(deviceGrants, inertia.Props{
+			"deviceId": grant.DeviceID, "deviceName": grant.DeviceName, "ownerEmail": grant.OwnerEmail,
+			"privateAddress": grant.PrivateAddress, "grantId": grant.GrantID, "grantedAt": grant.GrantedAt,
+			"applicationState": grant.ApplicationState, "applicationError": grant.ApplicationError,
+			"latestHandshakeAt": grant.LatestHandshakeAt, "observedAt": grant.ObservedAt,
+		})
+		if grant.ApplicationState == "failed" {
+			privateAccessState = "failed"
+		}
+		if grant.ApplicationState != "applied" {
+			allApplied = false
+			if privateAccessState != "failed" {
+				privateAccessState = "applying"
+			}
+		}
+	}
+	if allApplied {
+		privateAccessState = "ready"
+	}
+	availableDevices := make([]inertia.Props, 0, len(privateAccess.AvailableDevices))
+	for _, device := range privateAccess.AvailableDevices {
+		availableDevices = append(availableDevices, inertia.Props{
+			"id": device.ID, "name": device.Name, "privateAddress": device.PrivateAddress,
+		})
+	}
 	return inertia.Props{
 		"id": resource.ID, "createdAt": resource.CreatedAt, "updatedAt": resource.UpdatedAt,
 		"name": resource.Name, "category": resource.Category, "kind": resource.Kind,
@@ -91,6 +127,8 @@ func resourceDetailProps(detail models.ResourceDetails) inertia.Props {
 		"connectionCount": len(connections), "connections": connections,
 		"endpoints": endpoints, "credentials": credentials, "installations": installations,
 		"volumes": volumes, "mounts": mounts, "healthChecks": healthChecks,
+		"privateAccessState": privateAccessState, "deviceGrants": deviceGrants,
+		"availableDevices": availableDevices,
 	}
 }
 
@@ -131,7 +169,11 @@ func resourceOptionsProps(options models.ResourceFormOptions) inertia.Props {
 	}
 	networks := make([]inertia.Props, 0, len(options.PrivateNetworks))
 	for _, network := range options.PrivateNetworks {
-		networks = append(networks, inertia.Props{"id": network.ID, "name": network.Name, "serverIds": network.ServerIDs})
+		serverAddresses := make(map[string]string, len(network.ServerAddresses))
+		for serverID, address := range network.ServerAddresses {
+			serverAddresses[serverID.String()] = address
+		}
+		networks = append(networks, inertia.Props{"id": network.ID, "name": network.Name, "serverIds": network.ServerIDs, "serverAddresses": serverAddresses})
 	}
 	credentials := make([]inertia.Props, 0, len(options.RegistryCredentials))
 	for _, credential := range options.RegistryCredentials {

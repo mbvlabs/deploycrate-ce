@@ -1,5 +1,6 @@
 <script lang="ts" module>
 	import { cn, type WithElementRef } from "@/lib/utils.js";
+	import type { Snippet } from "svelte";
 	import type { HTMLAnchorAttributes, HTMLButtonAttributes } from "svelte/elements";
 	import { type VariantProps, tv } from "tailwind-variants";
 
@@ -38,6 +39,7 @@
 		WithElementRef<HTMLAnchorAttributes> & {
 			variant?: ButtonVariant;
 			size?: ButtonSize;
+			child?: Snippet<[{ props: Record<string, unknown> }]>;
 		};
 </script>
 
@@ -51,11 +53,24 @@
 		type = "button",
 		disabled,
 		children,
+		child,
 		...restProps
 	}: ButtonProps = $props();
+
+	const childProps = $derived({
+		"data-slot": "button",
+		class: cn(buttonVariants({ variant, size }), className),
+		href: disabled ? undefined : href,
+		"aria-disabled": disabled || undefined,
+		role: disabled ? "link" : undefined,
+		tabindex: disabled ? -1 : undefined,
+		...restProps,
+	});
 </script>
 
-{#if href}
+{#if child}
+	{@render child({ props: childProps })}
+{:else if href}
 	<a
 		bind:this={ref}
 		data-slot="button"

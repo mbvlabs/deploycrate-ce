@@ -20,7 +20,6 @@ type ResourceCredentialEntity struct {
 	CreatedAt              time.Time       `bun:"created_at"`
 	UpdatedAt              time.Time       `bun:"updated_at"`
 	Name                   string          `bun:"name"`
-	Role                   string          `bun:"role"`
 	Username               sql.NullString  `bun:"username"`
 	Metadata               json.RawMessage `bun:"metadata,type:jsonb"`
 	EncPayload             []byte          `bun:"enc_payload"`
@@ -32,12 +31,10 @@ type ResourceCredentialEntity struct {
 
 func (e *ResourceCredentialEntity) Validate() error {
 	e.Name = strings.TrimSpace(e.Name)
-	e.Role = strings.TrimSpace(e.Role)
 	e.Username.String = strings.TrimSpace(e.Username.String)
 	e.Username.Valid = e.Username.String != ""
 	builder := validation.NewBuilder()
 	builder.Required("name", e.Name)
-	builder.Required("role", e.Role)
 	if len(e.Metadata) == 0 || !json.Valid(e.Metadata) {
 		builder.Add("metadata", "invalid", "metadata must be valid JSON")
 	} else if settingsContainSecret(e.Metadata) {
@@ -73,7 +70,6 @@ func (rc resourceCredential) Find(
 
 type CreateResourceCredentialData struct {
 	Name                   string
-	Role                   string
 	Username               sql.NullString
 	Metadata               json.RawMessage
 	EncPayload             []byte
@@ -93,7 +89,6 @@ func (rc resourceCredential) Create(
 		CreatedAt:              time.Now(),
 		UpdatedAt:              time.Now(),
 		Name:                   data.Name,
-		Role:                   data.Role,
 		Username:               data.Username,
 		Metadata:               data.Metadata,
 		EncPayload:             data.EncPayload,
@@ -121,7 +116,6 @@ type UpdateResourceCredentialData struct {
 	ID                     uuid.UUID
 	UpdatedAt              time.Time
 	Name                   string
-	Role                   string
 	Username               sql.NullString
 	Metadata               json.RawMessage
 	EncPayload             []byte
@@ -140,7 +134,6 @@ func (rc resourceCredential) Update(
 		ID:                     data.ID,
 		UpdatedAt:              time.Now(),
 		Name:                   data.Name,
-		Role:                   data.Role,
 		Username:               data.Username,
 		Metadata:               data.Metadata,
 		EncPayload:             data.EncPayload,
@@ -161,7 +154,6 @@ func (rc resourceCredential) Update(
 		Model(&entity).
 		Column("updated_at").
 		Column("name").
-		Column("role").
 		Column("username").
 		Column("metadata").
 		Column("enc_payload").
@@ -262,7 +254,6 @@ func (rc resourceCredential) Upsert(
 		CreatedAt:              time.Now(),
 		UpdatedAt:              time.Now(),
 		Name:                   data.Name,
-		Role:                   data.Role,
 		Username:               data.Username,
 		Metadata:               data.Metadata,
 		EncPayload:             data.EncPayload,
@@ -283,7 +274,6 @@ func (rc resourceCredential) Upsert(
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
 		Set("name = excluded.name").
-		Set("role = excluded.role").
 		Set("username = excluded.username").
 		Set("metadata = excluded.metadata").
 		Set("enc_payload = excluded.enc_payload").

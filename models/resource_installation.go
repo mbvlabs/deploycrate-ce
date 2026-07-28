@@ -18,6 +18,12 @@ import (
 
 var resourceContainerNamePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]*$`)
 
+type ResourceInstallationPortMapping struct {
+	HostPort      int32  `json:"hostPort"`
+	ContainerPort int32  `json:"containerPort"`
+	Protocol      string `json:"protocol"`
+}
+
 type ResourceInstallationEntity struct {
 	bun.BaseModel        `bun:"table:resource_installations,alias:resource_installations"`
 	ID                   uuid.UUID       `bun:"id,pk,type:uuid"`
