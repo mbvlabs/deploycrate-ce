@@ -43,6 +43,8 @@ type (
 	changeTaskAttempt            struct{}
 	changeLog                    struct{}
 	build                        struct{}
+	buildLog                     struct{}
+	job                          struct{}
 	release                      struct{}
 	deployment                   struct{}
 	deploymentEvent              struct{}
@@ -107,6 +109,8 @@ var (
 	ChangeTaskAttempt            changeTaskAttempt
 	ChangeLog                    changeLog
 	Build                        build
+	BuildLog                     buildLog
+	Job                          job
 	Release                      release
 	Deployment                   deployment
 	DeploymentEvent              deploymentEvent

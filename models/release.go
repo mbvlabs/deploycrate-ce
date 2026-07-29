@@ -2,10 +2,12 @@ package models
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -28,7 +30,14 @@ type ReleaseEntity struct {
 }
 
 func (e *ReleaseEntity) Validate() error {
-	return nil
+	builder := validation.NewBuilder()
+	if e.ID == uuid.Nil || e.EnvironmentID == uuid.Nil || e.CreatedByChangeID == uuid.Nil {
+		builder.Add("id", "required", "Release ownership identifiers are required")
+	}
+	if strings.TrimSpace(e.ArtifactReference) == "" || (len(e.ArtifactDigest) != 0 && len(e.ArtifactDigest) != sha256.Size) {
+		builder.Add("artifact", "invalid", "Release artifact reference or digest is invalid")
+	}
+	return builder.Err()
 }
 
 func (r release) Find(

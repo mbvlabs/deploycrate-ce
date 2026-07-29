@@ -2,6 +2,7 @@
   import { Link, router } from '@inertiajs/svelte'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
+  import * as Dialog from '@/Components/ui/dialog'
   import DataField from '@/Components/DataField.svelte'
   import FormField from '@/Components/FormField.svelte'
   import { Input } from '@/Components/ui/input'
@@ -46,14 +47,14 @@
     return { label: 'Unknown', tone: 'neutral', detail: 'DeployCrate could not confirm the current runtime state.' }
   })
 
-  let endpointDialog: HTMLDialogElement
-  let privateAccessDialog: HTMLDialogElement
-  let credentialDialog: HTMLDialogElement
-  let volumeDialog: HTMLDialogElement
-  let mountDialog: HTMLDialogElement
-  let healthDialog: HTMLDialogElement
-  let destructiveActionDialog: HTMLDialogElement
-  let wireGuardConfigurationDialog: HTMLDialogElement
+  let endpointDialogOpen = $state(false)
+  let privateAccessDialogOpen = $state(false)
+  let credentialDialogOpen = $state(false)
+  let volumeDialogOpen = $state(false)
+  let mountDialogOpen = $state(false)
+  let healthDialogOpen = $state(false)
+  let destructiveActionDialogOpen = $state(false)
+  let wireGuardConfigurationDialogOpen = $state(false)
   let jsonError = $state('')
   let pendingAction = $state('')
   let destructiveAction = $state<DestructiveAction | null>(null)
@@ -67,9 +68,9 @@
   let health = $state(initialHealth())
 
   $effect(() => {
-    if (!enrollment?.clientConfiguration || !enrollment.grantId || enrollment.grantId === shownEnrollmentGrantId || !wireGuardConfigurationDialog) return
+    if (!enrollment?.clientConfiguration || !enrollment.grantId || enrollment.grantId === shownEnrollmentGrantId) return
     shownEnrollmentGrantId = enrollment.grantId
-    wireGuardConfigurationDialog.showModal()
+    wireGuardConfigurationDialogOpen = true
   })
 
   function initialEndpoint() {
@@ -85,9 +86,8 @@
   }
 
   function submit(action: () => void) { try { action() } catch {} }
-  function openWireGuardConfiguration() { if (enrollment?.clientConfiguration) wireGuardConfigurationDialog.showModal() }
-  function keepDialogOpen(dialog: HTMLDialogElement) { queueMicrotask(() => { if (dialog.isConnected && !dialog.open) dialog.showModal() }) }
-  function createEndpoint() { router.post(routes.resourceEndpointCreate(resource.id), { ...endpoint, settings: {}, resourceInstallationId: resource.managementMode === 'managed' ? resource.installations[0]?.id ?? '' : '' }, { onSuccess: () => endpointDialog.close(), onError: () => keepDialogOpen(endpointDialog) }) }
+  function openWireGuardConfiguration() { if (enrollment?.clientConfiguration) wireGuardConfigurationDialogOpen = true }
+  function createEndpoint() { router.post(routes.resourceEndpointCreate(resource.id), { ...endpoint, settings: {}, resourceInstallationId: resource.managementMode === 'managed' ? resource.installations[0]?.id ?? '' : '' }, { onSuccess: () => (endpointDialogOpen = false), onError: () => (endpointDialogOpen = true) }) }
   function chooseEndpointNetwork(networkId: string) {
     endpoint.privateNetworkId = networkId
     if (resource.managementMode !== 'managed') {
@@ -98,9 +98,9 @@
     const serverId = resource.installations[0]?.serverId
     endpoint.address = selected && serverId ? selected.serverAddresses[serverId] ?? '127.0.0.1' : '127.0.0.1'
   }
-  function openCredentialDialog() { if (canAddApplicationUser) credentialDialog.showModal() }
-  function createCredential() { if (canAddApplicationUser) router.post(routes.resourceCredentialCreate(resource.id), { ...credential, metadata: {} }, { onSuccess: () => { credentialDialog.close(); credential.secretValues = {} }, onError: () => keepDialogOpen(credentialDialog) }) }
-  function enablePrivateAccess() { router.post(routes.resourcePrivateAccessCreate(resource.id), { privateNetworkId: privateAccessNetworkId }, { onSuccess: () => privateAccessDialog.close(), onError: () => keepDialogOpen(privateAccessDialog) }) }
+  function openCredentialDialog() { if (canAddApplicationUser) credentialDialogOpen = true }
+  function createCredential() { if (canAddApplicationUser) router.post(routes.resourceCredentialCreate(resource.id), { ...credential, metadata: {} }, { onSuccess: () => { credentialDialogOpen = false; credential.secretValues = {} }, onError: () => (credentialDialogOpen = true) }) }
+  function enablePrivateAccess() { router.post(routes.resourcePrivateAccessCreate(resource.id), { privateNetworkId: privateAccessNetworkId }, { onSuccess: () => (privateAccessDialogOpen = false), onError: () => (privateAccessDialogOpen = true) }) }
   function disablePrivateAccess() {
     confirmDestructive({
       kind: 'disable-private-access',
@@ -120,9 +120,9 @@
     })
   }
   function retryDevice(deviceId: string) { router.post(routes.resourcePrivateAccessDeviceCreate(resource.id), { deviceId, name: '' }) }
-  function createVolume() { submit(() => router.post(routes.resourceVolumeCreate(resource.id), { ...volume, configuration: json(volume.configurationText) }, { onSuccess: () => volumeDialog.close(), onError: () => keepDialogOpen(volumeDialog) })) }
-  function createMount() { router.post(routes.resourceMountCreate(resource.id), mount, { onSuccess: () => mountDialog.close(), onError: () => keepDialogOpen(mountDialog) }) }
-  function createHealth() { submit(() => router.post(routes.resourceHealthCheckCreate(resource.id), { ...health, configuration: json(health.configurationText) }, { onSuccess: () => healthDialog.close(), onError: () => keepDialogOpen(healthDialog) })) }
+  function createVolume() { submit(() => router.post(routes.resourceVolumeCreate(resource.id), { ...volume, configuration: json(volume.configurationText) }, { onSuccess: () => (volumeDialogOpen = false), onError: () => (volumeDialogOpen = true) })) }
+  function createMount() { router.post(routes.resourceMountCreate(resource.id), mount, { onSuccess: () => (mountDialogOpen = false), onError: () => (mountDialogOpen = true) }) }
+  function createHealth() { submit(() => router.post(routes.resourceHealthCheckCreate(resource.id), { ...health, configuration: json(health.configurationText) }, { onSuccess: () => (healthDialogOpen = false), onError: () => (healthDialogOpen = true) })) }
 
   function lifecycle(installationId: string, action: 'start' | 'stop' | 'restart' | 'remove') {
     if (pendingAction) return
@@ -157,15 +157,14 @@
 
   function confirmDestructive(action: DestructiveAction) {
     destructiveAction = action
-    destructiveActionDialog.showModal()
+    destructiveActionDialogOpen = true
   }
 
   function executeDestructiveAction() {
     const action = destructiveAction
     if (!action) return
 
-    destructiveActionDialog.close()
-    destructiveAction = null
+    destructiveActionDialogOpen = false
 
     if (action.kind === 'remove-container') lifecycle(action.installationId, 'remove')
     if (action.kind === 'disable-private-access') router.delete(routes.resourcePrivateAccessDestroy(resource.id))
@@ -191,6 +190,7 @@
         <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">{resource.kind} · {resource.category}</p>
         <h1 class="mt-3 text-3xl font-semibold">{resource.name}</h1>
         <p class="mt-2 text-sm capitalize text-muted-foreground">{resource.managementMode} · {resource.sharingScope} sharing</p>
+        {#if resource.kind === 'postgresql'}<p class="mt-1 font-mono text-xs text-muted-foreground">Database {resource.databaseName}</p>{/if}
       </div>
       <div class="flex gap-2">
         <Button variant="outline" onclick={() => router.reload({ only: ['resource'] })}>Refresh status</Button>
@@ -274,7 +274,7 @@
           <section class="border-t border-border pt-5">
             <div class="flex flex-wrap items-start justify-between gap-3">
               <div><h3 class="font-medium">Private network</h3><p class="mt-1 text-xs text-muted-foreground">A WireGuard listener derived from the primary origin.</p></div>
-              {#if privateEndpoint}<Button size="sm" variant="destructive" onclick={disablePrivateAccess}>Remove from private network</Button>{:else}<Button size="sm" variant="outline" onclick={() => privateAccessDialog.showModal()}>Add to private network</Button>{/if}
+              {#if privateEndpoint}<Button size="sm" variant="destructive" onclick={disablePrivateAccess}>Remove from private network</Button>{:else}<Button size="sm" variant="outline" onclick={() => (privateAccessDialogOpen = true)}>Add to private network</Button>{/if}
             </div>
             {#if privateEndpoint}
               <div class="mt-4 grid gap-5 sm:grid-cols-3">
@@ -293,13 +293,13 @@
             {/if}
           </section>
         {:else}
-          <div class="border-t border-border pt-5"><Button size="sm" variant="outline" onclick={() => endpointDialog.showModal()}>Add endpoint</Button></div>
+          <div class="border-t border-border pt-5"><Button size="sm" variant="outline" onclick={() => (endpointDialogOpen = true)}>Add endpoint</Button></div>
         {/if}
       </Card.Content>
     </Card.Root>
 
     <Card.Root>
-      <Card.Header><Card.Action><Button size="sm" variant="outline" disabled={!canAddApplicationUser} onclick={openCredentialDialog}>Add application user</Button></Card.Action><Card.Title>Credentials</Card.Title><Card.Description>Administrator access is installation-specific. Application users are Resource-scoped PostgreSQL login roles.</Card.Description></Card.Header>
+      <Card.Header><Card.Action><Button size="sm" variant="outline" disabled={!canAddApplicationUser} onclick={openCredentialDialog}>Add application user</Button></Card.Action><Card.Title>Credentials</Card.Title><Card.Description>{resource.kind === 'postgresql' ? `Administrator access is installation-specific. Application users receive migration access only to ${resource.databaseName}.` : 'Encrypted application credentials for this Resource.'}</Card.Description></Card.Header>
       <Card.Content class="grid gap-6 lg:grid-cols-2">
         {#if managedPostgreSQL && !containerRunning}<p class="border border-border bg-muted/20 p-3 text-sm text-muted-foreground lg:col-span-2">Start the PostgreSQL container before adding an application user. DeployCrate must connect to the running server to create its LOGIN role.</p>{/if}
         <section><h3 class="text-sm font-medium">Resource administrator</h3><div class="mt-3 space-y-3">{#if administratorCredentials.length === 0}<p class="text-sm text-muted-foreground">No installation-specific administrator.</p>{/if}{#each administratorCredentials as item}<div class="border border-border p-3"><div class="flex justify-between gap-3"><p class="font-medium">{item.username}</p><span class="text-xs text-muted-foreground">{item.hasEncryptedPayload ? 'Encrypted' : 'Missing secret'}</span></div><p class="mt-2 text-xs text-muted-foreground">Resource administrator</p></div>{/each}</div></section>
@@ -308,75 +308,91 @@
     </Card.Root>
 
     <div class="grid gap-6 lg:grid-cols-2">
-      <Card.Root><Card.Header><Card.Action>{#if resource.managementMode === 'managed' && (resource.volumes.length === 0 || (resource.volumes.length === 1 && resource.installations.length === 1 && resource.mounts.length === 0))}<div class="flex gap-2">{#if resource.volumes.length === 0}<Button size="sm" variant="outline" onclick={() => volumeDialog.showModal()}>Add volume</Button>{/if}{#if resource.volumes.length === 1 && resource.installations.length === 1 && resource.mounts.length === 0}<Button size="sm" variant="outline" onclick={() => mountDialog.showModal()}>Add mount</Button>{/if}</div>{/if}</Card.Action><Card.Title>Storage</Card.Title><Card.Description>The primary durable volume and its installation mount.</Card.Description></Card.Header><Card.Content class="space-y-3">{#if resource.volumes.length === 0}<p class="text-sm text-muted-foreground">No primary volume configured.</p>{/if}{#each resource.volumes as item}<div class="border border-border p-3"><p class="font-medium">{item.name}</p><p class="mt-2 text-xs text-muted-foreground">{item.driver} on {item.serverName}</p>{#each resource.mounts.filter((mount: any) => mount.resourceVolumeId === item.id) as mount}<p class="mt-2 font-mono text-xs">{mount.mountPath} → {mount.containerName}{mount.readOnly ? ' (read only)' : ''}</p>{/each}</div>{/each}</Card.Content></Card.Root>
-      <Card.Root><Card.Header><Card.Action><Button size="sm" variant="outline" disabled={resource.installations.length === 0} onclick={() => healthDialog.showModal()}>Add check</Button></Card.Action><Card.Title>Health checks</Card.Title><Card.Description>Desired checks and their latest observations.</Card.Description></Card.Header><Card.Content class="space-y-3">{#if resource.healthChecks.length === 0}<p class="text-sm text-muted-foreground">No health checks configured.</p>{/if}{#each resource.healthChecks as item}<div class="border border-border p-3"><div class="flex justify-between gap-3"><p class="font-medium">{item.name}</p><span class="text-xs capitalize">{item.state || 'Unknown'}</span></div><p class="mt-2 text-xs text-muted-foreground">{item.kind} · every {item.intervalSeconds}s · {item.enabled ? 'Enabled' : 'Disabled'}</p>{#if item.message}<p class="mt-2 text-xs text-muted-foreground">{item.message}</p>{/if}</div>{/each}</Card.Content></Card.Root>
+      <Card.Root><Card.Header><Card.Action>{#if resource.managementMode === 'managed' && (resource.volumes.length === 0 || (resource.volumes.length === 1 && resource.installations.length === 1 && resource.mounts.length === 0))}<div class="flex gap-2">{#if resource.volumes.length === 0}<Button size="sm" variant="outline" onclick={() => (volumeDialogOpen = true)}>Add volume</Button>{/if}{#if resource.volumes.length === 1 && resource.installations.length === 1 && resource.mounts.length === 0}<Button size="sm" variant="outline" onclick={() => (mountDialogOpen = true)}>Add mount</Button>{/if}</div>{/if}</Card.Action><Card.Title>Storage</Card.Title><Card.Description>The primary durable volume and its installation mount.</Card.Description></Card.Header><Card.Content class="space-y-3">{#if resource.volumes.length === 0}<p class="text-sm text-muted-foreground">No primary volume configured.</p>{/if}{#each resource.volumes as item}<div class="border border-border p-3"><p class="font-medium">{item.name}</p><p class="mt-2 text-xs text-muted-foreground">{item.driver} on {item.serverName}</p>{#each resource.mounts.filter((mount: any) => mount.resourceVolumeId === item.id) as mount}<p class="mt-2 font-mono text-xs">{mount.mountPath} → {mount.containerName}{mount.readOnly ? ' (read only)' : ''}</p>{/each}</div>{/each}</Card.Content></Card.Root>
+      <Card.Root><Card.Header><Card.Action><Button size="sm" variant="outline" disabled={resource.installations.length === 0} onclick={() => (healthDialogOpen = true)}>Add check</Button></Card.Action><Card.Title>Health checks</Card.Title><Card.Description>Desired checks and their latest observations.</Card.Description></Card.Header><Card.Content class="space-y-3">{#if resource.healthChecks.length === 0}<p class="text-sm text-muted-foreground">No health checks configured.</p>{/if}{#each resource.healthChecks as item}<div class="border border-border p-3"><div class="flex justify-between gap-3"><p class="font-medium">{item.name}</p><span class="text-xs capitalize">{item.state || 'Unknown'}</span></div><p class="mt-2 text-xs text-muted-foreground">{item.kind} · every {item.intervalSeconds}s · {item.enabled ? 'Enabled' : 'Disabled'}</p>{#if item.message}<p class="mt-2 text-xs text-muted-foreground">{item.message}</p>{/if}</div>{/each}</Card.Content></Card.Root>
     </div>
 
     <Card.Root>
       <Card.Header><Card.Action><span class="text-xs text-muted-foreground">{resource.connectionCount} connected</span></Card.Action><Card.Title>Connected Environments</Card.Title><Card.Description>Connections are managed from Environment pages.</Card.Description></Card.Header>
       <Card.Content class="space-y-3">
         {#if resource.connections.length === 0}<p class="text-sm text-muted-foreground">This Resource is not connected to an Environment.</p>{/if}
-        {#each resource.connections as item}<div class="grid gap-3 border border-border p-3 sm:grid-cols-[1fr_auto]"><div><p class="font-medium">{item.applicationName} / {item.environmentName}</p><p class="mt-1 text-xs text-muted-foreground">Alias {item.alias} · Endpoint {item.endpointName}{item.credentialName ? ` · Credential ${item.credentialName}` : ''}</p></div>{#if item.environmentArchived || item.applicationArchived}<span class="text-xs text-destructive">Archived owner</span>{/if}</div>{/each}
+        {#each resource.connections as item}<div class="grid gap-3 border border-border p-3 sm:grid-cols-[1fr_auto]"><div><p class="font-medium">{item.applicationName} / {item.environmentName}</p><p class="mt-1 text-xs text-muted-foreground">Database {item.database || 'Not specified'} · Alias {item.alias} · Endpoint {item.endpointName}{item.credentialName ? ` · Credential ${item.credentialName}` : ''}</p></div>{#if item.environmentArchived || item.applicationArchived}<span class="text-xs text-destructive">Archived owner</span>{/if}</div>{/each}
       </Card.Content>
     </Card.Root>
 
     <div class="border-t border-border pt-6"><Button variant="destructive" onclick={confirmResourceArchive}>Archive Resource</Button></div>
   </div>
 
-  <dialog bind:this={wireGuardConfigurationDialog} class="m-auto w-[min(48rem,calc(100vw-2rem))] border border-primary/50 bg-background p-0 text-foreground shadow-2xl backdrop:bg-black/70">
-    <div class="space-y-5 p-6">
+  <Dialog.Root bind:open={wireGuardConfigurationDialogOpen}>
+    <Dialog.Content class="sm:max-w-3xl">
+    <div class="space-y-5">
       <div><h2 class="text-lg font-semibold">One-time WireGuard configuration</h2><p class="mt-2 text-sm text-muted-foreground">Import this configuration on the newly enrolled device now. The private key is not stored and cannot be shown again after leaving this page.</p></div>
       <pre class="max-h-[60vh] overflow-auto border border-border bg-muted/30 p-4 font-mono text-xs whitespace-pre-wrap">{enrollment?.clientConfiguration ?? ''}</pre>
-      <div class="flex justify-end"><Button type="button" onclick={() => wireGuardConfigurationDialog.close()}>I have saved this configuration</Button></div>
+      <div class="flex justify-end"><Button type="button" onclick={() => (wireGuardConfigurationDialogOpen = false)}>I have saved this configuration</Button></div>
     </div>
-  </dialog>
+    </Dialog.Content>
+  </Dialog.Root>
 
-  <dialog bind:this={destructiveActionDialog} onclose={() => { destructiveAction = null }} class="m-auto w-[min(32rem,calc(100vw-2rem))] border border-destructive/50 bg-background p-0 text-foreground shadow-2xl backdrop:bg-black/70">
-    <form class="space-y-5 p-6" onsubmit={(event) => { event.preventDefault(); executeDestructiveAction() }}>
+  <Dialog.Root bind:open={destructiveActionDialogOpen} onOpenChange={(open) => { if (!open) destructiveAction = null }}>
+    <Dialog.Content>
+    <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); executeDestructiveAction() }}>
       <div>
         <h2 class="text-lg font-semibold">{destructiveAction?.title ?? 'Confirm destructive action'}</h2>
         <p class="mt-2 text-sm text-muted-foreground">{destructiveAction?.description}</p>
       </div>
       <div class="flex justify-end gap-2">
-        <Button type="button" variant="outline" onclick={() => destructiveActionDialog.close()}>Cancel</Button>
+        <Button type="button" variant="outline" onclick={() => (destructiveActionDialogOpen = false)}>Cancel</Button>
         <Button type="submit" variant="destructive">{destructiveAction?.confirmationLabel ?? 'Confirm'}</Button>
       </div>
     </form>
-  </dialog>
+    </Dialog.Content>
+  </Dialog.Root>
 
-  <dialog bind:this={privateAccessDialog} class="m-auto w-[min(34rem,calc(100vw-2rem))] border border-border bg-background p-0 text-foreground shadow-2xl backdrop:bg-black/70">
-    <form class="space-y-5 p-6" onsubmit={(event) => { event.preventDefault(); enablePrivateAccess() }}>
+  <Dialog.Root bind:open={privateAccessDialogOpen}>
+    <Dialog.Content>
+    <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); enablePrivateAccess() }}>
       <div><h2 class="text-lg font-semibold">Add to private network</h2><p class="mt-1 text-sm text-muted-foreground">Select the WireGuard network attached to the installation Server. Address, port, protocol, and installation are derived.</p></div>
       <FormField label="Private network" error={errors.privateNetworkId}><select bind:value={privateAccessNetworkId} class={selectClass} required><option value="">Select a private network</option>{#each endpointNetworks as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField>
-      <div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => privateAccessDialog.close()}>Cancel</Button><Button type="submit">Add to private network</Button></div>
+      <div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (privateAccessDialogOpen = false)}>Cancel</Button><Button type="submit">Add to private network</Button></div>
     </form>
-  </dialog>
+    </Dialog.Content>
+  </Dialog.Root>
 
-  <dialog bind:this={endpointDialog} class="m-auto w-[min(44rem,calc(100vw-2rem))] border border-border bg-background p-0 text-foreground shadow-2xl backdrop:bg-black/70">
-    <form class="space-y-5 p-6" onsubmit={(event) => { event.preventDefault(); createEndpoint() }}>
+  <Dialog.Root bind:open={endpointDialogOpen}>
+    <Dialog.Content class="sm:max-w-2xl">
+    <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createEndpoint() }}>
       <div><h2 class="text-lg font-semibold">Add endpoint</h2><p class="mt-1 text-sm text-muted-foreground">Define another address for this Resource.</p></div>
       <div class="grid gap-4 sm:grid-cols-2"><FormField label="Name" error={errors.name}><Input bind:value={endpoint.name} required /></FormField><FormField label="Address" error={errors.address}><Input bind:value={endpoint.address} required /></FormField><FormField label="Role"><select bind:value={endpoint.role} class={selectClass}>{#each definition.endpointRoles as value}<option value={value}>{value}</option>{/each}</select></FormField><FormField label="Protocol"><select bind:value={endpoint.protocol} class={selectClass}>{#each definition.protocols as value}<option value={value}>{value}</option>{/each}</select></FormField><FormField label="Port"><Input type="number" bind:value={endpoint.port} min="1" max="65535" /></FormField><FormField label="TLS"><select bind:value={endpoint.tlsMode} class={selectClass}>{#each definition.tlsModes as value}<option value={value}>{value}</option>{/each}</select></FormField><FormField label="Private network"><select bind:value={endpoint.privateNetworkId} onchange={(event) => chooseEndpointNetwork(event.currentTarget.value)} class={selectClass}><option value="">No private network</option>{#each endpointNetworks as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField>{#if resource.managementMode === 'managed'}<div class="border border-border bg-muted/20 px-3 py-2"><p class="text-[10px] uppercase tracking-wider text-muted-foreground">Installation</p><p class="mt-1 text-sm">{resource.installations[0]?.containerName}</p></div>{/if}</div>
-      <div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => endpointDialog.close()}>Cancel</Button><Button type="submit">Create endpoint</Button></div>
+      <div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (endpointDialogOpen = false)}>Cancel</Button><Button type="submit">Create endpoint</Button></div>
     </form>
-  </dialog>
+    </Dialog.Content>
+  </Dialog.Root>
 
-  <dialog bind:this={credentialDialog} class="m-auto w-[min(44rem,calc(100vw-2rem))] border border-border bg-background p-0 text-foreground shadow-2xl backdrop:bg-black/70">
-    <form class="space-y-5 p-6" onsubmit={(event) => { event.preventDefault(); createCredential() }}>
+  <Dialog.Root bind:open={credentialDialogOpen}>
+    <Dialog.Content class="sm:max-w-2xl">
+    <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createCredential() }}>
       <div><h2 class="text-lg font-semibold">Add application user</h2><p class="mt-1 text-sm text-muted-foreground">DeployCrate will create or update this PostgreSQL LOGIN role without restarting the container.</p></div>
       <div class="grid gap-4 sm:grid-cols-2"><FormField label="Display name" error={errors.name}><Input bind:value={credential.name} required /></FormField><FormField label="PostgreSQL username" error={errors.username}><Input bind:value={credential.username} required autocomplete="username" /></FormField>{#each definition.credentialFields as field}<FormField label={field.label} error={errors[`secretValues.${field.name}`]}><Input type={field.secret ? 'password' : 'text'} value={credential.secretValues[field.name] ?? ''} oninput={(event) => credential.secretValues[field.name] = event.currentTarget.value} required={field.required} autocomplete="new-password" /></FormField>{/each}</div>
-      <div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => credentialDialog.close()}>Cancel</Button><Button type="submit" disabled={!canAddApplicationUser}>Create application user</Button></div>
+      <div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (credentialDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={!canAddApplicationUser}>Create application user</Button></div>
     </form>
-  </dialog>
+    </Dialog.Content>
+  </Dialog.Root>
 
-  <dialog bind:this={volumeDialog} class="m-auto w-[min(38rem,calc(100vw-2rem))] border border-border bg-background p-0 text-foreground shadow-2xl backdrop:bg-black/70">
-    <form class="space-y-5 p-6" onsubmit={(event) => { event.preventDefault(); createVolume() }}><div><h2 class="text-lg font-semibold">Add volume</h2><p class="mt-1 text-sm text-muted-foreground">Create durable storage for this Resource.</p></div><div class="grid gap-4 sm:grid-cols-2"><FormField label="Name"><Input bind:value={volume.name} required /></FormField><FormField label="Driver"><Input bind:value={volume.driver} required /></FormField><FormField label="Server"><select bind:value={volume.serverId} class={selectClass}>{#each options.servers as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><label class="grid gap-1 text-xs sm:col-span-2">Configuration JSON<textarea class={textareaClass} bind:value={volume.configurationText}></textarea></label></div><div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => volumeDialog.close()}>Cancel</Button><Button type="submit">Create volume</Button></div></form>
-  </dialog>
+  <Dialog.Root bind:open={volumeDialogOpen}>
+    <Dialog.Content class="sm:max-w-xl">
+    <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createVolume() }}><div><h2 class="text-lg font-semibold">Add volume</h2><p class="mt-1 text-sm text-muted-foreground">Create durable storage for this Resource.</p></div><div class="grid gap-4 sm:grid-cols-2"><FormField label="Name"><Input bind:value={volume.name} required /></FormField><FormField label="Driver"><Input bind:value={volume.driver} required /></FormField><FormField label="Server"><select bind:value={volume.serverId} class={selectClass}>{#each options.servers as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><label class="grid gap-1 text-xs sm:col-span-2">Configuration JSON<textarea class={textareaClass} bind:value={volume.configurationText}></textarea></label></div><div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (volumeDialogOpen = false)}>Cancel</Button><Button type="submit">Create volume</Button></div></form>
+    </Dialog.Content>
+  </Dialog.Root>
 
-  <dialog bind:this={mountDialog} class="m-auto w-[min(38rem,calc(100vw-2rem))] border border-border bg-background p-0 text-foreground shadow-2xl backdrop:bg-black/70">
-    <form class="space-y-5 p-6" onsubmit={(event) => { event.preventDefault(); createMount() }}><div><h2 class="text-lg font-semibold">Add mount</h2><p class="mt-1 text-sm text-muted-foreground">Attach a Resource volume to an installation.</p></div><div class="grid gap-4 sm:grid-cols-2"><FormField label="Mount path"><Input bind:value={mount.mountPath} required /></FormField><FormField label="Volume"><select bind:value={mount.resourceVolumeId} class={selectClass}>{#each resource.volumes as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Installation"><select bind:value={mount.resourceInstallationId} class={selectClass}>{#each resource.installations as value}<option value={value.id}>{value.containerName}</option>{/each}</select></FormField><label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={mount.readOnly} /> Read only</label></div><div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => mountDialog.close()}>Cancel</Button><Button type="submit">Create mount</Button></div></form>
-  </dialog>
+  <Dialog.Root bind:open={mountDialogOpen}>
+    <Dialog.Content class="sm:max-w-xl">
+    <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createMount() }}><div><h2 class="text-lg font-semibold">Add mount</h2><p class="mt-1 text-sm text-muted-foreground">Attach a Resource volume to an installation.</p></div><div class="grid gap-4 sm:grid-cols-2"><FormField label="Mount path"><Input bind:value={mount.mountPath} required /></FormField><FormField label="Volume"><select bind:value={mount.resourceVolumeId} class={selectClass}>{#each resource.volumes as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Installation"><select bind:value={mount.resourceInstallationId} class={selectClass}>{#each resource.installations as value}<option value={value.id}>{value.containerName}</option>{/each}</select></FormField><label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={mount.readOnly} /> Read only</label></div><div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (mountDialogOpen = false)}>Cancel</Button><Button type="submit">Create mount</Button></div></form>
+    </Dialog.Content>
+  </Dialog.Root>
 
-  <dialog bind:this={healthDialog} class="m-auto w-[min(44rem,calc(100vw-2rem))] border border-border bg-background p-0 text-foreground shadow-2xl backdrop:bg-black/70">
-    <form class="space-y-5 p-6" onsubmit={(event) => { event.preventDefault(); createHealth() }}><div><h2 class="text-lg font-semibold">Add health check</h2><p class="mt-1 text-sm text-muted-foreground">Define how DeployCrate should evaluate this Resource.</p></div><div class="grid gap-4 sm:grid-cols-2"><FormField label="Name"><Input bind:value={health.name} required /></FormField><FormField label="Kind"><select bind:value={health.kind} class={selectClass}>{#each definition.healthCheckKinds as value}<option value={value}>{value}</option>{/each}</select></FormField><FormField label="Installation"><select bind:value={health.resourceInstallationId} class={selectClass}>{#each resource.installations as value}<option value={value.id}>{value.containerName}</option>{/each}</select></FormField><FormField label="Endpoint"><select bind:value={health.resourceEndpointId} class={selectClass}><option value="">None</option>{#each resource.endpoints as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Credential"><select bind:value={health.resourceCredentialId} class={selectClass}><option value="">None</option>{#each resource.credentials as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Interval seconds"><Input type="number" bind:value={health.intervalSeconds} min="1" /></FormField><FormField label="Timeout seconds"><Input type="number" bind:value={health.timeoutSeconds} min="1" /></FormField><FormField label="Failure threshold"><Input type="number" bind:value={health.failureThreshold} min="1" /></FormField><FormField label="Success threshold"><Input type="number" bind:value={health.successThreshold} min="1" /></FormField><label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={health.enabled} /> Enabled</label><label class="grid gap-1 text-xs sm:col-span-2">Configuration JSON<textarea class={textareaClass} bind:value={health.configurationText}></textarea></label></div><div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => healthDialog.close()}>Cancel</Button><Button type="submit">Create health check</Button></div></form>
-  </dialog>
+  <Dialog.Root bind:open={healthDialogOpen}>
+    <Dialog.Content class="sm:max-w-2xl">
+    <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createHealth() }}><div><h2 class="text-lg font-semibold">Add health check</h2><p class="mt-1 text-sm text-muted-foreground">Define how DeployCrate should evaluate this Resource.</p></div><div class="grid gap-4 sm:grid-cols-2"><FormField label="Name"><Input bind:value={health.name} required /></FormField><FormField label="Kind"><select bind:value={health.kind} class={selectClass}>{#each definition.healthCheckKinds as value}<option value={value}>{value}</option>{/each}</select></FormField><FormField label="Installation"><select bind:value={health.resourceInstallationId} class={selectClass}>{#each resource.installations as value}<option value={value.id}>{value.containerName}</option>{/each}</select></FormField><FormField label="Endpoint"><select bind:value={health.resourceEndpointId} class={selectClass}><option value="">None</option>{#each resource.endpoints as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Credential"><select bind:value={health.resourceCredentialId} class={selectClass}><option value="">None</option>{#each resource.credentials as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Interval seconds"><Input type="number" bind:value={health.intervalSeconds} min="1" /></FormField><FormField label="Timeout seconds"><Input type="number" bind:value={health.timeoutSeconds} min="1" /></FormField><FormField label="Failure threshold"><Input type="number" bind:value={health.failureThreshold} min="1" /></FormField><FormField label="Success threshold"><Input type="number" bind:value={health.successThreshold} min="1" /></FormField><label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={health.enabled} /> Enabled</label><label class="grid gap-1 text-xs sm:col-span-2">Configuration JSON<textarea class={textareaClass} bind:value={health.configurationText}></textarea></label></div><div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (healthDialogOpen = false)}>Cancel</Button><Button type="submit">Create health check</Button></div></form>
+    </Dialog.Content>
+  </Dialog.Root>
 </DashboardLayout>

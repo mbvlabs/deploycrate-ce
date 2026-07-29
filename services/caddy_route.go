@@ -17,7 +17,9 @@ import (
 
 type CaddyClient interface {
 	ApplyRoute(context.Context, caddyclients.Route) error
+	DeleteRoute(context.Context, string) error
 	VerifyRoute(context.Context, string) error
+	VerifyPublic(context.Context, string, string) error
 }
 
 type CaddyRouteService struct {
@@ -52,6 +54,14 @@ func (service CaddyRouteService) Reconcile(ctx context.Context, routeID uuid.UUI
 	}
 	if domain.ArchivedAt.Valid {
 		return "", errors.New("cannot reconcile a Caddy route for an archived domain")
+	}
+	var healthPath string
+	err = service.db.Executor().NewSelect().TableExpr("runtime_configurations").
+		ColumnExpr("COALESCE(settings ->> 'health_path', '')").
+		Where("environment_id = ?", domain.EnvironmentID).OrderExpr("created_at DESC").Limit(1).
+		Scan(ctx, &healthPath)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("load Environment route health path: %w", err)
 	}
 
 	var rows []backendRow
@@ -88,7 +98,7 @@ func (service CaddyRouteService) Reconcile(ctx context.Context, routeID uuid.UUI
 	}
 
 	if err := service.caddy.ApplyRoute(ctx, caddyclients.Route{
-		ID: route.ExternalID, Domain: domain.Hostname, Backends: backends,
+		ID: route.ExternalID, Domain: domain.Hostname, Backends: backends, HealthPath: healthPath,
 	}); err != nil {
 		return "", fmt.Errorf("apply Caddy route desired state: %w", err)
 	}
@@ -107,6 +117,22 @@ func (service CaddyRouteService) Reconcile(ctx context.Context, routeID uuid.UUI
 		return "", fmt.Errorf("mark Caddy route applied: %w", err)
 	}
 	return route.ExternalID, nil
+}
+
+func (service CaddyRouteService) ReconcileRegistry(
+	ctx context.Context,
+	externalID, domain, origin, username, passwordHash string,
+) error {
+	if err := service.caddy.ApplyRoute(ctx, caddyclients.Route{
+		ID: externalID, Domain: domain, HealthPath: "/v2/",
+		Backends: []caddyclients.Backend{{Dial: origin, Weight: 100}},
+		Authentication: &caddyclients.BasicAuthentication{
+			Username: username, PasswordHash: passwordHash,
+		},
+	}); err != nil {
+		return fmt.Errorf("apply managed registry Caddy route: %w", err)
+	}
+	return nil
 }
 
 func (service CaddyRouteService) SwitchTraffic(
@@ -340,4 +366,12 @@ func markCaddyRoutePending(
 
 func (service CaddyRouteService) Verify(ctx context.Context, externalID string) error {
 	return service.caddy.VerifyRoute(ctx, externalID)
+}
+
+func (service CaddyRouteService) VerifyPublic(ctx context.Context, domain, healthPath string) error {
+	return service.caddy.VerifyPublic(ctx, domain, healthPath)
+}
+
+func (service CaddyRouteService) Delete(ctx context.Context, externalID string) error {
+	return service.caddy.DeleteRoute(ctx, externalID)
 }

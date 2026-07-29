@@ -5,12 +5,18 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"os"
 	"os/exec"
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
+
+const publicIPv4Endpoint = "https://api.ipify.org"
 
 type HostInfo struct {
 	Distribution string
@@ -18,6 +24,7 @@ type HostInfo struct {
 	Architecture string
 	MemoryMB     uint64
 	DiskFreeMB   uint64
+	PublicIPv4   string
 }
 
 type InstallLock struct {
@@ -59,6 +66,7 @@ func Preflight(ctx context.Context, dryRun bool) (HostInfo, error) {
 			Architecture: "amd64",
 			MemoryMB:     4096,
 			DiskFreeMB:   20480,
+			PublicIPv4:   "203.0.113.10",
 		}, nil
 	}
 	if os.Geteuid() != 0 {
@@ -106,10 +114,40 @@ func Preflight(ctx context.Context, dryRun bool) (HostInfo, error) {
 	if err != nil {
 		return HostInfo{}, err
 	}
+	publicIPv4, err := detectPublicIPv4(ctx)
+	if err != nil {
+		return HostInfo{}, err
+	}
 	return HostInfo{
 		Distribution: osRelease["ID"], Version: osRelease["VERSION_ID"], Architecture: architecture,
-		MemoryMB: memoryMB, DiskFreeMB: diskFreeMB,
+		MemoryMB: memoryMB, DiskFreeMB: diskFreeMB, PublicIPv4: publicIPv4,
 	}, nil
+}
+
+func detectPublicIPv4(ctx context.Context) (string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, publicIPv4Endpoint, nil)
+	if err != nil {
+		return "", fmt.Errorf("create public IPv4 detection request: %w", err)
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	response, err := client.Do(request)
+	if err != nil {
+		return "", fmt.Errorf("detect public IPv4: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("detect public IPv4: unexpected HTTP status %s", response.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(response.Body, 64))
+	if err != nil {
+		return "", fmt.Errorf("read detected public IPv4: %w", err)
+	}
+	value := strings.TrimSpace(string(body))
+	address := net.ParseIP(value)
+	if address == nil || address.To4() == nil || address.IsPrivate() || address.IsLoopback() {
+		return "", fmt.Errorf("detect public IPv4: received invalid address %q", value)
+	}
+	return address.String(), nil
 }
 
 func parseOSRelease() (map[string]string, error) {

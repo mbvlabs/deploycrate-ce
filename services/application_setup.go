@@ -63,6 +63,7 @@ type ApplicationDetails struct {
 	EnvironmentName         string          `json:"environmentName" bun:"environment_name"`
 	EnvironmentSlug         string          `json:"environmentSlug" bun:"environment_slug"`
 	EnvironmentKind         string          `json:"environmentKind" bun:"environment_kind"`
+	SetupComplete           bool            `json:"setupComplete" bun:"setup_complete"`
 	EnvironmentSourceID     uuid.UUID       `json:"environmentSourceId" bun:"environment_source_id"`
 	RepositoryID            uuid.UUID       `json:"repositoryId" bun:"repository_id"`
 	RepositoryFullName      string          `json:"repositoryFullName" bun:"repository_full_name"`
@@ -188,7 +189,7 @@ func (service *ApplicationSetup) Options(ctx context.Context) (ApplicationSetupO
 		summaries = append(summaries, GitHubInstallationSummary{GitHubInstallationEntity: installation, RepositoryCount: len(installationRepositories)})
 		repositories = append(repositories, installationRepositories...)
 	}
-	var registries []models.ContainerRegistryEntity
+	registries := make([]models.ContainerRegistryEntity, 0)
 	if err := service.db.Executor().NewSelect().Model(&registries).Where("archived_at IS NULL").OrderExpr("name ASC").Scan(ctx); err != nil {
 		return ApplicationSetupOptions{}, err
 	}
@@ -212,10 +213,32 @@ func (service *ApplicationSetup) List(ctx context.Context) ([]ApplicationListIte
 }
 
 func (service *ApplicationSetup) Details(ctx context.Context, applicationID uuid.UUID) (ApplicationDetails, error) {
+	return service.details(ctx, applicationID, nil)
+}
+
+func (service *ApplicationSetup) DetailsForEnvironment(
+	ctx context.Context,
+	applicationID, environmentID uuid.UUID,
+) (ApplicationDetails, error) {
+	return service.details(ctx, applicationID, &environmentID)
+}
+
+func (service *ApplicationSetup) details(
+	ctx context.Context,
+	applicationID uuid.UUID,
+	environmentID *uuid.UUID,
+) (ApplicationDetails, error) {
 	var details ApplicationDetails
-	err := service.db.Executor().NewSelect().TableExpr("applications AS application").
+	query := service.db.Executor().NewSelect().TableExpr("applications AS application").
 		ColumnExpr("application.id").ColumnExpr("application.name").ColumnExpr("application.slug").
 		ColumnExpr("environment.id AS environment_id").ColumnExpr("environment.name AS environment_name").ColumnExpr("environment.slug AS environment_slug").ColumnExpr("environment.kind AS environment_kind").
+		ColumnExpr(`EXISTS (
+			SELECT 1 FROM changes AS setup_change
+			JOIN change_state_revisions AS setup_result ON setup_result.change_id = setup_change.id AND setup_result.role = 'result'
+			JOIN environment_state_revisions AS setup_revision ON setup_revision.id = setup_result.environment_state_revision_id AND setup_revision.environment_id = environment.id
+			WHERE setup_change.environment_id = environment.id AND setup_change.kind = 'environment_setup'
+			AND setup_change.committed_at IS NOT NULL AND setup_change.cancelled_at IS NULL
+		) AS setup_complete`).
 		ColumnExpr("source.id AS environment_source_id").ColumnExpr("source.reference").ColumnExpr("source.auto_build").
 		ColumnExpr("repository.id AS repository_id").ColumnExpr("repository.full_name AS repository_full_name").ColumnExpr("repository.removed_at AS repository_removed_at").
 		ColumnExpr("installation.id AS installation_id").ColumnExpr("installation.account_login AS installation_account").ColumnExpr("installation.suspended_at AS installation_suspended_at").
@@ -228,7 +251,11 @@ func (service *ApplicationSetup) Details(ctx context.Context, applicationID uuid
 		Join("JOIN environment_sources AS source ON source.environment_id = environment.id AND source.archived_at IS NULL").
 		Join("JOIN github_environment_sources AS binding ON binding.environment_source_id = source.id").Join("JOIN github_repositories AS repository ON repository.id = binding.github_repository_id").Join("JOIN github_installations AS installation ON installation.id = repository.github_installation_id").
 		Join("JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = source.id").Join("JOIN container_registries AS registry ON registry.id = buildpack.container_registry_id").
-		Where("application.id = ?", applicationID).Where("application.archived_at IS NULL").Where("application.slug <> ?", models.SystemApplicationSlug).Scan(ctx, &details)
+		Where("application.id = ?", applicationID).Where("application.archived_at IS NULL").Where("application.slug <> ?", models.SystemApplicationSlug)
+	if environmentID != nil {
+		query = query.Where("environment.id = ?", *environmentID)
+	}
+	err := query.Scan(ctx, &details)
 	return details, err
 }
 
@@ -267,6 +294,27 @@ func (service *ApplicationSetup) UpdateSource(ctx context.Context, applicationID
 	if err != nil {
 		return err
 	}
+	return service.updateSource(ctx, details, data)
+}
+
+func (service *ApplicationSetup) UpdateEnvironmentSource(
+	ctx context.Context,
+	applicationID, environmentID uuid.UUID,
+	data ApplicationSetupData,
+) error {
+	details, err := service.DetailsForEnvironment(ctx, applicationID, environmentID)
+	if err != nil {
+		return err
+	}
+	return service.updateSource(ctx, details, data)
+}
+
+func (service *ApplicationSetup) updateSource(
+	ctx context.Context,
+	details ApplicationDetails,
+	data ApplicationSetupData,
+) error {
+	var err error
 	repository, _, err := service.validateRepository(ctx, data.GitHubInstallationID, data.GitHubRepositoryID)
 	if err != nil {
 		return err

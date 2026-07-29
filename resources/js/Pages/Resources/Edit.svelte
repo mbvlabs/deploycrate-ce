@@ -2,6 +2,7 @@
   import { Link, router, useForm } from '@inertiajs/svelte'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
+  import ConfirmActionDialog from '@/Components/ConfirmActionDialog.svelte'
   import FormField from '@/Components/FormField.svelte'
   import { Input } from '@/Components/ui/input'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
@@ -13,7 +14,7 @@
   type Options = { kinds: Kind[]; servers: Array<{ id: string; name: string; address: string }>; privateNetworks: PrivateNetwork[]; registryCredentials: Array<{ id: string; name: string }> }
   let { auth, resource, options, errors = {} }: { auth: { email: string }; resource: any; options: Options; errors?: Record<string, string> } = $props()
 
-  const identity = useForm(() => ({ name: resource.name, category: resource.category, kind: resource.kind, managementMode: resource.managementMode, sharingScope: resource.sharingScope }))
+  const identity = useForm(() => ({ name: resource.name, category: resource.category, kind: resource.kind, databaseName: resource.databaseName, managementMode: resource.managementMode, sharingScope: resource.sharingScope }))
   const definition = $derived(options.kinds.find((kind) => kind.kind === $identity.kind) ?? options.kinds[0])
   const selectClass = 'h-9 w-full border border-input bg-background px-3 text-sm aria-invalid:border-destructive'
   const textareaClass = 'min-h-24 w-full border border-input bg-background px-3 py-2 font-mono text-xs'
@@ -24,6 +25,9 @@
   let volumeDrafts = $state(initialVolumeDrafts())
   let mountDrafts = $state(initialMountDrafts())
   let healthDrafts = $state(initialHealthDrafts())
+  let archiveDialogOpen = $state(false)
+  let archiveTarget = $state<{ path: string; label: string } | null>(null)
+  let archiveProcessing = $state(false)
 
   function initialEndpointDrafts() { return Object.fromEntries(resource.endpoints.map((item: any) => [item.id, { ...item, privateNetworkId: item.privateNetworkId ?? '' }])) }
   function initialCredentialDrafts() { return Object.fromEntries(resource.credentials.map((item: any) => [item.id, { ...item, secretValues: {}, rotate: false }])) }
@@ -45,7 +49,19 @@
   function saveVolume(id: string) { const value = volumeDrafts[id]; submit(() => router.patch(editRoute(routes.resourceVolumeUpdate(resource.id, id)), { ...value, configuration: json(value.configurationText) })) }
   function saveMount(id: string) { router.patch(editRoute(routes.resourceMountUpdate(resource.id, id)), mountDrafts[id]) }
   function saveHealth(id: string) { const value = healthDrafts[id]; submit(() => router.patch(editRoute(routes.resourceHealthCheckUpdate(resource.id, id)), { ...value, configuration: json(value.configurationText) })) }
-  function archive(path: string, label: string) { if (window.confirm(`Archive this ${label}?`)) router.delete(editRoute(path)) }
+  function archive(path: string, label: string) {
+    archiveTarget = { path, label }
+    archiveDialogOpen = true
+  }
+  function confirmArchive() {
+    if (!archiveTarget) return
+    archiveProcessing = true
+    router.delete(editRoute(archiveTarget.path), {
+      preserveScroll: true,
+      onSuccess: () => (archiveDialogOpen = false),
+      onFinish: () => (archiveProcessing = false),
+    })
+  }
 </script>
 
 <svelte:head><title>Edit {resource.name}</title></svelte:head>
@@ -57,7 +73,7 @@
     {#if Object.keys(errors).length > 0}<div class="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert"><p class="font-medium">The changes could not be saved.</p><ul class="mt-2 list-disc pl-5">{#each Object.entries(errors) as [field, message]}<li>{field}: {message}</li>{/each}</ul></div>{/if}
 
     <form onsubmit={saveIdentity}>
-      <Card.Root><Card.Header><Card.Title>Identity and policy</Card.Title><Card.Description>Kind and management-mode changes remain protected by topology rules.</Card.Description></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2"><FormField label="Name" error={errors.name}><Input bind:value={$identity.name} required /></FormField><FormField label="Kind" error={errors.kind}><select bind:value={$identity.kind} onchange={selectKind} class={selectClass} required>{#each options.kinds as kind}<option value={kind.kind}>{kind.label}</option>{/each}</select></FormField><FormField label="Category"><Input bind:value={$identity.category} readonly required /></FormField><FormField label="Management mode" error={errors.managementMode}><select bind:value={$identity.managementMode} class={selectClass}><option value="managed">Managed</option><option value="external">External</option></select></FormField><FormField label="Sharing scope" error={errors.sharingScope}><select bind:value={$identity.sharingScope} class={selectClass}><option value="environment">Environment policy</option><option value="application">Application policy</option><option value="global">Global policy</option></select></FormField></Card.Content><Card.Footer class="border-t border-border"><Button type="submit" disabled={$identity.processing}>Save identity</Button></Card.Footer></Card.Root>
+      <Card.Root><Card.Header><Card.Title>Identity and policy</Card.Title><Card.Description>Kind, database, and management-mode changes remain protected by topology rules.</Card.Description></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2"><FormField label="Name" error={errors.name}><Input bind:value={$identity.name} required /></FormField><FormField label="Kind" error={errors.kind}><select bind:value={$identity.kind} onchange={selectKind} class={selectClass} required>{#each options.kinds as kind}<option value={kind.kind}>{kind.label}</option>{/each}</select></FormField><FormField label="Category"><Input bind:value={$identity.category} readonly required /></FormField>{#if $identity.kind === 'postgresql'}<FormField label="Database" error={errors.databaseName}><Input bind:value={$identity.databaseName} readonly required /></FormField>{/if}<FormField label="Management mode" error={errors.managementMode}><select bind:value={$identity.managementMode} class={selectClass}><option value="managed">Managed</option><option value="external">External</option></select></FormField><FormField label="Sharing scope" error={errors.sharingScope}><select bind:value={$identity.sharingScope} class={selectClass}><option value="environment">Environment policy</option><option value="application">Application policy</option><option value="global">Global policy</option></select></FormField></Card.Content><Card.Footer class="border-t border-border"><Button type="submit" disabled={$identity.processing}>Save identity</Button></Card.Footer></Card.Root>
     </form>
 
     <Card.Root>
@@ -94,4 +110,13 @@
       <Card.Content class="space-y-6">{#if resource.healthChecks.length === 0}<p class="text-sm text-muted-foreground">No health checks to edit.</p>{/if}{#each resource.healthChecks as item}<section class="space-y-4 border border-border p-4"><div class="flex items-center justify-between"><h3 class="font-medium">{item.name}</h3><Button size="sm" variant="destructive" onclick={() => archive(routes.resourceHealthCheckDestroy(resource.id, item.id), 'health check')}>Archive</Button></div><div class="grid gap-4 sm:grid-cols-2"><FormField label="Name"><Input bind:value={healthDrafts[item.id].name} /></FormField><FormField label="Kind"><select bind:value={healthDrafts[item.id].kind} class={selectClass}>{#each definition.healthCheckKinds as value}<option value={value}>{value}</option>{/each}</select></FormField><FormField label="Installation"><select bind:value={healthDrafts[item.id].resourceInstallationId} class={selectClass}>{#each resource.installations as value}<option value={value.id}>{value.containerName}</option>{/each}</select></FormField><FormField label="Endpoint"><select bind:value={healthDrafts[item.id].resourceEndpointId} class={selectClass}><option value="">None</option>{#each resource.endpoints as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Credential"><select bind:value={healthDrafts[item.id].resourceCredentialId} class={selectClass}><option value="">None</option>{#each resource.credentials as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Interval seconds"><Input type="number" bind:value={healthDrafts[item.id].intervalSeconds} min="1" /></FormField><FormField label="Timeout seconds"><Input type="number" bind:value={healthDrafts[item.id].timeoutSeconds} min="1" /></FormField><FormField label="Failure threshold"><Input type="number" bind:value={healthDrafts[item.id].failureThreshold} min="1" /></FormField><FormField label="Success threshold"><Input type="number" bind:value={healthDrafts[item.id].successThreshold} min="1" /></FormField><label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={healthDrafts[item.id].enabled} /> Enabled</label><label class="grid gap-1 text-xs sm:col-span-2">Configuration JSON<textarea class={textareaClass} bind:value={healthDrafts[item.id].configurationText}></textarea></label></div><Button size="sm" onclick={() => saveHealth(item.id)}>Save health check</Button></section>{/each}</Card.Content>
     </Card.Root>
   </div>
+  <ConfirmActionDialog
+    bind:open={archiveDialogOpen}
+    title={`Archive ${archiveTarget?.label ?? 'item'}?`}
+    description={`Archive this ${archiveTarget?.label ?? 'item'} and remove it from active Resource configuration.`}
+    confirmLabel="Archive"
+    destructive
+    processing={archiveProcessing}
+    onconfirm={confirmArchive}
+  />
 </DashboardLayout>

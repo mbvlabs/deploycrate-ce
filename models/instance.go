@@ -7,6 +7,8 @@ import (
 	"deploycrate-ce/internal/validation"
 	"encoding/json"
 	"errors"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,7 +33,20 @@ type InstanceEntity struct {
 }
 
 func (e *InstanceEntity) Validate() error {
-	return nil
+	builder := validation.NewBuilder()
+	if e.ID == uuid.Nil || e.DeploymentID == uuid.Nil || e.ReleaseID == uuid.Nil || e.EnvironmentTargetID == uuid.Nil {
+		builder.Add("id", "required", "Instance ownership identifiers are required")
+	}
+	if strings.TrimSpace(e.ExternalID) == "" || strings.TrimSpace(e.ReplicaKey) == "" {
+		builder.Add("externalId", "required", "Instance identity is required")
+	}
+	if !slices.Contains([]string{"queued", "candidate", "running", "serving", "failed", "removed"}, e.State) {
+		builder.Add("state", "invalid", "Instance state is invalid")
+	}
+	if len(e.Ports) == 0 || !json.Valid(e.Ports) {
+		builder.Add("ports", "invalid", "Instance ports must be valid JSON")
+	}
+	return builder.Err()
 }
 
 func (i instance) Find(

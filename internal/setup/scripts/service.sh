@@ -79,7 +79,7 @@ if [ "$(caddy version | awk '{print $1}')" != "v${CADDY_VERSION}" ]; then
   printf 'Expected Caddy v%s after installation\n' "${CADDY_VERSION}" >&2
   exit 1
 fi
-if ! caddy list-modules | grep -Fxq "${CADDY_MODULE}"; then
+if ! caddy list-modules | grep -Fx "${CADDY_MODULE}" >/dev/null; then
   printf 'Installed Caddy v%s does not provide required module %s\n' "${CADDY_VERSION}" "${CADDY_MODULE}" >&2
   exit 1
 fi

@@ -102,6 +102,7 @@ func (er environmentResource) FindConnectionByApplicationAndAlias(
 }
 
 type CreateEnvironmentResourceData struct {
+	ID                   uuid.UUID
 	Alias                string
 	Configuration        json.RawMessage
 	ArchivedAt           sql.NullTime
@@ -117,7 +118,7 @@ func (er environmentResource) Create(
 	data CreateEnvironmentResourceData,
 ) (EnvironmentResourceEntity, error) {
 	entity := EnvironmentResourceEntity{
-		ID:                   uuid.New(),
+		ID:                   data.ID,
 		CreatedAt:            time.Now(),
 		UpdatedAt:            time.Now(),
 		Alias:                data.Alias,
@@ -127,6 +128,9 @@ func (er environmentResource) Create(
 		ResourceID:           data.ResourceID,
 		ResourceEndpointID:   data.ResourceEndpointID,
 		ResourceCredentialID: data.ResourceCredentialID,
+	}
+	if entity.ID == uuid.Nil {
+		entity.ID = uuid.New()
 	}
 
 	if err := validation.Validate(&entity); err != nil {

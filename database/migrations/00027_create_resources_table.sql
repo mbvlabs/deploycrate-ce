@@ -9,6 +9,7 @@ CREATE TABLE resources (
     name TEXT NOT NULL,
     category TEXT NOT NULL,
     kind TEXT NOT NULL,
+    database_name TEXT NOT NULL,
     management_mode TEXT NOT NULL,
     sharing_scope TEXT NOT NULL,
     system_managed BOOLEAN NOT NULL,

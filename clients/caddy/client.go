@@ -25,6 +25,9 @@ const (
 	backendHealthTimeout     = "1s"
 	backendTryDuration       = "2s"
 	backendTryInterval       = "100ms"
+	publicVerifyTimeout      = 2 * time.Minute
+	publicVerifyInterval     = 2 * time.Second
+	publicVerifyRequestLimit = 10 * time.Second
 )
 
 type Backend struct {
@@ -33,9 +36,16 @@ type Backend struct {
 }
 
 type Route struct {
-	ID       string
-	Domain   string
-	Backends []Backend
+	ID             string
+	Domain         string
+	Backends       []Backend
+	HealthPath     string
+	Authentication *BasicAuthentication
+}
+
+type BasicAuthentication struct {
+	Username     string
+	PasswordHash string
 }
 
 type Client struct {
@@ -58,23 +68,37 @@ func (client *Client) ApplyRoute(ctx context.Context, route Route) error {
 		return err
 	}
 
+	healthPath := strings.TrimSpace(route.HealthPath)
+	if healthPath == "" {
+		healthPath = "/api/health"
+	}
+	handles := make([]routeHandle, 0, 2)
+	if route.Authentication != nil {
+		handles = append(handles, routeHandle{
+			Handler: "authentication",
+			Providers: map[string]authenticationProvider{
+				"http_basic": {Accounts: []authenticationAccount{{
+					Username: route.Authentication.Username, Password: route.Authentication.PasswordHash,
+				}}},
+			},
+		})
+	}
+	handles = append(handles, routeHandle{
+		Handler:   "reverse_proxy",
+		Upstreams: upstreams(route.Backends),
+		LoadBalancing: &loadBalancing{SelectionPolicy: selectionPolicy{
+			Policy:  "weighted_round_robin",
+			Weights: weights(route.Backends),
+		}, TryDuration: backendTryDuration, TryInterval: backendTryInterval},
+		HealthChecks: &healthChecks{Active: activeHealthChecks{
+			URI: healthPath, Interval: backendHealthInterval, Timeout: backendHealthTimeout,
+		}},
+	})
 	entry := routeEntry{
 		ID:       route.ID,
 		Match:    []routeMatch{{Host: []string{route.Domain}}},
 		Terminal: true,
-		Handle: []routeHandle{{
-			Handler:   "reverse_proxy",
-			Upstreams: upstreams(route.Backends),
-			LoadBalancing: loadBalancing{SelectionPolicy: selectionPolicy{
-				Policy:  "weighted_round_robin",
-				Weights: weights(route.Backends),
-			}, TryDuration: backendTryDuration, TryInterval: backendTryInterval},
-			HealthChecks: healthChecks{Active: activeHealthChecks{
-				URI:      "/api/health",
-				Interval: backendHealthInterval,
-				Timeout:  backendHealthTimeout,
-			}},
-		}},
+		Handle:   handles,
 	}
 
 	for attempt := 1; attempt <= applyRouteMaxAttempts; attempt++ {
@@ -132,6 +156,70 @@ func (client *Client) VerifyRoute(ctx context.Context, id string) error {
 		return fmt.Errorf("caddy: route %s is not present", id)
 	}
 	return nil
+}
+
+func (client *Client) DeleteRoute(ctx context.Context, id string) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return errors.New("caddy: route identifier is required")
+	}
+	exists, err := client.routeExists(ctx, id)
+	if err != nil || !exists {
+		return err
+	}
+	if err := client.request(ctx, http.MethodDelete, "/id/"+url.PathEscape(id), nil, http.StatusOK); err != nil {
+		return fmt.Errorf("caddy: delete route %s: %w", id, err)
+	}
+	return nil
+}
+
+func (client *Client) VerifyPublic(ctx context.Context, domain, healthPath string) error {
+	domain = strings.TrimSpace(domain)
+	healthPath = strings.TrimSpace(healthPath)
+	if domain == "" {
+		return errors.New("caddy: public verification domain is required")
+	}
+	if healthPath == "" {
+		healthPath = "/"
+	}
+	if !strings.HasPrefix(healthPath, "/") {
+		return errors.New("caddy: public verification health path is invalid")
+	}
+	verificationCtx, cancel := context.WithTimeout(ctx, publicVerifyTimeout)
+	defer cancel()
+	httpClient := &http.Client{Timeout: publicVerifyRequestLimit}
+	var lastErr error
+	for {
+		request, err := http.NewRequestWithContext(verificationCtx, http.MethodGet, "https://"+domain+healthPath, nil)
+		if err != nil {
+			return err
+		}
+		response, err := httpClient.Do(request)
+		if err != nil {
+			lastErr = fmt.Errorf("caddy: verify public Environment route: %w", err)
+		} else {
+			_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 32*1024))
+			_ = response.Body.Close()
+			if response.StatusCode >= 200 && response.StatusCode < 400 {
+				return nil
+			}
+			lastErr = fmt.Errorf("caddy: public Environment route returned status %d", response.StatusCode)
+			if response.StatusCode < 500 {
+				return lastErr
+			}
+		}
+
+		timer := time.NewTimer(publicVerifyInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-verificationCtx.Done():
+			timer.Stop()
+			return fmt.Errorf("caddy: public Environment route did not become ready: %w", lastErr)
+		case <-timer.C:
+		}
+	}
 }
 
 func (client *Client) serverExists(ctx context.Context) (bool, error) {
@@ -275,6 +363,12 @@ func validateRoute(route Route) error {
 			return fmt.Errorf("caddy: backend weight %d must be between 0 and 100", backend.Weight)
 		}
 	}
+	if route.HealthPath != "" && !strings.HasPrefix(route.HealthPath, "/") {
+		return errors.New("caddy: health path must be absolute")
+	}
+	if route.Authentication != nil && (strings.TrimSpace(route.Authentication.Username) == "" || strings.TrimSpace(route.Authentication.PasswordHash) == "") {
+		return errors.New("caddy: basic authentication username and password hash are required")
+	}
 	return nil
 }
 
@@ -302,10 +396,20 @@ type routeEntry struct {
 }
 
 type routeHandle struct {
-	Handler       string        `json:"handler"`
-	HealthChecks  healthChecks  `json:"health_checks"`
-	LoadBalancing loadBalancing `json:"load_balancing"`
-	Upstreams     []upstream    `json:"upstreams"`
+	Handler       string                            `json:"handler"`
+	HealthChecks  *healthChecks                     `json:"health_checks,omitempty"`
+	LoadBalancing *loadBalancing                    `json:"load_balancing,omitempty"`
+	Upstreams     []upstream                        `json:"upstreams,omitempty"`
+	Providers     map[string]authenticationProvider `json:"providers,omitempty"`
+}
+
+type authenticationProvider struct {
+	Accounts []authenticationAccount `json:"accounts"`
+}
+
+type authenticationAccount struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
 }
 
 type routeMatch struct {

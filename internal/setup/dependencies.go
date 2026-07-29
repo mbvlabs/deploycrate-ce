@@ -24,22 +24,23 @@ type AdminInput struct {
 }
 
 type BootstrapInput struct {
-	DatabaseURL         string
-	Domain              string
-	Version             string
-	ArtifactReference   string
-	ArtifactDigest      []byte
-	Distribution        string
-	DistributionVersion string
-	Architecture        string
-	Capabilities        BootstrapCapabilitiesInput
-	DatabaseExternal    bool
-	DatabaseHost        string
-	DatabasePort        int
-	DatabaseName        string
-	DatabaseSSLMode     string
-	WireGuard           BootstrapWireGuardInput
-	Backup              BootstrapBackupInput
+	DatabaseURL          string
+	Domain               string
+	Version              string
+	ArtifactReference    string
+	ArtifactDigest       []byte
+	Distribution         string
+	DistributionVersion  string
+	Architecture         string
+	SessionEncryptionKey string
+	Capabilities         BootstrapCapabilitiesInput
+	DatabaseExternal     bool
+	DatabaseHost         string
+	DatabasePort         int
+	DatabaseName         string
+	DatabaseSSLMode      string
+	WireGuard            BootstrapWireGuardInput
+	Backup               BootstrapBackupInput
 }
 
 type BootstrapCapabilitiesInput struct {

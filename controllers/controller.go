@@ -20,8 +20,11 @@ var constructors = fx.Provide(
 	NewSystem,
 	NewSelfUpdates,
 	NewGitHubConnections,
+	NewContainerRegistries,
 	NewApplications,
+	NewEnvironments,
 	NewResources,
+	NewJobs,
 )
 
 var Module = fx.Module(
@@ -51,10 +54,19 @@ var Module = fx.Module(
 	fx.Invoke(func(r *router.Router, c GitHubConnections) error {
 		return c.RegisterRoutes(r)
 	}),
+	fx.Invoke(func(r *router.Router, c ContainerRegistries) error {
+		return c.RegisterRoutes(r)
+	}),
 	fx.Invoke(func(r *router.Router, c Applications) error {
 		return c.RegisterRoutes(r)
 	}),
+	fx.Invoke(func(r *router.Router, c Environments) error {
+		return c.RegisterRoutes(r)
+	}),
 	fx.Invoke(func(r *router.Router, c Resources) error {
+		return c.RegisterRoutes(r)
+	}),
+	fx.Invoke(func(r *router.Router, c Jobs) error {
 		return c.RegisterRoutes(r)
 	}),
 )

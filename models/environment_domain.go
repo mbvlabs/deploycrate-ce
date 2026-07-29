@@ -6,6 +6,8 @@ import (
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
 	"errors"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -23,8 +25,39 @@ type EnvironmentDomainEntity struct {
 	EnvironmentID uuid.UUID    `bun:"environment_id,type:uuid"`
 }
 
+var environmentHostnamePattern = regexp.MustCompile(`^(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))+$`)
+
 func (e *EnvironmentDomainEntity) Validate() error {
-	return nil
+	e.Hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(e.Hostname), "."))
+	builder := validation.NewBuilder()
+	if len(e.Hostname) > 253 || !environmentHostnamePattern.MatchString(e.Hostname) {
+		builder.Add("hostname", "format", "hostname must be a valid fully qualified domain name")
+	}
+	if !e.IsPrimary {
+		builder.Add("isPrimary", "required", "this release requires a primary Environment domain")
+	}
+	if e.EnvironmentID == uuid.Nil {
+		builder.Add("environmentId", "required", "Environment is required")
+	}
+	return builder.Err()
+}
+
+func ensureEnvironmentDomainUnique(ctx context.Context, db storage.Executor, entity EnvironmentDomainEntity) error {
+	if entity.ArchivedAt.Valid {
+		return nil
+	}
+	if err := ensureActiveUnique(
+		ctx, db, "environment-domain-hostname:"+entity.Hostname, entity.ID,
+		db.NewSelect().Model((*EnvironmentDomainEntity)(nil)).Where("lower(hostname) = ?", strings.ToLower(entity.Hostname)),
+		"hostname", "an active Environment domain already uses this hostname",
+	); err != nil {
+		return err
+	}
+	return ensureActiveUnique(
+		ctx, db, "environment-domain-primary:"+entity.EnvironmentID.String(), entity.ID,
+		db.NewSelect().Model((*EnvironmentDomainEntity)(nil)).Where("environment_id = ?", entity.EnvironmentID).Where("is_primary = TRUE"),
+		"isPrimary", "the Environment already has an active primary domain",
+	)
 }
 
 func (ed environmentDomain) Find(
@@ -115,6 +148,9 @@ func (ed environmentDomain) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return EnvironmentDomainEntity{}, errors.Join(ErrDomainValidation, err)
 	}
+	if err := ensureEnvironmentDomainUnique(ctx, db, entity); err != nil {
+		return EnvironmentDomainEntity{}, err
+	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
 		return EnvironmentDomainEntity{}, err
@@ -148,6 +184,9 @@ func (ed environmentDomain) Update(
 
 	if err := validation.Validate(&entity); err != nil {
 		return EnvironmentDomainEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureEnvironmentDomainUnique(ctx, db, entity); err != nil {
+		return EnvironmentDomainEntity{}, err
 	}
 
 	if err := db.NewUpdate().
@@ -257,6 +296,9 @@ func (ed environmentDomain) Upsert(
 
 	if err := validation.Validate(&entity); err != nil {
 		return EnvironmentDomainEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureEnvironmentDomainUnique(ctx, db, entity); err != nil {
+		return EnvironmentDomainEntity{}, err
 	}
 
 	if err := db.NewInsert().

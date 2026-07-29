@@ -27,6 +27,31 @@ func (e *EnvironmentTargetEntity) Validate() error {
 	return nil
 }
 
+func ensureEnvironmentTargetUnique(ctx context.Context, db storage.Executor, entity EnvironmentTargetEntity) error {
+	if entity.DetachedAt.Valid {
+		return nil
+	}
+	switch db.(type) {
+	case bun.Tx, *bun.Tx:
+	default:
+		return errors.New("active Environment target uniqueness checks require a transaction")
+	}
+	lockKey := "environment-target:" + entity.EnvironmentID.String() + ":" + entity.ServerID.String()
+	if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", lockKey); err != nil {
+		return err
+	}
+	count, err := db.NewSelect().Model((*EnvironmentTargetEntity)(nil)).
+		Where("environment_id = ?", entity.EnvironmentID).Where("server_id = ?", entity.ServerID).
+		Where("detached_at IS NULL").Where("id <> ?", entity.ID).Count(ctx)
+	if err != nil {
+		return err
+	}
+	if count != 0 {
+		return errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "serverId", Code: "taken", Message: "the Environment already has an active target on this Server"}})
+	}
+	return nil
+}
+
 func (et environmentTarget) Find(
 	ctx context.Context,
 	db storage.Executor,
@@ -41,6 +66,13 @@ func (et environmentTarget) Find(
 	}
 
 	return entity, nil
+}
+
+func (et environmentTarget) ActiveForEnvironment(ctx context.Context, db storage.Executor, environmentID uuid.UUID) (EnvironmentTargetEntity, error) {
+	var entity EnvironmentTargetEntity
+	err := db.NewSelect().Model(&entity).Where("environment_id = ?", environmentID).
+		Where("detached_at IS NULL").OrderExpr("attached_at DESC").Limit(1).Scan(ctx)
+	return entity, err
 }
 
 type CreateEnvironmentTargetData struct {
@@ -67,6 +99,9 @@ func (et environmentTarget) Create(
 
 	if err := validation.Validate(&entity); err != nil {
 		return EnvironmentTargetEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureEnvironmentTargetUnique(ctx, db, entity); err != nil {
+		return EnvironmentTargetEntity{}, err
 	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
@@ -101,6 +136,9 @@ func (et environmentTarget) Update(
 
 	if err := validation.Validate(&entity); err != nil {
 		return EnvironmentTargetEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureEnvironmentTargetUnique(ctx, db, entity); err != nil {
+		return EnvironmentTargetEntity{}, err
 	}
 
 	if err := db.NewUpdate().
@@ -210,6 +248,9 @@ func (et environmentTarget) Upsert(
 
 	if err := validation.Validate(&entity); err != nil {
 		return EnvironmentTargetEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureEnvironmentTargetUnique(ctx, db, entity); err != nil {
+		return EnvironmentTargetEntity{}, err
 	}
 
 	if err := db.NewInsert().

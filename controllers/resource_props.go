@@ -2,6 +2,8 @@ package controllers
 
 import (
 	"database/sql"
+	"encoding/json"
+	"strings"
 	"time"
 
 	"deploycrate-ce/internal/inertia"
@@ -15,6 +17,7 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 		connections = append(connections, inertia.Props{
 			"id": connection.ID, "createdAt": connection.CreatedAt, "updatedAt": connection.UpdatedAt,
 			"alias": connection.Alias, "configuration": connection.Configuration,
+			"database":      resourceConnectionDatabase(connection.Configuration),
 			"environmentId": connection.EnvironmentID, "environmentName": connection.EnvironmentName,
 			"environmentKind": connection.EnvironmentKind, "environmentArchived": connection.EnvironmentArchived,
 			"applicationName": connection.ApplicationName, "applicationSlug": connection.ApplicationSlug,
@@ -123,6 +126,7 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 	return inertia.Props{
 		"id": resource.ID, "createdAt": resource.CreatedAt, "updatedAt": resource.UpdatedAt,
 		"name": resource.Name, "category": resource.Category, "kind": resource.Kind,
+		"databaseName":   resource.DatabaseName,
 		"managementMode": resource.ManagementMode.String(), "sharingScope": resource.SharingScope.String(),
 		"connectionCount": len(connections), "connections": connections,
 		"endpoints": endpoints, "credentials": credentials, "installations": installations,
@@ -132,11 +136,22 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 	}
 }
 
+func resourceConnectionDatabase(configuration json.RawMessage) string {
+	var value struct {
+		Database string `json:"database"`
+	}
+	if json.Unmarshal(configuration, &value) != nil {
+		return ""
+	}
+	return strings.TrimSpace(value.Database)
+}
+
 func resourceListProps(items []models.ResourceListItem) []inertia.Props {
 	props := make([]inertia.Props, 0, len(items))
 	for _, item := range items {
 		props = append(props, inertia.Props{
 			"id": item.ID, "name": item.Name, "category": item.Category, "kind": item.Kind,
+			"databaseName":   item.DatabaseName,
 			"managementMode": item.ManagementMode.String(), "sharingScope": item.SharingScope.String(),
 			"connectionCount": item.ConnectionCount, "installationCount": item.InstallationCount,
 			"endpointCount": item.EndpointCount, "health": item.Health,

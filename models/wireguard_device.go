@@ -112,7 +112,7 @@ func (wireGuardDevice) FindActive(ctx context.Context, db storage.Executor, id u
 
 func (wireGuardDevice) AllocatedAddresses(ctx context.Context, db storage.Executor) ([]string, error) {
 	addresses := make([]string, 0)
-	err := db.NewSelect().TableExpr("wireguard_devices").ColumnExpr("private_address::text").OrderExpr("private_address").Scan(ctx, &addresses)
+	err := db.NewSelect().TableExpr("wireguard_devices").ColumnExpr("host(private_address)").OrderExpr("private_address").Scan(ctx, &addresses)
 	return addresses, err
 }
 

@@ -9,6 +9,7 @@ import (
 
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/queue/jobs"
+	"deploycrate-ce/services"
 
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverdatabasesql"
@@ -49,12 +50,34 @@ func (p Processor) Stop(ctx context.Context) error {
 	return p.Client.Stop(ctx)
 }
 
+func (p Processor) Job(ctx context.Context, id int64) (*rivertype.JobRow, error) {
+	return p.Client.JobGet(ctx, id)
+}
+
+func (p Processor) RunJobNow(ctx context.Context, id int64) (*rivertype.JobRow, error) {
+	return p.Client.JobRetry(ctx, id)
+}
+
+func (p Processor) RestartJob(ctx context.Context, id int64) (*rivertype.JobRow, error) {
+	return p.Client.JobRetry(ctx, id)
+}
+
+func (p Processor) CancelJob(ctx context.Context, id int64) (*rivertype.JobRow, error) {
+	return p.Client.JobCancel(ctx, id)
+}
+
+func (p Processor) DeleteJob(ctx context.Context, id int64) (*rivertype.JobRow, error) {
+	return p.Client.JobDelete(ctx, id)
+}
+
 func NewProcessor(params ProcessorParams) (Processor, error) {
 	riverClient, err := river.NewClient(riverdatabasesql.New(params.DB.Conn()), &river.Config{
 		PeriodicJobs: params.PeriodicJobs,
 		Queues: map[string]river.QueueConfig{
-			river.QueueDefault: {MaxWorkers: 100},
-			jobs.BackupQueue:   {MaxWorkers: 1},
+			river.QueueDefault:   {MaxWorkers: 100},
+			jobs.BackupQueue:     {MaxWorkers: 1},
+			jobs.BuildQueue:      {MaxWorkers: 1},
+			jobs.DeploymentQueue: {MaxWorkers: 1},
 		},
 		RescueStuckJobsAfter: 13 * time.Hour,
 		Logger:               slog.Default(),
@@ -69,6 +92,35 @@ func NewProcessor(params ProcessorParams) (Processor, error) {
 
 type InsertOnly struct {
 	client *river.Client[*sql.Tx]
+}
+
+type JobControlOnly struct {
+	client *river.Client[*sql.Tx]
+}
+
+func (control JobControlOnly) CancelJob(ctx context.Context, id int64) error {
+	_, err := control.client.JobCancel(ctx, id)
+	return err
+}
+
+func (control JobControlOnly) DeleteJob(ctx context.Context, id int64) error {
+	_, err := control.client.JobDelete(ctx, id)
+	return err
+}
+
+func (control JobControlOnly) CancelJobTx(ctx context.Context, tx *sql.Tx, id int64) error {
+	_, err := control.client.JobCancelTx(ctx, tx, id)
+	return err
+}
+
+func (control JobControlOnly) RetryJobTx(ctx context.Context, tx *sql.Tx, id int64) error {
+	_, err := control.client.JobRetryTx(ctx, tx, id)
+	return err
+}
+
+func (control JobControlOnly) DeleteJobTx(ctx context.Context, tx *sql.Tx, id int64) error {
+	_, err := control.client.JobDeleteTx(ctx, tx, id)
+	return err
 }
 
 // Insert implements storage.InsertQueue.
@@ -141,11 +193,16 @@ func NewInsertQueue(insertOnly InsertOnly) storage.InsertQueue {
 	return &insertOnly
 }
 
+func NewBuildJobControl(insertOnly InsertOnly) services.BuildJobControl {
+	return JobControlOnly{client: insertOnly.client}
+}
+
 var Module = fx.Module(
 	"queue",
 	fx.Provide(
 		NewInsertOnly,
 		NewInsertQueue,
+		NewBuildJobControl,
 		NewBackupScheduleSeeder,
 		NewProcessor,
 		fx.Annotate(NewMetricRollupPeriodicJob, fx.ResultTags(periodicJobsGroup)),

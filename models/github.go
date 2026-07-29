@@ -178,6 +178,7 @@ func (githubApp) ActiveDependencyCount(ctx context.Context, db storage.Executor,
 		Join("JOIN github_repositories AS repository ON repository.id = binding.github_repository_id").
 		Join("JOIN github_installations AS installation ON installation.id = repository.github_installation_id").
 		Join("JOIN environment_sources AS source ON source.id = binding.environment_source_id").
+		Join("JOIN environments AS environment ON environment.id = source.environment_id").
 		Where("installation.github_app_id = ?", id).Where("source.archived_at IS NULL").Count(ctx)
 	if err != nil {
 		return 0, err
@@ -338,21 +339,36 @@ type GitHubMatchingSource struct {
 	Reference           string          `bun:"reference"`
 	AutoBuild           bool            `bun:"auto_build"`
 	RepositoryFullName  string          `bun:"repository_full_name"`
-	BuildConfiguration  json.RawMessage `bun:"build_configuration,type:jsonb"`
+	ContextPath         string          `bun:"context_path"`
+	BuilderReference    sql.NullString  `bun:"builder_reference"`
+	BuildpackSettings   json.RawMessage `bun:"buildpack_settings,type:jsonb"`
+	ImageRepository     string          `bun:"image_repository"`
+	RegistryID          uuid.UUID       `bun:"registry_id"`
+	RegistryEndpoint    string          `bun:"registry_endpoint"`
 }
 
 func (githubEnvironmentSource) MatchingActive(ctx context.Context, db storage.Executor, installationExternalID, repositoryExternalID int64, reference string) ([]GitHubMatchingSource, error) {
 	var entities []GitHubMatchingSource
 	err := db.NewSelect().TableExpr("github_environment_sources AS binding").
 		ColumnExpr("source.id AS environment_source_id").ColumnExpr("source.environment_id").ColumnExpr("source.reference").ColumnExpr("source.auto_build").ColumnExpr("repository.full_name AS repository_full_name").
-		ColumnExpr("jsonb_build_object('schema_version', 1, 'context_path', buildpack.context_path, 'builder_reference', buildpack.builder_reference, 'image_repository', buildpack.image_repository, 'container_registry_id', buildpack.container_registry_id, 'settings', buildpack.settings) AS build_configuration").
+		ColumnExpr("buildpack.context_path, buildpack.builder_reference, buildpack.settings AS buildpack_settings, buildpack.image_repository").
+		ColumnExpr("registry.id AS registry_id, registry.endpoint AS registry_endpoint").
 		Join("JOIN environment_sources AS source ON source.id = binding.environment_source_id").
+		Join("JOIN environments AS environment ON environment.id = source.environment_id").
 		Join("JOIN github_repositories AS repository ON repository.id = binding.github_repository_id").
 		Join("JOIN github_installations AS installation ON installation.id = repository.github_installation_id").
 		Join("JOIN github_apps AS app ON app.id = installation.github_app_id").
 		Join("JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = source.id").
+		Join("JOIN container_registries AS registry ON registry.id = buildpack.container_registry_id AND registry.archived_at IS NULL").
 		Where("installation.external_id = ?", installationExternalID).Where("repository.external_id = ?", repositoryExternalID).
-		Where("source.archived_at IS NULL").Where("source.auto_build = TRUE").Where("source.reference = ?", reference).
+		Where("source.archived_at IS NULL").Where("environment.archived_at IS NULL").
+		Where(`EXISTS (
+			SELECT 1 FROM changes AS setup_change
+			JOIN change_state_revisions AS setup_result ON setup_result.change_id = setup_change.id AND setup_result.role = 'result'
+			JOIN environment_state_revisions AS setup_revision ON setup_revision.id = setup_result.environment_state_revision_id AND setup_revision.environment_id = environment.id
+			WHERE setup_change.environment_id = environment.id AND setup_change.kind = 'environment_setup'
+			AND setup_change.committed_at IS NOT NULL AND setup_change.cancelled_at IS NULL
+		)`).Where("source.auto_build = TRUE").Where("source.reference = ?", reference).
 		Where("repository.removed_at IS NULL").Where("installation.archived_at IS NULL").Where("installation.suspended_at IS NULL").Where("app.archived_at IS NULL").Scan(ctx, &entities)
 	return entities, err
 }

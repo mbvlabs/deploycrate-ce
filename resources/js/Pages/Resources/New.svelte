@@ -30,7 +30,7 @@
   function initialForm() {
     const initialKind = options.kinds[0]
     return {
-      name: '', category: initialKind?.category ?? 'database', kind: initialKind?.kind ?? 'postgresql', sharingScope: 'environment', managementMode: 'managed',
+      name: '', category: initialKind?.category ?? 'database', kind: initialKind?.kind ?? 'postgresql', databaseName: '', sharingScope: 'environment', managementMode: 'managed',
       endpoint: { name: 'Primary', role: initialKind?.endpointRoles[0] ?? 'primary', address: '127.0.0.1', port: initialKind?.defaultPort ?? 5432, protocol: initialKind?.defaultProtocol ?? 'postgresql', tlsMode: initialKind?.defaultTlsMode ?? 'prefer', settings: {}, resourceInstallationId: '', privateNetworkId: '' },
       installation: { imageReference: '', imageDigest: '', containerName: '', restartPolicy: 'unless-stopped', configuration: {}, portMappings: [{ hostPort: initialKind?.defaultPort ?? 5432, containerPort: initialKind?.defaultPort ?? 5432, protocol: 'tcp' }], serverId: '', registryCredentialId: '' },
       volume: { name: '', driver: 'local', configuration: {}, serverId: '' }, mount: { mountPath: '/data', readOnly: false, resourceVolumeId: '', resourceInstallationId: '' },
@@ -81,7 +81,7 @@
     const managed = form.managementMode === 'managed'
     router.post(routes.resourceCreate(), {
       name: form.name, category: form.category,
-      kind: form.kind, sharingScope: form.sharingScope, managementMode: form.managementMode,
+      kind: form.kind, databaseName: form.databaseName, sharingScope: form.sharingScope, managementMode: form.managementMode,
       endpoint: managed ? null : form.endpoint,
       installation: managed ? form.installation : null,
       volume: managed && includeVolume ? { ...form.volume, serverId: form.installation.serverId } : null,
@@ -134,6 +134,7 @@
             {#each filteredKinds as kind}<option value={kind.kind}>{kind.label}</option>{/each}
           </select>
         </FormField>
+        {#if form.kind === 'postgresql'}<FormField label="Database" error={errors.databaseName}><Input bind:value={form.databaseName} aria-invalid={Boolean(errors.databaseName)} placeholder="application_production" required /></FormField>{/if}
       </Card.Content>
     </Card.Root>
 

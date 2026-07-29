@@ -24,6 +24,7 @@ const (
 	APIVersion      = "2026-03-10"
 	defaultBaseURL  = "https://api.github.com"
 	maxResponseBody = 2 << 20
+	maxArchiveBytes = 512 << 20
 )
 
 var (
@@ -35,6 +36,76 @@ var (
 type Client struct {
 	httpClient *http.Client
 	baseURL    string
+}
+
+func (c *Client) DownloadArchive(
+	ctx context.Context,
+	auth AppAuthentication,
+	installationID int64,
+	repository, revision string,
+	destination io.Writer,
+) error {
+	repository = strings.Trim(strings.TrimSpace(repository), "/")
+	revision = strings.ToLower(strings.TrimSpace(revision))
+	if installationID <= 0 || strings.Count(repository, "/") != 1 || len(revision) != 40 || destination == nil {
+		return errors.New("GitHub repository, exact revision, and archive destination are required")
+	}
+	for _, character := range revision {
+		if !strings.ContainsRune("0123456789abcdef", character) {
+			return errors.New("GitHub archive revision must be an exact commit SHA")
+		}
+	}
+	token, err := c.createInstallationToken(ctx, auth, installationID)
+	if err != nil {
+		return err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		c.baseURL+"/repos/"+repository+"/tarball/"+revision, nil)
+	if err != nil {
+		return err
+	}
+	request.Header.Set("Accept", "application/vnd.github+json")
+	request.Header.Set("X-GitHub-Api-Version", APIVersion)
+	request.Header.Set("User-Agent", "DeployCrate-CE")
+	request.Header.Set("Authorization", "Bearer "+token)
+	client := *c.httpClient
+	client.Timeout = 2 * time.Minute
+	client.CheckRedirect = func(next *http.Request, previous []*http.Request) error {
+		if len(previous) > 3 {
+			return errors.New("GitHub archive exceeded the redirect limit")
+		}
+		host := strings.ToLower(next.URL.Hostname())
+		if host != "api.github.com" && host != "github.com" && host != "codeload.github.com" {
+			return errors.New("GitHub archive redirected to an untrusted host")
+		}
+		if host != "api.github.com" {
+			next.Header.Del("Authorization")
+		}
+		return nil
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("download GitHub archive: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		if response.StatusCode == http.StatusNotFound {
+			return ErrNotFound
+		}
+		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+			return ErrUnauthorized
+		}
+		return fmt.Errorf("GitHub archive returned status %d", response.StatusCode)
+	}
+	limited := &io.LimitedReader{R: response.Body, N: maxArchiveBytes + 1}
+	written, err := io.Copy(destination, limited)
+	if err != nil {
+		return fmt.Errorf("write GitHub archive: %w", err)
+	}
+	if written > maxArchiveBytes {
+		return errors.New("GitHub archive exceeded the allowed size")
+	}
+	return nil
 }
 
 func NewClient() *Client {
@@ -134,6 +205,34 @@ func (c *Client) ListInstallationRepositories(ctx context.Context, auth AppAuthe
 		}
 	}
 	return repositories, nil
+}
+
+func (c *Client) ResolveRevision(
+	ctx context.Context,
+	auth AppAuthentication,
+	installationID int64,
+	repository, reference string,
+) (string, error) {
+	repository = strings.Trim(strings.TrimSpace(repository), "/")
+	reference = strings.TrimSpace(reference)
+	if installationID <= 0 || strings.Count(repository, "/") != 1 || reference == "" {
+		return "", errors.New("GitHub repository and reference are required")
+	}
+	token, err := c.createInstallationToken(ctx, auth, installationID)
+	if err != nil {
+		return "", err
+	}
+	var commit struct {
+		SHA string `json:"sha"`
+	}
+	path := "/repos/" + repository + "/commits/" + url.PathEscape(reference)
+	if err := c.request(ctx, http.MethodGet, path, "Bearer "+token, nil, &commit); err != nil {
+		return "", fmt.Errorf("resolve GitHub revision: %w", err)
+	}
+	if len(commit.SHA) != 40 {
+		return "", errors.New("GitHub returned an invalid commit revision")
+	}
+	return strings.ToLower(commit.SHA), nil
 }
 
 func (c *Client) createInstallationToken(ctx context.Context, auth AppAuthentication, installationID int64) (string, error) {

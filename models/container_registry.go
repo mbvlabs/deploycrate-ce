@@ -6,6 +6,7 @@ import (
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -25,7 +26,21 @@ type ContainerRegistryEntity struct {
 }
 
 func (e *ContainerRegistryEntity) Validate() error {
-	return nil
+	e.Name = strings.TrimSpace(e.Name)
+	e.Provider = strings.TrimSpace(e.Provider)
+	e.Endpoint = strings.TrimSpace(strings.TrimSuffix(e.Endpoint, "/"))
+	builder := validation.NewBuilder()
+	builder.Required("name", e.Name)
+	if e.Provider != "distribution" {
+		builder.Add("provider", "unsupported", "container registry provider must be distribution")
+	}
+	if e.Endpoint == "" || strings.ContainsAny(e.Endpoint, " \t\r\n") {
+		builder.Add("endpoint", "invalid", "container registry endpoint is invalid")
+	}
+	if e.CredentialID == uuid.Nil {
+		builder.Add("credentialId", "required", "registry credential is required")
+	}
+	return builder.Err()
 }
 
 func (cr containerRegistry) Find(
@@ -41,6 +56,19 @@ func (cr containerRegistry) Find(
 		return ContainerRegistryEntity{}, err
 	}
 
+	return entity, nil
+}
+
+func (cr containerRegistry) ActiveManaged(ctx context.Context, db storage.Executor) (ContainerRegistryEntity, error) {
+	var entity ContainerRegistryEntity
+	if err := db.NewSelect().Model(&entity).
+		Join("JOIN credentials AS credential ON credential.id = container_registries.credential_id").
+		Where("container_registries.archived_at IS NULL").
+		Where("credential.provider = 'container_registry' AND credential.archived_at IS NULL").
+		Where("COALESCE(credential.metadata ->> 'credential_kind', '') <> 'external_registry'").
+		OrderExpr("container_registries.created_at").Limit(1).Scan(ctx); err != nil {
+		return ContainerRegistryEntity{}, err
+	}
 	return entity, nil
 }
 

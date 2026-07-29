@@ -21,6 +21,7 @@ type ResourceListItem struct {
 	Name              string                     `bun:"name"`
 	Category          string                     `bun:"category"`
 	Kind              string                     `bun:"kind"`
+	DatabaseName      string                     `bun:"database_name"`
 	ManagementMode    ResourceManagementModeEnum `bun:"management_mode"`
 	SharingScope      ResourceSharingScopeEnum   `bun:"sharing_scope"`
 	ConnectionCount   int                        `bun:"connection_count"`

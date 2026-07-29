@@ -70,7 +70,7 @@ Rules local to one entity belong in `models/`. Rules involving multiple records,
 
 - An environment state revision belongs to one environment and the committed change that created it.
 - Revision `state` is a complete canonical desired-state snapshot, not a patch.
-- Revision state stores secret identifiers, generations, and digests only. It never stores plaintext or encrypted secret values.
+- Revision state stores secret identifiers and keyed digests only. It never stores plaintext or encrypted secret values.
 - Environment state revisions are immutable.
 - Change sequence increases monotonically within an environment.
 - A change's base and result revisions belong to the same environment as the change.
@@ -154,28 +154,35 @@ Rules local to one entity belong in `models/`. Rules involving multiple records,
 - Each environment-specific database and principal is owned through an explicit resource binding.
 - Database and principal names identify the intended objects within their cluster and are not reused across unrelated active bindings unless sharing is explicitly requested.
 - A binding cannot reference a database, principal, endpoint, installation, or credential from another resource.
-- Managed credential rotation creates a new credential generation. It never overwrites the previous generation in place.
-- A managed credential generation belongs to one binding and projects to identified environment secrets.
-- Managed environment secrets identify their binding source and generation and cannot be edited directly.
+- Managed credential rotation creates a new immutable credential value. It never overwrites the previous value in place.
+- A managed credential value belongs to one binding and projects to identified Environment secret rows.
+- Managed Environment secrets identify their binding source and keyed digest and cannot be edited directly.
 - Self-managed mode references user-controlled secret material and never silently replaces it with generated credentials.
-- Retiring a credential generation occurs only after dependent deployments stop using it or an explicitly supported overlap window ends.
+- Retiring a credential value occurs only after dependent deployments stop using it or an explicitly supported overlap window ends.
 - Archiving a binding retires its managed credentials and secrets through a corrective change and cleanup tasks.
 - Resource changes that affect bound environments create changes for those environments before updating managed secrets or deployments.
 
 ## Environment secrets
 
-- Active secret keys are unique within an environment.
-- Secret values are encrypted before persistence and are never stored in JSONB configuration, logs, task results, or outbox payloads.
-- A digest may be used for change detection but cannot be used to recover the value.
-- Secret ownership is explicit through its source type and source identifier.
-- Self-managed secrets are changed only through user-authorized environment changes.
-- Managed binding secrets are changed only through the binding credential lifecycle.
-- Rotation creates a new secret generation or record and preserves the prior generation long enough for rollback and safe rollout.
-- Archival stops future injection but preserves historical identity for revisions and telemetry correlation.
+- Environment secret keys are normalized to uppercase, match `[A-Z_][A-Z0-9_]*`, and are unique without regard to case among active rows in one Environment.
+- `PORT` and any active Resource-projected keys are reserved from user ownership.
+- Secret values are encrypted with purpose-bound AES-256-GCM before persistence and are never stored in desired-state JSON, build or deployment configuration JSON, changes, jobs, logs, telemetry, or Inertia props.
+- Secret digests use a server-key-derived, context-bound HMAC-SHA256 over Environment ID, normalized key, and plaintext so a same-value rotation is detected as a no-op.
+- Secret ciphertext, digest, source type, source ID, and Environment ID are immutable. The secret row UUID and keyed digest identify the exact immutable value.
+- Secret ownership is either `user` with the initiating User ID or `environment_resource` with the EnvironmentResource connection ID.
+- User workflows cannot mutate Resource-managed secret rows. Resource reconciliation cannot silently take ownership of an active user key.
+- Rotation archives the active row and creates a new immutable row in one transaction. Archived rows are retained for rollback.
+- Archival creates a committed Environment change and complete state revision that omits the key. Historical revisions continue resolving their exact archived row.
+- Desired-state revisions contain only secret ID, key, full keyed digest, source type, and source ID. Resolution verifies every descriptor against its Environment-owned database row before decryption.
+- Secret values are decrypted only in memory for Resource projection or the exact deployment revision. Root and Docker-socket administrator visibility into a running container environment is an accepted security boundary.
 
 ## Deployments and instances
 
 - A deployment's change, release, target, and runtime configuration all belong to the same environment.
+- Environment workloads are directly managed Docker containers. Docker Compose and generated per-Environment systemd units are not deployment state stores.
+- Each workload container and bridge network is identified by stable ownership labels. Names alone never establish ownership.
+- Workload images use immutable registry digests, restart with `unless-stopped`, and publish application ports only to dynamic loopback host ports.
+- One-replica replacement is blue-green. The previous serving container remains available until candidate health, Caddy switching, and public verification succeed.
 - A deployment applies the result revision selected by its change.
 - Deployment attempt numbers increase within the same change, release, and target execution.
 - Deployment status follows the supported lifecycle. Start and finish timestamps reflect the actual execution window.

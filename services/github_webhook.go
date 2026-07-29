@@ -196,6 +196,14 @@ func (service *GitHubWebhook) processPush(ctx context.Context, delivery models.G
 
 	now := time.Now().UTC()
 	for _, source := range matches {
+		stateRevision, err := models.EnvironmentStateRevision.LatestCommitted(ctx, tx, source.EnvironmentID)
+		if err != nil {
+			return fmt.Errorf("load current Environment state: %w", err)
+		}
+		state, err := models.ParseEnvironmentDesiredState(stateRevision.State)
+		if err != nil {
+			return fmt.Errorf("parse current Environment state: %w", err)
+		}
 		event, err := models.SourceEvent.Create(ctx, tx, models.CreateSourceEventData{ExternalID: delivery.DeliveryID, Kind: "github_push", SourceRevision: sql.NullString{String: payload.After, Valid: true}, Payload: sanitized, ReceivedAt: delivery.ReceivedAt, ProcessedAt: sql.NullTime{Time: now, Valid: true}, EnvironmentSourceID: source.EnvironmentSourceID})
 		if err != nil {
 			return fmt.Errorf("create source event: %w", err)
@@ -212,7 +220,22 @@ func (service *GitHubWebhook) processPush(ctx context.Context, delivery models.G
 		if _, err := models.ChangeItem.Create(ctx, tx, models.CreateChangeItemData{Action: "build", SubjectType: "environment_source", SubjectID: source.EnvironmentSourceID, RequestedValue: requestedValue, ChangeID: change.ID}); err != nil {
 			return fmt.Errorf("create build change item: %w", err)
 		}
-		build, err := models.Build.Create(ctx, tx, models.CreateBuildData{SourceRevision: payload.After, BuildMethod: "buildpacks", BuildConfiguration: source.BuildConfiguration, Status: "pending", EnvironmentID: source.EnvironmentID, EnvironmentSourceID: source.EnvironmentSourceID, ChangeID: change.ID})
+		buildConfiguration, err := marshalBuildSnapshot(buildSnapshot{
+			SchemaVersion: 1, SourceEventID: event.ID, EnvironmentStateRevisionID: stateRevision.ID,
+			Repository: source.RepositoryFullName, Reference: source.Reference, SourceRevision: payload.After,
+			ContextPath: source.ContextPath, BuilderReference: nullableStringPointer(source.BuilderReference),
+			ImageRepository: source.ImageRepository, ContainerRegistryID: source.RegistryID,
+			RegistryEndpoint: source.RegistryEndpoint, Settings: source.BuildpackSettings,
+			BPGOTargets: state.Runtime.BPGOTargets,
+		})
+		if err != nil {
+			return fmt.Errorf("create Build configuration snapshot: %w", err)
+		}
+		build, err := models.Build.Create(ctx, tx, models.CreateBuildData{
+			SourceRevision: payload.After, BuildMethod: "buildpacks", BuildConfiguration: buildConfiguration,
+			Status: "pending", CurrentStep: sql.NullString{String: "queued", Valid: true},
+			EnvironmentID: source.EnvironmentID, EnvironmentSourceID: source.EnvironmentSourceID, ChangeID: change.ID,
+		})
 		if err != nil {
 			return fmt.Errorf("create pending build: %w", err)
 		}

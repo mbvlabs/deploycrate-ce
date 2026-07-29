@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"net/netip"
+	"net/url"
 	"strings"
 	"time"
 
@@ -34,16 +35,18 @@ type ResourceManagement struct {
 	config    config.Config
 	container containerclient.Client
 	postgres  postgresqlclient.Client
+	secrets   *EnvironmentSecrets
 }
 
-func NewResourceManagement(db storage.Pool, cfg config.Config) *ResourceManagement {
-	return &ResourceManagement{db: db, config: cfg, container: containerclient.New(), postgres: postgresqlclient.New()}
+func NewResourceManagement(db storage.Pool, cfg config.Config, secrets *EnvironmentSecrets) *ResourceManagement {
+	return &ResourceManagement{db: db, config: cfg, container: containerclient.New(), postgres: postgresqlclient.New(), secrets: secrets}
 }
 
 type ResourceInput struct {
 	Name           string
 	Category       string
 	Kind           string
+	DatabaseName   string
 	ManagementMode models.ResourceManagementModeEnum
 	SharingScope   models.ResourceSharingScopeEnum
 }
@@ -129,7 +132,7 @@ func (service *ResourceManagement) List(ctx context.Context, filters models.Reso
 	items := make([]models.ResourceListItem, 0)
 	query := service.db.Executor().NewSelect().
 		TableExpr("resources AS resource").
-		ColumnExpr("resource.id, resource.name, resource.category, resource.kind, resource.management_mode, resource.sharing_scope").
+		ColumnExpr("resource.id, resource.name, resource.category, resource.kind, resource.database_name, resource.management_mode, resource.sharing_scope").
 		ColumnExpr("(SELECT count(*) FROM environment_resources AS connection WHERE connection.resource_id = resource.id AND connection.archived_at IS NULL) AS connection_count").
 		ColumnExpr("(SELECT count(*) FROM resource_installations AS installation WHERE installation.resource_id = resource.id AND installation.archived_at IS NULL) AS installation_count").
 		ColumnExpr("(SELECT count(*) FROM resource_endpoints AS endpoint WHERE endpoint.resource_id = resource.id AND endpoint.archived_at IS NULL) AS endpoint_count").
@@ -332,6 +335,7 @@ func (service *ResourceManagement) CreateResource(ctx context.Context, input Cre
 	defer tx.Rollback()
 	resource, err := models.Resource.Create(ctx, tx, models.CreateResourceData{
 		Name: input.Resource.Name, Category: input.Resource.Category, Kind: input.Resource.Kind,
+		DatabaseName:   input.Resource.DatabaseName,
 		ManagementMode: input.Resource.ManagementMode, SharingScope: input.Resource.SharingScope,
 		SystemManaged: false,
 	})
@@ -431,6 +435,7 @@ func (service *ResourceManagement) UpdateResource(ctx context.Context, resourceI
 	}
 	updated, err := models.Resource.Update(ctx, tx, models.UpdateResourceData{
 		ID: resource.ID, Name: input.Name, Category: input.Category, Kind: input.Kind,
+		DatabaseName:   input.DatabaseName,
 		ManagementMode: input.ManagementMode, SharingScope: input.SharingScope,
 		SystemManaged: resource.SystemManaged, ArchivedAt: resource.ArchivedAt,
 	})
@@ -509,6 +514,9 @@ func (service *ResourceManagement) loadResource(ctx context.Context, db storage.
 }
 
 func (service *ResourceManagement) validateResourceTransition(ctx context.Context, db storage.Executor, current models.ResourceEntity, input ResourceInput) error {
+	if current.Kind == "postgresql" && current.DatabaseName != strings.TrimSpace(input.DatabaseName) {
+		return domainError("databaseName", "immutable", "Resource database cannot be changed after creation")
+	}
 	if current.ManagementMode != input.ManagementMode {
 		return domainError("managementMode", "immutable", "Resource management mode cannot be changed after creation")
 	}
@@ -842,7 +850,8 @@ func (service *ResourceManagement) createManagedPrimaryEndpoint(ctx context.Cont
 	installationID := installation.ID
 	return models.ResourceEndpoint.Create(ctx, db, models.CreateResourceEndpointData{
 		Name: "Primary service", Role: "primary", Address: "127.0.0.1", Port: mapping.HostPort,
-		Protocol: definition.DefaultProtocol, TlsMode: definition.DefaultTLSMode, Settings: json.RawMessage(`{}`),
+		Protocol: definition.DefaultProtocol, TlsMode: definition.DefaultTLSMode,
+		Settings:   json.RawMessage(fmt.Sprintf(`{"database":%q}`, resource.DatabaseName)),
 		ResourceID: resource.ID, ResourceInstallationID: &installationID,
 	})
 }
@@ -895,7 +904,7 @@ func (service *ResourceManagement) syncManagedEndpoints(ctx context.Context, db 
 		if _, err := models.ResourceEndpoint.Update(ctx, db, models.UpdateResourceEndpointData{
 			ID: endpoint.ID, Name: endpoint.Name, Role: "primary", Address: address,
 			Port: mapping.HostPort, Protocol: definition.DefaultProtocol, TlsMode: endpoint.TlsMode,
-			Settings: json.RawMessage(`{}`), ArchivedAt: endpoint.ArchivedAt, ResourceID: resource.ID,
+			Settings: json.RawMessage(fmt.Sprintf(`{"database":%q}`, resource.DatabaseName)), ArchivedAt: endpoint.ArchivedAt, ResourceID: resource.ID,
 			ResourceInstallationID: &installation.ID, PrivateNetworkID: endpoint.PrivateNetworkID,
 		}); err != nil {
 			return err
@@ -1043,10 +1052,14 @@ func (service *ResourceManagement) reconcilePostgreSQLCredential(ctx context.Con
 	if err != nil {
 		return err
 	}
+	database := ""
+	if credential.ResourceInstallationID == nil {
+		database = resource.DatabaseName
+	}
 	if err := service.postgres.ReconcileLoginRole(ctx, postgresqlclient.Connection{
 		Host: origin.Address, Port: origin.Port,
 		Username: administrator.Username.String, Password: administratorPassword,
-	}, credential.Username.String, targetValues["password"]); err != nil {
+	}, database, credential.Username.String, targetValues["password"]); err != nil {
 		return fmt.Errorf("reconcile PostgreSQL login role %q: %w", credential.Username.String, err)
 	}
 	return nil
@@ -1421,10 +1434,54 @@ func (service *ResourceManagement) updateCredential(ctx context.Context, resourc
 	if err != nil {
 		return models.ResourceCredentialEntity{}, mapResourceConflict(err)
 	}
+	if rotate && resource.Kind == "postgresql" && current.ResourceInstallationID == nil {
+		if err := service.rotateEnvironmentResourceProjections(ctx, tx, updated); err != nil {
+			return models.ResourceCredentialEntity{}, err
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return models.ResourceCredentialEntity{}, mapResourceConflict(err)
 	}
 	return updated, nil
+}
+
+func (service *ResourceManagement) rotateEnvironmentResourceProjections(ctx context.Context, db storage.Executor, credential models.ResourceCredentialEntity) error {
+	secretValues, err := service.credentialSecretValues(credential)
+	if err != nil {
+		return err
+	}
+	password := secretValues["password"]
+	if password == "" || !credential.Username.Valid {
+		return errors.New("rotated PostgreSQL credential is incomplete")
+	}
+	connections := make([]models.EnvironmentResourceEntity, 0)
+	if err := db.NewSelect().Model(&connections).Where("resource_credential_id = ?", credential.ID).Where("archived_at IS NULL").OrderExpr("created_at").Scan(ctx); err != nil {
+		return err
+	}
+	for _, connection := range connections {
+		endpoint, err := models.ResourceEndpoint.Find(ctx, db, connection.ResourceEndpointID)
+		if err != nil || endpoint.ArchivedAt.Valid || endpoint.ResourceID != connection.ResourceID {
+			return errors.New("Environment Resource endpoint is unavailable during credential rotation")
+		}
+		var configuration struct {
+			Database string `json:"database"`
+		}
+		if json.Unmarshal(connection.Configuration, &configuration) != nil || strings.TrimSpace(configuration.Database) == "" {
+			return errors.New("Environment Resource database projection is invalid")
+		}
+		uri := &url.URL{Scheme: "postgresql", Host: fmt.Sprintf("%s:%d", endpoint.Address, endpoint.Port), Path: "/" + configuration.Database, User: url.UserPassword(credential.Username.String, password)}
+		query := uri.Query()
+		query.Set("sslmode", endpoint.TlsMode)
+		uri.RawQuery = query.Encode()
+		prefix := strings.ToUpper(connection.Alias)
+		if err := service.secrets.RotateManagedResource(ctx, db, connection, map[string]string{
+			prefix + "_PASSWORD": password,
+			prefix + "_URL":      uri.String(),
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (service *ResourceManagement) ArchiveCredential(ctx context.Context, resourceID, credentialID uuid.UUID) error {
@@ -1845,6 +1902,10 @@ func (service *ResourceManagement) DeployResource(ctx context.Context, resourceI
 }
 
 func (service *ResourceManagement) postgreSQLContainerEnvironment(ctx context.Context, resourceID, installationID uuid.UUID) (map[string]string, error) {
+	resource, err := models.Resource.Find(ctx, service.db.Executor(), resourceID)
+	if err != nil {
+		return nil, err
+	}
 	credentials := make([]models.ResourceCredentialEntity, 0)
 	if err := service.db.Executor().NewSelect().Model(&credentials).
 		Where("resource_id = ?", resourceID).
@@ -1865,7 +1926,7 @@ func (service *ResourceManagement) postgreSQLContainerEnvironment(ctx context.Co
 	if password == "" {
 		return nil, errors.New("PostgreSQL Resource administrator credential does not contain a password")
 	}
-	environment := map[string]string{"POSTGRES_PASSWORD": password}
+	environment := map[string]string{"POSTGRES_DB": resource.DatabaseName, "POSTGRES_PASSWORD": password}
 	if credentials[0].Username.Valid {
 		environment["POSTGRES_USER"] = credentials[0].Username.String
 	} else {

@@ -21,6 +21,7 @@ type ResourceEntity struct {
 	Name           string                     `bun:"name"`
 	Category       string                     `bun:"category"`
 	Kind           string                     `bun:"kind"`
+	DatabaseName   string                     `bun:"database_name"`
 	ManagementMode ResourceManagementModeEnum `bun:"management_mode"`
 	SharingScope   ResourceSharingScopeEnum   `bun:"sharing_scope"`
 	SystemManaged  bool                       `bun:"system_managed"`
@@ -31,12 +32,19 @@ func (e *ResourceEntity) Validate() error {
 	e.Name = strings.TrimSpace(e.Name)
 	e.Category = strings.ToLower(strings.TrimSpace(e.Category))
 	e.Kind = strings.ToLower(strings.TrimSpace(e.Kind))
+	e.DatabaseName = strings.TrimSpace(e.DatabaseName)
 	e.ManagementMode = ResourceManagementModeEnum(strings.ToLower(strings.TrimSpace(e.ManagementMode.String())))
 	e.SharingScope = ResourceSharingScopeEnum(strings.ToLower(strings.TrimSpace(e.SharingScope.String())))
 	builder := validation.NewBuilder()
 	builder.Required("name", e.Name)
 	if !ResourceCategoryKindSupported(e.Category, e.Kind) {
 		builder.Add("kind", "unsupported", "category and kind must match a supported resource kind")
+	}
+	if e.Kind == "postgresql" {
+		builder.Required("databaseName", e.DatabaseName)
+		if len([]byte(e.DatabaseName)) > 63 || strings.ContainsRune(e.DatabaseName, '\x00') {
+			builder.Add("databaseName", "format", "PostgreSQL database name must be at most 63 bytes and cannot contain null bytes")
+		}
 	}
 	if !e.ManagementMode.IsValid() {
 		builder.Add("managementMode", "unsupported", "management mode must be managed or external")
@@ -67,6 +75,7 @@ type CreateResourceData struct {
 	Name           string
 	Category       string
 	Kind           string
+	DatabaseName   string
 	ManagementMode ResourceManagementModeEnum
 	SharingScope   ResourceSharingScopeEnum
 	SystemManaged  bool
@@ -85,6 +94,7 @@ func (r resource) Create(
 		Name:           data.Name,
 		Category:       data.Category,
 		Kind:           data.Kind,
+		DatabaseName:   data.DatabaseName,
 		ManagementMode: data.ManagementMode,
 		SharingScope:   data.SharingScope,
 		ArchivedAt:     data.ArchivedAt,
@@ -111,6 +121,7 @@ type UpdateResourceData struct {
 	Name           string
 	Category       string
 	Kind           string
+	DatabaseName   string
 	ManagementMode ResourceManagementModeEnum
 	SharingScope   ResourceSharingScopeEnum
 	SystemManaged  bool
@@ -128,6 +139,7 @@ func (r resource) Update(
 		Name:           data.Name,
 		Category:       data.Category,
 		Kind:           data.Kind,
+		DatabaseName:   data.DatabaseName,
 		ManagementMode: data.ManagementMode,
 		SharingScope:   data.SharingScope,
 		ArchivedAt:     data.ArchivedAt,
@@ -147,6 +159,7 @@ func (r resource) Update(
 		Column("name").
 		Column("category").
 		Column("kind").
+		Column("database_name").
 		Column("management_mode").
 		Column("sharing_scope").
 		Column("system_managed").
@@ -243,6 +256,7 @@ func (r resource) Upsert(
 		Name:           data.Name,
 		Category:       data.Category,
 		Kind:           data.Kind,
+		DatabaseName:   data.DatabaseName,
 		ManagementMode: data.ManagementMode,
 		SharingScope:   data.SharingScope,
 		ArchivedAt:     data.ArchivedAt,
@@ -262,6 +276,7 @@ func (r resource) Upsert(
 		Set("name = excluded.name").
 		Set("category = excluded.category").
 		Set("kind = excluded.kind").
+		Set("database_name = excluded.database_name").
 		Set("management_mode = excluded.management_mode").
 		Set("sharing_scope = excluded.sharing_scope").
 		Set("system_managed = excluded.system_managed").

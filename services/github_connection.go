@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"slices"
 	"strings"
@@ -518,6 +519,55 @@ func (service *GitHubConnection) authentication(ctx context.Context, app models.
 		return githubclient.AppAuthentication{}, errors.New("GitHub App credential is invalid")
 	}
 	return githubclient.AppAuthentication{AppID: app.ExternalID, PrivateKeyPEM: payload.PrivateKeyPEM}, nil
+}
+
+func (service *GitHubConnection) ResolveRevision(
+	ctx context.Context,
+	installation models.GitHubInstallationEntity,
+	repository models.GitHubRepositoryEntity,
+	reference string,
+) (string, error) {
+	if service.client == nil {
+		return "", errors.New("GitHub provider client is unavailable")
+	}
+	if installation.ArchivedAt.Valid || installation.SuspendedAt.Valid || repository.RemovedAt.Valid ||
+		repository.GitHubInstallationID != installation.ID {
+		return "", errors.New("GitHub source is unavailable")
+	}
+	app, err := models.GitHubApp.Find(ctx, service.db.Executor(), installation.GitHubAppID)
+	if err != nil {
+		return "", err
+	}
+	authentication, err := service.authentication(ctx, app)
+	if err != nil {
+		return "", err
+	}
+	return service.client.ResolveRevision(ctx, authentication, installation.ExternalID, repository.FullName, reference)
+}
+
+func (service *GitHubConnection) DownloadArchive(
+	ctx context.Context,
+	installation models.GitHubInstallationEntity,
+	repository models.GitHubRepositoryEntity,
+	revision string,
+	destination io.Writer,
+) error {
+	if service.client == nil {
+		return errors.New("GitHub provider client is unavailable")
+	}
+	if installation.ArchivedAt.Valid || installation.SuspendedAt.Valid || repository.RemovedAt.Valid ||
+		repository.GitHubInstallationID != installation.ID {
+		return errors.New("GitHub source is unavailable")
+	}
+	app, err := models.GitHubApp.Find(ctx, service.db.Executor(), installation.GitHubAppID)
+	if err != nil {
+		return err
+	}
+	authentication, err := service.authentication(ctx, app)
+	if err != nil {
+		return err
+	}
+	return service.client.DownloadArchive(ctx, authentication, installation.ExternalID, repository.FullName, revision, destination)
 }
 
 func (service *GitHubConnection) webhookSecret(ctx context.Context, app models.GitHubAppEntity) (string, error) {

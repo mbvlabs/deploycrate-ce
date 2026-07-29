@@ -12,6 +12,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"deploycrate-ce/internal/resourceaccess"
 	"deploycrate-ce/internal/setup"
 	setupui "deploycrate-ce/internal/setup/ui"
 )
@@ -48,6 +49,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	case "help", "--help", "-h":
 		printHelp(stdout)
 		return nil
+	case "host-resource-access":
+		return resourceaccess.RunHostCommand(args[1:])
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n", args[0])
 		printHelp(stderr)
@@ -121,6 +124,7 @@ func install(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
+	cfg.PublicIPv4 = host.PublicIPv4
 	_, err = tea.NewProgram(setupui.NewModel(cfg, host, *dryRun, newSetupOperations())).Run()
 	return err
 }

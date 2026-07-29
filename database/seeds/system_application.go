@@ -130,6 +130,7 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		factories.WithResourcesName("DeployCrate CE PostgreSQL"),
 		factories.WithResourcesCategory("database"),
 		factories.WithResourcesKind("postgresql"),
+		factories.WithResourcesDatabaseName("deploycrate"),
 		factories.WithResourcesSharingScope(models.ResourceSharingEnvironment),
 		factories.WithResourcesSystemManaged(true),
 		factories.WithResourcesArchivedAt(sql.NullTime{}),

@@ -40,6 +40,8 @@ func (controller Applications) RegisterRoutes(r *router.Router) error {
 		{http.MethodGet, routes.Applications, controller.Index},
 		{http.MethodGet, routes.ApplicationNew, controller.New},
 		{http.MethodPost, routes.ApplicationCreate, controller.Create},
+		{http.MethodGet, routes.EnvironmentNew, controller.NewEnvironment},
+		{http.MethodPost, routes.EnvironmentCreate, controller.CreateEnvironment},
 		{http.MethodGet, routes.ApplicationShow, controller.Show},
 		{http.MethodGet, routes.ApplicationEdit, controller.Edit},
 		{http.MethodPatch, routes.ApplicationUpdate, controller.Update},
@@ -66,11 +68,37 @@ func (controller Applications) Index(etx *echo.Context) error {
 }
 
 func (controller Applications) New(etx *echo.Context) error {
+	return controller.newPage(etx, false)
+}
+
+func (controller Applications) NewEnvironment(etx *echo.Context) error {
+	return controller.newPage(etx, true)
+}
+
+func (controller Applications) newPage(etx *echo.Context, environmentIntent bool) error {
 	options, err := controller.service.Options(etx.Request().Context())
 	if err != nil {
 		return controller.renderError(etx, err)
 	}
-	return inertia.Page(etx, "Applications/New", inertia.Props{"auth": authProps(etx), "options": options})
+	return inertia.Page(etx, "Applications/New", inertia.Props{"auth": authProps(etx), "options": applicationSetupOptionsProps(options), "environmentIntent": environmentIntent})
+}
+
+type containerRegistryOptionProps struct {
+	ID       uuid.UUID `json:"id"`
+	Name     string    `json:"name"`
+	Endpoint string    `json:"endpoint"`
+}
+
+func applicationSetupOptionsProps(options services.ApplicationSetupOptions) map[string]any {
+	registries := make([]containerRegistryOptionProps, 0, len(options.Registries))
+	for _, registry := range options.Registries {
+		registries = append(registries, containerRegistryOptionProps{ID: registry.ID, Name: registry.Name, Endpoint: registry.Endpoint})
+	}
+	return map[string]any{
+		"installations": options.Installations,
+		"repositories":  options.Repositories,
+		"registries":    registries,
+	}
 }
 
 type applicationSetupPayload struct {
@@ -107,6 +135,14 @@ func (payload applicationSetupPayload) serviceData() (services.ApplicationSetupD
 }
 
 func (controller Applications) Create(etx *echo.Context) error {
+	return controller.create(etx, false)
+}
+
+func (controller Applications) CreateEnvironment(etx *echo.Context) error {
+	return controller.create(etx, true)
+}
+
+func (controller Applications) create(etx *echo.Context, environmentIntent bool) error {
 	var payload applicationSetupPayload
 	if err := etx.Bind(&payload); err != nil {
 		return inertia.Page(etx, "Errors/BadRequest", inertia.Props{})
@@ -116,11 +152,15 @@ func (controller Applications) Create(etx *echo.Context) error {
 		var result services.ApplicationSetupResult
 		result, err = controller.service.Create(etx.Request().Context(), data)
 		if err == nil {
+			if environmentIntent {
+				_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Environment created. Complete its deployment setup")
+				return inertia.Redirect(etx, routes.EnvironmentSetup.URL(routes.EnvironmentParams{ApplicationID: result.Application.ID.String(), EnvironmentID: result.Environment.ID.String()}), http.StatusSeeOther)
+			}
 			_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Application created")
 			return inertia.Redirect(etx, routes.ApplicationShow.URL(result.Application.ID), http.StatusSeeOther)
 		}
 	}
-	return controller.renderSetupError(etx, "Applications/New", err)
+	return controller.renderSetupError(etx, "Applications/New", environmentIntent, err)
 }
 
 func (controller Applications) Show(etx *echo.Context) error {
@@ -176,7 +216,10 @@ func (controller Applications) EditSource(etx *echo.Context) error {
 	if err != nil {
 		return controller.renderError(etx, err)
 	}
-	return inertia.Page(etx, "Applications/Source/Edit", inertia.Props{"auth": authProps(etx), "application": details, "options": options})
+	return inertia.Page(etx, "Applications/Source/Edit", inertia.Props{
+		"auth": authProps(etx), "application": details, "options": applicationSetupOptionsProps(options),
+		"updateUrl": routes.ApplicationSourceUpdate.URL(id), "returnUrl": routes.ApplicationShow.URL(id),
+	})
 }
 
 func (controller Applications) UpdateSource(etx *echo.Context) error {
@@ -211,15 +254,19 @@ func (controller Applications) Destroy(etx *echo.Context) error {
 	return inertia.Redirect(etx, routes.Applications.URL(), http.StatusSeeOther)
 }
 
-func (controller Applications) renderSetupError(etx *echo.Context, page string, err error) error {
+func (controller Applications) renderSetupError(etx *echo.Context, page string, environmentIntent bool, err error) error {
 	options, optionsErr := controller.service.Options(etx.Request().Context())
 	if optionsErr != nil {
 		return controller.renderError(etx, errors.Join(err, optionsErr))
 	}
 	if validationErrors, ok := validation.As(err); ok {
-		return inertia.Page(etx, page, inertia.Props{"auth": authProps(etx), "options": options}, inertia.WithValidationErrors(validationErrors.ToMap()))
+		return inertia.Page(etx, page, inertia.Props{"auth": authProps(etx), "options": applicationSetupOptionsProps(options), "environmentIntent": environmentIntent}, inertia.WithValidationErrors(validationErrors.ToMap()))
 	}
-	return controller.redirectWithError(etx, routes.ApplicationNew.URL(), err)
+	location := routes.ApplicationNew.URL()
+	if environmentIntent {
+		location = routes.EnvironmentNew.URL()
+	}
+	return controller.redirectWithError(etx, location, err)
 }
 
 func (controller Applications) redirectWithError(etx *echo.Context, location string, err error) error {

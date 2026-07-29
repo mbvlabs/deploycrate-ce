@@ -7,6 +7,8 @@ import (
 	"deploycrate-ce/internal/validation"
 	"encoding/json"
 	"errors"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,7 +34,20 @@ type DeploymentEntity struct {
 }
 
 func (e *DeploymentEntity) Validate() error {
-	return nil
+	builder := validation.NewBuilder()
+	if e.ID == uuid.Nil || e.ChangeID == uuid.Nil || e.ReleaseID == uuid.Nil || e.EnvironmentTargetID == uuid.Nil {
+		builder.Add("id", "required", "Deployment ownership identifiers are required")
+	}
+	if e.Attempt < 1 {
+		builder.Add("attempt", "invalid", "Deployment attempt must be positive")
+	}
+	if !slices.Contains([]string{"queued", "running", "succeeded", "failed"}, e.Status) {
+		builder.Add("status", "invalid", "Deployment status is invalid")
+	}
+	if !json.Valid(e.Strategy) || !json.Valid(e.RuntimeConfiguration) {
+		builder.Add("configuration", "invalid", "Deployment configuration must be valid JSON")
+	}
+	return builder.Err()
 }
 
 func (d deployment) Find(
@@ -49,6 +64,30 @@ func (d deployment) Find(
 	}
 
 	return entity, nil
+}
+
+func (d deployment) Lock(ctx context.Context, db storage.Executor, id uuid.UUID) (DeploymentEntity, error) {
+	var entity DeploymentEntity
+	err := db.NewSelect().Model(&entity).Where("id = ?", id).For("UPDATE").Scan(ctx)
+	return entity, err
+}
+
+func (d deployment) MarkRunning(ctx context.Context, db storage.Executor, id uuid.UUID, step string, at time.Time) error {
+	_, err := db.NewUpdate().TableExpr("deployments").Set("status = 'running'").Set("current_step = ?", step).
+		Set("started_at = COALESCE(started_at, ?)", at).Set("finished_at = NULL").Set("error = NULL").
+		Set("updated_at = ?", at).Where("id = ?", id).Where("status IN ('queued', 'running')").Exec(ctx)
+	return err
+}
+
+func (d deployment) MarkFailed(ctx context.Context, db storage.Executor, id uuid.UUID, operationErr error, at time.Time) error {
+	message := strings.TrimSpace(operationErr.Error())
+	if len(message) > 2048 {
+		message = message[:2048]
+	}
+	_, err := db.NewUpdate().TableExpr("deployments").Set("status = 'failed'").Set("current_step = 'failed'").
+		Set("finished_at = ?", at).Set("error = ?", message).Set("updated_at = ?", at).
+		Where("id = ?", id).Where("status IN ('queued', 'running')").Exec(ctx)
+	return err
 }
 
 type CreateDeploymentData struct {

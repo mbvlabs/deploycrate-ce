@@ -80,6 +80,7 @@ type Config struct {
 	InstanceID        string         `json:"instance_id"`
 	Version           string         `json:"version"`
 	Domain            string         `json:"domain"`
+	PublicIPv4        string         `json:"public_ipv4"`
 	SSHPort           int            `json:"ssh_port"`
 	Timezone          string         `json:"timezone"`
 	AdminUser         string         `json:"admin_user"`
@@ -186,6 +187,12 @@ func (c Config) Validate(normalizeObjectStorage func(S3Config) (S3Config, error)
 	}
 	if !validHostname(c.Domain) {
 		errs = append(errs, errors.New("a valid domain without protocol is required"))
+	} else if !validHostname("registry-" + c.Domain) {
+		errs = append(errs, errors.New("domain is too long to create the managed registry hostname"))
+	}
+	publicIPv4 := net.ParseIP(c.PublicIPv4)
+	if publicIPv4 == nil || publicIPv4.To4() == nil || publicIPv4.IsPrivate() || publicIPv4.IsLoopback() {
+		errs = append(errs, errors.New("a valid public IPv4 address is required"))
 	}
 	for name, value := range map[string]string{
 		"domain": c.Domain, "administrator user": c.AdminUser, "service user": c.ServiceUser,

@@ -20,7 +20,11 @@ type Client struct{}
 
 func New() Client { return Client{} }
 
-func (Client) ReconcileLoginRole(ctx context.Context, connection Connection, username, password string) error {
+func (Client) ReconcileLoginRole(ctx context.Context, connection Connection, database, username, password string) error {
+	database = strings.TrimSpace(database)
+	if database != "" && (len([]byte(database)) > 63 || strings.ContainsRune(database, '\x00')) {
+		return errors.New("PostgreSQL database name must be at most 63 bytes and cannot contain null bytes")
+	}
 	username = strings.TrimSpace(username)
 	if username == "" {
 		return errors.New("PostgreSQL role username is required")
@@ -38,7 +42,10 @@ func (Client) ReconcileLoginRole(ctx context.Context, connection Connection, use
 	}
 	configuration.Host = strings.TrimSpace(connection.Host)
 	configuration.Port = uint16(connection.Port)
-	configuration.Database = "postgres"
+	configuration.Database = database
+	if configuration.Database == "" {
+		configuration.Database = "postgres"
+	}
 	configuration.User = strings.TrimSpace(connection.Username)
 	configuration.Password = connection.Password
 	configuration.TLSConfig = nil
@@ -74,6 +81,25 @@ func (Client) ReconcileLoginRole(ctx context.Context, connection Connection, use
 	}
 	if _, err := tx.Exec(ctx, "ALTER ROLE "+identifier+" WITH LOGIN PASSWORD "+quotedPassword); err != nil {
 		return fmt.Errorf("rotate PostgreSQL login role %q password: %w", username, err)
+	}
+	if database != "" {
+		databaseIdentifier := pgx.Identifier{database}.Sanitize()
+		administratorIdentifier := pgx.Identifier{configuration.User}.Sanitize()
+		statements := []string{
+			"GRANT ALL PRIVILEGES ON DATABASE " + databaseIdentifier + " TO " + identifier,
+			"GRANT ALL PRIVILEGES ON SCHEMA public TO " + identifier,
+			"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO " + identifier,
+			"GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO " + identifier,
+			"GRANT ALL PRIVILEGES ON ALL ROUTINES IN SCHEMA public TO " + identifier,
+			"ALTER DEFAULT PRIVILEGES FOR ROLE " + administratorIdentifier + " IN SCHEMA public GRANT ALL PRIVILEGES ON TABLES TO " + identifier,
+			"ALTER DEFAULT PRIVILEGES FOR ROLE " + administratorIdentifier + " IN SCHEMA public GRANT ALL PRIVILEGES ON SEQUENCES TO " + identifier,
+			"ALTER DEFAULT PRIVILEGES FOR ROLE " + administratorIdentifier + " IN SCHEMA public GRANT ALL PRIVILEGES ON ROUTINES TO " + identifier,
+		}
+		for _, statement := range statements {
+			if _, err := tx.Exec(ctx, statement); err != nil {
+				return fmt.Errorf("grant PostgreSQL database %q privileges to role %q: %w", database, username, err)
+			}
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit PostgreSQL role reconciliation: %w", err)

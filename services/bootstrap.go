@@ -2,8 +2,12 @@ package services
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,10 +15,13 @@ import (
 	"strings"
 	"time"
 
+	containerclient "deploycrate-ce/clients/container"
+	"deploycrate-ce/internal/secretcrypto"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
 
 	"github.com/google/uuid"
+	"golang.org/x/crypto/bcrypt"
 )
 
 const (
@@ -23,21 +30,22 @@ const (
 )
 
 type BootstrapInput struct {
-	Domain              string
-	Version             string
-	ArtifactReference   string
-	ArtifactDigest      []byte
-	Distribution        string
-	DistributionVersion string
-	Architecture        string
-	Capabilities        BootstrapCapabilitiesInput
-	DatabaseExternal    bool
-	DatabaseHost        string
-	DatabasePort        int
-	DatabaseName        string
-	DatabaseSSLMode     string
-	WireGuard           BootstrapWireGuardInput
-	Backup              BootstrapBackupInput
+	Domain               string
+	Version              string
+	ArtifactReference    string
+	ArtifactDigest       []byte
+	Distribution         string
+	DistributionVersion  string
+	Architecture         string
+	SessionEncryptionKey string
+	Capabilities         BootstrapCapabilitiesInput
+	DatabaseExternal     bool
+	DatabaseHost         string
+	DatabasePort         int
+	DatabaseName         string
+	DatabaseSSLMode      string
+	WireGuard            BootstrapWireGuardInput
+	Backup               BootstrapBackupInput
 }
 
 type BootstrapCapabilitiesInput struct {
@@ -88,6 +96,7 @@ type BootstrapResult struct {
 
 type bootstrapRouteService interface {
 	Reconcile(context.Context, uuid.UUID) (string, error)
+	ReconcileRegistry(context.Context, string, string, string, string, string) error
 	Verify(context.Context, string) error
 }
 
@@ -135,7 +144,105 @@ func (service BootstrapService) Bootstrap(
 		return BootstrapResult{}, fmt.Errorf("reconcile bootstrap Caddy route: %w", err)
 	}
 	result.ExternalRouteID = externalID
+	if err := service.reconcileRegistryContainer(ctx); err != nil {
+		return BootstrapResult{}, err
+	}
+	if err := service.reconcileRegistry(ctx); err != nil {
+		return BootstrapResult{}, err
+	}
 	return result, nil
+}
+
+func (service BootstrapService) reconcileRegistryContainer(ctx context.Context) error {
+	registry, err := models.ContainerRegistry.ActiveManaged(ctx, service.db.Executor())
+	if err != nil {
+		return fmt.Errorf("load managed registry container: %w", err)
+	}
+	_, metadata, err := loadManagedRegistryCredential(ctx, service.db.Executor(), registry)
+	if err != nil {
+		return err
+	}
+	var installation models.ResourceInstallationEntity
+	if err := service.db.Executor().NewSelect().Model(&installation).Where("resource_id = ?", metadata.ResourceID).
+		Where("archived_at IS NULL").Limit(1).Scan(ctx); err != nil {
+		return fmt.Errorf("load managed registry installation: %w", err)
+	}
+	var mounts []struct {
+		Name      string `bun:"name"`
+		MountPath string `bun:"mount_path"`
+		ReadOnly  bool   `bun:"read_only"`
+	}
+	if err := service.db.Executor().NewSelect().TableExpr("resource_volume_mounts AS mount").
+		ColumnExpr("volume.name, mount.mount_path, mount.read_only").
+		Join("JOIN resource_volumes AS volume ON volume.id = mount.resource_volume_id AND volume.archived_at IS NULL").
+		Where("mount.resource_installation_id = ?", installation.ID).Where("mount.archived_at IS NULL").Scan(ctx, &mounts); err != nil {
+		return fmt.Errorf("load managed registry volume: %w", err)
+	}
+	volumeMounts := make([]containerclient.VolumeMount, 0, len(mounts))
+	for _, mount := range mounts {
+		volumeMounts = append(volumeMounts, containerclient.VolumeMount{Name: mount.Name, MountPath: mount.MountPath, ReadOnly: mount.ReadOnly})
+	}
+	imageReference := installation.ImageReference
+	if installation.ImageDigest.Valid && !strings.Contains(imageReference, "@") {
+		imageReference += "@" + installation.ImageDigest.String
+	}
+	if err := (containerclient.New()).Run(ctx, containerclient.RunSpec{
+		InstallationID: installation.ID.String(), ContainerName: installation.ContainerName, ImageReference: imageReference,
+		RestartPolicy: installation.RestartPolicy, PortMappings: []containerclient.PortMapping{{HostPort: 5000, ContainerPort: 5000, Protocol: "tcp"}},
+		VolumeMounts: volumeMounts, Environment: map[string]string{},
+	}); err != nil {
+		return fmt.Errorf("run managed registry container: %w", err)
+	}
+	return nil
+}
+
+func (service BootstrapService) reconcileRegistry(ctx context.Context) error {
+	registry, err := models.ContainerRegistry.ActiveManaged(ctx, service.db.Executor())
+	if err != nil {
+		return fmt.Errorf("load managed registry: %w", err)
+	}
+	_, metadata, err := loadManagedRegistryCredential(ctx, service.db.Executor(), registry)
+	if err != nil {
+		return err
+	}
+	endpoint, err := models.ResourceEndpoint.Find(ctx, service.db.Executor(), metadata.ResourceEndpointID)
+	if err != nil {
+		return fmt.Errorf("load managed registry endpoint: %w", err)
+	}
+	return service.routes.ReconcileRegistry(
+		ctx, registryRouteID(registry.Endpoint), registry.Endpoint,
+		fmt.Sprintf("%s:%d", endpoint.Address, endpoint.Port), metadata.Username, metadata.BasicAuthHash,
+	)
+}
+
+func loadManagedRegistryCredential(
+	ctx context.Context,
+	db storage.Executor,
+	registry models.ContainerRegistryEntity,
+) (models.CredentialEntity, managedRegistryCredentialMetadata, error) {
+	credential, err := models.Credential.Find(ctx, db, registry.CredentialID)
+	if err != nil || credential.ArchivedAt.Valid || credential.Provider != "container_registry" {
+		return models.CredentialEntity{}, managedRegistryCredentialMetadata{}, errors.New("managed registry credential is unavailable")
+	}
+	var metadata managedRegistryCredentialMetadata
+	if json.Unmarshal(credential.Metadata, &metadata) != nil || metadata.SchemaVersion != 1 ||
+		metadata.ResourceID == uuid.Nil || metadata.ResourceEndpointID == uuid.Nil || metadata.ResourceCredentialID == uuid.Nil ||
+		metadata.Username == "" || metadata.BasicAuthHash == "" {
+		return models.CredentialEntity{}, managedRegistryCredentialMetadata{}, errors.New("managed registry authentication metadata is invalid")
+	}
+	resource, err := models.Resource.Find(ctx, db, metadata.ResourceID)
+	if err != nil || resource.ArchivedAt.Valid || !resource.SystemManaged || resource.Kind != "registry" {
+		return models.CredentialEntity{}, managedRegistryCredentialMetadata{}, errors.New("managed registry Resource is unavailable")
+	}
+	endpoint, err := models.ResourceEndpoint.Find(ctx, db, metadata.ResourceEndpointID)
+	if err != nil || endpoint.ArchivedAt.Valid || endpoint.ResourceID != resource.ID {
+		return models.CredentialEntity{}, managedRegistryCredentialMetadata{}, errors.New("managed registry endpoint is unavailable")
+	}
+	resourceCredential, err := models.ResourceCredential.Find(ctx, db, metadata.ResourceCredentialID)
+	if err != nil || resourceCredential.ArchivedAt.Valid || resourceCredential.ResourceID != resource.ID {
+		return models.CredentialEntity{}, managedRegistryCredentialMetadata{}, errors.New("managed registry Resource credential is unavailable")
+	}
+	return credential, metadata, nil
 }
 
 func (service BootstrapService) VerifyRoute(ctx context.Context, externalID string) error {
@@ -357,6 +464,9 @@ func (service BootstrapService) createGraph(
 	); err != nil {
 		return BootstrapResult{}, err
 	}
+	if err := createBootstrapRegistryResource(ctx, tx, input, server.ID); err != nil {
+		return BootstrapResult{}, err
+	}
 	if err := createBootstrapBackups(
 		ctx,
 		tx,
@@ -558,6 +668,126 @@ func createBootstrapClickHouseResource(
 	return nil
 }
 
+const (
+	registryImageReference = "registry@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33"
+)
+
+type managedRegistryCredentialMetadata struct {
+	SchemaVersion        int       `json:"schema_version"`
+	ResourceID           uuid.UUID `json:"resource_id"`
+	ResourceEndpointID   uuid.UUID `json:"resource_endpoint_id"`
+	ResourceCredentialID uuid.UUID `json:"resource_credential_id"`
+	Username             string    `json:"username"`
+	BasicAuthHash        string    `json:"basic_auth_hash"`
+}
+
+func createBootstrapRegistryResource(
+	ctx context.Context,
+	exec storage.Executor,
+	input BootstrapInput,
+	serverID uuid.UUID,
+) error {
+	resource, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
+		Name: "DeployCrate CE Registry", Category: "service", Kind: "registry",
+		ManagementMode: models.ResourceManagementManaged,
+		SharingScope:   models.ResourceSharingGlobal, SystemManaged: true,
+	})
+	if err != nil {
+		return fmt.Errorf("create bootstrap registry Resource: %w", err)
+	}
+	installation, err := models.ResourceInstallation.Create(ctx, exec, models.CreateResourceInstallationData{
+		ImageReference: registryImageReference,
+		ImageDigest:    sql.NullString{String: "sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33", Valid: true},
+		ContainerName:  "deploycrate-ce-registry", RestartPolicy: "unless-stopped",
+		Configuration: json.RawMessage(`{"portMappings":[{"hostPort":5000,"containerPort":5000,"protocol":"tcp"}]}`),
+		ResourceID:    resource.ID, ServerID: serverID,
+	})
+	if err != nil {
+		return fmt.Errorf("create bootstrap registry installation: %w", err)
+	}
+	if err := createBootstrapResourceVolume(ctx, exec, resource.ID, installation.ID, serverID, "deploycrate-ce-registry", "/var/lib/registry"); err != nil {
+		return fmt.Errorf("create bootstrap registry volume: %w", err)
+	}
+	endpoint, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
+		Name: "Registry API", Role: "primary", Address: "127.0.0.1", Port: 5000,
+		Protocol: "http", TlsMode: "disable", Settings: json.RawMessage(`{"health_path":"/v2/"}`),
+		ResourceID: resource.ID, ResourceInstallationID: &installation.ID,
+	})
+	if err != nil {
+		return fmt.Errorf("create bootstrap registry endpoint: %w", err)
+	}
+	username := "deploycrate"
+	passwordBytes := make([]byte, 32)
+	if _, err := rand.Read(passwordBytes); err != nil {
+		return fmt.Errorf("generate registry password: %w", err)
+	}
+	password := base64.RawURLEncoding.EncodeToString(passwordBytes)
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	if err != nil {
+		return fmt.Errorf("hash registry password: %w", err)
+	}
+	payload, err := json.Marshal(map[string]any{
+		"schema_version": 1, "username": username, "password": password,
+	})
+	if err != nil {
+		return fmt.Errorf("encode registry credential: %w", err)
+	}
+	encrypted, err := secretcrypto.EncryptForPurpose(payload, input.SessionEncryptionKey, registryCredentialPurpose)
+	if err != nil {
+		return fmt.Errorf("encrypt registry credential: %w", err)
+	}
+	masterKey, err := hex.DecodeString(input.SessionEncryptionKey)
+	if err != nil || len(masterKey) != 32 {
+		return errors.New("registry credential digest key is invalid")
+	}
+	digest := hmac.New(sha256.New, masterKey)
+	_, _ = digest.Write([]byte("registry-credential/digest/v1\x00"))
+	_, _ = digest.Write(payload)
+	resourceCredentialMetadata, err := json.Marshal(map[string]any{
+		"schema_version": 1, "username": username, "basic_auth_hash": string(passwordHash),
+	})
+	if err != nil {
+		return fmt.Errorf("encode registry credential metadata: %w", err)
+	}
+	credential, err := models.ResourceCredential.Create(ctx, exec, models.CreateResourceCredentialData{
+		Name: "Registry publisher", Username: sql.NullString{String: username, Valid: true},
+		Metadata: resourceCredentialMetadata, EncPayload: encrypted, Digest: digest.Sum(nil),
+		ResourceID: resource.ID, ResourceInstallationID: &installation.ID,
+	})
+	if err != nil {
+		return fmt.Errorf("create bootstrap registry credential: %w", err)
+	}
+	registryMetadata, err := json.Marshal(managedRegistryCredentialMetadata{
+		SchemaVersion: 1, ResourceID: resource.ID, ResourceEndpointID: endpoint.ID,
+		ResourceCredentialID: credential.ID, Username: username, BasicAuthHash: string(passwordHash),
+	})
+	if err != nil {
+		return fmt.Errorf("encode registry projection credential metadata: %w", err)
+	}
+	registryCredential, err := models.Credential.Create(ctx, exec, models.CreateCredentialData{
+		Name: "DeployCrate CE Registry", Provider: "container_registry", Metadata: registryMetadata,
+		EncPayload: encrypted, VerifiedAt: sql.NullTime{Time: time.Now().UTC(), Valid: true},
+	})
+	if err != nil {
+		return fmt.Errorf("create registry projection credential: %w", err)
+	}
+	registryDomain := "registry-" + strings.TrimSpace(input.Domain)
+	if _, err := models.ContainerRegistry.Create(ctx, exec, models.CreateContainerRegistryData{
+		Name: "DeployCrate CE Registry", Provider: "distribution", Endpoint: registryDomain,
+		CredentialID: registryCredential.ID,
+	}); err != nil {
+		return fmt.Errorf("create bootstrap registry projection: %w", err)
+	}
+	if _, err := models.ResourceHealthCheck.Create(ctx, exec, models.CreateResourceHealthCheckData{
+		Name: "Registry API", Kind: "http", Configuration: json.RawMessage(`{"path":"/v2/","expected_status":200}`),
+		IntervalSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 3, SuccessThreshold: 1, Enabled: true,
+		ResourceInstallationID: installation.ID, ResourceEndpointID: &endpoint.ID,
+	}); err != nil {
+		return fmt.Errorf("create bootstrap registry health check: %w", err)
+	}
+	return nil
+}
+
 type bootstrapDatabaseTopology struct {
 	ResourceID            uuid.UUID
 	EnvironmentResourceID uuid.UUID
@@ -576,6 +806,7 @@ func createBootstrapDatabaseResource(
 	}
 	resource, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
 		Name: "DeployCrate CE PostgreSQL", Category: "database", Kind: "postgresql",
+		DatabaseName:   input.DatabaseName,
 		ManagementMode: managementMode,
 		SharingScope:   models.ResourceSharingEnvironment, SystemManaged: true,
 	})
@@ -802,6 +1033,10 @@ func validateBootstrapInput(input BootstrapInput) error {
 	if strings.TrimSpace(input.ArtifactReference) == "" || len(input.ArtifactDigest) == 0 {
 		return errors.New("bootstrap release artifact and digest are required")
 	}
+	key, err := hex.DecodeString(input.SessionEncryptionKey)
+	if err != nil || len(key) != 32 {
+		return errors.New("bootstrap session encryption key must be a hex-encoded 32-byte key")
+	}
 	capabilityVersions := []struct {
 		name    string
 		version string
@@ -861,4 +1096,9 @@ func validateBootstrapInput(input BootstrapInput) error {
 func routeID(domain string) string {
 	id := strings.NewReplacer(".", "_", "-", "_").Replace(strings.ToLower(domain))
 	return "deploycrate_ce_" + id
+}
+
+func registryRouteID(domain string) string {
+	id := strings.NewReplacer(".", "_", "-", "_").Replace(strings.ToLower(domain))
+	return "deploycrate_registry_" + id
 }

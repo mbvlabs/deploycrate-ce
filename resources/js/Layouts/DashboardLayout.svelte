@@ -1,11 +1,13 @@
 <script lang="ts">
   import AppWindowIcon from '@lucide/svelte/icons/app-window'
+  import BoxesIcon from '@lucide/svelte/icons/boxes'
   import ChevronDownIcon from '@lucide/svelte/icons/chevron-down'
   import DatabaseIcon from '@lucide/svelte/icons/database'
   import GitBranchIcon from '@lucide/svelte/icons/git-branch'
   import GithubIcon from '@lucide/svelte/icons/git-fork'
   import KeyRoundIcon from '@lucide/svelte/icons/key-round'
   import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard'
+  import ListTodoIcon from '@lucide/svelte/icons/list-todo'
   import LogOutIcon from '@lucide/svelte/icons/log-out'
   import NetworkIcon from '@lucide/svelte/icons/network'
   import ServerIcon from '@lucide/svelte/icons/server'
@@ -22,6 +24,7 @@
 
   let { children, email, version }: { children: Snippet; email: string; version?: string } = $props()
   const appVersion = $derived(version ?? String($page.props.appVersion ?? 'dev'))
+  const environmentPage = $derived($page.url.startsWith(routes.environments()) || /^\/applications\/[^/]+\/environments(?:\/|$)/.test($page.url))
 
   function initialSidebarOpen() {
     if (typeof document === 'undefined') return true
@@ -68,8 +71,13 @@
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.applications())} tooltipContent="Applications">
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.applications()) && !environmentPage} tooltipContent="Applications">
                 {#snippet child({ props })}<Link {...props} href={routes.applications()}><AppWindowIcon /><span>Applications</span></Link>{/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={environmentPage} tooltipContent="Environments">
+                {#snippet child({ props })}<Link {...props} href={routes.environments()}><BoxesIcon /><span>Environments</span></Link>{/snippet}
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>
@@ -111,9 +119,8 @@
         <Sidebar.GroupContent>
           <Sidebar.Menu>
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton disabled tooltipContent="Provider Credentials">
-                <KeyRoundIcon />
-                <span>Provider Credentials</span>
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.containerRegistries())} tooltipContent="Container Registries">
+                {#snippet child({ props })}<Link {...props} href={routes.containerRegistries()}><KeyRoundIcon /><span>Container Registries</span></Link>{/snippet}
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>
@@ -141,6 +148,16 @@
                   <Link {...props} href={routes.systemOverview()}>
                     <ShieldCheckIcon />
                     <span>Overview</span>
+                  </Link>
+                {/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.systemJobs())} tooltipContent="Jobs">
+                {#snippet child({ props })}
+                  <Link {...props} href={routes.systemJobs()}>
+                    <ListTodoIcon />
+                    <span>Jobs</span>
                   </Link>
                 {/snippet}
               </Sidebar.MenuButton>

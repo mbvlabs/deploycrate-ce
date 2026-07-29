@@ -123,6 +123,7 @@ type resourcePayload struct {
 	Name           string `json:"name"`
 	Category       string `json:"category"`
 	Kind           string `json:"kind"`
+	DatabaseName   string `json:"databaseName"`
 	ManagementMode string `json:"managementMode"`
 	SharingScope   string `json:"sharingScope"`
 }
@@ -138,6 +139,7 @@ func (payload resourcePayload) serviceInput() (services.ResourceInput, error) {
 	}
 	return services.ResourceInput{
 		Name: payload.Name, Category: payload.Category, Kind: payload.Kind,
+		DatabaseName:   payload.DatabaseName,
 		ManagementMode: managementMode, SharingScope: sharingScope,
 	}, nil
 }

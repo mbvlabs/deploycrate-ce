@@ -89,6 +89,7 @@ func main() {
 		router.Module,
 
 		fx.Invoke(runMigrationsOnStartup),
+		fx.Invoke(reconcileWorkloadsOnStartup),
 		fx.Invoke(startQueueProcessor),
 		fx.Invoke(startServer),
 		fx.Invoke(ensureInitialBackupsOnStartup),
@@ -167,6 +168,15 @@ func runMigrationsOnStartup(lc fx.Lifecycle, db storage.Pool) {
 			return nil
 		},
 	})
+}
+
+func reconcileWorkloadsOnStartup(lc fx.Lifecycle, reconciliation *services.WorkloadReconciliation) {
+	lc.Append(fx.Hook{OnStart: func(ctx context.Context) error {
+		if err := reconciliation.Reconcile(ctx); err != nil {
+			return fmt.Errorf("reconcile workload state on startup: %w", err)
+		}
+		return nil
+	}})
 }
 
 func startQueueProcessor(lc fx.Lifecycle, appCtx context.Context, p queue.Processor) {

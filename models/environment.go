@@ -6,6 +6,8 @@ import (
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,7 +29,17 @@ type EnvironmentEntity struct {
 }
 
 func (e *EnvironmentEntity) Validate() error {
-	return nil
+	e.Name = strings.TrimSpace(e.Name)
+	e.Slug = strings.TrimSpace(e.Slug)
+	e.Kind = strings.TrimSpace(e.Kind)
+	builder := validation.NewBuilder()
+	builder.Required("name", e.Name)
+	builder.Required("slug", e.Slug)
+	builder.Required("kind", e.Kind)
+	if e.ApplicationID == uuid.Nil {
+		builder.Add("applicationId", "required", "application is required")
+	}
+	return builder.Err()
 }
 
 func (e environment) Find(
@@ -44,6 +56,161 @@ func (e environment) Find(
 	}
 
 	return entity, nil
+}
+
+func (e environment) FindForApplication(
+	ctx context.Context,
+	db storage.Executor,
+	applicationID, environmentID uuid.UUID,
+) (EnvironmentEntity, error) {
+	var entity EnvironmentEntity
+	if err := db.NewSelect().Model(&entity).
+		Where("id = ?", environmentID).
+		Where("application_id = ?", applicationID).
+		Scan(ctx); err != nil {
+		return EnvironmentEntity{}, err
+	}
+	return entity, nil
+}
+
+func (e environment) Lock(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (EnvironmentEntity, error) {
+	var entity EnvironmentEntity
+	if err := db.NewSelect().Model(&entity).Where("id = ?", id).For("UPDATE").Scan(ctx); err != nil {
+		return EnvironmentEntity{}, err
+	}
+	return entity, nil
+}
+
+func (e environment) SetupComplete(ctx context.Context, db storage.Executor, id uuid.UUID) (bool, error) {
+	var complete bool
+	err := db.NewSelect().TableExpr("environments AS environment").
+		ColumnExpr(`EXISTS (
+			SELECT 1
+			FROM changes AS setup_change
+			JOIN change_state_revisions AS setup_result
+				ON setup_result.change_id = setup_change.id AND setup_result.role = 'result'
+			JOIN environment_state_revisions AS setup_revision
+				ON setup_revision.id = setup_result.environment_state_revision_id
+				AND setup_revision.environment_id = environment.id
+			WHERE setup_change.environment_id = environment.id
+				AND setup_change.kind = 'environment_setup'
+				AND setup_change.committed_at IS NOT NULL
+				AND setup_change.cancelled_at IS NULL
+		)`).
+		Where("environment.id = ?", id).
+		Scan(ctx, &complete)
+	return complete, err
+}
+
+type EnvironmentDeployability struct {
+	Deployable bool     `json:"deployable"`
+	Missing    []string `json:"missing"`
+}
+
+func (e environment) Deployability(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (EnvironmentDeployability, error) {
+	var checks struct {
+		EnvironmentActive bool `bun:"environment_active"`
+		ApplicationActive bool `bun:"application_active"`
+		SetupComplete     bool `bun:"setup_complete"`
+		SourceReady       bool `bun:"source_ready"`
+		BuildpackReady    bool `bun:"buildpack_ready"`
+		RuntimeReady      bool `bun:"runtime_ready"`
+		TargetReady       bool `bun:"target_ready"`
+		DomainReady       bool `bun:"domain_ready"`
+		RevisionReady     bool `bun:"revision_ready"`
+		ResourcesReady    bool `bun:"resources_ready"`
+	}
+	query := `
+		SELECT
+			e.archived_at IS NULL AS environment_active,
+			a.archived_at IS NULL AS application_active,
+			EXISTS (
+				SELECT 1 FROM changes setup_change
+				JOIN change_state_revisions setup_result ON setup_result.change_id = setup_change.id AND setup_result.role = 'result'
+				JOIN environment_state_revisions setup_revision ON setup_revision.id = setup_result.environment_state_revision_id AND setup_revision.environment_id = e.id
+				WHERE setup_change.environment_id = e.id AND setup_change.kind = 'environment_setup'
+				AND setup_change.committed_at IS NOT NULL AND setup_change.cancelled_at IS NULL
+			) AS setup_complete,
+			EXISTS (
+				SELECT 1 FROM environment_sources es
+				JOIN github_environment_sources ges ON ges.environment_source_id = es.id
+				JOIN github_repositories gr ON gr.id = ges.github_repository_id AND gr.removed_at IS NULL
+				JOIN github_installations gi ON gi.id = gr.github_installation_id AND gi.archived_at IS NULL AND gi.suspended_at IS NULL
+				WHERE es.environment_id = e.id AND es.archived_at IS NULL AND es.kind = 'git' AND es.provider = 'github'
+			) AS source_ready,
+			EXISTS (
+				SELECT 1 FROM buildpack_configurations bc
+				JOIN environment_sources es ON es.id = bc.environment_source_id AND es.archived_at IS NULL
+				WHERE es.environment_id = e.id
+			) AS buildpack_ready,
+			EXISTS (SELECT 1 FROM runtime_configurations rc WHERE rc.environment_id = e.id) AS runtime_ready,
+			EXISTS (
+				SELECT 1 FROM environment_targets et
+				JOIN servers s ON s.id = et.server_id AND s.archived_at IS NULL
+				WHERE et.environment_id = e.id AND et.detached_at IS NULL
+			) AS target_ready,
+			EXISTS (
+				SELECT 1 FROM environment_domains ed
+				WHERE ed.environment_id = e.id AND ed.is_primary AND ed.archived_at IS NULL
+			) AS domain_ready,
+			EXISTS (
+				SELECT 1 FROM environment_state_revisions esr
+				JOIN changes c ON c.id = esr.change_id AND c.committed_at IS NOT NULL AND c.cancelled_at IS NULL
+				WHERE esr.environment_id = e.id
+			) AS revision_ready,
+			NOT EXISTS (
+				SELECT 1 FROM environment_resources er
+				LEFT JOIN resources r ON r.id = er.resource_id
+				LEFT JOIN resource_endpoints re ON re.id = er.resource_endpoint_id
+				LEFT JOIN resource_credentials rc ON rc.id = er.resource_credential_id
+				WHERE er.environment_id = e.id AND er.archived_at IS NULL
+				AND (r.id IS NULL OR r.archived_at IS NOT NULL OR re.id IS NULL OR re.archived_at IS NOT NULL
+					OR (er.resource_credential_id IS NOT NULL AND (rc.id IS NULL OR rc.archived_at IS NOT NULL)))
+			) AS resources_ready
+		FROM environments e
+		JOIN applications a ON a.id = e.application_id
+		WHERE e.id = ?`
+	if err := db.NewRaw(query, id).Scan(ctx, &checks); err != nil {
+		return EnvironmentDeployability{}, err
+	}
+	missing := make([]string, 0, 10)
+	for _, check := range []struct {
+		name string
+		ok   bool
+	}{
+		{"environment_active", checks.EnvironmentActive},
+		{"application_active", checks.ApplicationActive},
+		{"setup_complete", checks.SetupComplete},
+		{"github_source", checks.SourceReady},
+		{"buildpacks_configuration", checks.BuildpackReady},
+		{"runtime_configuration", checks.RuntimeReady},
+		{"environment_target", checks.TargetReady},
+		{"primary_domain", checks.DomainReady},
+		{"committed_state_revision", checks.RevisionReady},
+		{"resource_connections", checks.ResourcesReady},
+	} {
+		if !check.ok {
+			missing = append(missing, check.name)
+		}
+	}
+	if checks.RevisionReady {
+		revision, err := EnvironmentStateRevision.LatestCommitted(ctx, db, id)
+		if err != nil {
+			return EnvironmentDeployability{}, fmt.Errorf("load latest Environment revision: %w", err)
+		}
+		if _, err := EnvironmentStateRevision.ResolveSecrets(ctx, db, revision); err != nil {
+			missing = append(missing, "revision_secrets")
+		}
+	}
+	return EnvironmentDeployability{Deployable: len(missing) == 0, Missing: missing}, nil
 }
 
 type CreateEnvironmentData struct {

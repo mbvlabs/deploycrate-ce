@@ -741,7 +741,10 @@ func (m Model) renderScreen(width int) string {
 				"The admin and deploycrate users receive passwordless sudo and Docker access; deploycrate remains non-login.",
 			) + "\n\nPress enter to begin."
 	case screenServer:
-		content = m.renderForm([]string{"Public domain", "SSH port"})
+		content = m.renderForm([]string{"Public domain", "SSH port"}) + "\n\n" +
+			warnStyle.Render("Required DNS records before continuing") + "\n" +
+			m.renderDNSRecords(m.serverScreenDomain()) + "\n" +
+			mutedStyle.Render("Use DNS-only mode if your provider offers HTTP proxying.")
 	case screenAccess:
 		content = m.renderForm(
 			[]string{"Server administrator password", "Confirm password", "Ordinary owner SSH public key"},
@@ -881,6 +884,8 @@ func (m Model) renderReview() string {
 	}
 	rows := []string{
 		labelStyle.Render("Server") + "       https://" + m.config.Domain,
+		labelStyle.Render("App DNS A") + "    " + m.config.Domain + " -> " + m.config.PublicIPv4 + " (DNS only)",
+		labelStyle.Render("Registry DNS A") + " " + registryDomain(m.config.Domain) + " -> " + m.config.PublicIPv4 + " (DNS only)",
 		labelStyle.Render(
 			"SSH",
 		) + fmt.Sprintf(
@@ -999,6 +1004,8 @@ func (m Model) renderHandoff() string {
 	b.WriteString(okStyle.Bold(true).Render("Setup complete. Final confirmation required."))
 	b.WriteString("\n\n")
 	b.WriteString(labelStyle.Render("Application URL") + "  https://" + m.config.Domain + "\n")
+	b.WriteString(labelStyle.Render("App DNS A") + "        " + m.config.Domain + " -> " + m.config.PublicIPv4 + " (DNS only)\n")
+	b.WriteString(labelStyle.Render("Registry DNS A") + "   " + registryDomain(m.config.Domain) + " -> " + m.config.PublicIPv4 + " (DNS only)\n")
 	b.WriteString(labelStyle.Render("Server admin") + "     " + m.config.AdminUser + "\n")
 	b.WriteString(
 		labelStyle.Render("Admin password") + "   " + m.config.Secrets.ServerAdminPassword + "\n",
@@ -1077,6 +1084,8 @@ func (m Model) handoffDetails() string {
 	var b strings.Builder
 	b.WriteString("DeployCrate CE setup details\n\n")
 	b.WriteString("Application URL: https://" + m.config.Domain + "\n")
+	b.WriteString("Application DNS A record: " + m.config.Domain + " -> " + m.config.PublicIPv4 + " (DNS only)\n")
+	b.WriteString("Registry DNS A record: " + registryDomain(m.config.Domain) + " -> " + m.config.PublicIPv4 + " (DNS only)\n")
 	b.WriteString("Server administrator: " + m.config.AdminUser + "\n")
 	b.WriteString("Server administrator password: " + m.config.Secrets.ServerAdminPassword + "\n")
 	b.WriteString(
@@ -1106,6 +1115,26 @@ func (m Model) handoffDetails() string {
 	b.WriteString("\nApp admin: " + m.config.AdminEmail + "\n")
 	b.WriteString("Admin password: " + m.config.Secrets.AdminPassword + "\n")
 	return b.String()
+}
+
+func (m Model) serverScreenDomain() string {
+	if len(m.inputs) == 0 {
+		return m.config.Domain
+	}
+	domain := strings.TrimSpace(m.inputs[0].Value())
+	if domain == "" {
+		return "<your domain>"
+	}
+	return domain
+}
+
+func (m Model) renderDNSRecords(domain string) string {
+	return labelStyle.Render("A") + " " + domain + " -> " + m.config.PublicIPv4 + "\n" +
+		labelStyle.Render("A") + " " + registryDomain(domain) + " -> " + m.config.PublicIPv4
+}
+
+func registryDomain(domain string) string {
+	return "registry-" + domain
 }
 
 func (m Model) stepLabel() string {

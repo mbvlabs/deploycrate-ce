@@ -128,7 +128,8 @@ func bootstrapSetupControlPlane(ctx context.Context, input setup.BootstrapInput)
 		Domain: input.Domain, Version: input.Version,
 		ArtifactReference: input.ArtifactReference, ArtifactDigest: input.ArtifactDigest,
 		Distribution: input.Distribution, DistributionVersion: input.DistributionVersion,
-		Architecture: input.Architecture,
+		Architecture:         input.Architecture,
+		SessionEncryptionKey: input.SessionEncryptionKey,
 		Capabilities: services.BootstrapCapabilitiesInput{
 			BuildpacksPackVersion: input.Capabilities.BuildpacksPackVersion,
 			CaddyVersion:          input.Capabilities.CaddyVersion,

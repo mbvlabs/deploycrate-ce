@@ -54,6 +54,8 @@ Generated session, encryption, signing, pepper, and local database secrets are n
 
 ### Bootstrap Behavior
 
+During server configuration, bootstrap detects the VPS public IPv4 address and shows the two exact DNS-only `A` records required for the application domain and its managed registry. For example, `ce.example.com` uses `registry-ce.example.com`. Create both records before approving the review screen so Caddy can obtain TLS certificates, the displayed SSH command reaches the server, and the registry is available to publish application images. The review, credential handoff, and copied setup details repeat both records.
+
 After the operator approves the review screen, the CLI saves resumable configuration and runs these phases in order:
 
 1. Installs baseline packages and creates two operating-system identities. `admin` receives a unique password, the generated key and optional owner key, unrestricted passwordless sudo, and Docker access. `deploycrate` is a locked, non-login service account with unrestricted passwordless sudo and local Docker access so the running application can manage the host. It has no SSH authorization.
@@ -183,7 +185,11 @@ After bootstrap, sign in to the dashboard and open **Connections > GitHub**. Cho
 
 Install the App on each required GitHub account, choose repository access, and return to DeployCrate. The connection page shows suspension, repository-selection mode, repository count, and last synchronization time. Use **Sync** after changing repository grants. Local archive actions do not uninstall the App on GitHub, and DeployCrate blocks archival while active application sources depend on the connection.
 
-Open **Applications > New** to create an application, its initial environment, GitHub source binding, Buildpacks configuration, and image destination in one transaction. A matching signed push creates a pending build and a durable River job. This delivery intentionally leaves that job unconsumed. Source checkout, `pack build`, registry push, release creation, and deployment are implemented by the later build-system phase.
+Open **Applications > New** to create an application and its initial Environment, GitHub source binding, Buildpacks configuration, and image destination. Existing Application behavior remains unchanged. Open the Environment and complete setup with a domain, the fixed Go runtime, optional PostgreSQL Resources, and write-only secrets. Setup resolves the configured GitHub ref to an exact commit and atomically queues the first Build.
+
+DeployCrate accepts Go applications with a `go.mod` in the configured context. The Build worker downloads the exact private GitHub archive, invokes the pinned Paketo Ubuntu Noble builder and Go buildpack, publishes to the authenticated managed Distribution registry, verifies the immutable digest, and queues a direct Docker deployment. Environment workloads use an ownership-labeled bridge and container, `unless-stopped`, and a dynamic port bound only to `127.0.0.1`. They do not use Docker Compose or per-Environment systemd units. Installation-backed Docker Resources are attached to each consuming Environment network. Host-native processes use the Resource's loopback-published port, while Environment workloads use the Resource container name and internal container port.
+
+Environment secret values are write-only and encrypted in PostgreSQL. Rotation creates a new immutable secret row and sanitized desired-state revision identified by the secret UUID and keyed digest. User secret creation, rotation, and archival do not deploy automatically. The user can build and deploy the current source or redeploy a selected Release image with the latest committed state and secrets. Resource-managed secret rotations continue to queue a replacement deployment without rebuilding the image. Root and Docker-socket administrators can inspect values stored in a running container configuration, which is part of the accepted server-administrator boundary.
 
 For webhook delivery, GitHub must reach the exact public path `/webhooks/github`. Do not place a browser login, body-rewriting proxy, or broad webhook path in front of it. DeployCrate validates `X-Hub-Signature-256` against the raw bounded request body and deduplicates deliveries by `X-GitHub-Delivery`.
 
@@ -213,6 +219,17 @@ curl -fsS http://127.0.0.1:8080/api/health
 curl -fsS http://127.0.0.1:2019/config/
 curl -fsS http://127.0.0.1:2019/config/apps/http/servers/srv0/routes
 ```
+
+Managed registry and Environment workloads:
+
+```bash
+sudo docker ps --filter label=com.deploycrate.environment
+sudo docker network ls --filter label=com.deploycrate.environment
+curl -I https://registry.example.com/v2/
+sudo docker logs <workload-container-id>
+```
+
+The public registry request must require Basic authentication. Use the Environment overview for bounded Build and Deployment failures, immutable Release references, observed Instances, retry actions, and recovery guidance. On restart, DeployCrate inspects labeled workload containers, reapplies durable Caddy routes, requeues unresolved Deployments, and completes stale backend cleanup.
 
 WireGuard:
 

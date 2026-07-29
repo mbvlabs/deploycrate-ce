@@ -7,6 +7,7 @@ import (
 	"deploycrate-ce/internal/validation"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,6 +31,52 @@ type RuntimeConfigurationEntity struct {
 }
 
 func (e *RuntimeConfigurationEntity) Validate() error {
+	e.Runtime = strings.ToLower(strings.TrimSpace(e.Runtime))
+	e.RestartPolicy = strings.ToLower(strings.TrimSpace(e.RestartPolicy))
+	builder := validation.NewBuilder()
+	if e.Runtime != "go" {
+		builder.Add("runtime", "unsupported", "only the Go runtime is supported")
+	}
+	if e.Replicas != 1 {
+		builder.Add("replicas", "unsupported", "this release supports exactly one replica")
+	}
+	if e.RestartPolicy != "unless-stopped" {
+		builder.Add("restartPolicy", "unsupported", "restart policy must be unless-stopped")
+	}
+	for field, value := range map[string]json.RawMessage{"arguments": e.Arguments, "ports": e.Ports, "resourceLimits": e.ResourceLimits, "settings": e.Settings} {
+		if len(value) == 0 || !json.Valid(value) {
+			builder.Add(field, "invalid", field+" must be valid JSON")
+		}
+	}
+	var ports struct {
+		HTTP int32 `json:"http"`
+	}
+	if json.Unmarshal(e.Ports, &ports) != nil || ports.HTTP < 1 || ports.HTTP > 65535 {
+		builder.Add("ports", "invalid", "runtime must define a valid HTTP container port")
+	}
+	if e.EnvironmentID == uuid.Nil {
+		builder.Add("environmentId", "required", "Environment is required")
+	}
+	return builder.Err()
+}
+
+func ensureRuntimeConfigurationUnique(ctx context.Context, db storage.Executor, entity RuntimeConfigurationEntity) error {
+	switch db.(type) {
+	case bun.Tx, *bun.Tx:
+	default:
+		return errors.New("runtime configuration uniqueness checks require a transaction")
+	}
+	if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "runtime-configuration:"+entity.EnvironmentID.String()); err != nil {
+		return err
+	}
+	count, err := db.NewSelect().Model((*RuntimeConfigurationEntity)(nil)).
+		Where("environment_id = ?", entity.EnvironmentID).Where("id <> ?", entity.ID).Count(ctx)
+	if err != nil {
+		return err
+	}
+	if count != 0 {
+		return errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "environmentId", Code: "taken", Message: "the Environment already has a runtime configuration"}})
+	}
 	return nil
 }
 
@@ -83,6 +130,9 @@ func (rc runtimeConfiguration) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return RuntimeConfigurationEntity{}, errors.Join(ErrDomainValidation, err)
 	}
+	if err := ensureRuntimeConfigurationUnique(ctx, db, entity); err != nil {
+		return RuntimeConfigurationEntity{}, err
+	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
 		return RuntimeConfigurationEntity{}, err
@@ -126,6 +176,9 @@ func (rc runtimeConfiguration) Update(
 
 	if err := validation.Validate(&entity); err != nil {
 		return RuntimeConfigurationEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureRuntimeConfigurationUnique(ctx, db, entity); err != nil {
+		return RuntimeConfigurationEntity{}, err
 	}
 
 	if err := db.NewUpdate().
@@ -244,6 +297,9 @@ func (rc runtimeConfiguration) Upsert(
 
 	if err := validation.Validate(&entity); err != nil {
 		return RuntimeConfigurationEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureRuntimeConfigurationUnique(ctx, db, entity); err != nil {
+		return RuntimeConfigurationEntity{}, err
 	}
 
 	if err := db.NewInsert().

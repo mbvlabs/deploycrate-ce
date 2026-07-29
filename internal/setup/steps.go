@@ -361,10 +361,11 @@ func controlPlaneBootstrapStep(
 				ArtifactReference: ApplicationReleaseBinaryPath(
 					cfg.Version,
 				),
-				ArtifactDigest:      digest,
-				Distribution:        metadata["ID"],
-				DistributionVersion: metadata["VERSION_ID"],
-				Architecture:        runtime.GOARCH,
+				ArtifactDigest:       digest,
+				Distribution:         metadata["ID"],
+				DistributionVersion:  metadata["VERSION_ID"],
+				Architecture:         runtime.GOARCH,
+				SessionEncryptionKey: cfg.Secrets.SessionEncryptionKey,
 				Capabilities: BootstrapCapabilitiesInput{
 					BuildpacksPackVersion: BuildpacksPackVersion,
 					CaddyVersion:          CaddyVersion,

@@ -179,6 +179,25 @@ func (de deploymentEvent) All(
 	return entities, nil
 }
 
+func (de deploymentEvent) ForDeploymentAfter(
+	ctx context.Context,
+	db storage.Executor,
+	deploymentID uuid.UUID,
+	after int64,
+	limit int,
+) ([]DeploymentEventEntity, error) {
+	if limit < 1 {
+		limit = 200
+	}
+	if limit > 501 {
+		limit = 501
+	}
+	events := make([]DeploymentEventEntity, 0, limit)
+	err := db.NewSelect().Model(&events).Where("deployment_id = ?", deploymentID).Where("sequence > ?", after).
+		OrderExpr("sequence ASC").Limit(limit).Scan(ctx)
+	return events, err
+}
+
 type PaginatedDeploymentEvents struct {
 	DeploymentEvents []DeploymentEventEntity
 	TotalCount       int64
