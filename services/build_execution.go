@@ -182,6 +182,21 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	if err != nil {
 		return fmt.Errorf("initialize Build logging: %w", err)
 	}
+	recordTiming := func(phase string, started time.Time) {
+		duration := max(time.Since(started), 0)
+		message := fmt.Sprintf("Timing: %s completed in %s", phase, duration.Round(time.Millisecond))
+		if logErr := logger.System(ctx, message); logErr != nil {
+			slog.WarnContext(ctx, "Build timing could not be persisted", "build_id", build.ID, "phase", phase, "error", logErr)
+		}
+		slog.InfoContext(ctx, "Build phase completed", "build_id", build.ID, "phase", phase, "duration", duration)
+	}
+	if build.StartedAt.Valid {
+		queueWait := max(build.StartedAt.Time.Sub(build.CreatedAt), 0)
+		message := fmt.Sprintf("Timing: queue wait completed in %s", queueWait.Round(time.Millisecond))
+		if err := logger.System(ctx, message); err != nil {
+			slog.WarnContext(ctx, "Build queue timing could not be persisted", "build_id", build.ID, "error", err)
+		}
+	}
 	fail := func(operationErr error) error {
 		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
@@ -241,6 +256,7 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	if err := progress("downloading_source", "Downloading the exact GitHub revision"); err != nil {
 		return err
 	}
+	downloadStarted := time.Now()
 	archiveCommand := sudo.CommandContext(ctx, "/usr/bin/install", "-m", "0600", "/dev/stdin", archivePath)
 	archiveInput, err := archiveCommand.StdinPipe()
 	if err != nil {
@@ -271,13 +287,16 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	if closeErr != nil {
 		return fmt.Errorf("close Build archive: %w", closeErr)
 	}
+	recordTiming("source download", downloadStarted)
 	sourceRoot := filepath.Join(workspace, "source")
 	if err := progress("extracting_source", "Validating and extracting the GitHub archive"); err != nil {
 		return err
 	}
+	extractionStarted := time.Now()
 	if err := extractGitHubArchive(ctx, archivePath, sourceRoot); err != nil {
 		return fail(err)
 	}
+	recordTiming("source extraction", extractionStarted)
 	if err := progress("validating_context", "Validating the configured Go Buildpacks context"); err != nil {
 		return err
 	}
@@ -294,6 +313,7 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	if err := progress("loading_registry", "Loading registry credentials"); err != nil {
 		return err
 	}
+	registryStarted := time.Now()
 	credentials, err := service.registryCredentials(ctx, snapshot)
 	if err != nil {
 		operationErr := fmt.Errorf("load Build registry credentials: %w", err)
@@ -310,12 +330,31 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 		}
 		return fail(operationErr)
 	}
+	recordTiming("registry authentication", registryStarted)
 	defer func() {
 		if closeErr := authentication.Close(); closeErr != nil {
 			slog.WarnContext(context.WithoutCancel(ctx), "Build registry authentication cleanup failed", "build_id", build.ID, "error", closeErr)
 		}
 	}()
 	imageTag := strings.TrimSuffix(snapshot.RegistryEndpoint, "/") + "/" + strings.Trim(snapshot.ImageRepository, "/") + ":build-" + build.ID.String()
+	caches, err := buildpacksclient.EnvironmentCacheNames(build.EnvironmentID)
+	if err != nil {
+		return fail(err)
+	}
+	previousImage := ""
+	previousRelease, err := models.Release.LatestBuildForEnvironment(ctx, service.db.Executor(), build.EnvironmentID)
+	if err == nil {
+		previousImage = previousRelease.ArtifactReference
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	if previousImage == "" {
+		if err := logger.System(ctx, fmt.Sprintf("Using Pack caches %s and %s without a previous Release image", caches.Build, caches.Launch)); err != nil {
+			return err
+		}
+	} else if err := logger.System(ctx, fmt.Sprintf("Using Pack caches %s and %s with previous Release image %s", caches.Build, caches.Launch, previousImage)); err != nil {
+		return err
+	}
 	buildCtx, cancel := context.WithTimeout(ctx, buildTimeout)
 	defer cancel()
 	reportDirectory := filepath.Join(workspace, "report")
@@ -329,11 +368,14 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	if err := progress("building_image", "Running Pack and publishing the application image"); err != nil {
 		return err
 	}
+	packStarted := time.Now()
 	_, err = service.pack.Build(buildCtx, buildpacksclient.BuildSpec{
 		Image: imageTag, Path: contextPath, ReportDirectory: reportDirectory, TemporaryDirectory: temporaryDirectory,
+		BuildCache: caches.Build, LaunchCache: caches.Launch, PreviousImage: previousImage, PullPolicy: buildpacksclient.PullPolicyIfNotPresent,
 		DockerEnvironment: authentication.Environment(), BPGOTargets: snapshot.BPGOTargets,
 		Output: logger,
 	})
+	recordTiming("Pack execution", packStarted)
 	if persistenceErr := logger.PersistenceError(); persistenceErr != nil {
 		slog.WarnContext(ctx, "Build output logging became unavailable", "build_id", build.ID, "error", persistenceErr)
 	}
@@ -343,6 +385,7 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	if err := progress("resolving_artifact", "Resolving the published image digest"); err != nil {
 		return err
 	}
+	digestStarted := time.Now()
 	immutableReference, err := service.registry.ResolveRemoteDigest(ctx, credentials, imageTag)
 	if err != nil {
 		return err
@@ -351,12 +394,15 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	if err != nil || len(digest) != 32 {
 		return errors.New("published registry digest is invalid")
 	}
+	recordTiming("artifact digest resolution", digestStarted)
 	if err := progress("finalizing", "Creating the Release and queueing its Deployment"); err != nil {
 		return err
 	}
+	finalizationStarted := time.Now()
 	if err := service.complete(ctx, build.ID, snapshot, immutableReference, digest); err != nil {
 		return err
 	}
+	recordTiming("Build finalization", finalizationStarted)
 	if err := logger.System(ctx, "Build completed successfully"); err != nil {
 		slog.WarnContext(ctx, "Build completion log could not be persisted", "build_id", build.ID, "error", err)
 	}
@@ -431,13 +477,17 @@ func (service *BuildExecution) claim(ctx context.Context, id uuid.UUID) (models.
 		return build, err
 	}
 	if build.Status == "pending" || build.Status == "running" {
-		if err := models.Build.MarkRunning(ctx, tx, id, time.Now().UTC()); err != nil {
+		startedAt := time.Now().UTC()
+		if err := models.Build.MarkRunning(ctx, tx, id, startedAt); err != nil {
 			return build, err
 		}
-		if err := models.Change.MarkRunning(ctx, tx, build.ChangeID, time.Now().UTC()); err != nil {
+		if err := models.Change.MarkRunning(ctx, tx, build.ChangeID, startedAt); err != nil {
 			return build, err
 		}
 		build.Status = "running"
+		if !build.StartedAt.Valid {
+			build.StartedAt = sql.NullTime{Time: startedAt, Valid: true}
+		}
 	}
 	return build, tx.Commit()
 }

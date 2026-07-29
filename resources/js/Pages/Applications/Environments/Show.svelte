@@ -17,7 +17,7 @@
   type BuildLog = { id: string; sequence: number; stream: 'system' | 'pack'; message: string; occurredAt: string }
   type BuildLogSnapshot = { build: Build; logs: BuildLog[]; nextSequence: number; hasMore: boolean }
   type Release = { id: string; sourceRevision: string; artifactReference: string; createdAt: string }
-  type Deployment = { id: string; status: string; currentStep: string; error: string; releaseId: string; createdAt: string }
+  type Deployment = { id: string; status: string; currentStep: string; error: string; releaseId: string; createdAt: string; active: boolean }
   type DeploymentEvent = { id: string; sequence: number; eventType: string; status: string; step: string; message: string; error: string; occurredAt: string }
   type DeploymentEventSnapshot = { deployment: Deployment; events: DeploymentEvent[]; nextSequence: number; hasMore: boolean }
   type Instance = { id: string; state: string; slot: string; ports: Record<string, number>; releaseId: string; observedAt: string }
@@ -71,6 +71,7 @@
   const short = (value: string) => value ? value.slice(0, 12) : 'Unavailable'
   const stamp = (value: string) => value ? new Date(value).toLocaleString() : 'Pending'
   const stepLabel = (value: string) => value ? value.replaceAll('_', ' ') : 'waiting for worker'
+  const deploymentStep = (deployment: Deployment) => deployment.active ? 'serving' : deployment.status === 'succeeded' ? 'superseded' : deployment.currentStep || 'queued'
   function createSecret() { router.post(routes.environmentSecretsCreate(environment.applicationId, environment.environment.id), { key, value }, { onSuccess: () => { key = ''; value = '' } }) }
   function askToRotate(secret: Secret) {
     rotatingSecret = secret
@@ -188,7 +189,11 @@
       })
       if (!response.ok) throw new Error(`Deployment events returned ${response.status}`)
       const snapshot = (await response.json()) as DeploymentEventSnapshot
-      liveDeployments = deployments.map((deployment) => deployment.id === snapshot.deployment.id ? snapshot.deployment : deployment)
+      liveDeployments = deployments.map((deployment) => {
+        if (deployment.id === snapshot.deployment.id) return snapshot.deployment
+        if (snapshot.deployment.active) return { ...deployment, active: false }
+        return deployment
+      })
       if (snapshot.events.length > 0) {
         deploymentEvents = { ...deploymentEvents, [deploymentId]: [...(deploymentEvents[deploymentId] ?? []), ...snapshot.events] }
       } else if (!(deploymentId in deploymentEvents)) {
@@ -273,7 +278,10 @@
           timer = window.setTimeout(poll, 0)
           return
         }
-        if (snapshot.deployment.status !== 'queued' && snapshot.deployment.status !== 'running') return
+        if (snapshot.deployment.status !== 'queued' && snapshot.deployment.status !== 'running') {
+          router.reload({ only: ['environment'], preserveScroll: true })
+          return
+        }
       } catch {
         if (abortController.signal.aborted) return
         deploymentEventConnectionError = 'Reconnecting to the Deployment timeline...'
@@ -366,7 +374,7 @@
           <div class="border border-border text-sm">
             <div class="flex items-start justify-between gap-4 p-3">
               <button type="button" class="min-w-0 flex-1 text-left" onclick={() => toggleDeploymentEvents(deployment.id)} aria-expanded={expandedDeploymentId === deployment.id}>
-                <p><span class="font-mono">{short(deployment.id)}</span> · {deployment.status} · {deployment.currentStep || 'queued'}</p>
+                <p><span class="font-mono">{short(deployment.id)}</span> · {deployment.status} · {deploymentStep(deployment)}</p>
                 <p class="mt-1 text-xs text-muted-foreground">{stamp(deployment.createdAt)} · Release {short(deployment.releaseId)} · {expandedDeploymentId === deployment.id ? 'Hide timeline' : 'Show timeline'}</p>
                 {#if deployment.error}<p class="mt-2 text-xs text-destructive">{deployment.error}</p>{/if}
               </button>

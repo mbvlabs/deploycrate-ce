@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	buildpacksclient "deploycrate-ce/clients/buildpacks"
 	containerclient "deploycrate-ce/clients/container"
 
 	"github.com/google/uuid"
@@ -40,6 +41,7 @@ type EnvironmentSetup struct {
 	resources  *ResourceManagement
 	caddy      CaddyRouteService
 	container  containerclient.WorkloadClient
+	buildpacks buildpacksclient.Client
 }
 
 func NewEnvironmentSetup(
@@ -53,7 +55,7 @@ func NewEnvironmentSetup(
 ) *EnvironmentSetup {
 	return &EnvironmentSetup{
 		db: db, queue: queue, jobControl: jobControl, github: github, secrets: secrets,
-		resources: resources, caddy: caddy, container: containerclient.NewWorkload(),
+		resources: resources, caddy: caddy, container: containerclient.NewWorkload(), buildpacks: buildpacksclient.New(),
 	}
 }
 
@@ -241,7 +243,22 @@ type EnvironmentDeploymentActivity struct {
 	Error       string    `json:"error" bun:"error"`
 	ReleaseID   uuid.UUID `json:"releaseId" bun:"release_id"`
 	CreatedAt   time.Time `json:"createdAt" bun:"created_at"`
+	Active      bool      `json:"active" bun:"active"`
 }
+
+const environmentDeploymentActiveExpression = `EXISTS (
+	SELECT 1
+	FROM instances AS active_instance
+	JOIN caddy_route_backends AS active_backend ON active_backend.instance_id = active_instance.id
+	JOIN caddy_routes AS active_route ON active_route.id = active_backend.caddy_route_id
+	WHERE active_instance.deployment_id = deployment.id
+		AND active_instance.state = 'serving'
+		AND active_instance.removed_at IS NULL
+		AND active_backend.weight = 100
+		AND active_backend.removed_at IS NULL
+		AND active_route.environment_target_id = deployment.environment_target_id
+		AND active_route.removed_at IS NULL
+)`
 
 type EnvironmentDeploymentEventActivity struct {
 	ID         uuid.UUID `json:"id"`
@@ -348,7 +365,12 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 		return EnvironmentOverview{}, err
 	}
 	deployments := make([]EnvironmentDeploymentActivity, 0)
-	if err := service.db.Executor().NewSelect().TableExpr("deployments AS deployment").ColumnExpr("deployment.id, deployment.status, COALESCE(deployment.current_step, '') AS current_step, COALESCE(deployment.error, '') AS error, deployment.release_id, deployment.created_at").Join("JOIN releases AS release ON release.id = deployment.release_id").Where("release.environment_id = ?", environmentID).Where("release.build_id IS NOT NULL").OrderExpr("deployment.created_at DESC").Limit(30).Scan(ctx, &deployments); err != nil {
+	if err := service.db.Executor().NewSelect().TableExpr("deployments AS deployment").
+		ColumnExpr("deployment.id, deployment.status, COALESCE(deployment.current_step, '') AS current_step, COALESCE(deployment.error, '') AS error, deployment.release_id, deployment.created_at").
+		ColumnExpr(environmentDeploymentActiveExpression+" AS active").
+		Join("JOIN releases AS release ON release.id = deployment.release_id").
+		Where("release.environment_id = ?", environmentID).Where("release.build_id IS NOT NULL").
+		OrderExpr("deployment.created_at DESC").Limit(30).Scan(ctx, &deployments); err != nil {
 		return EnvironmentOverview{}, err
 	}
 	instances := make([]EnvironmentInstanceActivity, 0)
@@ -479,13 +501,18 @@ func (service *EnvironmentSetup) DeploymentEvents(
 	environmentID, deploymentID uuid.UUID,
 	after int64,
 ) (EnvironmentDeploymentEventSnapshot, error) {
-	deployment, err := models.Deployment.Find(ctx, service.db.Executor(), deploymentID)
-	if err != nil {
+	var deployment EnvironmentDeploymentActivity
+	err := service.db.Executor().NewSelect().TableExpr("deployments AS deployment").
+		ColumnExpr("deployment.id, deployment.status, COALESCE(deployment.current_step, '') AS current_step, COALESCE(deployment.error, '') AS error, deployment.release_id, deployment.created_at").
+		ColumnExpr(environmentDeploymentActiveExpression+" AS active").
+		Join("JOIN releases AS release ON release.id = deployment.release_id").
+		Where("deployment.id = ?", deploymentID).Where("release.environment_id = ?", environmentID).
+		Where("release.build_id IS NOT NULL").Limit(1).Scan(ctx, &deployment)
+	if errors.Is(err, sql.ErrNoRows) {
 		return EnvironmentDeploymentEventSnapshot{}, sql.ErrNoRows
 	}
-	release, err := models.Release.Find(ctx, service.db.Executor(), deployment.ReleaseID)
-	if err != nil || release.EnvironmentID != environmentID || release.BuildID == nil {
-		return EnvironmentDeploymentEventSnapshot{}, sql.ErrNoRows
+	if err != nil {
+		return EnvironmentDeploymentEventSnapshot{}, err
 	}
 	eventEntities, err := models.DeploymentEvent.ForDeploymentAfter(ctx, service.db.Executor(), deploymentID, after, 501)
 	if err != nil {
@@ -506,11 +533,8 @@ func (service *EnvironmentSetup) DeploymentEvents(
 		nextSequence = event.Sequence
 	}
 	return EnvironmentDeploymentEventSnapshot{
-		Deployment: EnvironmentDeploymentActivity{
-			ID: deployment.ID, Status: deployment.Status, CurrentStep: deployment.CurrentStep.String,
-			Error: deployment.Error.String, ReleaseID: deployment.ReleaseID, CreatedAt: deployment.CreatedAt,
-		},
-		Events: events, NextSequence: nextSequence, HasMore: hasMore,
+		Deployment: deployment,
+		Events:     events, NextSequence: nextSequence, HasMore: hasMore,
 	}, nil
 }
 
@@ -1386,6 +1410,9 @@ func (service *EnvironmentSetup) DeleteEnvironment(
 				return fmt.Errorf("hard-delete cancelled Environment background job %d: %w", job.ID, hardDeleteErr)
 			}
 		}
+	}
+	if err := service.buildpacks.DeleteEnvironmentCaches(ctx, environmentID); err != nil {
+		return fmt.Errorf("delete Environment Pack caches: %w", err)
 	}
 
 	tx, err := service.db.BeginTx(ctx, nil)

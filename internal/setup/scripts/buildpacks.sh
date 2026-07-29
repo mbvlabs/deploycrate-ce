@@ -3,6 +3,9 @@ set -euo pipefail
 
 : "${SERVICE_USER:?SERVICE_USER is required}"
 : "${PACK_VERSION:?PACK_VERSION is required}"
+: "${BUILDER_REFERENCE:?BUILDER_REFERENCE is required}"
+: "${GO_BUILDPACK_REFERENCE:?GO_BUILDPACK_REFERENCE is required}"
+: "${RUN_IMAGE_REFERENCE:?RUN_IMAGE_REFERENCE is required}"
 
 pack_version="${PACK_VERSION}"
 architecture="$(dpkg --print-architecture)"
@@ -40,3 +43,8 @@ install -d -m 0750 -o "${SERVICE_USER}" -g "${SERVICE_USER}" /var/lib/deploycrat
 
 runuser -u "${SERVICE_USER}" -- /usr/local/bin/pack version
 runuser -u "${SERVICE_USER}" -- docker info >/dev/null
+
+for image_reference in "${BUILDER_REFERENCE}" "${GO_BUILDPACK_REFERENCE}" "${RUN_IMAGE_REFERENCE}"; do
+  runuser -u "${SERVICE_USER}" -- docker pull "${image_reference}"
+  runuser -u "${SERVICE_USER}" -- docker image inspect "${image_reference}" >/dev/null
+done

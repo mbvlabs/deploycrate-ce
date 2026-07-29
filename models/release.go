@@ -56,6 +56,25 @@ func (r release) Find(
 	return entity, nil
 }
 
+func (r release) LatestBuildForEnvironment(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) (ReleaseEntity, error) {
+	var entity ReleaseEntity
+	if err := db.NewSelect().
+		Model(&entity).
+		Join("JOIN builds AS build ON build.id = releases.build_id").
+		Where("releases.environment_id = ?", environmentID).
+		Where("build.status = 'succeeded'").
+		OrderExpr("releases.created_at DESC").
+		Limit(1).
+		Scan(ctx); err != nil {
+		return ReleaseEntity{}, err
+	}
+	return entity, nil
+}
+
 type CreateReleaseData struct {
 	Version             sql.NullString
 	SourceRevision      sql.NullString

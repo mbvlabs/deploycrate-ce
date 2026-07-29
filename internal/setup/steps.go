@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	buildpacksclient "deploycrate-ce/clients/buildpacks"
 	"deploycrate-ce/internal/secretcrypto"
 )
 
@@ -153,13 +154,19 @@ func DefaultSteps(operations Operations) []Step {
 			nil,
 		),
 		scriptSetupStep(
-			"buildpacks-0-40-6",
-			"Install the Cloud Native Buildpacks tooling",
+			"buildpacks-0-40-6-cache-v1",
+			"Install and warm the Cloud Native Buildpacks tooling",
 			"buildpacks.sh",
 			func(cfg Config) map[string]string {
+				builder, _ := buildpacksclient.PinnedBuilder()
+				buildpack, _ := buildpacksclient.PinnedGoBuildpack()
+				runImage, _ := buildpacksclient.PinnedRunImage()
 				return map[string]string{
-					"PACK_VERSION": BuildpacksPackVersion,
-					"SERVICE_USER": cfg.ServiceUser,
+					"BUILDER_REFERENCE":      builder,
+					"GO_BUILDPACK_REFERENCE": buildpack,
+					"PACK_VERSION":           BuildpacksPackVersion,
+					"RUN_IMAGE_REFERENCE":    runImage,
+					"SERVICE_USER":           cfg.ServiceUser,
 				}
 			},
 		),
