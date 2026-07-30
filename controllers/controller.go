@@ -25,6 +25,7 @@ var constructors = fx.Provide(
 	NewApplications,
 	NewEnvironments,
 	NewResources,
+	NewNetworks,
 	NewJobs,
 	NewCaddyRoutes,
 )
@@ -69,6 +70,9 @@ var Module = fx.Module(
 		return c.RegisterRoutes(r)
 	}),
 	fx.Invoke(func(r *router.Router, c Resources) error {
+		return c.RegisterRoutes(r)
+	}),
+	fx.Invoke(func(r *router.Router, c Networks) error {
 		return c.RegisterRoutes(r)
 	}),
 	fx.Invoke(func(r *router.Router, c Jobs) error {

@@ -57,18 +57,6 @@ var SystemResourceWireGuardDeviceDestroy = routing.NewRouteWithParams[SystemReso
 	SystemPrefix,
 )
 
-var SystemWireGuardDeviceDestroy = routing.NewRouteWithUUIDID(
-	"/wireguard-devices/:id",
-	"system.wireguard-device.destroy",
-	SystemPrefix,
-)
-
-var SystemNetwork = routing.NewSimpleRoute(
-	"/network",
-	"system.network",
-	SystemPrefix,
-)
-
 var SystemUpdate = routing.NewSimpleRoute(
 	"/update",
 	"system.update",

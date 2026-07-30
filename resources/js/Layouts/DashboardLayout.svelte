@@ -108,9 +108,13 @@
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton disabled tooltipContent="Networks">
-                <NetworkIcon />
-                <span>Networks</span>
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.networks())} tooltipContent="Networks">
+                {#snippet child({ props })}
+                  <Link {...props} href={routes.networks()}>
+                    <NetworkIcon />
+                    <span>Networks</span>
+                  </Link>
+                {/snippet}
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>
@@ -211,16 +215,6 @@
                   <Link {...props} href={routes.systemResources()}>
                     <DatabaseIcon />
                     <span>Resources</span>
-                  </Link>
-                {/snippet}
-              </Sidebar.MenuButton>
-            </Sidebar.MenuItem>
-            <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive={$page.url === routes.systemNetwork()} tooltipContent="Network">
-                {#snippet child({ props })}
-                  <Link {...props} href={routes.systemNetwork()}>
-                    <NetworkIcon />
-                    <span>Network</span>
                   </Link>
                 {/snippet}
               </Sidebar.MenuButton>

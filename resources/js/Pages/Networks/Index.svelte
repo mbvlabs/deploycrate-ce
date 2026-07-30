@@ -83,20 +83,20 @@
     return field === undefined || field === null ? '' : String(field)
   }
   function revokeDevice(deviceId: string) {
-    router.delete(routes.systemWireGuardDeviceDestroy(deviceId))
+    router.delete(routes.networkWireGuardDeviceDestroy(deviceId))
   }
 </script>
 
 <svelte:head>
-  <title>System network</title>
+  <title>Networks</title>
 </svelte:head>
 
 <DashboardLayout email={auth.email}>
   <div class="space-y-8">
     <section class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div class="max-w-3xl">
-        <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">System</p>
-        <h1 class="mt-3 text-3xl font-semibold tracking-tight">Network</h1>
+        <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">Infrastructure</p>
+        <h1 class="mt-3 text-3xl font-semibold tracking-tight">Networks</h1>
         <p class="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
           Private-network ownership, environment and server attachments, WireGuard peer state, and the active public route.
         </p>
@@ -108,7 +108,7 @@
       <Card.Root>
         <Card.Header>
           <Card.Title>Private network</Card.Title>
-          <Card.Description>The network owned by the system environment.</Card.Description>
+          <Card.Description>The private network owned by the control-plane environment.</Card.Description>
         </Card.Header>
         <Card.Content>
           <dl class="grid gap-x-8 gap-y-5 sm:grid-cols-2">
@@ -192,7 +192,7 @@
       <Card.Root>
         <Card.Header>
           <Card.Title>Server attachment</Card.Title>
-          <Card.Description>The network applied directly to the system server.</Card.Description>
+          <Card.Description>The network applied directly to the control-plane server.</Card.Description>
         </Card.Header>
         <Card.Content>
           <dl class="grid gap-x-8 gap-y-5 sm:grid-cols-2">
@@ -241,7 +241,7 @@
       <Card.Root>
         <Card.Header>
           <Card.Title>Environment target attachment</Card.Title>
-          <Card.Description>The system environment target attached to the same private network.</Card.Description>
+          <Card.Description>The control-plane environment target attached to the same private network.</Card.Description>
         </Card.Header>
         <Card.Content>
           <dl class="grid gap-x-8 gap-y-5 sm:grid-cols-2">
@@ -340,7 +340,7 @@
             {/if}
           </dl>
         {:else}
-          <p class="text-sm text-muted-foreground">No active WireGuard peer is recorded for the system server.</p>
+          <p class="text-sm text-muted-foreground">No active WireGuard peer is recorded for the control-plane server.</p>
         {/if}
       </Card.Content>
     </Card.Root>

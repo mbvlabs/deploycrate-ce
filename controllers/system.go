@@ -54,8 +54,6 @@ func (s System) RegisterRoutes(r *router.Router) error {
 		{method: http.MethodPost, route: routes.SystemResourceEndpointCreate, handler: s.CreateResourceEndpoint},
 		{method: http.MethodPost, route: routes.SystemResourceWireGuardDeviceCreate, handler: s.CreateResourceWireGuardDevice},
 		{method: http.MethodDelete, route: routes.SystemResourceWireGuardDeviceDestroy, handler: s.DestroyResourceWireGuardDevice},
-		{method: http.MethodDelete, route: routes.SystemWireGuardDeviceDestroy, handler: s.DestroyWireGuardDevice},
-		{method: http.MethodGet, route: routes.SystemNetwork, handler: s.Network},
 	}
 
 	errList := make([]error, 0, len(routesToRegister))
@@ -294,21 +292,6 @@ func (s System) DestroyResourceWireGuardDevice(etx *echo.Context) error {
 	return inertia.Redirect(etx, routes.SystemResource.URL(resourceID), http.StatusSeeOther)
 }
 
-func (s System) DestroyWireGuardDevice(etx *echo.Context) error {
-	deviceID, err := uuid.Parse(etx.Param("id"))
-	if err == nil {
-		err = s.access.RevokeDevice(etx.Request().Context(), deviceID)
-	}
-	if err != nil {
-		if flashErr := cookies.AddFlash(etx, cookies.FlashError, err.Error()); flashErr != nil {
-			return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
-		}
-	} else {
-		_ = cookies.AddFlash(etx, cookies.FlashSuccess, "WireGuard device revoked")
-	}
-	return inertia.Redirect(etx, routes.SystemNetwork.URL(), http.StatusSeeOther)
-}
-
 func (s System) renderResource(etx *echo.Context, resourceID uuid.UUID, enrollment inertia.Props, option inertia.PageOption) error {
 	if err := s.access.ObserveResource(etx.Request().Context(), resourceID); err != nil {
 		slog.WarnContext(etx.Request().Context(), "failed to observe WireGuard device handshakes", "resource_id", resourceID, "error", err)
@@ -353,29 +336,6 @@ func optionalUUID(value string) (*uuid.UUID, error) {
 		return nil, err
 	}
 	return &id, nil
-}
-
-func (s System) Network(etx *echo.Context) error {
-	network, err := models.Application.FindSystemNetwork(
-		etx.Request().Context(),
-		s.db.Executor(),
-	)
-	if err != nil {
-		return s.renderLoadError(etx, "network", err)
-	}
-	devices, err := models.Application.FindSystemWireGuardDevices(
-		etx.Request().Context(),
-		s.db.Executor(),
-	)
-	if err != nil {
-		return s.renderLoadError(etx, "network devices", err)
-	}
-
-	return inertia.Page(etx, "System/Network", inertia.Props{
-		"auth":    s.authProps(etx),
-		"network": network,
-		"devices": systemWireGuardDeviceProps(devices),
-	})
 }
 
 func (s System) authProps(etx *echo.Context) inertia.Props {
