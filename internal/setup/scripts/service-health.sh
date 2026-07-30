@@ -60,17 +60,39 @@ for port in 2019 4318 8123 8888 9000 9090 9101 9363 13133; do
     exit 1
   fi
 done
-curl --fail --silent http://10.99.0.1:9100/metrics >/dev/null
+curl --fail --silent http://10.99.0.1:9100/metrics |
+  awk '/^node_network_receive_bytes_total\{/ && $0 !~ /device="lo"/ { found = 1 } END { exit !found }'
 curl --fail --silent http://127.0.0.1:9090/-/ready >/dev/null
 curl --fail --silent http://127.0.0.1:9101/healthz >/dev/null
 curl --fail --silent http://127.0.0.1:2019/metrics >/dev/null
 curl --fail --silent http://127.0.0.1:8888/metrics >/dev/null
 curl --fail --silent http://127.0.0.1:9363/metrics >/dev/null
 curl --fail --silent http://127.0.0.1:13133/ >/dev/null
-prometheus_targets="$(curl --fail --silent http://127.0.0.1:9090/api/v1/targets)"
-grep -Fq '"health":"up"' <<<"${prometheus_targets}"
-if grep -Fq '"health":"down"' <<<"${prometheus_targets}"; then
-  printf 'One or more Prometheus targets are down\n' >&2
+prometheus_targets=""
+prometheus_targets_healthy=false
+for attempt in $(seq 1 30); do
+  prometheus_targets="$(curl --fail --silent 'http://127.0.0.1:9090/api/v1/targets?state=active')"
+  target_healths="$(grep -o '"health":"[^"]*"' <<<"${prometheus_targets}" || true)"
+  if [ -n "${target_healths}" ] && ! grep -Fvq '"health":"up"' <<<"${target_healths}"; then
+    prometheus_targets_healthy=true
+    break
+  fi
+  [ "${attempt}" -lt 30 ] || break
+  sleep 1
+done
+if [ "${prometheus_targets_healthy}" != true ]; then
+  printf 'One or more Prometheus targets did not become healthy\n' >&2
+  sed 's/},{"discoveredLabels"/}\n{"discoveredLabels"/g' <<<"${prometheus_targets}" |
+    grep -Fv '"health":"up"' >&2 || true
+  exit 1
+fi
+prometheus_container_response="$(curl --fail --silent --get \
+  --data-urlencode 'query=container_memory_working_set_bytes{component="clickhouse"}' \
+  http://127.0.0.1:9090/api/v1/query)"
+if ! grep -Fq '"component":"clickhouse"' <<<"${prometheus_container_response}" ||
+  grep -Fq '"instance":' <<<"${prometheus_container_response}"; then
+  printf 'Prometheus container telemetry has an invalid DeployCrate identity\n' >&2
+  printf '%s\n' "${prometheus_container_response}" >&2
   exit 1
 fi
 curl --fail --silent --user "deploycrate:${CLICKHOUSE_PASSWORD}" http://127.0.0.1:8123/ping | grep -Fxq 'Ok.'

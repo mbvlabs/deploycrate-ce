@@ -95,7 +95,10 @@ cadvisor_diagnostics() {
 for attempt in $(seq 1 30); do
   if curl --fail --silent "http://${listen_address}:${listen_port}/healthz" >/dev/null &&
     curl --fail --silent "http://${listen_address}:${listen_port}/metrics" |
-      awk '/^cadvisor_version_info/ && /dockerVersion="[^"]+"/ { found = 1 } END { exit !found }'; then
+      awk -v expected_version="v${version}" '
+        /^cadvisor_version_info/ && index($0, "cadvisorVersion=\"" expected_version "\"") { found = 1 }
+        END { exit !found }
+      '; then
     exit 0
   fi
   if ! systemctl is-active --quiet cadvisor.service; then

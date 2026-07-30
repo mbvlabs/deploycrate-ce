@@ -70,7 +70,7 @@ ProtectKernelTunables=true
 ProtectSystem=strict
 LockPersonality=true
 MemoryDenyWriteExecute=true
-RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 RestrictNamespaces=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
@@ -98,7 +98,8 @@ node_exporter_diagnostics() {
 }
 
 for attempt in $(seq 1 30); do
-  if curl --fail --silent http://10.99.0.1:9100/metrics >/dev/null; then
+  if curl --fail --silent http://10.99.0.1:9100/metrics |
+    awk '/^node_network_receive_bytes_total\{/ && $0 !~ /device="lo"/ { found = 1 } END { exit !found }'; then
     exit 0
   fi
   if ! systemctl is-active --quiet node-exporter.service; then

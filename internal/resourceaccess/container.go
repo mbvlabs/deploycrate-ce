@@ -296,7 +296,7 @@ func validateContainerExecSpec(spec containerExecSpec) error {
 	if !containerNamePattern.MatchString(spec.ContainerName) || len(spec.ContainerName) > 128 {
 		return errors.New("container name is invalid")
 	}
-	if !slices.Contains([]string{"pg_dump", "pg_dumpall", "pg_restore"}, spec.Executable) {
+	if !slices.Contains([]string{"pg_dump", "pg_dumpall", "pg_restore", "psql"}, spec.Executable) {
 		return errors.New("container executable is not allowed")
 	}
 	if len(spec.Arguments) > 32 {

@@ -111,6 +111,11 @@
 
         {#each chart.series as item}
           <path d={pathFor(item.values)} fill="none" stroke={item.color} stroke-width="2.5" vector-effect="non-scaling-stroke" />
+          {#each item.values as value, index}
+            {#if value !== null}
+              <circle cx={chart.buckets[index].x} cy={yFor(value)} r="3" fill={item.color} />
+            {/if}
+          {/each}
         {/each}
 
         {#if hoveredIndex !== null}

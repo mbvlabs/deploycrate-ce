@@ -120,7 +120,7 @@ func DefaultSteps(operations Operations) []Step {
 			},
 		),
 		scriptSetupStep(
-			"node-exporter-1-11-1",
+			"node-exporter-1-11-1-netlink-v1",
 			"Install hardened node-exporter on WireGuard",
 			"node-exporter.sh",
 			nil,
@@ -142,7 +142,7 @@ func DefaultSteps(operations Operations) []Step {
 			},
 		),
 		scriptSetupStep(
-			"cadvisor-"+CadvisorVersion+"-docker-attribution-v2",
+			"cadvisor-"+CadvisorVersion+"-docker-attribution-v3",
 			"Install localhost-only cAdvisor resource accounting",
 			"cadvisor.sh",
 			nil,
@@ -168,7 +168,7 @@ func DefaultSteps(operations Operations) []Step {
 			},
 		),
 		scriptSetupStep(
-			"prometheus-3-13-1-service-metrics-v2",
+			"prometheus-3-13-1-service-metrics-v3",
 			"Install Prometheus with 24-hour raw retention",
 			"prometheus.sh",
 			nil,

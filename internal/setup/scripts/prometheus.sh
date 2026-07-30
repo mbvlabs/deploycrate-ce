@@ -107,6 +107,8 @@ scrape_configs:
         separator: ';'
         action: keep
         regex: '(process_.*|cadvisor_version_info|container_scrape_error);.*|[^;]+;[^;]+;.*|[^;]+;;[^;]+;.*|[^;]+;;;[^;]+;.*|[^;]+;;;;/system\.slice/(prometheus|node-exporter|cadvisor|docker|caddy|otelcol-contrib|deploycrate-ce@(blue|green))\.service'
+      - regex: instance
+        action: labeldrop
       - action: labelmap
         regex: container_label_com_deploycrate_(application|environment|deployment|instance|release|resource_installation|component)
         replacement: '$1'
@@ -222,10 +224,38 @@ if [ "${container_observed}" != true ]; then
   exit 1
 fi
 
+prometheus_ready=false
 for attempt in $(seq 1 30); do
   if curl --fail --silent http://127.0.0.1:9090/-/ready >/dev/null; then
-    exit 0
+    prometheus_ready=true
+    break
   fi
-  [ "${attempt}" -lt 30 ] || exit 1
+  [ "${attempt}" -lt 30 ] || break
   sleep 1
 done
+if [ "${prometheus_ready}" != true ]; then
+  printf 'Prometheus did not become ready\n' >&2
+  systemctl status prometheus.service --no-pager >&2 || true
+  journalctl -u prometheus.service -b --no-pager --lines=100 >&2 || true
+  exit 1
+fi
+
+prometheus_container_response=""
+prometheus_container_observed=false
+for attempt in $(seq 1 30); do
+  prometheus_container_response="$(curl --fail --silent --get \
+    --data-urlencode 'query=container_memory_working_set_bytes{component="clickhouse"}' \
+    http://127.0.0.1:9090/api/v1/query)"
+  if grep -Fq '"component":"clickhouse"' <<<"${prometheus_container_response}" &&
+    ! grep -Fq '"instance":' <<<"${prometheus_container_response}"; then
+    prometheus_container_observed=true
+    break
+  fi
+  [ "${attempt}" -lt 30 ] || break
+  sleep 1
+done
+if [ "${prometheus_container_observed}" != true ]; then
+  printf 'Prometheus did not retain the ClickHouse container with an unambiguous DeployCrate identity\n' >&2
+  printf '%s\n' "${prometheus_container_response}" >&2
+  exit 1
+fi
