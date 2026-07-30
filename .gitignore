@@ -9,3 +9,5 @@ tmp
 /dist
 deploycrate-ce.db
 .andurel-upgrade-state.json
+plans/
+VISION.md
