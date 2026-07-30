@@ -12,6 +12,7 @@
   import ListTodoIcon from '@lucide/svelte/icons/list-todo'
   import LogOutIcon from '@lucide/svelte/icons/log-out'
   import NetworkIcon from '@lucide/svelte/icons/network'
+  import RouteIcon from '@lucide/svelte/icons/route'
   import ServerIcon from '@lucide/svelte/icons/server'
   import SettingsIcon from '@lucide/svelte/icons/settings'
   import ShieldCheckIcon from '@lucide/svelte/icons/shield-check'
@@ -110,6 +111,11 @@
               <Sidebar.MenuButton disabled tooltipContent="Networks">
                 <NetworkIcon />
                 <span>Networks</span>
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.caddyRoutes())} tooltipContent="Caddy Routes">
+                {#snippet child({ props })}<Link {...props} href={routes.caddyRoutes()}><RouteIcon /><span>Caddy Routes</span></Link>{/snippet}
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
           </Sidebar.Menu>
