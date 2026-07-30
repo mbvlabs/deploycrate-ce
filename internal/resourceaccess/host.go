@@ -142,6 +142,11 @@ func RunHostCommand(arguments []string) error {
 			return errors.New("usage: host-resource-access container-inspect INSTALLATION_ID CONTAINER_NAME")
 		}
 		return printContainerInspection(arguments[1], arguments[2])
+	case "container-exec":
+		if len(arguments) != 1 {
+			return errors.New("usage: host-resource-access container-exec")
+		}
+		return execContainer(os.Stdin, os.Stdout)
 	case "container-start", "container-stop", "container-restart", "container-remove":
 		if len(arguments) != 3 {
 			return errors.New("usage: host-resource-access container-(start|stop|restart|remove) INSTALLATION_ID CONTAINER_NAME")

@@ -1,6 +1,8 @@
 package resourceaccess
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,6 +39,14 @@ type containerRunSpec struct {
 	PortMappings   []containerPortMapping `json:"portMappings"`
 	VolumeMounts   []containerVolumeMount `json:"volumeMounts"`
 	Environment    map[string]string      `json:"environment"`
+}
+
+type containerExecSpec struct {
+	InstallationID string            `json:"installationId"`
+	ContainerName  string            `json:"containerName"`
+	Executable     string            `json:"executable"`
+	Arguments      []string          `json:"arguments"`
+	Environment    map[string]string `json:"environment"`
 }
 
 type containerPortMapping struct {
@@ -208,6 +218,119 @@ func validateContainerRunSpec(spec containerRunSpec) error {
 		}
 	}
 	return nil
+}
+
+func execContainer(input io.Reader, output io.Writer) error {
+	reader := bufio.NewReaderSize(input, maximumContainerInputLength+1)
+	header, err := reader.ReadBytes('\n')
+	if err != nil {
+		return errors.New("read container execution specification")
+	}
+	if len(header) > maximumContainerInputLength {
+		return errors.New("container execution specification is too large")
+	}
+	defer clear(header)
+	decoder := json.NewDecoder(bytes.NewReader(header))
+	decoder.DisallowUnknownFields()
+	var spec containerExecSpec
+	if err := decoder.Decode(&spec); err != nil {
+		return fmt.Errorf("decode container execution specification: %w", err)
+	}
+	if err := validateContainerExecSpec(spec); err != nil {
+		return err
+	}
+	inspection, err := inspectOwnedContainer(spec.InstallationID, spec.ContainerName)
+	if err != nil {
+		return err
+	}
+	if !inspection.Exists {
+		return fmt.Errorf("container %q does not exist", spec.ContainerName)
+	}
+	if inspection.Name != spec.ContainerName {
+		return errors.New("container name does not match the persisted Resource installation")
+	}
+	if !inspection.Running {
+		return fmt.Errorf("container %q is not running", spec.ContainerName)
+	}
+
+	arguments := []string{"exec", "--interactive"}
+	keys := make([]string, 0, len(spec.Environment))
+	for key := range spec.Environment {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		arguments = append(arguments, "--env", key)
+	}
+	arguments = append(arguments, spec.ContainerName, spec.Executable)
+	arguments = append(arguments, spec.Arguments...)
+	command := exec.Command(dockerExecutable, arguments...)
+	command.Env = make([]string, 0, len(keys))
+	for _, key := range keys {
+		command.Env = append(command.Env, key+"="+spec.Environment[key])
+	}
+	defer func() {
+		for key := range spec.Environment {
+			spec.Environment[key] = ""
+		}
+		clear(command.Env)
+	}()
+	command.Stdin = reader
+	command.Stdout = output
+	stderr := &boundedContainerError{remaining: 800}
+	command.Stderr = stderr
+	if err := command.Run(); err != nil {
+		message := strings.TrimSpace(stderr.value.String())
+		if message == "" {
+			message = err.Error()
+		}
+		return fmt.Errorf("execute %s in owned container: %s", spec.Executable, message)
+	}
+	return nil
+}
+
+func validateContainerExecSpec(spec containerExecSpec) error {
+	if _, err := uuid.Parse(spec.InstallationID); err != nil {
+		return errors.New("installation ID must be a UUID")
+	}
+	if !containerNamePattern.MatchString(spec.ContainerName) || len(spec.ContainerName) > 128 {
+		return errors.New("container name is invalid")
+	}
+	if !slices.Contains([]string{"pg_dump", "pg_dumpall", "pg_restore"}, spec.Executable) {
+		return errors.New("container executable is not allowed")
+	}
+	if len(spec.Arguments) > 32 {
+		return errors.New("too many container execution arguments")
+	}
+	for _, argument := range spec.Arguments {
+		if strings.ContainsRune(argument, '\x00') || len(argument) > 1024 {
+			return errors.New("container execution argument is invalid")
+		}
+	}
+	if len(spec.Environment) > 1 {
+		return errors.New("too many container execution environment variables")
+	}
+	for key := range spec.Environment {
+		if key != "PGPASSWORD" {
+			return errors.New("container execution environment variable is not allowed")
+		}
+	}
+	return nil
+}
+
+type boundedContainerError struct {
+	value     strings.Builder
+	remaining int
+}
+
+func (writer *boundedContainerError) Write(value []byte) (int, error) {
+	written := len(value)
+	if writer.remaining > 0 {
+		kept := min(len(value), writer.remaining)
+		_, _ = writer.value.Write(value[:kept])
+		writer.remaining -= kept
+	}
+	return written, nil
 }
 
 func inspectContainerLabel(name string) (string, bool, error) {

@@ -945,6 +945,8 @@ func createBootstrapBackups(
 		return nil
 	}
 	metadata, err := json.Marshal(map[string]any{
+		"schema_version":   1,
+		"credential_kind":  "object_storage_backup_access",
 		"instance_id":      input.Backup.InstanceID,
 		"provider":         input.Backup.Provider,
 		"endpoint":         input.Backup.Endpoint,
@@ -1007,19 +1009,19 @@ func createBootstrapBackups(
 		return fmt.Errorf("calculate first database backup: %w", err)
 	}
 	if _, err := models.BackupPolicy.Create(ctx, exec, models.CreateBackupPolicyData{
-		Name:                  "Control-plane PostgreSQL",
-		Schedule:              input.Backup.DatabaseSchedule,
-		Strategy:              "logical",
-		Driver:                "postgresql",
-		Retention:             input.Backup.DatabaseRetention,
-		Format:                "tar.age",
-		Verification:          json.RawMessage(`{"every_backup":true,"pg_restore_list":true}`),
-		Settings:              json.RawMessage(`{"exclude_table_data":["river_*"]}`),
-		TargetType:            "resource",
-		ResourceID:            &database.ResourceID,
-		EnvironmentResourceID: &database.EnvironmentResourceID,
-		NextRunAt:             databaseNextRun,
-		BackupDestinationID:   destination.ID,
+		Name:                   "Control-plane PostgreSQL",
+		Schedule:               input.Backup.DatabaseSchedule,
+		Strategy:               "logical",
+		Driver:                 "postgresql",
+		Retention:              input.Backup.DatabaseRetention,
+		Format:                 "tar.age",
+		Verification:           json.RawMessage(`{"every_backup":true,"pg_restore_list":true}`),
+		Settings:               json.RawMessage(`{"exclude_table_data":["river_*"]}`),
+		TargetType:             "resource",
+		ResourceID:             &database.ResourceID,
+		ResourceInstallationID: database.InstallationID,
+		NextRunAt:              databaseNextRun,
+		BackupDestinationID:    destination.ID,
 	}); err != nil {
 		return fmt.Errorf("create database backup policy: %w", err)
 	}

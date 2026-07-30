@@ -175,24 +175,36 @@ func (backup) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (Back
 }
 
 type BackupExecutionScopeRecord struct {
-	Backup                 BackupEntity    `bun:"embed:backup_"`
-	PolicyRetention        json.RawMessage `bun:"policy_retention"`
-	PolicyVerification     json.RawMessage `bun:"policy_verification"`
-	PolicySettings         json.RawMessage `bun:"policy_settings"`
-	DestinationProvider    string          `bun:"destination_provider"`
-	DestinationEndpoint    string          `bun:"destination_endpoint"`
-	DestinationRegion      string          `bun:"destination_region"`
-	DestinationBucket      string          `bun:"destination_bucket"`
-	DestinationPrefix      string          `bun:"destination_prefix"`
-	DestinationPathStyle   bool            `bun:"destination_path_style"`
-	CredentialProvider     string          `bun:"credential_provider"`
-	CredentialPayload      []byte          `bun:"credential_payload"`
-	BindingResourceID      *uuid.UUID      `bun:"binding_resource_id"`
-	EndpointResourceID     *uuid.UUID      `bun:"endpoint_resource_id"`
-	EndpointInstallationID *uuid.UUID      `bun:"endpoint_installation_id"`
-	InstallationResourceID *uuid.UUID      `bun:"installation_resource_id"`
-	ResourceKind           string          `bun:"resource_kind"`
-	DatabaseExternal       bool            `bun:"database_external"`
+	Backup                  BackupEntity    `bun:"embed:backup_"`
+	PolicyRetention         json.RawMessage `bun:"policy_retention"`
+	PolicyVerification      json.RawMessage `bun:"policy_verification"`
+	PolicySettings          json.RawMessage `bun:"policy_settings"`
+	DestinationProvider     string          `bun:"destination_provider"`
+	DestinationEndpoint     string          `bun:"destination_endpoint"`
+	DestinationRegion       string          `bun:"destination_region"`
+	DestinationBucket       string          `bun:"destination_bucket"`
+	DestinationPrefix       string          `bun:"destination_prefix"`
+	DestinationPathStyle    bool            `bun:"destination_path_style"`
+	DestinationArchived     bool            `bun:"destination_archived"`
+	CredentialProvider      string          `bun:"credential_provider"`
+	CredentialPayload       []byte          `bun:"credential_payload"`
+	DestinationCredentialID uuid.UUID       `bun:"destination_credential_id"`
+	CredentialArchived      bool            `bun:"credential_archived"`
+	CredentialVerified      bool            `bun:"credential_verified"`
+	InstallationResourceID  *uuid.UUID      `bun:"installation_resource_id"`
+	InstallationContainer   string          `bun:"installation_container"`
+	InstallationServerID    *uuid.UUID      `bun:"installation_server_id"`
+	InstallationServerIPv4  string          `bun:"installation_server_ipv4"`
+	InstallationArchived    bool            `bun:"installation_archived"`
+	ResourceKind            string          `bun:"resource_kind"`
+	ResourceCategory        string          `bun:"resource_category"`
+	ResourceManagementMode  string          `bun:"resource_management_mode"`
+	ResourceSystemManaged   bool            `bun:"resource_system_managed"`
+	ResourceArchived        bool            `bun:"resource_archived"`
+	DatabaseName            string          `bun:"database_name"`
+	AdministratorUsername   string          `bun:"administrator_username"`
+	AdministratorPayload    []byte          `bun:"administrator_payload"`
+	AdministratorCount      int             `bun:"administrator_count"`
 }
 
 func (backup) FindExecutionScope(
@@ -218,23 +230,60 @@ func (backup) FindExecutionScope(
 		ColumnExpr("destination.provider AS destination_provider, COALESCE(destination.endpoint, '') AS destination_endpoint").
 		ColumnExpr("COALESCE(destination.region, '') AS destination_region, destination.bucket AS destination_bucket").
 		ColumnExpr("COALESCE(destination.prefix, '') AS destination_prefix, destination.force_path_style AS destination_path_style").
-		ColumnExpr("credential.provider AS credential_provider, credential.enc_payload AS credential_payload").
-		ColumnExpr("binding.resource_id AS binding_resource_id, endpoint.resource_id AS endpoint_resource_id").
-		ColumnExpr("endpoint.resource_installation_id AS endpoint_installation_id").
-		ColumnExpr("installation.resource_id AS installation_resource_id, COALESCE(resource.kind, '') AS resource_kind").
-		ColumnExpr("COALESCE((endpoint.settings ->> 'external')::boolean, FALSE) AS database_external").
-		Join("JOIN backup_policies AS policy ON policy.id = backup.backup_policy_id AND policy.archived_at IS NULL").
-		Join("JOIN backup_destinations AS destination ON destination.id = backup.backup_destination_id AND destination.archived_at IS NULL").
-		Join("JOIN credentials AS credential ON credential.id = destination.credential_id AND credential.archived_at IS NULL").
-		Join("LEFT JOIN resources AS resource ON resource.id = backup.resource_id AND resource.archived_at IS NULL").
-		Join("LEFT JOIN environment_resources AS binding ON binding.id = backup.environment_resource_id AND binding.archived_at IS NULL").
-		Join("LEFT JOIN resource_endpoints AS endpoint ON endpoint.id = binding.resource_endpoint_id AND endpoint.archived_at IS NULL").
-		Join("LEFT JOIN resource_installations AS installation ON installation.id = endpoint.resource_installation_id AND installation.archived_at IS NULL").
+		ColumnExpr("destination.archived_at IS NOT NULL AS destination_archived").
+		ColumnExpr("credential.id AS destination_credential_id, credential.provider AS credential_provider, credential.enc_payload AS credential_payload").
+		ColumnExpr("credential.archived_at IS NOT NULL AS credential_archived, credential.verified_at IS NOT NULL AS credential_verified").
+		ColumnExpr("installation.resource_id AS installation_resource_id, COALESCE(installation.container_name, '') AS installation_container").
+		ColumnExpr("installation.server_id AS installation_server_id, COALESCE(server.ipv4_address, '') AS installation_server_ipv4, installation.archived_at IS NOT NULL AS installation_archived").
+		ColumnExpr("COALESCE(resource.kind, '') AS resource_kind, COALESCE(resource.category, '') AS resource_category").
+		ColumnExpr("COALESCE(resource.management_mode::text, '') AS resource_management_mode, COALESCE(resource.system_managed, FALSE) AS resource_system_managed").
+		ColumnExpr("resource.archived_at IS NOT NULL AS resource_archived, COALESCE(resource.database_name, '') AS database_name").
+		ColumnExpr("COALESCE(administrator.username, '') AS administrator_username, administrator.enc_payload AS administrator_payload").
+		ColumnExpr("(SELECT count(*) FROM resource_credentials AS candidate WHERE candidate.resource_id = backup.resource_id AND candidate.resource_installation_id = backup.resource_installation_id AND candidate.archived_at IS NULL) AS administrator_count").
+		Join("JOIN backup_policies AS policy ON policy.id = backup.backup_policy_id").
+		Join("JOIN backup_destinations AS destination ON destination.id = backup.backup_destination_id").
+		Join("JOIN credentials AS credential ON credential.id = destination.credential_id").
+		Join("LEFT JOIN resources AS resource ON resource.id = backup.resource_id").
+		Join("LEFT JOIN resource_installations AS installation ON installation.id = backup.resource_installation_id").
+		Join("LEFT JOIN servers AS server ON server.id = installation.server_id AND server.archived_at IS NULL").
+		Join("LEFT JOIN LATERAL (SELECT resource_credential.username, resource_credential.enc_payload FROM resource_credentials AS resource_credential WHERE resource_credential.resource_id = backup.resource_id AND resource_credential.resource_installation_id = backup.resource_installation_id AND resource_credential.archived_at IS NULL ORDER BY resource_credential.created_at LIMIT 1) AS administrator ON TRUE").
 		Where("backup.id = ?", id).
 		Scan(ctx, &row); err != nil {
 		return BackupExecutionScopeRecord{}, err
 	}
 	return row, nil
+}
+
+type ResourceBackupHistory struct {
+	ID                uuid.UUID  `bun:"id"`
+	Status            string     `bun:"status"`
+	TriggerType       string     `bun:"trigger_type"`
+	ScheduledAt       time.Time  `bun:"scheduled_at"`
+	FinishedAt        *time.Time `bun:"finished_at"`
+	VerifiedAt        *time.Time `bun:"verified_at"`
+	SizeBytes         *int64     `bun:"size_bytes"`
+	Error             string     `bun:"error"`
+	ArtifactReference string     `bun:"artifact_reference"`
+}
+
+func (backup) RecentForResource(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+	limit int,
+) ([]ResourceBackupHistory, error) {
+	if limit < 1 || limit > 50 {
+		limit = 10
+	}
+	items := make([]ResourceBackupHistory, 0, limit)
+	err := db.NewSelect().TableExpr("backups").
+		ColumnExpr("id, status, trigger_type, scheduled_at, finished_at, verified_at, size_bytes").
+		ColumnExpr("LEFT(COALESCE(error, ''), 800) AS error, artifact_reference").
+		Where("resource_id = ?", resourceID).
+		OrderExpr("scheduled_at DESC").
+		Limit(limit).
+		Scan(ctx, &items)
+	return items, err
 }
 
 func (backup) FindVerifiedByPolicy(
@@ -326,9 +375,10 @@ func (backup) Claim(ctx context.Context, db storage.Executor, id uuid.UUID) (boo
 }
 
 func (backup) MarkFailed(ctx context.Context, db storage.Executor, id uuid.UUID, operationErr error) error {
+	message := boundedBackupError(operationErr)
 	_, err := db.NewUpdate().Model((*BackupEntity)(nil)).
 		Set("status = ?", BackupStatusFailed).
-		Set("error = ?", operationErr.Error()).
+		Set("error = ?", message).
 		Set("finished_at = ?", time.Now().UTC()).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
@@ -407,9 +457,10 @@ func (backup) MarkVerificationFailed(
 	id uuid.UUID,
 	verificationErr error,
 ) error {
+	message := boundedBackupError(verificationErr)
 	result, err := db.NewUpdate().Model((*BackupEntity)(nil)).
 		Set("status = ?", BackupStatusVerificationFailed).
-		Set("error = ?", verificationErr.Error()).
+		Set("error = ?", message).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
 		Where("status IN (?, ?)", BackupStatusUploaded, BackupStatusVerificationFailed).
@@ -425,6 +476,17 @@ func (backup) MarkVerificationFailed(
 		return errors.New("backup lifecycle changed before verification failure was recorded")
 	}
 	return nil
+}
+
+func boundedBackupError(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := strings.TrimSpace(err.Error())
+	if len(message) > 800 {
+		return message[:800]
+	}
+	return message
 }
 
 func (backup) MarkPruned(ctx context.Context, db storage.Executor, id uuid.UUID) error {

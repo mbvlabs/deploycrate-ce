@@ -24,10 +24,11 @@ import (
 type Resources struct {
 	service *services.ResourceManagement
 	access  *services.ResourcePrivateAccess
+	backups *services.ResourceBackups
 }
 
-func NewResources(service *services.ResourceManagement, access *services.ResourcePrivateAccess) Resources {
-	return Resources{service: service, access: access}
+func NewResources(service *services.ResourceManagement, access *services.ResourcePrivateAccess, backups *services.ResourceBackups) Resources {
+	return Resources{service: service, access: access, backups: backups}
 }
 
 func (controller Resources) RegisterRoutes(r *router.Router) error {
@@ -76,6 +77,12 @@ func (controller Resources) RegisterRoutes(r *router.Router) error {
 		{http.MethodPost, routes.ResourceHealthCheckCreate, controller.CreateHealthCheck},
 		{http.MethodPatch, routes.ResourceHealthCheckUpdate, controller.UpdateHealthCheck},
 		{http.MethodDelete, routes.ResourceHealthCheckDestroy, controller.DestroyHealthCheck},
+		{http.MethodPost, routes.ResourceBackupPolicyCreate, controller.CreateBackupPolicy},
+		{http.MethodPatch, routes.ResourceBackupPolicyUpdate, controller.UpdateBackupPolicy},
+		{http.MethodPost, routes.ResourceBackupPolicyPause, controller.PauseBackupPolicy},
+		{http.MethodPost, routes.ResourceBackupPolicyResume, controller.ResumeBackupPolicy},
+		{http.MethodDelete, routes.ResourceBackupPolicyDestroy, controller.ArchiveBackupPolicy},
+		{http.MethodPost, routes.ResourceBackupPolicyRun, controller.RunBackupPolicy},
 	}
 	errList := make([]error, 0, len(definitions))
 	for _, definition := range definitions {
@@ -846,6 +853,91 @@ func (controller Resources) DestroyHealthCheck(etx *echo.Context) error {
 	return controller.finishChildMutation(etx, resourceID, err, "Health check archived")
 }
 
+type resourceBackupPolicyPayload struct {
+	Schedule            string `json:"schedule"`
+	KeepLast            int    `json:"keepLast"`
+	KeepDaily           int    `json:"keepDaily"`
+	KeepWeekly          int    `json:"keepWeekly"`
+	KeepMonthly         int    `json:"keepMonthly"`
+	BackupDestinationID string `json:"backupDestinationId"`
+}
+
+func (payload resourceBackupPolicyPayload) serviceInput() (services.ResourceBackupPolicyInput, error) {
+	destinationID, err := uuid.Parse(payload.BackupDestinationID)
+	if err != nil {
+		return services.ResourceBackupPolicyInput{}, domainPayloadError("backupDestinationId", "Object Storage destination is required")
+	}
+	return services.ResourceBackupPolicyInput{
+		Schedule: payload.Schedule, KeepLast: payload.KeepLast, KeepDaily: payload.KeepDaily,
+		KeepWeekly: payload.KeepWeekly, KeepMonthly: payload.KeepMonthly,
+		BackupDestinationID: destinationID,
+	}, nil
+}
+
+func (controller Resources) CreateBackupPolicy(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	var payload resourceBackupPolicyPayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	var input services.ResourceBackupPolicyInput
+	if err == nil {
+		input, err = payload.serviceInput()
+	}
+	if err == nil {
+		_, err = controller.backups.Create(etx.Request().Context(), resourceID, input)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Backup policy created")
+}
+
+func (controller Resources) UpdateBackupPolicy(etx *echo.Context) error {
+	resourceID, policyID, err := parseChildIDs(etx, "backupPolicyID")
+	var payload resourceBackupPolicyPayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	var input services.ResourceBackupPolicyInput
+	if err == nil {
+		input, err = payload.serviceInput()
+	}
+	if err == nil {
+		_, err = controller.backups.Update(etx.Request().Context(), resourceID, policyID, input)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Backup policy updated")
+}
+
+func (controller Resources) PauseBackupPolicy(etx *echo.Context) error {
+	resourceID, policyID, err := parseChildIDs(etx, "backupPolicyID")
+	if err == nil {
+		err = controller.backups.Pause(etx.Request().Context(), resourceID, policyID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Backup policy paused")
+}
+
+func (controller Resources) ResumeBackupPolicy(etx *echo.Context) error {
+	resourceID, policyID, err := parseChildIDs(etx, "backupPolicyID")
+	if err == nil {
+		err = controller.backups.Resume(etx.Request().Context(), resourceID, policyID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Backup policy resumed")
+}
+
+func (controller Resources) ArchiveBackupPolicy(etx *echo.Context) error {
+	resourceID, policyID, err := parseChildIDs(etx, "backupPolicyID")
+	if err == nil {
+		err = controller.backups.Archive(etx.Request().Context(), resourceID, policyID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Backup policy archived")
+}
+
+func (controller Resources) RunBackupPolicy(etx *echo.Context) error {
+	resourceID, policyID, err := parseChildIDs(etx, "backupPolicyID")
+	if err == nil {
+		_, err = controller.backups.Manual(etx.Request().Context(), resourceID, policyID)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Backup requested")
+}
+
 func (controller Resources) renderShow(etx *echo.Context, resourceID uuid.UUID, option inertia.PageOption) error {
 	return controller.renderShowPage(etx, resourceID, nil, option)
 }
@@ -869,7 +961,11 @@ func (controller Resources) renderShowPage(etx *echo.Context, resourceID uuid.UU
 	if err != nil {
 		return controller.renderLoadError(etx, err)
 	}
-	props := inertia.Props{"auth": authProps(etx), "resource": resourceDetailProps(detail, privateAccess), "options": resourceOptionsProps(options), "flash": resourceFlashProps(etx)}
+	backups, err := controller.backups.Details(etx.Request().Context(), resourceID)
+	if err != nil {
+		return controller.renderLoadError(etx, err)
+	}
+	props := inertia.Props{"auth": authProps(etx), "resource": resourceDetailProps(detail, privateAccess), "backups": resourceBackupProps(backups), "options": resourceOptionsProps(options), "flash": resourceFlashProps(etx)}
 	if enrollment != nil {
 		props["enrollment"] = enrollment
 	}

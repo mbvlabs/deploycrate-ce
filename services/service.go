@@ -27,6 +27,7 @@ var Module = fx.Module(
 		NewBackupRetention,
 		NewBackupPolicyActivator,
 		NewBackupScheduler,
+		NewResourceBackups,
 		githubclient.NewClient,
 		NewGitHubConnection,
 		NewGitHubWebhook,

@@ -30,6 +30,52 @@ type BackupDestinationEntity struct {
 	CredentialID   uuid.UUID      `bun:"credential_id,type:uuid"`
 }
 
+type BackupDestinationSummary struct {
+	ID         uuid.UUID  `bun:"id"`
+	Name       string     `bun:"name"`
+	Provider   string     `bun:"provider"`
+	Endpoint   string     `bun:"endpoint"`
+	Region     string     `bun:"region"`
+	Bucket     string     `bun:"bucket"`
+	Prefix     string     `bun:"prefix"`
+	VerifiedAt *time.Time `bun:"verified_at"`
+	LastUsedAt *time.Time `bun:"last_used_at"`
+}
+
+func (bd backupDestination) ActiveSummaries(
+	ctx context.Context,
+	db storage.Executor,
+) ([]BackupDestinationSummary, error) {
+	items := make([]BackupDestinationSummary, 0)
+	err := db.NewSelect().
+		TableExpr("backup_destinations AS destination").
+		ColumnExpr("destination.id, destination.name, destination.provider").
+		ColumnExpr("COALESCE(destination.endpoint, '') AS endpoint, COALESCE(destination.region, '') AS region").
+		ColumnExpr("destination.bucket, COALESCE(destination.prefix, '') AS prefix").
+		ColumnExpr("credential.verified_at, credential.last_used_at").
+		Join("JOIN credentials AS credential ON credential.id = destination.credential_id").
+		Where("destination.archived_at IS NULL").
+		Where("credential.archived_at IS NULL").
+		Where("credential.verified_at IS NOT NULL").
+		Where("credential.provider = 'backup_' || destination.provider").
+		OrderExpr("destination.name ASC").
+		Scan(ctx, &items)
+	return items, err
+}
+
+func (bd backupDestination) HasActivePolicyReferences(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (bool, error) {
+	count, err := db.NewSelect().TableExpr("backup_policies").
+		Where("backup_destination_id = ?", id).
+		Where("archived_at IS NULL").
+		Where("activated_at IS NOT NULL").
+		Count(ctx)
+	return count > 0, err
+}
+
 func (e *BackupDestinationEntity) Validate() error {
 	builder := validation.NewBuilder()
 	if e.ID == uuid.Nil {
@@ -156,6 +202,15 @@ func (bd backupDestination) Update(
 	db storage.Executor,
 	data UpdateBackupDestinationData,
 ) (BackupDestinationEntity, error) {
+	if data.ArchivedAt.Valid {
+		referenced, err := bd.HasActivePolicyReferences(ctx, db, data.ID)
+		if err != nil {
+			return BackupDestinationEntity{}, err
+		}
+		if referenced {
+			return BackupDestinationEntity{}, errors.Join(ErrDomainValidation, errors.New("active backup policies must be paused or archived before archiving this destination"))
+		}
+	}
 	entity := BackupDestinationEntity{
 		ID:             data.ID,
 		UpdatedAt:      time.Now(),

@@ -60,6 +60,9 @@ func (service *BackupVerifier) Verify(ctx context.Context, backupID uuid.UUID) e
 		scope.Backup.Status != models.BackupStatusVerificationFailed {
 		return fmt.Errorf("backup %s is not ready for verification", backupID)
 	}
+	if err := validateBackupScope(scope); err != nil {
+		return service.recordVerificationFailure(ctx, scope, fmt.Errorf("validate backup scope: %w", err))
+	}
 	plaintext, err := secretcrypto.Decrypt(scope.CredentialPayload, service.config.App.SessionEncryptionKey)
 	if err != nil {
 		return service.recordVerificationFailure(
@@ -88,6 +91,11 @@ func (service *BackupVerifier) Verify(ctx context.Context, backupID uuid.UUID) e
 	if scope.Backup.TargetType == "server" {
 		err = service.verifyServerBackup(ctx, scope, credential)
 	} else {
+		var target PostgreSQLBackupTarget
+		target, err = service.executor.postgreSQLTarget(scope)
+		if err != nil {
+			return service.recordVerificationFailure(ctx, scope, err)
+		}
 		var store *objectstorage.Client
 		store, err = objectstorage.New(
 			ctx,
@@ -97,7 +105,7 @@ func (service *BackupVerifier) Verify(ctx context.Context, backupID uuid.UUID) e
 			},
 		)
 		if err == nil {
-			err = service.verifyDatabaseBackup(ctx, scope, credential, store)
+			err = service.verifyDatabaseBackup(ctx, scope, target, credential, store)
 		}
 	}
 	if err != nil {
@@ -440,6 +448,7 @@ func containsString(values []string, expected string) bool {
 func (service *BackupVerifier) verifyDatabaseBackup(
 	ctx context.Context,
 	scope BackupScope,
+	target PostgreSQLBackupTarget,
 	credential BackupCredentialPayload,
 	store objectstorage.Store,
 ) error {
@@ -472,12 +481,14 @@ func (service *BackupVerifier) verifyDatabaseBackup(
 		return errors.New("database backup record is missing its resource identity")
 	}
 	expectedMetadata := map[string]string{
-		"backup-id":      scope.Backup.ID.String(),
-		"policy-id":      scope.Backup.BackupPolicyID.String(),
-		"resource-id":    scope.Backup.ResourceID.String(),
-		"instance-id":    service.config.App.InstanceID,
-		"sha256":         fmt.Sprintf("%x", scope.Backup.Digest),
-		"format-version": scope.Backup.FormatVersion,
+		"backup-id":                scope.Backup.ID.String(),
+		"policy-id":                scope.Backup.BackupPolicyID.String(),
+		"resource-id":              scope.Backup.ResourceID.String(),
+		"resource-installation-id": target.InstallationID.String(),
+		"database-name":            target.DatabaseName,
+		"instance-id":              service.config.App.InstanceID,
+		"sha256":                   fmt.Sprintf("%x", scope.Backup.Digest),
+		"format-version":           scope.Backup.FormatVersion,
 	}
 	for key, expected := range expectedMetadata {
 		if remote.Metadata[key] != expected {
@@ -556,15 +567,17 @@ func (service *BackupVerifier) verifyDatabaseBackup(
 		}
 	}
 	var manifest struct {
-		ArtifactVersion string    `json:"artifact_version"`
-		InstanceID      string    `json:"instance_id"`
-		BackupID        string    `json:"backup_id"`
-		PolicyID        string    `json:"policy_id"`
-		ResourceID      string    `json:"resource_id"`
-		ScheduledAt     time.Time `json:"scheduled_at"`
-		ProducerVersion string    `json:"producer_version"`
-		Format          string    `json:"format"`
-		RiverExcluded   bool      `json:"river_table_data_excluded"`
+		ArtifactVersion        string    `json:"artifact_version"`
+		InstanceID             string    `json:"instance_id"`
+		BackupID               string    `json:"backup_id"`
+		PolicyID               string    `json:"policy_id"`
+		ResourceID             string    `json:"resource_id"`
+		ResourceInstallationID string    `json:"resource_installation_id"`
+		DatabaseName           string    `json:"database_name"`
+		ScheduledAt            time.Time `json:"scheduled_at"`
+		ProducerVersion        string    `json:"producer_version"`
+		Format                 string    `json:"format"`
+		RiverExcluded          bool      `json:"river_table_data_excluded"`
 	}
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
 		return fmt.Errorf("decode database backup manifest: %w", err)
@@ -574,13 +587,15 @@ func (service *BackupVerifier) verifyDatabaseBackup(
 		manifest.BackupID != scope.Backup.ID.String() ||
 		manifest.PolicyID != scope.Backup.BackupPolicyID.String() ||
 		manifest.ResourceID != scope.Backup.ResourceID.String() ||
+		manifest.ResourceInstallationID != target.InstallationID.String() ||
+		manifest.DatabaseName != target.DatabaseName ||
 		!manifest.ScheduledAt.Equal(scope.Backup.ScheduledAt) ||
 		manifest.ProducerVersion != scope.Backup.ProducerVersion ||
 		manifest.Format != "postgresql-custom+globals+tar+age" ||
-		!manifest.RiverExcluded {
+		manifest.RiverExcluded != target.ExcludeRiverTableData {
 		return errors.New("database backup manifest does not match the backup record")
 	}
-	if err := service.database.validateDump(ctx, dumpPath); err != nil {
+	if err := service.database.validateDump(ctx, target, dumpPath); err != nil {
 		return fmt.Errorf("validate downloaded PostgreSQL dump: %w", err)
 	}
 	return nil

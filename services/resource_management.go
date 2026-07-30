@@ -464,6 +464,18 @@ func (service *ResourceManagement) ArchiveResource(ctx context.Context, resource
 	if bindings > 0 {
 		return domainError("resource", "dependency", "archive active Environment bindings before archiving this Resource")
 	}
+	backupPolicies, err := tx.NewSelect().TableExpr("backup_policies").
+		Where("resource_id = ?", resourceID).
+		Where("target_type = 'resource'").
+		Where("archived_at IS NULL").
+		Where("activated_at IS NOT NULL").
+		Count(ctx)
+	if err != nil {
+		return err
+	}
+	if backupPolicies > 0 {
+		return domainError("resource", "backup_policy", "pause or archive the active backup policy before archiving this Resource")
+	}
 	privateAccess, err := tx.NewSelect().TableExpr("resource_endpoints").Where("resource_id = ?", resourceID).
 		Where("private_network_id IS NOT NULL").Where("archived_at IS NULL").Count(ctx)
 	if err != nil {
@@ -1621,6 +1633,13 @@ func (service *ResourceManagement) UpdateInstallation(ctx context.Context, resou
 		}
 	}
 	if current.ServerID != input.ServerID {
+		activePolicy, policyErr := service.installationHasActiveBackupPolicy(ctx, tx, installationID)
+		if policyErr != nil {
+			return models.ResourceInstallationEntity{}, policyErr
+		}
+		if activePolicy {
+			return models.ResourceInstallationEntity{}, domainError("serverId", "backup_policy", "pause or archive the active backup policy before moving this installation")
+		}
 		if err := service.validateInstallationMove(ctx, tx, installationID, input.ServerID); err != nil {
 			return models.ResourceInstallationEntity{}, err
 		}
@@ -1995,11 +2014,32 @@ func (service *ResourceManagement) ArchiveInstallation(ctx context.Context, reso
 	if dependencies > 0 {
 		return domainError("installation", "dependency", "installation has active endpoints, credentials, mounts, or health checks")
 	}
+	activePolicy, err := service.installationHasActiveBackupPolicy(ctx, tx, installationID)
+	if err != nil {
+		return err
+	}
+	if activePolicy {
+		return domainError("installation", "backup_policy", "pause or archive the active backup policy before archiving this installation")
+	}
 	now := time.Now().UTC()
 	if _, err := tx.NewUpdate().Table("resource_installations").Set("archived_at = ?", now).Set("updated_at = ?", now).Where("id = ?", installationID).Exec(ctx); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func (service *ResourceManagement) installationHasActiveBackupPolicy(
+	ctx context.Context,
+	db storage.Executor,
+	installationID uuid.UUID,
+) (bool, error) {
+	count, err := db.NewSelect().TableExpr("backup_policies").
+		Where("resource_installation_id = ?", installationID).
+		Where("target_type = 'resource'").
+		Where("archived_at IS NULL").
+		Where("activated_at IS NOT NULL").
+		Count(ctx)
+	return count > 0, err
 }
 
 func (service *ResourceManagement) CreateVolume(ctx context.Context, resourceID uuid.UUID, input ResourceVolumeInput) (models.ResourceVolumeEntity, error) {

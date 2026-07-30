@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
+	"strings"
 
 	"deploycrate-ce/internal/hostcommand"
 )
@@ -44,6 +46,16 @@ type State struct {
 	StartedAt      string `json:"startedAt"`
 	FinishedAt     string `json:"finishedAt"`
 	RestartCount   int    `json:"restartCount"`
+}
+
+type ExecSpec struct {
+	InstallationID string            `json:"installationId"`
+	ContainerName  string            `json:"containerName"`
+	Executable     string            `json:"executable"`
+	Arguments      []string          `json:"arguments"`
+	Environment    map[string]string `json:"environment"`
+	Stdin          io.Reader         `json:"-"`
+	Stdout         io.Writer         `json:"-"`
 }
 
 type Client struct{}
@@ -89,4 +101,21 @@ func (Client) Restart(ctx context.Context, installationID, containerName string)
 func (Client) Remove(ctx context.Context, installationID, containerName string) error {
 	_, err := hostcommand.Run(ctx, "container-remove", installationID, containerName)
 	return err
+}
+
+func (Client) Exec(ctx context.Context, spec ExecSpec) error {
+	payload, err := json.Marshal(spec)
+	if err != nil {
+		return fmt.Errorf("encode container execution specification: %w", err)
+	}
+	defer clear(payload)
+	stdin := spec.Stdin
+	if stdin == nil {
+		stdin = strings.NewReader("")
+	}
+	stdout := spec.Stdout
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	return hostcommand.RunStreaming(ctx, payload, stdin, stdout, "container-exec")
 }

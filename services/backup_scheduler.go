@@ -176,8 +176,10 @@ func (service *BackupScheduler) enqueue(
 		return uuid.Nil, fmt.Errorf("create backup change: %w", err)
 	}
 	targetID := policy.ServerID
+	taskServerID := policy.ServerID
 	if policy.TargetType == "resource" {
 		targetID = policy.ResourceID
+		taskServerID = policy.InstallationServerID
 	}
 	if targetID == nil {
 		return uuid.Nil, errors.New("backup policy target is missing")
@@ -186,7 +188,7 @@ func (service *BackupScheduler) enqueue(
 		Kind: "backup_execute", SubjectType: policy.TargetType, SubjectID: *targetID,
 		IdempotencyKey: "backup:" + triggerType + ":" + policy.ID.String() + ":" + slot.Format(time.RFC3339Nano),
 		Input:          json.RawMessage(`{}`), Status: "pending", AvailableAt: now,
-		ChangeID: change.ID, ServerID: policy.ServerID,
+		ChangeID: change.ID, ServerID: taskServerID,
 	})
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("create backup change task: %w", err)
@@ -213,6 +215,48 @@ func (service *BackupScheduler) enqueue(
 		nil,
 	); err != nil {
 		return uuid.Nil, fmt.Errorf("insert backup execution job: %w", err)
+	}
+	return backupID, nil
+}
+
+func (service *BackupScheduler) InsertScheduleTx(
+	ctx context.Context,
+	tx bun.Tx,
+	policyID uuid.UUID,
+	scheduledAt time.Time,
+) error {
+	_, err := service.queue.InsertTx(
+		ctx,
+		tx.Tx,
+		jobs.BackupScheduleArgs{BackupPolicyID: policyID, ScheduledAt: scheduledAt},
+		jobs.BackupScheduleInsertOpts(scheduledAt),
+	)
+	return err
+}
+
+func (service *BackupScheduler) Manual(ctx context.Context, policyID uuid.UUID) (uuid.UUID, error) {
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	defer tx.Rollback()
+	state, err := models.BackupPolicy.FindForUpdate(ctx, tx, policyID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if !state.Schedulable() {
+		return uuid.Nil, errors.New("backup policy is paused or archived")
+	}
+	policy, err := models.BackupPolicy.FindScheduled(ctx, tx, policyID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	backupID, err := service.enqueue(ctx, tx, policy, time.Now().UTC(), "manual")
+	if err != nil {
+		return uuid.Nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return uuid.Nil, err
 	}
 	return backupID, nil
 }

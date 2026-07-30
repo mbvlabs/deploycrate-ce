@@ -14,12 +14,17 @@
   type PrivateNetwork = { id: string; name: string; serverIds: string[]; serverAddresses: Record<string, string> }
   type Options = { kinds: Kind[]; servers: Array<{ id: string; name: string; address: string }>; privateNetworks: PrivateNetwork[]; registryCredentials: Array<{ id: string; name: string }> }
   type Enrollment = { deviceId: string; grantId: string; clientConfiguration: string }
+  type BackupDestination = { id: string; name: string; provider: string; endpoint: string; region: string; bucket: string; prefix: string; verifiedAt: string | null; lastUsedAt: string | null }
+  type BackupPolicy = { id: string; schedule: string; active: boolean; nextRunAt: string; backupDestinationId: string; keepLast: number; keepDaily: number; keepWeekly: number; keepMonthly: number }
+  type BackupHistory = { id: string; status: string; triggerType: string; scheduledAt: string; finishedAt: string | null; verifiedAt: string | null; sizeBytes: number | null; error: string }
+  type Backups = { eligibility: { eligible: boolean; reason: string; installationId: string | null }; policy: BackupPolicy | null; destinations: BackupDestination[]; history: BackupHistory[] }
   type DestructiveAction =
     | { kind: 'remove-container'; installationId: string; title: string; description: string; confirmationLabel: string }
     | { kind: 'disable-private-access'; title: string; description: string; confirmationLabel: string }
     | { kind: 'revoke-device'; deviceId: string; title: string; description: string; confirmationLabel: string }
     | { kind: 'archive-resource'; title: string; description: string; confirmationLabel: string }
-  let { auth, resource, options, enrollment = null, errors = {} }: { auth: { email: string }; resource: any; options: Options; enrollment?: Enrollment | null; errors?: Record<string, string> } = $props()
+    | { kind: 'archive-backup-policy'; policyId: string; title: string; description: string; confirmationLabel: string }
+  let { auth, resource, backups, options, enrollment = null, errors = {} }: { auth: { email: string }; resource: any; backups: Backups; options: Options; enrollment?: Enrollment | null; errors?: Record<string, string> } = $props()
 
   const definition = $derived(options.kinds.find((kind) => kind.kind === resource.kind) ?? options.kinds[0])
   const endpointNetworks = $derived(resource.managementMode === 'managed' && resource.installations.length === 1
@@ -33,6 +38,7 @@
   const managedPostgreSQL = $derived(resource.managementMode === 'managed' && resource.kind === 'postgresql')
   const containerRunning = $derived(resource.installations.some((item: any) => item.serviceState === 'running'))
   const canAddApplicationUser = $derived(!managedPostgreSQL || containerRunning)
+  const lastSuccessfulBackup = $derived(backups.history.find((item) => item.status === 'verified'))
   const selectClass = 'h-9 w-full border border-input bg-background px-3 text-sm aria-invalid:border-destructive'
   const textareaClass = 'min-h-24 w-full border border-input bg-background px-3 py-2 font-mono text-xs'
   const overallStatus = $derived.by(() => {
@@ -66,6 +72,14 @@
   let volume = $state(initialVolume())
   let mount = $state(initialMount())
   let health = $state(initialHealth())
+  let backupPolicy = $state({
+    schedule: backups.policy?.schedule ?? '0 2 * * *',
+    backupDestinationId: backups.policy?.backupDestinationId ?? backups.destinations[0]?.id ?? '',
+    keepLast: backups.policy?.keepLast ?? 7,
+    keepDaily: backups.policy?.keepDaily ?? 7,
+    keepWeekly: backups.policy?.keepWeekly ?? 4,
+    keepMonthly: backups.policy?.keepMonthly ?? 6,
+  })
 
   $effect(() => {
     if (!enrollment?.clientConfiguration || !enrollment.grantId || enrollment.grantId === shownEnrollmentGrantId) return
@@ -123,6 +137,17 @@
   function createVolume() { submit(() => router.post(routes.resourceVolumeCreate(resource.id), { ...volume, configuration: json(volume.configurationText) }, { onSuccess: () => (volumeDialogOpen = false), onError: () => (volumeDialogOpen = true) })) }
   function createMount() { router.post(routes.resourceMountCreate(resource.id), mount, { onSuccess: () => (mountDialogOpen = false), onError: () => (mountDialogOpen = true) }) }
   function createHealth() { submit(() => router.post(routes.resourceHealthCheckCreate(resource.id), { ...health, configuration: json(health.configurationText) }, { onSuccess: () => (healthDialogOpen = false), onError: () => (healthDialogOpen = true) })) }
+  function saveBackupPolicy() {
+    if (backups.policy) router.patch(routes.resourceBackupPolicyUpdate(resource.id, backups.policy.id), backupPolicy)
+    else router.post(routes.resourceBackupPolicyCreate(resource.id), backupPolicy)
+  }
+  function pauseBackupPolicy() { if (backups.policy) router.post(routes.resourceBackupPolicyPause(resource.id, backups.policy.id), {}) }
+  function resumeBackupPolicy() { if (backups.policy) router.post(routes.resourceBackupPolicyResume(resource.id, backups.policy.id), {}) }
+  function runBackupPolicy() { if (backups.policy) router.post(routes.resourceBackupPolicyRun(resource.id, backups.policy.id), {}) }
+  function confirmBackupPolicyArchive() {
+    if (!backups.policy) return
+    confirmDestructive({ kind: 'archive-backup-policy', policyId: backups.policy.id, title: 'Archive backup policy?', description: 'Future schedules stop immediately. Existing backup history and artifacts are retained.', confirmationLabel: 'Archive policy' })
+  }
 
   function lifecycle(installationId: string, action: 'start' | 'stop' | 'restart' | 'remove') {
     if (pendingAction) return
@@ -170,6 +195,7 @@
     if (action.kind === 'disable-private-access') router.delete(routes.resourcePrivateAccessDestroy(resource.id))
     if (action.kind === 'revoke-device') router.delete(routes.resourcePrivateAccessDeviceDestroy(resource.id, action.deviceId))
     if (action.kind === 'archive-resource') router.delete(routes.resourceDestroy(resource.id))
+    if (action.kind === 'archive-backup-policy') router.delete(routes.resourceBackupPolicyDestroy(resource.id, action.policyId))
   }
 
   function observedLabel(value: string | null) {
@@ -179,6 +205,11 @@
 
   function accessStateLabel(value: string) {
     return ({ configured: 'Configured', applying: 'Applying', ready: 'Ready', failed: 'Failed' } as Record<string, string>)[value] ?? 'Not configured'
+  }
+
+  function bytesLabel(value: number | null) {
+    if (value === null) return 'Not available'
+    return new Intl.NumberFormat(undefined, { style: 'unit', unit: 'byte', notation: 'compact', unitDisplay: 'narrow' }).format(value)
   }
 </script>
 
@@ -215,6 +246,59 @@
           <DataField label="Installations" value={String(resource.installations.length)} />
           <DataField label="Connected Environments" value={String(resource.connectionCount)} />
         </div>
+      </Card.Content>
+    </Card.Root>
+
+    <Card.Root>
+      <Card.Header>
+        <Card.Action>{#if backups.policy}<span class="border border-border px-2 py-1 text-xs" class:text-success={backups.policy.active}>{backups.policy.active ? 'Active' : 'Paused'}</span>{/if}</Card.Action>
+        <Card.Title>Backups</Card.Title>
+        <Card.Description>Encrypted PostgreSQL logical backups using a verified Object Storage connection.</Card.Description>
+      </Card.Header>
+      <Card.Content class="space-y-6">
+        {#if !backups.eligibility.eligible}
+          <p class="border border-border bg-muted/20 p-3 text-sm text-muted-foreground">{backups.eligibility.reason}</p>
+        {:else}
+          <form class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" onsubmit={(event) => { event.preventDefault(); saveBackupPolicy() }}>
+            <FormField label="Object Storage" error={errors.backupDestinationId}>
+              <select bind:value={backupPolicy.backupDestinationId} class={selectClass} required>
+                {#each backups.destinations as destination}<option value={destination.id}>{destination.name} · {destination.bucket}</option>{/each}
+              </select>
+            </FormField>
+            <FormField label="Schedule" error={errors.schedule}><Input bind:value={backupPolicy.schedule} class="font-mono" placeholder="0 2 * * *" required /></FormField>
+            <div class="hidden lg:block"></div>
+            <FormField label="Keep last"><Input type="number" min="0" bind:value={backupPolicy.keepLast} /></FormField>
+            <FormField label="Keep daily"><Input type="number" min="0" bind:value={backupPolicy.keepDaily} /></FormField>
+            <FormField label="Keep weekly"><Input type="number" min="0" bind:value={backupPolicy.keepWeekly} /></FormField>
+            <FormField label="Keep monthly"><Input type="number" min="0" bind:value={backupPolicy.keepMonthly} /></FormField>
+            <div class="flex flex-wrap items-end gap-2 sm:col-span-2">
+              <Button type="submit">{backups.policy ? 'Save policy' : 'Create policy'}</Button>
+              {#if backups.policy}
+                {#if backups.policy.active}<Button type="button" variant="outline" onclick={pauseBackupPolicy}>Pause</Button>{:else}<Button type="button" variant="outline" onclick={resumeBackupPolicy}>Resume</Button>{/if}
+                <Button type="button" variant="outline" disabled={!backups.policy.active} onclick={runBackupPolicy}>Back up now</Button>
+                <Button type="button" variant="destructive" onclick={confirmBackupPolicyArchive}>Archive</Button>
+              {/if}
+            </div>
+          </form>
+          {#if backups.policy}
+            <div class="grid gap-4 border-t border-border pt-5 sm:grid-cols-3">
+              <DataField label="Next run" value={backups.policy.active ? observedLabel(backups.policy.nextRunAt) : 'Paused'} />
+              <DataField label="Last successful" value={observedLabel(lastSuccessfulBackup?.finishedAt ?? null)} />
+              <DataField label="Last verified" value={observedLabel(lastSuccessfulBackup?.verifiedAt ?? null)} />
+            </div>
+          {/if}
+        {/if}
+
+        <section class="space-y-3 border-t border-border pt-5">
+          <div><h3 class="text-sm font-medium">Recent history</h3><p class="mt-1 text-xs text-muted-foreground">The latest Resource backup attempts, including retained outcomes after policy archival.</p></div>
+          {#if backups.history.length === 0}<p class="text-sm text-muted-foreground">No Resource backups have been requested.</p>{/if}
+          {#each backups.history as item (item.id)}
+            <div class="grid gap-3 border border-border p-3 text-sm sm:grid-cols-[1fr_auto]">
+              <div><div class="flex flex-wrap items-center gap-2"><span class="font-medium capitalize">{item.status.replaceAll('_', ' ')}</span><span class="text-xs uppercase tracking-wider text-muted-foreground">{item.triggerType}</span></div><p class="mt-1 text-xs text-muted-foreground">{observedLabel(item.scheduledAt)} · {bytesLabel(item.sizeBytes)}</p>{#if item.error}<p class="mt-2 text-xs text-destructive">{item.error}</p>{/if}</div>
+              <span class="font-mono text-xs text-muted-foreground">{item.id.slice(0, 8)}</span>
+            </div>
+          {/each}
+        </section>
       </Card.Content>
     </Card.Root>
 

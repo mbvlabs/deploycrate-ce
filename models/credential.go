@@ -50,13 +50,16 @@ func (e *CredentialEntity) Validate() error {
 			builder.Add("provider", "unsupported", "backup credential provider must be backup_s3 or backup_r2")
 		}
 		var metadata struct {
-			InstanceID string `json:"instance_id"`
-			Provider   string `json:"provider"`
-			Endpoint   string `json:"endpoint"`
-			Region     string `json:"region"`
-			Bucket     string `json:"bucket"`
+			SchemaVersion  int    `json:"schema_version"`
+			CredentialKind string `json:"credential_kind"`
+			InstanceID     string `json:"instance_id"`
+			Provider       string `json:"provider"`
+			Endpoint       string `json:"endpoint"`
+			Region         string `json:"region"`
+			Bucket         string `json:"bucket"`
 		}
 		if json.Unmarshal(e.Metadata, &metadata) != nil ||
+			metadata.SchemaVersion != 1 || metadata.CredentialKind != "object_storage_backup_access" ||
 			strings.TrimSpace(metadata.InstanceID) == "" ||
 			metadata.Provider != strings.TrimPrefix(e.Provider, "backup_") ||
 			strings.TrimSpace(metadata.Region) == "" || strings.TrimSpace(metadata.Bucket) == "" ||
@@ -177,6 +180,21 @@ func (c credential) Update(
 	db storage.Executor,
 	data UpdateCredentialData,
 ) (CredentialEntity, error) {
+	if data.ArchivedAt.Valid {
+		count, err := db.NewSelect().TableExpr("backup_destinations AS destination").
+			Join("JOIN backup_policies AS policy ON policy.backup_destination_id = destination.id").
+			Where("destination.credential_id = ?", data.ID).
+			Where("destination.archived_at IS NULL").
+			Where("policy.archived_at IS NULL").
+			Where("policy.activated_at IS NOT NULL").
+			Count(ctx)
+		if err != nil {
+			return CredentialEntity{}, err
+		}
+		if count > 0 {
+			return CredentialEntity{}, errors.Join(ErrDomainValidation, errors.New("active backup policies must be paused or archived before archiving this credential"))
+		}
+	}
 	entity := CredentialEntity{
 		ID:         data.ID,
 		UpdatedAt:  time.Now(),

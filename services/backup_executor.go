@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/netip"
+	"strings"
 	"time"
 
 	"deploycrate-ce/clients/objectstorage"
@@ -26,24 +28,36 @@ type BackupCredentialPayload struct {
 }
 
 type BackupScope struct {
-	Backup                 models.BackupEntity
-	PolicyRetention        json.RawMessage
-	PolicyVerification     json.RawMessage
-	PolicySettings         json.RawMessage
-	DestinationProvider    string
-	DestinationEndpoint    string
-	DestinationRegion      string
-	DestinationBucket      string
-	DestinationPrefix      string
-	DestinationPathStyle   bool
-	CredentialProvider     string
-	CredentialPayload      []byte
-	BindingResourceID      *uuid.UUID
-	EndpointResourceID     *uuid.UUID
-	EndpointInstallationID *uuid.UUID
-	InstallationResourceID *uuid.UUID
-	ResourceKind           string
-	DatabaseExternal       bool
+	Backup                  models.BackupEntity
+	PolicyRetention         json.RawMessage
+	PolicyVerification      json.RawMessage
+	PolicySettings          json.RawMessage
+	DestinationProvider     string
+	DestinationEndpoint     string
+	DestinationRegion       string
+	DestinationBucket       string
+	DestinationPrefix       string
+	DestinationPathStyle    bool
+	DestinationArchived     bool
+	CredentialProvider      string
+	CredentialPayload       []byte
+	DestinationCredentialID uuid.UUID
+	CredentialArchived      bool
+	CredentialVerified      bool
+	InstallationResourceID  *uuid.UUID
+	InstallationContainer   string
+	InstallationServerID    *uuid.UUID
+	InstallationServerIPv4  string
+	InstallationArchived    bool
+	ResourceKind            string
+	ResourceCategory        string
+	ResourceManagementMode  string
+	ResourceSystemManaged   bool
+	ResourceArchived        bool
+	DatabaseName            string
+	AdministratorUsername   string
+	AdministratorPayload    []byte
+	AdministratorCount      int
 }
 
 func (scope BackupScope) ObjectStorageConfig() objectstorage.Config {
@@ -66,7 +80,7 @@ type ServerBackupRunner interface {
 }
 
 type DatabaseBackupRunner interface {
-	Run(context.Context, BackupScope, BackupCredentialPayload, objectstorage.Store) (BackupArtifact, error)
+	Run(context.Context, BackupScope, PostgreSQLBackupTarget, BackupCredentialPayload, objectstorage.Store) (BackupArtifact, error)
 }
 
 type BackupExecutor struct {
@@ -150,8 +164,9 @@ func (service *BackupExecutor) Execute(ctx context.Context, backupID uuid.UUID) 
 	if scope.Backup.TargetType == "server" {
 		artifact, err = service.server.Run(ctx, scope, credential)
 	} else {
-		if scope.DatabaseExternal {
-			return errors.New("externally managed databases cannot be backed up")
+		target, targetErr := service.postgreSQLTarget(scope)
+		if targetErr != nil {
+			return targetErr
 		}
 		store, storeErr := objectstorage.New(
 			ctx,
@@ -163,7 +178,7 @@ func (service *BackupExecutor) Execute(ctx context.Context, backupID uuid.UUID) 
 		if storeErr != nil {
 			return storeErr
 		}
-		artifact, err = service.database.Run(ctx, scope, credential, store)
+		artifact, err = service.database.Run(ctx, scope, target, credential, store)
 	}
 	if err != nil {
 		return err
@@ -181,6 +196,14 @@ func (service *BackupExecutor) Execute(ctx context.Context, backupID uuid.UUID) 
 		Digest:            artifact.Digest,
 	}); err != nil {
 		return fmt.Errorf("record uploaded backup: %w", err)
+	}
+	if _, err := tx.NewUpdate().Table("credentials").
+		Set("last_used_at = ?", time.Now().UTC()).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", scope.DestinationCredentialID).
+		Where("archived_at IS NULL").
+		Exec(ctx); err != nil {
+		return fmt.Errorf("record backup destination use: %w", err)
 	}
 	if err := models.ChangeTask.MarkCompleted(
 		ctx, tx, scope.Backup.ChangeTaskID, time.Now().UTC(),
@@ -247,6 +270,9 @@ func validateBackupScope(scope BackupScope) error {
 	if scope.CredentialProvider != "backup_"+scope.DestinationProvider {
 		return errors.New("backup credential provider does not match its destination")
 	}
+	if scope.DestinationArchived || scope.CredentialArchived || !scope.CredentialVerified {
+		return errors.New("backup destination and credential must be active and verified")
+	}
 	if !json.Valid(scope.PolicyRetention) || !json.Valid(scope.PolicyVerification) ||
 		!json.Valid(scope.PolicySettings) || len(scope.CredentialPayload) < 2 {
 		return errors.New("backup policy or credential scope is incomplete")
@@ -258,25 +284,51 @@ func validateBackupScope(scope BackupScope) error {
 		}
 		return nil
 	}
-	if scope.DatabaseExternal {
-		return errors.New("externally managed databases cannot be backed up")
-	}
-	if scope.Backup.ResourceID == nil || scope.Backup.EnvironmentResourceID == nil ||
-		scope.Backup.ResourceInstallationID == nil || scope.BindingResourceID == nil ||
-		scope.EndpointResourceID == nil || scope.EndpointInstallationID == nil ||
-		scope.InstallationResourceID == nil ||
-		*scope.BindingResourceID != *scope.Backup.ResourceID ||
-		*scope.EndpointResourceID != *scope.Backup.ResourceID ||
+	if scope.Backup.ResourceID == nil || scope.Backup.ResourceInstallationID == nil ||
+		scope.InstallationResourceID == nil || scope.InstallationServerID == nil ||
 		*scope.InstallationResourceID != *scope.Backup.ResourceID ||
-		*scope.EndpointInstallationID != *scope.Backup.ResourceInstallationID ||
-		scope.ResourceKind != "postgresql" {
+		scope.InstallationArchived || scope.ResourceArchived ||
+		scope.ResourceKind != "postgresql" || scope.ResourceCategory != "database" ||
+		(scope.ResourceManagementMode != "managed" && !scope.ResourceSystemManaged) ||
+		strings.TrimSpace(scope.DatabaseName) == "" || strings.TrimSpace(scope.InstallationContainer) == "" ||
+		scope.AdministratorCount != 1 || strings.TrimSpace(scope.AdministratorUsername) == "" ||
+		len(scope.AdministratorPayload) < 2 {
 		return errors.New("database backup target is not the local PostgreSQL resource")
+	}
+	address, addressErr := netip.ParseAddr(strings.TrimSpace(scope.InstallationServerIPv4))
+	if addressErr != nil || !address.IsLoopback() {
+		return errors.New("database backup target is not installed on the local DeployCrate CE host")
 	}
 	if scope.Backup.Strategy != "logical" || scope.Backup.Driver != "postgresql" ||
 		scope.Backup.Format != "tar.age" {
 		return errors.New("database backup driver scope is incompatible")
 	}
 	return nil
+}
+
+func (service *BackupExecutor) postgreSQLTarget(scope BackupScope) (PostgreSQLBackupTarget, error) {
+	if err := validateBackupScope(scope); err != nil {
+		return PostgreSQLBackupTarget{}, err
+	}
+	plaintext, err := secretcrypto.DecryptForPurpose(
+		scope.AdministratorPayload,
+		service.config.App.SessionEncryptionKey,
+		resourceCredentialPurpose,
+	)
+	if err != nil {
+		return PostgreSQLBackupTarget{}, errors.New("decrypt Resource administrator credential")
+	}
+	defer clear(plaintext)
+	var values map[string]string
+	if json.Unmarshal(plaintext, &values) != nil || strings.TrimSpace(values["password"]) == "" {
+		return PostgreSQLBackupTarget{}, errors.New("Resource administrator credential is incomplete")
+	}
+	return PostgreSQLBackupTarget{
+		ResourceID: *scope.Backup.ResourceID, InstallationID: *scope.Backup.ResourceInstallationID,
+		ContainerName: scope.InstallationContainer, DatabaseName: scope.DatabaseName,
+		Username: scope.AdministratorUsername, Password: values["password"],
+		ExcludeRiverTableData: scope.ResourceSystemManaged,
+	}, nil
 }
 
 func markBackupExecutionStarted(
@@ -326,10 +378,17 @@ func (service *BackupExecutor) loadScope(ctx context.Context, backupID uuid.UUID
 		DestinationProvider: row.DestinationProvider, DestinationEndpoint: row.DestinationEndpoint,
 		DestinationRegion: row.DestinationRegion, DestinationBucket: row.DestinationBucket,
 		DestinationPrefix: row.DestinationPrefix, DestinationPathStyle: row.DestinationPathStyle,
-		CredentialProvider: row.CredentialProvider, CredentialPayload: row.CredentialPayload,
-		BindingResourceID: row.BindingResourceID, EndpointResourceID: row.EndpointResourceID,
-		EndpointInstallationID: row.EndpointInstallationID,
-		InstallationResourceID: row.InstallationResourceID, ResourceKind: row.ResourceKind,
-		DatabaseExternal: row.DatabaseExternal,
+		DestinationArchived: row.DestinationArchived,
+		CredentialProvider:  row.CredentialProvider, CredentialPayload: row.CredentialPayload,
+		DestinationCredentialID: row.DestinationCredentialID,
+		CredentialArchived:      row.CredentialArchived, CredentialVerified: row.CredentialVerified,
+		InstallationResourceID: row.InstallationResourceID,
+		InstallationContainer:  row.InstallationContainer, InstallationServerID: row.InstallationServerID,
+		InstallationServerIPv4: row.InstallationServerIPv4, InstallationArchived: row.InstallationArchived,
+		ResourceKind: row.ResourceKind, ResourceCategory: row.ResourceCategory,
+		ResourceManagementMode: row.ResourceManagementMode, ResourceSystemManaged: row.ResourceSystemManaged,
+		ResourceArchived: row.ResourceArchived, DatabaseName: row.DatabaseName,
+		AdministratorUsername: row.AdministratorUsername, AdministratorPayload: row.AdministratorPayload,
+		AdministratorCount: row.AdministratorCount,
 	}, nil
 }

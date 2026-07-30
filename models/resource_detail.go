@@ -72,6 +72,19 @@ type ResourceDetails struct {
 	HealthChecks  []ResourceHealthCheckDetail
 }
 
+type ResourceBackupEligibility struct {
+	Eligible       bool
+	Reason         string
+	InstallationID *uuid.UUID
+}
+
+type ResourceBackupDetails struct {
+	Eligibility  ResourceBackupEligibility
+	Policy       *BackupPolicyEntity
+	Destinations []BackupDestinationSummary
+	History      []ResourceBackupHistory
+}
+
 type ResourcePrivateAccessDetails struct {
 	DeviceGrants     []SystemWireGuardDeviceGrant
 	AvailableDevices []SystemWireGuardDeviceOption

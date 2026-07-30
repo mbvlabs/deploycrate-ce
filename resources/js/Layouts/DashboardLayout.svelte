@@ -3,6 +3,7 @@
   import ActivityIcon from '@lucide/svelte/icons/activity'
   import BoxesIcon from '@lucide/svelte/icons/boxes'
   import ChevronDownIcon from '@lucide/svelte/icons/chevron-down'
+  import CloudIcon from '@lucide/svelte/icons/cloud'
   import DatabaseIcon from '@lucide/svelte/icons/database'
   import GitBranchIcon from '@lucide/svelte/icons/git-branch'
   import GithubIcon from '@lucide/svelte/icons/git-fork'
@@ -122,6 +123,11 @@
             <Sidebar.MenuItem>
               <Sidebar.MenuButton isActive={$page.url.startsWith(routes.containerRegistries())} tooltipContent="Container Registries">
                 {#snippet child({ props })}<Link {...props} href={routes.containerRegistries()}><KeyRoundIcon /><span>Container Registries</span></Link>{/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.objectStorage())} tooltipContent="Object Storage">
+                {#snippet child({ props })}<Link {...props} href={routes.objectStorage()}><CloudIcon /><span>Object Storage</span></Link>{/snippet}
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>

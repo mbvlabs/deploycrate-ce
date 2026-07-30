@@ -90,3 +90,15 @@ type ResourceHealthCheckParams struct {
 var ResourceHealthCheckCreate = routing.NewRouteWithUUIDID("/:id/health-checks", "resources.health-checks.create", ResourcesPrefix)
 var ResourceHealthCheckUpdate = routing.NewRouteWithParams[ResourceHealthCheckParams]("/:id/health-checks/:healthCheckID", "resources.health-checks.update", ResourcesPrefix)
 var ResourceHealthCheckDestroy = routing.NewRouteWithParams[ResourceHealthCheckParams]("/:id/health-checks/:healthCheckID", "resources.health-checks.destroy", ResourcesPrefix)
+
+type ResourceBackupPolicyParams struct {
+	ResourceID     string `param:"id"`
+	BackupPolicyID string `param:"backupPolicyID"`
+}
+
+var ResourceBackupPolicyCreate = routing.NewRouteWithUUIDID("/:id/backups", "resources.backups.create", ResourcesPrefix)
+var ResourceBackupPolicyUpdate = routing.NewRouteWithParams[ResourceBackupPolicyParams]("/:id/backups/:backupPolicyID", "resources.backups.update", ResourcesPrefix)
+var ResourceBackupPolicyPause = routing.NewRouteWithParams[ResourceBackupPolicyParams]("/:id/backups/:backupPolicyID/pause", "resources.backups.pause", ResourcesPrefix)
+var ResourceBackupPolicyResume = routing.NewRouteWithParams[ResourceBackupPolicyParams]("/:id/backups/:backupPolicyID/resume", "resources.backups.resume", ResourcesPrefix)
+var ResourceBackupPolicyDestroy = routing.NewRouteWithParams[ResourceBackupPolicyParams]("/:id/backups/:backupPolicyID", "resources.backups.destroy", ResourcesPrefix)
+var ResourceBackupPolicyRun = routing.NewRouteWithParams[ResourceBackupPolicyParams]("/:id/backups/:backupPolicyID/run", "resources.backups.run", ResourcesPrefix)

@@ -136,6 +136,43 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 	}
 }
 
+func resourceBackupProps(detail models.ResourceBackupDetails) inertia.Props {
+	destinations := make([]inertia.Props, 0, len(detail.Destinations))
+	for _, destination := range detail.Destinations {
+		destinations = append(destinations, inertia.Props{
+			"id": destination.ID, "name": destination.Name, "provider": destination.Provider,
+			"endpoint": destination.Endpoint, "region": destination.Region, "bucket": destination.Bucket,
+			"prefix": destination.Prefix, "verifiedAt": destination.VerifiedAt, "lastUsedAt": destination.LastUsedAt,
+		})
+	}
+	history := make([]inertia.Props, 0, len(detail.History))
+	for _, backup := range detail.History {
+		history = append(history, inertia.Props{
+			"id": backup.ID, "status": backup.Status, "triggerType": backup.TriggerType,
+			"scheduledAt": backup.ScheduledAt, "finishedAt": backup.FinishedAt,
+			"verifiedAt": backup.VerifiedAt, "sizeBytes": backup.SizeBytes, "error": backup.Error,
+		})
+	}
+	var policy inertia.Props
+	if detail.Policy != nil {
+		retention, _ := detail.Policy.RetentionPolicy()
+		policy = inertia.Props{
+			"id": detail.Policy.ID, "schedule": detail.Policy.Schedule,
+			"active": detail.Policy.Schedulable(), "nextRunAt": detail.Policy.NextRunAt,
+			"backupDestinationId": detail.Policy.BackupDestinationID,
+			"keepLast":            retention.KeepLast, "keepDaily": retention.KeepDaily,
+			"keepWeekly": retention.KeepWeekly, "keepMonthly": retention.KeepMonthly,
+		}
+	}
+	return inertia.Props{
+		"eligibility": inertia.Props{
+			"eligible": detail.Eligibility.Eligible, "reason": detail.Eligibility.Reason,
+			"installationId": detail.Eligibility.InstallationID,
+		},
+		"policy": policy, "destinations": destinations, "history": history,
+	}
+}
+
 func resourceConnectionDatabase(configuration json.RawMessage) string {
 	var value struct {
 		Database string `json:"database"`

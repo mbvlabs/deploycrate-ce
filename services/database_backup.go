@@ -10,32 +10,44 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
-	"strings"
 	"time"
 
+	containerclient "deploycrate-ce/clients/container"
 	"deploycrate-ce/clients/objectstorage"
 	"deploycrate-ce/config"
 
 	"filippo.io/age"
+	"github.com/google/uuid"
 )
 
 const backupWorkRoot = "/var/lib/deploycrate-ce/runtime/backups"
 
 type DatabaseBackup struct {
-	config  config.Config
-	version CurrentVersion
+	config    config.Config
+	version   CurrentVersion
+	container containerclient.Client
 }
 
 func NewDatabaseBackup(configuration config.Config, version CurrentVersion) *DatabaseBackup {
-	return &DatabaseBackup{config: configuration, version: version}
+	return &DatabaseBackup{config: configuration, version: version, container: containerclient.New()}
+}
+
+type PostgreSQLBackupTarget struct {
+	ResourceID            uuid.UUID
+	InstallationID        uuid.UUID
+	ContainerName         string
+	DatabaseName          string
+	Username              string
+	Password              string
+	ExcludeRiverTableData bool
 }
 
 func (service *DatabaseBackup) Run(
 	ctx context.Context,
 	scope BackupScope,
+	target PostgreSQLBackupTarget,
 	credential BackupCredentialPayload,
 	store objectstorage.Store,
 ) (BackupArtifact, error) {
@@ -48,8 +60,16 @@ func (service *DatabaseBackup) Run(
 		scope.Backup.ID.String()+".tar.age",
 	)
 	if remote, err := store.Head(ctx, objectKey); err == nil {
-		if remote.Metadata["backup-id"] != scope.Backup.ID.String() {
-			return BackupArtifact{}, errors.New("existing database object has conflicting backup identity")
+		expected := map[string]string{
+			"backup-id": scope.Backup.ID.String(), "policy-id": scope.Backup.BackupPolicyID.String(),
+			"resource-id": target.ResourceID.String(), "resource-installation-id": target.InstallationID.String(),
+			"database-name": target.DatabaseName, "instance-id": service.config.App.InstanceID,
+			"format-version": scope.Backup.FormatVersion,
+		}
+		for key, value := range expected {
+			if remote.Metadata[key] != value {
+				return BackupArtifact{}, errors.New("existing database object has conflicting backup identity")
+			}
 		}
 		digest, decodeErr := hex.DecodeString(remote.Metadata["sha256"])
 		if decodeErr != nil || len(digest) != sha256.Size {
@@ -65,6 +85,9 @@ func (service *DatabaseBackup) Run(
 	if err := os.MkdirAll(workDirectory, 0o700); err != nil {
 		return BackupArtifact{}, fmt.Errorf("create database backup work directory: %w", err)
 	}
+	if err := os.Chmod(workDirectory, 0o700); err != nil {
+		return BackupArtifact{}, fmt.Errorf("secure database backup work directory: %w", err)
+	}
 	defer os.RemoveAll(workDirectory)
 	dumpPath := filepath.Join(workDirectory, "database.dump")
 	globalsPath := filepath.Join(workDirectory, "globals.sql")
@@ -72,13 +95,13 @@ func (service *DatabaseBackup) Run(
 	archivePath := filepath.Join(workDirectory, "database.tar")
 	encryptedPath := archivePath + ".age"
 
-	if err := service.dumpDatabase(ctx, dumpPath); err != nil {
+	if err := service.dumpDatabase(ctx, target, dumpPath); err != nil {
 		return BackupArtifact{}, err
 	}
-	if err := service.dumpGlobals(ctx, globalsPath); err != nil {
+	if err := service.dumpGlobals(ctx, target, globalsPath); err != nil {
 		return BackupArtifact{}, err
 	}
-	if err := service.validateDump(ctx, dumpPath); err != nil {
+	if err := service.validateDump(ctx, target, dumpPath); err != nil {
 		return BackupArtifact{}, fmt.Errorf("validate PostgreSQL custom dump: %w", err)
 	}
 	manifest := map[string]any{
@@ -87,10 +110,12 @@ func (service *DatabaseBackup) Run(
 		"backup_id":                 scope.Backup.ID.String(),
 		"policy_id":                 scope.Backup.BackupPolicyID.String(),
 		"resource_id":               scope.Backup.ResourceID.String(),
+		"resource_installation_id":  target.InstallationID.String(),
+		"database_name":             target.DatabaseName,
 		"scheduled_at":              scope.Backup.ScheduledAt.UTC().Format(time.RFC3339Nano),
 		"producer_version":          string(service.version),
 		"format":                    "postgresql-custom+globals+tar+age",
-		"river_table_data_excluded": true,
+		"river_table_data_excluded": target.ExcludeRiverTableData,
 	}
 	manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -122,12 +147,14 @@ func (service *DatabaseBackup) Run(
 	}
 	digestBytes := digest.Sum(nil)
 	metadata := map[string]string{
-		"backup-id":      scope.Backup.ID.String(),
-		"policy-id":      scope.Backup.BackupPolicyID.String(),
-		"resource-id":    scope.Backup.ResourceID.String(),
-		"instance-id":    service.config.App.InstanceID,
-		"sha256":         hex.EncodeToString(digestBytes),
-		"format-version": scope.Backup.FormatVersion,
+		"backup-id":                scope.Backup.ID.String(),
+		"policy-id":                scope.Backup.BackupPolicyID.String(),
+		"resource-id":              scope.Backup.ResourceID.String(),
+		"resource-installation-id": target.InstallationID.String(),
+		"database-name":            target.DatabaseName,
+		"instance-id":              service.config.App.InstanceID,
+		"sha256":                   hex.EncodeToString(digestBytes),
+		"format-version":           scope.Backup.FormatVersion,
 	}
 	remote, uploadErr := store.Put(ctx, objectKey, file, metadata)
 	closeErr := file.Close()
@@ -149,20 +176,21 @@ func (service *DatabaseBackup) Run(
 	}, nil
 }
 
-func (service *DatabaseBackup) dumpDatabase(ctx context.Context, destination string) error {
-	database := service.config.DB
+func (service *DatabaseBackup) dumpDatabase(ctx context.Context, target PostgreSQLBackupTarget, destination string) error {
 	file, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
 	arguments := []string{
-		"--username", database.User,
-		"--dbname", database.Name,
+		"--username", target.Username,
+		"--dbname", target.DatabaseName,
 		"--format=custom",
 		"--no-password",
-		"--exclude-table-data=river_*",
 	}
-	runErr := service.runContainerPostgres(ctx, nil, file, "pg_dump", arguments...)
+	if target.ExcludeRiverTableData {
+		arguments = append(arguments, "--exclude-table-data=river_*")
+	}
+	runErr := service.runContainerPostgres(ctx, target, nil, file, "pg_dump", arguments...)
 	closeErr := file.Close()
 	if runErr != nil || closeErr != nil {
 		if runErr != nil {
@@ -176,18 +204,17 @@ func (service *DatabaseBackup) dumpDatabase(ctx context.Context, destination str
 	return nil
 }
 
-func (service *DatabaseBackup) dumpGlobals(ctx context.Context, destination string) error {
+func (service *DatabaseBackup) dumpGlobals(ctx context.Context, target PostgreSQLBackupTarget, destination string) error {
 	file, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
 	}
-	database := service.config.DB
 	arguments := []string{
-		"--username", database.User,
+		"--username", target.Username,
 		"--globals-only",
 		"--no-password",
 	}
-	runErr := service.runContainerPostgres(ctx, nil, file, "pg_dumpall", arguments...)
+	runErr := service.runContainerPostgres(ctx, target, nil, file, "pg_dumpall", arguments...)
 	closeErr := file.Close()
 	if runErr != nil {
 		return fmt.Errorf("create PostgreSQL globals dump: %w", runErr)
@@ -195,44 +222,28 @@ func (service *DatabaseBackup) dumpGlobals(ctx context.Context, destination stri
 	return closeErr
 }
 
-func (service *DatabaseBackup) validateDump(ctx context.Context, dumpPath string) error {
+func (service *DatabaseBackup) validateDump(ctx context.Context, target PostgreSQLBackupTarget, dumpPath string) error {
 	dump, err := os.Open(dumpPath)
 	if err != nil {
 		return err
 	}
 	defer dump.Close()
-	return service.runContainerPostgres(ctx, dump, nil, "pg_restore", "--list")
+	return service.runContainerPostgres(ctx, target, dump, nil, "pg_restore", "--list")
 }
 
 func (service *DatabaseBackup) runContainerPostgres(
 	ctx context.Context,
+	target PostgreSQLBackupTarget,
 	stdin io.Reader,
 	stdout io.Writer,
 	executable string,
 	arguments ...string,
 ) error {
-	containerArguments := []string{
-		"exec", "--interactive", "--env", "PGPASSWORD", "deploycrate-ce-postgres", executable,
-	}
-	command := exec.CommandContext(ctx, "/usr/bin/docker", append(containerArguments, arguments...)...)
-	command.Env = []string{"PGPASSWORD=" + service.config.DB.Password}
-	command.Stdin = stdin
-	command.Stdout = stdout
-	var stderr strings.Builder
-	command.Stderr = &stderr
-	err := command.Run()
-	if err != nil {
-		return fmt.Errorf("%s: %w", limitedError(stderr.String()), err)
-	}
-	return nil
-}
-
-func limitedError(value string) string {
-	value = strings.TrimSpace(value)
-	if len(value) > 800 {
-		return value[:800]
-	}
-	return value
+	return service.container.Exec(ctx, containerclient.ExecSpec{
+		InstallationID: target.InstallationID.String(), ContainerName: target.ContainerName,
+		Executable: executable, Arguments: arguments,
+		Environment: map[string]string{"PGPASSWORD": target.Password}, Stdin: stdin, Stdout: stdout,
+	})
 }
 
 func createBackupArchive(destination string, sources ...string) error {
