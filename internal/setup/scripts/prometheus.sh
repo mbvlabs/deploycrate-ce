@@ -195,6 +195,33 @@ EOF
 systemctl daemon-reload
 systemctl enable --now prometheus.service
 systemctl restart prometheus.service
+
+cadvisor_container_diagnostics() {
+  printf 'cAdvisor is healthy but does not expose the labeled ClickHouse Docker container\n' >&2
+  docker info >&2 || true
+  systemctl status cadvisor.service --no-pager >&2 || true
+  journalctl -u cadvisor.service -b --no-pager --lines=100 >&2 || true
+}
+
+container_observed=false
+for attempt in $(seq 1 30); do
+  if curl --fail --silent http://127.0.0.1:9101/metrics |
+    awk '/^container_memory_working_set_bytes/ && /container_label_com_deploycrate_component="clickhouse"/ { found = 1 } END { exit !found }'; then
+    container_observed=true
+    break
+  fi
+  [ "${attempt}" -lt 30 ] || {
+    cadvisor_container_diagnostics
+    exit 1
+  }
+  sleep 1
+done
+
+if [ "${container_observed}" != true ]; then
+  cadvisor_container_diagnostics
+  exit 1
+fi
+
 for attempt in $(seq 1 30); do
   if curl --fail --silent http://127.0.0.1:9090/-/ready >/dev/null; then
     exit 0

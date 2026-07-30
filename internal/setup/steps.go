@@ -142,7 +142,7 @@ func DefaultSteps(operations Operations) []Step {
 			},
 		),
 		scriptSetupStep(
-			"cadvisor-"+CadvisorVersion,
+			"cadvisor-"+CadvisorVersion+"-docker-attribution-v2",
 			"Install localhost-only cAdvisor resource accounting",
 			"cadvisor.sh",
 			nil,
@@ -168,7 +168,7 @@ func DefaultSteps(operations Operations) []Step {
 			},
 		),
 		scriptSetupStep(
-			"prometheus-3-13-1-service-metrics-v1",
+			"prometheus-3-13-1-service-metrics-v2",
 			"Install Prometheus with 24-hour raw retention",
 			"prometheus.sh",
 			nil,

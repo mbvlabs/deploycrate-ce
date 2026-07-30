@@ -1,5 +1,6 @@
 <script lang="ts">
   import * as Card from '@/Components/ui/card'
+  import TelemetryHistory from '@/Components/System/TelemetryHistory.svelte'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
 
   type SystemIdentity = {
@@ -44,6 +45,49 @@
     oomAvailable: boolean
     cpuThrottlingAvailable: boolean
     tasksAvailable: boolean
+    history: AttributedTelemetryPoint[]
+  }
+
+  type AttributedTelemetryPoint = {
+    observedAt: string
+    cpuCores: number
+    memoryBytes: number
+    diskReadBytesPerSecond: number
+    diskWriteBytesPerSecond: number
+    networkReceiveBytesPerSecond: number
+    networkTransmitBytesPerSecond: number
+    cpuAvailable: boolean
+    memoryAvailable: boolean
+    diskReadAvailable: boolean
+    diskWriteAvailable: boolean
+    networkReceiveAvailable: boolean
+    networkTransmitAvailable: boolean
+  }
+
+  type HostHistoryPoint = {
+    observedAt: string
+    cpuCores: number
+    cpuCoresTotal: number
+    diskReadBytesPerSecond: number
+    diskWriteBytesPerSecond: number
+    networkReceiveBytesPerSecond: number
+    networkTransmitBytesPerSecond: number
+    cpuAvailable: boolean
+    diskReadAvailable: boolean
+    diskWriteAvailable: boolean
+    networkReceiveAvailable: boolean
+    networkTransmitAvailable: boolean
+  }
+
+  type UsageHistoryPoint = {
+    observedAt: string
+    used: number
+    free: number
+  }
+
+  type ChartSeries = {
+    label: string
+    points: Array<{ observedAt: string; value: number }>
   }
 
   type SystemTelemetry = {
@@ -66,8 +110,10 @@
     tasksAvailable: boolean
     memory: ResourceUsage
     storage: ResourceUsage
+    hostHistory: HostHistoryPoint[]
+    memoryHistory: UsageHistoryPoint[]
     platform: AttributedTelemetry[]
-    containers: AttributedTelemetry[]
+    systemContainers: AttributedTelemetry[]
   }
 
   let { auth, system, telemetry }: {
@@ -90,26 +136,52 @@
   const stamp = (value: string) => value ? new Date(value).toLocaleString() : 'Unknown'
   const label = (value: string) => value ? value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) : 'Unknown'
   const current = (row: AttributedTelemetry, metricAvailable: boolean, value: string) => row.available && metricAvailable ? value : 'Unavailable'
-  const containerName = (row: AttributedTelemetry) => {
+  const systemContainerName = (row: AttributedTelemetry) => {
     if (row.installation) return `Managed resource ${short(row.resource)}`
-    if (row.application) return `Application ${short(row.application)} / Environment ${short(row.environment)}`
     return label(row.component)
   }
-  const containerIdentity = (row: AttributedTelemetry) => {
+  const systemContainerIdentity = (row: AttributedTelemetry) => {
     if (row.installation) return `Installation ${short(row.installation)}`
-    if (row.instance) return `Instance ${short(row.instance)} · Deployment ${short(row.deployment)}`
     return 'System container'
   }
 
   const platform = $derived(telemetry.platform ?? [])
-  const containers = $derived(telemetry.containers ?? [])
-  const currentRows = $derived([...platform, ...containers].filter((row) => row.available))
+  const systemContainers = $derived(telemetry.systemContainers ?? [])
+  const currentRows = $derived([...platform, ...systemContainers].filter((row) => row.available))
   const currentCPURows = $derived(currentRows.filter((row) => row.cpuAvailable))
   const currentMemoryRows = $derived(currentRows.filter((row) => row.memoryAvailable))
   const attributedCPUCores = $derived(currentCPURows.reduce((total, row) => total + row.cpuCores, 0))
   const attributedMemoryBytes = $derived(currentMemoryRows.reduce((total, row) => total + row.memoryBytes, 0))
   const unattributedCPUCores = $derived(Math.max(0, telemetry.cpuCoresUsed - attributedCPUCores))
   const unattributedMemoryBytes = $derived(Math.max(0, telemetry.memory.used - attributedMemoryBytes))
+  const hostHistory = $derived(telemetry.hostHistory ?? [])
+  const memoryHistory = $derived(telemetry.memoryHistory ?? [])
+  const attributionRows = $derived([...platform, ...systemContainers])
+  const rowName = (row: AttributedTelemetry) => {
+    if (row.scope === 'native') return label(row.component)
+    if (row.installation) return `Managed resource ${short(row.resource)}`
+    return label(row.component)
+  }
+  const attributedSeries = (metric: 'cpu' | 'memory'): ChartSeries[] => attributionRows.flatMap((row) => {
+    const points = (row.history ?? []).flatMap((point) => {
+      if (metric === 'cpu' && point.cpuAvailable) return [{ observedAt: point.observedAt, value: point.cpuCores }]
+      if (metric === 'memory' && point.memoryAvailable) return [{ observedAt: point.observedAt, value: point.memoryBytes }]
+      return []
+    })
+    return points.length ? [{ label: rowName(row), points }] : []
+  })
+  const hostCPUSeries = $derived<ChartSeries[]>([{ label: 'Host CPU', points: hostHistory.filter((point) => point.cpuAvailable).map((point) => ({ observedAt: point.observedAt, value: point.cpuCores })) }])
+  const hostMemorySeries = $derived<ChartSeries[]>([{ label: 'Host memory', points: memoryHistory.map((point) => ({ observedAt: point.observedAt, value: point.used })) }])
+  const hostDiskSeries = $derived<ChartSeries[]>([
+    { label: 'Read', points: hostHistory.filter((point) => point.diskReadAvailable).map((point) => ({ observedAt: point.observedAt, value: point.diskReadBytesPerSecond })) },
+    { label: 'Write', points: hostHistory.filter((point) => point.diskWriteAvailable).map((point) => ({ observedAt: point.observedAt, value: point.diskWriteBytesPerSecond })) },
+  ])
+  const hostNetworkSeries = $derived<ChartSeries[]>([
+    { label: 'Receive', points: hostHistory.filter((point) => point.networkReceiveAvailable).map((point) => ({ observedAt: point.observedAt, value: point.networkReceiveBytesPerSecond })) },
+    { label: 'Transmit', points: hostHistory.filter((point) => point.networkTransmitAvailable).map((point) => ({ observedAt: point.observedAt, value: point.networkTransmitBytesPerSecond })) },
+  ])
+  const attributedCPUSeries = $derived(attributedSeries('cpu'))
+  const attributedMemorySeries = $derived(attributedSeries('memory'))
 </script>
 
 <svelte:head><title>System telemetry</title></svelte:head>
@@ -156,17 +228,35 @@
       </div>
     </section>
 
+    <section aria-labelledby="host-history-heading" class="space-y-4">
+      <div>
+        <h2 id="host-history-heading" class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Host history</h2>
+        <p class="mt-1 text-xs text-muted-foreground">Twelve two-hour buckets from the last 24 hours</p>
+      </div>
+      <div class="grid gap-4 xl:grid-cols-2">
+        <TelemetryHistory label="CPU usage" description="Host CPU cores in use" series={hostCPUSeries} formatValue={formatCores} />
+        <TelemetryHistory label="Memory usage" description="Host memory working set" series={hostMemorySeries} formatValue={formatBytes} />
+        <TelemetryHistory label="Disk throughput" description="Host read and write rates" series={hostDiskSeries} formatValue={formatRate} />
+        <TelemetryHistory label="Network throughput" description="Host receive and transmit rates" series={hostNetworkSeries} formatValue={formatRate} />
+      </div>
+    </section>
+
     <section aria-labelledby="attribution-heading" class="space-y-4">
       <div>
-        <h2 id="attribution-heading" class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Resource attribution</h2>
-        <p class="mt-1 text-xs text-muted-foreground">Host totals compared with current platform service and application container samples</p>
+        <h2 id="attribution-heading" class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">System service attribution</h2>
+        <p class="mt-1 text-xs text-muted-foreground">Host totals compared with current system service samples</p>
       </div>
 
       <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Card.Root><Card.Header><Card.Title class="text-sm">Attributed CPU</Card.Title></Card.Header><Card.Content><p class="text-2xl font-semibold">{currentCPURows.length ? formatCores(attributedCPUCores) : 'Unavailable'}</p><p class="mt-1 text-xs text-muted-foreground">Across {currentCPURows.length} current resources</p></Card.Content></Card.Root>
+        <Card.Root><Card.Header><Card.Title class="text-sm">Attributed CPU</Card.Title></Card.Header><Card.Content><p class="text-2xl font-semibold">{currentCPURows.length ? formatCores(attributedCPUCores) : 'Unavailable'}</p><p class="mt-1 text-xs text-muted-foreground">Across {currentCPURows.length} current services</p></Card.Content></Card.Root>
         <Card.Root><Card.Header><Card.Title class="text-sm">Estimated other host CPU</Card.Title></Card.Header><Card.Content><p class="text-2xl font-semibold">{telemetry.available && currentCPURows.length ? formatCores(unattributedCPUCores) : 'Unavailable'}</p><p class="mt-1 text-xs text-muted-foreground">Directional difference, not exact reconciliation</p></Card.Content></Card.Root>
         <Card.Root><Card.Header><Card.Title class="text-sm">Attributed memory</Card.Title></Card.Header><Card.Content><p class="text-2xl font-semibold">{currentMemoryRows.length ? formatBytes(attributedMemoryBytes) : 'Unavailable'}</p><p class="mt-1 text-xs text-muted-foreground">Across {currentMemoryRows.length} current working sets</p></Card.Content></Card.Root>
         <Card.Root><Card.Header><Card.Title class="text-sm">Estimated other host memory</Card.Title></Card.Header><Card.Content><p class="text-2xl font-semibold">{telemetry.available && currentMemoryRows.length ? formatBytes(unattributedMemoryBytes) : 'Unavailable'}</p><p class="mt-1 text-xs text-muted-foreground">Directional difference, not exact reconciliation</p></Card.Content></Card.Root>
+      </div>
+
+      <div class="grid gap-4 xl:grid-cols-2">
+        <TelemetryHistory label="Attributed CPU" description="CPU usage by system service" series={attributedCPUSeries} formatValue={formatCores} />
+        <TelemetryHistory label="Attributed memory" description="Working set by system service" series={attributedMemorySeries} formatValue={formatBytes} />
       </div>
 
       <Card.Root>
@@ -196,16 +286,16 @@
       </Card.Root>
 
       <Card.Root>
-        <Card.Header><Card.Title>Containers</Card.Title><Card.Description>Application workloads and managed resources grouped by stable DeployCrate identities.</Card.Description></Card.Header>
+        <Card.Header><Card.Title>System containers</Card.Title><Card.Description>Containerized services managed as part of the DeployCrate system.</Card.Description></Card.Header>
         <Card.Content class="p-0">
-          {#if containers.length}
+          {#if systemContainers.length}
             <div class="overflow-x-auto">
               <table class="w-full min-w-[1180px] text-left text-xs">
-                <thead class="border-y border-border bg-muted/30 text-muted-foreground"><tr><th class="px-5 py-3">Workload</th><th class="px-5 py-3">State</th><th class="px-5 py-3">CPU</th><th class="px-5 py-3">Memory</th><th class="px-5 py-3">Disk read / write</th><th class="px-5 py-3">Network receive / transmit</th><th class="px-5 py-3">Tasks</th><th class="px-5 py-3">Throttling / OOM</th></tr></thead>
+                <thead class="border-y border-border bg-muted/30 text-muted-foreground"><tr><th class="px-5 py-3">Service</th><th class="px-5 py-3">State</th><th class="px-5 py-3">CPU</th><th class="px-5 py-3">Memory</th><th class="px-5 py-3">Disk read / write</th><th class="px-5 py-3">Network receive / transmit</th><th class="px-5 py-3">Tasks</th><th class="px-5 py-3">Throttling / OOM</th></tr></thead>
                 <tbody>
-                  {#each containers as row (`${row.instance}:${row.deployment}`)}
+                  {#each systemContainers as row (`${row.component}:${row.resource}:${row.installation}`)}
                     <tr class="border-b border-border last:border-0">
-                      <td class="px-5 py-4"><p class="font-medium text-sm">{containerName(row)}</p><p class="mt-1 font-mono text-[11px] text-muted-foreground">{containerIdentity(row)}</p></td>
+                      <td class="px-5 py-4"><p class="font-medium text-sm">{systemContainerName(row)}</p><p class="mt-1 font-mono text-[11px] text-muted-foreground">{systemContainerIdentity(row)}</p></td>
                       <td class="px-5 py-4"><span class={row.available ? 'text-success' : 'text-warning'}>{row.available ? `Observed ${stamp(row.observedAt)}` : 'Stale'}</span></td>
                       <td class="px-5 py-4">{current(row, row.cpuAvailable, formatCores(row.cpuCores))}</td>
                       <td class="px-5 py-4">{current(row, row.memoryAvailable, formatBytes(row.memoryBytes))}</td>
@@ -218,7 +308,7 @@
                 </tbody>
               </table>
             </div>
-          {:else}<p class="p-6 text-sm text-muted-foreground">No container telemetry is available yet.</p>{/if}
+          {:else}<p class="p-6 text-sm text-muted-foreground">No system container telemetry is available yet.</p>{/if}
         </Card.Content>
       </Card.Root>
     </section>

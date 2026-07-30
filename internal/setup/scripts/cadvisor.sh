@@ -49,7 +49,8 @@ ExecStart=/usr/local/bin/cadvisor \\
   --housekeeping_interval=15s \\
   --max_housekeeping_interval=15s \\
   --allow_dynamic_housekeeping=false \\
-  --docker_only=false \\
+  --docker_only=true \\
+  --raw_cgroup_prefix_whitelist=/system.slice/prometheus.service,/system.slice/node-exporter.service,/system.slice/cadvisor.service,/system.slice/docker.service,/system.slice/caddy.service,/system.slice/otelcol-contrib.service,/system.slice/deploycrate-ce@ \\
   --store_container_labels=false \\
   --whitelisted_container_labels=com.deploycrate.application,com.deploycrate.environment,com.deploycrate.deployment,com.deploycrate.instance,com.deploycrate.release,com.deploycrate.resource-installation,com.deploycrate.component \\
   --enable_metrics=cpu,memory,diskIO,network,oom_event,process
@@ -92,7 +93,9 @@ cadvisor_diagnostics() {
 }
 
 for attempt in $(seq 1 30); do
-  if curl --fail --silent "http://${listen_address}:${listen_port}/healthz" >/dev/null; then
+  if curl --fail --silent "http://${listen_address}:${listen_port}/healthz" >/dev/null &&
+    curl --fail --silent "http://${listen_address}:${listen_port}/metrics" |
+      awk '/^cadvisor_version_info/ && /dockerVersion="[^"]+"/ { found = 1 } END { exit !found }'; then
     exit 0
   fi
   if ! systemctl is-active --quiet cadvisor.service; then

@@ -86,35 +86,51 @@ type SystemResourceUsage struct {
 }
 
 type SystemTelemetry struct {
-	Available                bool                          `json:"available"`
-	ObservedAt               time.Time                     `json:"observedAt"`
-	CPU                      SystemResourceUsage           `json:"cpu"`
-	CPUCoresUsed             float64                       `json:"cpuCoresUsed"`
-	CPUCoresTotal            float64                       `json:"cpuCoresTotal"`
-	DiskReadBytesPS          float64                       `json:"diskReadBytesPerSecond"`
-	DiskWriteBytesPS         float64                       `json:"diskWriteBytesPerSecond"`
-	NetworkReceiveBPS        float64                       `json:"networkReceiveBytesPerSecond"`
-	NetworkTransmitBPS       float64                       `json:"networkTransmitBytesPerSecond"`
-	OOMEvents                float64                       `json:"oomEvents"`
-	Tasks                    float64                       `json:"tasks"`
-	DiskReadAvailable        bool                          `json:"diskReadAvailable"`
-	DiskWriteAvailable       bool                          `json:"diskWriteAvailable"`
-	NetworkReceiveAvailable  bool                          `json:"networkReceiveAvailable"`
-	NetworkTransmitAvailable bool                          `json:"networkTransmitAvailable"`
-	OOMAvailable             bool                          `json:"oomAvailable"`
-	TasksAvailable           bool                          `json:"tasksAvailable"`
-	Memory                   SystemResourceUsage           `json:"memory"`
-	Storage                  SystemResourceUsage           `json:"storage"`
-	MemoryHistory            []SystemTelemetryHistoryPoint `json:"memoryHistory"`
-	StorageHistory           []SystemTelemetryHistoryPoint `json:"storageHistory"`
-	Platform                 []AttributedTelemetryRow      `json:"platform"`
-	Containers               []AttributedTelemetryRow      `json:"containers"`
+	Available                bool                           `json:"available"`
+	ObservedAt               time.Time                      `json:"observedAt"`
+	CPU                      SystemResourceUsage            `json:"cpu"`
+	CPUCoresUsed             float64                        `json:"cpuCoresUsed"`
+	CPUCoresTotal            float64                        `json:"cpuCoresTotal"`
+	DiskReadBytesPS          float64                        `json:"diskReadBytesPerSecond"`
+	DiskWriteBytesPS         float64                        `json:"diskWriteBytesPerSecond"`
+	NetworkReceiveBPS        float64                        `json:"networkReceiveBytesPerSecond"`
+	NetworkTransmitBPS       float64                        `json:"networkTransmitBytesPerSecond"`
+	OOMEvents                float64                        `json:"oomEvents"`
+	Tasks                    float64                        `json:"tasks"`
+	DiskReadAvailable        bool                           `json:"diskReadAvailable"`
+	DiskWriteAvailable       bool                           `json:"diskWriteAvailable"`
+	NetworkReceiveAvailable  bool                           `json:"networkReceiveAvailable"`
+	NetworkTransmitAvailable bool                           `json:"networkTransmitAvailable"`
+	OOMAvailable             bool                           `json:"oomAvailable"`
+	TasksAvailable           bool                           `json:"tasksAvailable"`
+	Memory                   SystemResourceUsage            `json:"memory"`
+	Storage                  SystemResourceUsage            `json:"storage"`
+	MemoryHistory            []SystemTelemetryHistoryPoint  `json:"memoryHistory"`
+	StorageHistory           []SystemTelemetryHistoryPoint  `json:"storageHistory"`
+	HostHistory              []SystemThroughputHistoryPoint `json:"hostHistory"`
+	Platform                 []AttributedTelemetryRow       `json:"platform"`
+	SystemContainers         []AttributedTelemetryRow       `json:"systemContainers"`
 }
 
 type SystemTelemetryHistoryPoint struct {
 	ObservedAt time.Time `json:"observedAt"`
 	Used       float64   `json:"used"`
 	Free       float64   `json:"free"`
+}
+
+type SystemThroughputHistoryPoint struct {
+	ObservedAt               time.Time `json:"observedAt"`
+	CPUCores                 float64   `json:"cpuCores"`
+	CPUCoresTotal            float64   `json:"cpuCoresTotal"`
+	DiskReadBytesPS          float64   `json:"diskReadBytesPerSecond"`
+	DiskWriteBytesPS         float64   `json:"diskWriteBytesPerSecond"`
+	NetworkReceiveBPS        float64   `json:"networkReceiveBytesPerSecond"`
+	NetworkTransmitBPS       float64   `json:"networkTransmitBytesPerSecond"`
+	CPUAvailable             bool      `json:"cpuAvailable"`
+	DiskReadAvailable        bool      `json:"diskReadAvailable"`
+	DiskWriteAvailable       bool      `json:"diskWriteAvailable"`
+	NetworkReceiveAvailable  bool      `json:"networkReceiveAvailable"`
+	NetworkTransmitAvailable bool      `json:"networkTransmitAvailable"`
 }
 
 type AttributedTelemetryPoint struct {
@@ -415,8 +431,9 @@ func (service MetricRollupService) HostTelemetry(ctx context.Context, server str
 		Memory:        SystemResourceUsage{Used: memoryTotal - memoryFree, Free: memoryFree},
 		Storage:       SystemResourceUsage{Used: storageTotal - storageFree, Free: storageFree},
 		MemoryHistory: []SystemTelemetryHistoryPoint{}, StorageHistory: []SystemTelemetryHistoryPoint{},
-		Platform:   []AttributedTelemetryRow{},
-		Containers: []AttributedTelemetryRow{},
+		HostHistory:      []SystemThroughputHistoryPoint{},
+		Platform:         []AttributedTelemetryRow{},
+		SystemContainers: []AttributedTelemetryRow{},
 	}
 	history, err := client.SystemMetricHistory(ctx, server, service.now().UTC().Add(-systemTelemetryHistoryWindow))
 	if err != nil {
@@ -424,6 +441,7 @@ func (service MetricRollupService) HostTelemetry(ctx context.Context, server str
 	}
 	result.MemoryHistory = systemResourceHistory(history, "memory_available_bytes", "memory_total_bytes")
 	result.StorageHistory = systemResourceHistory(history, "root_filesystem_available_bytes", "root_filesystem_size_bytes")
+	result.HostHistory = systemThroughputHistory(history)
 	return result, nil
 }
 
@@ -440,13 +458,34 @@ func (service MetricRollupService) SystemTelemetry(ctx context.Context, server s
 	if err != nil {
 		return result, err
 	}
-	result.Platform = attributedTelemetryRows(platform, nil, service.now().UTC())
+	historySince := service.now().UTC().Add(-systemTelemetryHistoryWindow)
+	platformHistory, err := client.AttributedMetricHistory(ctx, "native", server, "", historySince)
+	if err != nil {
+		return result, err
+	}
+	result.Platform = attributedTelemetryRows(platform, platformHistory, service.now().UTC())
 	containers, err := client.LatestAttributedMetricValues(ctx, "container", server, "")
 	if err != nil {
 		return result, err
 	}
-	result.Containers = attributedTelemetryRows(containers, nil, service.now().UTC())
+	containers = systemContainerMetricValues(containers)
+	containerHistory, err := client.AttributedMetricHistory(ctx, "container", server, "", historySince)
+	if err != nil {
+		return result, err
+	}
+	containerHistory = systemContainerMetricValues(containerHistory)
+	result.SystemContainers = attributedTelemetryRows(containers, containerHistory, service.now().UTC())
 	return result, nil
+}
+
+func systemContainerMetricValues(values []clickhouseclient.AttributedMetricValue) []clickhouseclient.AttributedMetricValue {
+	result := make([]clickhouseclient.AttributedMetricValue, 0, len(values))
+	for _, value := range values {
+		if value.Instance == "" {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func freshSystemMetric(
@@ -628,6 +667,42 @@ func systemResourceHistory(values []clickhouseclient.MetricHistoryValue, availab
 		}
 		free := clamp(current.available, 0, current.total)
 		points = append(points, SystemTelemetryHistoryPoint{ObservedAt: current.observedAt, Used: current.total - free, Free: free})
+	}
+	return points
+}
+
+func systemThroughputHistory(values []clickhouseclient.MetricHistoryValue) []SystemThroughputHistoryPoint {
+	pointsByBucket := make(map[int64]*SystemThroughputHistoryPoint)
+	for _, value := range values {
+		key := value.BucketStart.UnixMilli()
+		point := pointsByBucket[key]
+		if point == nil {
+			point = &SystemThroughputHistoryPoint{ObservedAt: value.BucketStart}
+			pointsByBucket[key] = point
+		}
+		switch value.Metric {
+		case "cpu_cores_used":
+			point.CPUCores, point.CPUAvailable = value.Value, true
+		case "cpu_cores_total":
+			point.CPUCoresTotal = value.Value
+		case "disk_read_bytes_per_second":
+			point.DiskReadBytesPS, point.DiskReadAvailable = value.Value, true
+		case "disk_write_bytes_per_second":
+			point.DiskWriteBytesPS, point.DiskWriteAvailable = value.Value, true
+		case "network_receive_bytes_per_second":
+			point.NetworkReceiveBPS, point.NetworkReceiveAvailable = value.Value, true
+		case "network_transmit_bytes_per_second":
+			point.NetworkTransmitBPS, point.NetworkTransmitAvailable = value.Value, true
+		}
+	}
+	keys := make([]int64, 0, len(pointsByBucket))
+	for key := range pointsByBucket {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	points := make([]SystemThroughputHistoryPoint, 0, len(keys))
+	for _, key := range keys {
+		points = append(points, *pointsByBucket[key])
 	}
 	return points
 }
