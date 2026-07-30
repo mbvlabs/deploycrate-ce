@@ -61,6 +61,7 @@ temporary_excludes="$(mktemp)"
 printf '%s\n' \
   /etc/deploycrate-ce \
   /etc/caddy \
+  /etc/otelcol-contrib \
   /etc/prometheus \
   /etc/wireguard \
   /etc/ssh \
@@ -73,6 +74,7 @@ printf '%s\n' \
   /etc/systemd/system/deploycrate-ce@.service \
   /etc/systemd/system/caddy.service \
   /etc/systemd/system/clickhouse.service \
+  /etc/systemd/system/otelcol-contrib.service \
   /etc/systemd/system/prometheus.service \
   /etc/systemd/system/node-exporter.service \
   /etc/systemd/system/cadvisor.service \

@@ -63,6 +63,35 @@ scrape_configs:
           server: control-plane
           target: control-plane
           component: node-exporter
+  - job_name: caddy
+    static_configs:
+      - targets: ['127.0.0.1:2019']
+        labels:
+          server: control-plane
+          target: caddy
+          component: caddy
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        action: keep
+        regex: 'caddy_.*|go_.*'
+  - job_name: clickhouse
+    static_configs:
+      - targets: ['127.0.0.1:9363']
+        labels:
+          server: control-plane
+          target: clickhouse
+          component: clickhouse
+  - job_name: otel-collector
+    static_configs:
+      - targets: ['127.0.0.1:8888']
+        labels:
+          server: control-plane
+          target: otel-collector
+          component: otel-collector
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        action: keep
+        regex: 'otelcol_.*'
   - job_name: cadvisor
     static_configs:
       - targets: ['127.0.0.1:9101']
@@ -77,7 +106,7 @@ scrape_configs:
       - source_labels: [__name__, container_label_com_deploycrate_application, container_label_com_deploycrate_resource_installation, container_label_com_deploycrate_component, id]
         separator: ';'
         action: keep
-        regex: '(process_.*|cadvisor_version_info|container_scrape_error);.*|[^;]+;[^;]+;.*|[^;]+;;[^;]+;.*|[^;]+;;;[^;]+;.*|[^;]+;;;;/system\.slice/(prometheus|node-exporter|cadvisor|docker|caddy|deploycrate-ce@(blue|green))\.service'
+        regex: '(process_.*|cadvisor_version_info|container_scrape_error);.*|[^;]+;[^;]+;.*|[^;]+;;[^;]+;.*|[^;]+;;;[^;]+;.*|[^;]+;;;;/system\.slice/(prometheus|node-exporter|cadvisor|docker|caddy|otelcol-contrib|deploycrate-ce@(blue|green))\.service'
       - action: labelmap
         regex: container_label_com_deploycrate_(application|environment|deployment|instance|release|resource_installation|component)
         replacement: '$1'
@@ -106,6 +135,10 @@ scrape_configs:
         target_label: component
         replacement: caddy
       - source_labels: [id]
+        regex: '/system\.slice/otelcol-contrib\.service'
+        target_label: component
+        replacement: otel-collector
+      - source_labels: [id]
         regex: '/system\.slice/deploycrate-ce@(blue|green)\.service'
         target_label: component
         replacement: deploycrate-ce
@@ -119,8 +152,8 @@ chmod 0640 /etc/prometheus/prometheus.yml
 cat > /etc/systemd/system/prometheus.service <<'EOF'
 [Unit]
 Description=Prometheus for DeployCrate
-Wants=network-online.target node-exporter.service cadvisor.service
-After=network-online.target node-exporter.service cadvisor.service
+Wants=network-online.target node-exporter.service cadvisor.service otelcol-contrib.service
+After=network-online.target node-exporter.service cadvisor.service otelcol-contrib.service
 
 [Service]
 Type=simple

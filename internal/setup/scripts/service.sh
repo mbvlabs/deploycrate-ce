@@ -24,8 +24,8 @@ chmod 0600 /etc/deploycrate-ce/slots/blue.env /etc/deploycrate-ce/slots/green.en
 cat > /etc/systemd/system/deploycrate-ce@.service <<EOF
 [Unit]
 Description=DeployCrate CE %i slot
-Wants=network-online.target
-After=network-online.target docker.service
+Wants=network-online.target otelcol-contrib.service
+After=network-online.target docker.service otelcol-contrib.service
 
 [Service]
 Type=simple
@@ -92,6 +92,9 @@ apt-mark hold caddy >/dev/null
 cat > /etc/caddy/Caddyfile <<EOF
 {
   admin 127.0.0.1:2019
+  metrics {
+    per_host
+  }
 }
 EOF
 

@@ -9,9 +9,12 @@ container="deploycrate-ce-postgres"
 volume="deploycrate-ce-postgres"
 
 docker volume create "${volume}" >/dev/null
-if docker container inspect "${container}" >/dev/null 2>&1 &&
-  [ "$(docker inspect --format '{{ index .Config.Labels "com.deploycrate.component" }}' "${container}")" != postgresql ]; then
-  docker rm --force "${container}" >/dev/null
+if docker container inspect "${container}" >/dev/null 2>&1; then
+  component="$(docker inspect --format '{{ index .Config.Labels "com.deploycrate.component" }}' "${container}")"
+  logging_driver="$(docker inspect --format '{{.HostConfig.LogConfig.Type}}' "${container}")"
+  if [ "${component}" != postgresql ] || [ "${logging_driver}" != journald ]; then
+    docker rm --force "${container}" >/dev/null
+  fi
 fi
 if docker container inspect "${container}" >/dev/null 2>&1; then
   docker start "${container}" >/dev/null

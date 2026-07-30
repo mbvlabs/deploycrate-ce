@@ -63,13 +63,13 @@ After the operator approves the review screen, the CLI saves resumable configura
 3. Configures persistent journald storage, fail2ban, a 1 GB `/swapfile` only when the host has no active swap, a resource guard, and conservative Docker garbage-collection timers that never prune volumes.
 4. Installs WireGuard tools; creates a root-only keypair and `wg0` configuration; assigns `10.99.0.1/16`; listens on UDP `51820`; opens UFW; and enables and verifies `wg-quick@wg0`.
 5. Installs checksum-verified node-exporter 1.11.1 as a hardened native service bound only to `10.99.0.1:9100`, with UFW access limited to `wg0`.
-6. Installs and configures Docker Engine, checksum-verified cAdvisor 0.57.0 on `127.0.0.1:9101`, and pinned ClickHouse 25.8.28.1 with a persistent volume. cAdvisor retains only approved DeployCrate labels and selected resource metric families.
-7. Installs checksum-verified Prometheus 3.13.1 as a localhost-only native service. Prometheus scrapes every 15 seconds and retains raw data for 24 hours. ClickHouse stores identity-complete, one-minute average, maximum, and last rollups for seven days.
+6. Installs and configures Docker Engine with journald logging, checksum-verified cAdvisor 0.57.0 on `127.0.0.1:9101`, and pinned ClickHouse 25.8.28.1 with a persistent volume and localhost-only Prometheus endpoint. cAdvisor retains only approved DeployCrate labels and selected resource metric families.
+7. Installs the checksum-verified OpenTelemetry Collector 0.157.0 and Prometheus 3.13.1 as localhost-only native services. The collector reads platform and Docker logs from journald, accepts structured application logs over local OTLP, and writes them to ClickHouse through a persistent disk queue. Prometheus scrapes node-exporter, cAdvisor, Caddy, ClickHouse, the collector, and itself every 15 seconds, retaining raw data for 24 hours. ClickHouse stores logs and identity-complete metric rollups for seven days.
 8. Installs checksum-verified Buildpacks `pack` 0.40.6, creates the deploycrate-owned build workspace, and pre-pulls the pinned Paketo builder, Go buildpack, and run image as the service user.
 9. Starts local PostgreSQL or verifies the external connection, installs the application release, writes protected runtime configuration, applies embedded migrations, creates or updates the administrator, and persists optional encrypted backup policies.
 10. Creates blue and green systemd slots on `127.0.0.1:8080` and `127.0.0.1:8081`, but links and starts only the initial blue slot.
-11. Installs checksum-verified Caddy 2.11.4, records the initial topology, applies the route, and hardens SSH. Direct root login and SSH passwords are disabled; public keys and the installation user CA remain enabled for `admin` only.
-12. Verifies WireGuard, node-exporter, cAdvisor, Docker, Caddy, PostgreSQL, Prometheus, ClickHouse, and the active application slot.
+11. Installs checksum-verified Caddy 2.11.4, enables native Prometheus metrics and structured access logs, records the initial topology, applies the route, and hardens SSH. Direct root login and SSH passwords are disabled; public keys and the installation user CA remain enabled for `admin` only.
+12. Verifies WireGuard, node-exporter, cAdvisor, Docker, Caddy, PostgreSQL, the OpenTelemetry Collector, Prometheus, ClickHouse, and the active application slot.
 13. Displays credentials, the recovery bundle path and checksum, and its age passphrase. `[ Copy details ]` remains the first focused action. Typing `CONFIRM` acknowledges the off-server recovery copy, activates backup policies, removes transient installer secrets and the temporary bootstrap binaries, then reboots.
 14. On application startup, the application lifecycle checks every configured backup policy and creates one initial backup when that policy has no backup record. The registered backup workers then execute and verify it through the same pipeline as scheduled backups.
 
@@ -90,7 +90,7 @@ The `bootstrap` CLI exists only for installation, resume, installer logs, and of
 | `bootstrap help` | Prints command usage. Running without arguments, `bootstrap --help`, and `bootstrap -h` do the same. |
 | `sudo bootstrap ssh-ca recover --bundle PATH --passphrase-file PATH` | Decrypts and validates a version 1 recovery bundle, checks both fingerprints against the public keys already trusted by SSH, and atomically restores the protected CA directory. |
 
-The application System Overview runs live checks for services, listeners, WireGuard state, node-exporter, Prometheus targets, ClickHouse, disk headroom, and agreement between the active systemd slot and PostgreSQL. These checks execute as the `deploycrate` service account and use its non-interactive sudo access where host privileges are required.
+The application System Overview runs live checks for services, listeners, WireGuard state, node-exporter, Caddy metrics, the OpenTelemetry Collector, Prometheus targets, ClickHouse metrics and storage, disk headroom, and agreement between the active systemd slot and PostgreSQL. These checks execute as the `deploycrate` service account and use its non-interactive sudo access where host privileges are required.
 
 Configuration is saved before the first setup phase and each completed step is recorded in `/var/lib/deploycrate-ce/install-state.json`. A non-blocking process lock prevents concurrent installers. If setup fails after configuration is saved, fix the reported problem and run `sudo bootstrap resume`; do not start a second installation. The topology transaction is reused by domain if Caddy reconciliation needs to be retried.
 
@@ -106,7 +106,7 @@ OpenSSH server trust reads the user CA file, which may contain overlapping publi
 
 For accidental CA loss, restore the original bundle with `bootstrap ssh-ca recover`. Suspected compromise is different: generate new CAs, distribute both new public keys alongside the old keys, switch signing to the new CAs, wait for old 30-minute user certificates to expire, and only then remove the old public keys. Do not restore a suspected-compromised CA.
 
-For WireGuard failure, inspect `wg-quick@wg0`, `/etc/wireguard/wg0.conf`, the `10.99.0.1/16` address, UDP 51820, and `wg show wg0` before restarting the unit. For cAdvisor failure, inspect `systemctl status cadvisor`, `journalctl -u cadvisor`, `curl http://127.0.0.1:9101/healthz`, and the Docker and cgroup permissions before changing its hardening. The listener must remain localhost-only. For Prometheus failure, run `promtool check config /etc/prometheus/prometheus.yml`, inspect `journalctl -u prometheus`, verify its localhost listener, then check `/api/v1/targets`. Prometheus raw metrics remain disposable. ClickHouse rollups expire after seven days locally and are exported into each server backup.
+For WireGuard failure, inspect `wg-quick@wg0`, `/etc/wireguard/wg0.conf`, the `10.99.0.1/16` address, UDP 51820, and `wg show wg0` before restarting the unit. For cAdvisor failure, inspect `systemctl status cadvisor`, `journalctl -u cadvisor`, `curl http://127.0.0.1:9101/healthz`, and the Docker and cgroup permissions before changing its hardening. The listener must remain localhost-only. For collector failure, validate `/etc/otelcol-contrib/config.yaml`, inspect `journalctl -u otelcol-contrib`, and check `http://127.0.0.1:13133/`. Its disk queue retains pending log batches while ClickHouse is unavailable. For Prometheus failure, run `promtool check config /etc/prometheus/prometheus.yml`, inspect `journalctl -u prometheus`, verify its localhost listener, then check `/api/v1/targets`. Prometheus raw metrics remain disposable. ClickHouse logs and rollups expire after seven days locally; rollups are exported into each server backup.
 
 cAdvisor is intentionally a host-trusted native service running as root. Reading the complete cgroup hierarchy and Docker-owned runtime state is not reliably available to a dedicated unprivileged account. The unit keeps network access local, has no writable service state, drops label and metric families outside the allowlist, and applies systemd filesystem, namespace, privilege-escalation, kernel, and address-family restrictions that do not block those reads.
 
@@ -120,9 +120,13 @@ max by (job) (process_resident_memory_bytes{job=~"prometheus|node-exporter|cadvi
 max by (job) (process_open_fds{job=~"prometheus|node-exporter|cadvisor"})
 max by (job) (scrape_duration_seconds{job=~"prometheus|node-exporter|cadvisor"})
 prometheus_tsdb_head_series
+up{job=~"caddy|clickhouse|otel-collector"}
+sum by (job) (scrape_samples_post_metric_relabeling{job=~"caddy|clickhouse|otel-collector"})
 ```
 
 Also record `du -sb /var/lib/prometheus` at the beginning and end of the same observation window, plus the application `metric_rollup_duration_seconds`, inserted-row, rejected-sample, and run-outcome telemetry from its configured OpenTelemetry backend. Exporter `process_*` values are overhead checks only and must not be added to cgroup resource totals.
+
+Application logs keep their structured attributes and OpenTelemetry trace context. Caddy access logs include DeployCrate route and domain attributes. Docker supplies container name, image, and approved DeployCrate identity labels to journald, so workload and managed Resource logs remain attributable after collection. Journald remains the local fallback for host and container logs, while the collector queue preserves unsent ClickHouse batches across restarts.
 
 ### Upcoming Managed Node Enrollment
 
@@ -162,6 +166,7 @@ DeployCrate separates temporary bootstrap commands, immutable application releas
 /usr/local/bin/
 |-- node_exporter                       WireGuard-only host metrics exporter
 |-- cadvisor                            Local Docker and systemd cgroup collector
+|-- otelcol-contrib                     Local log receiver and ClickHouse exporter
 |-- prometheus                          Local raw metrics collector
 |-- promtool                            Prometheus configuration validator
 `-- pack                                Cloud Native Buildpacks CLI
@@ -186,14 +191,16 @@ The remaining DeployCrate-managed locations are:
 | `/etc/deploycrate-ce/installer-secrets.json` | Transient installer credentials. This file is removed only after the operator types `CONFIRM` at the final handoff. |
 | `/etc/ssl/certs/deploycrate-ce-postgresql-ca.crt` | Managed copy of an external PostgreSQL CA certificate, when one was supplied. It remains readable by the application service. |
 | `/etc/wireguard/` | Root-only `deploycrate-ce.key`, `deploycrate-ce.pub`, and `wg0.conf` files for the initial mesh peer. |
+| `/etc/otelcol-contrib/` | Protected collector configuration and ClickHouse exporter credentials. |
 | `/var/lib/deploycrate-ce/` | Root-owned installer state, including `install-state.json`, `install.lock`, and the redacted `install.log`. |
 | `/var/lib/deploycrate-ce/runtime/` | Mutable application runtime state owned by the `deploycrate` user, including `self-update.json`. |
 | `/var/lib/deploycrate/ssh-ca/` | Protected user and host CA keypairs plus the verified age recovery bundle. |
 | `/var/lib/prometheus/` | Raw Prometheus data retained for 24 hours. |
+| `/var/lib/otelcol-contrib/storage/` | Collector cursors and persistent batches awaiting delivery to ClickHouse. |
 | `/var/lib/deploycrate-builds/` | Build workspace owned by the `deploycrate` user. Builder images, build containers, and Environment-owned Pack cache volumes remain Docker-managed. |
 | `/home/admin/.ssh/authorized_keys` | Generated administrator key and optional ordinary owner key for SSH access as `admin`. |
 
-ClickHouse uses the Docker volume `deploycrate-ce-clickhouse`. Its `metric_rollups_v2` table expires identity-complete rows after seven days and is exported in deterministic JSONEachRow format into each daily server backup. The live Docker volume itself is not copied. Persistent volume capacity is not inferred from cgroup disk I/O and remains a separate collection problem.
+ClickHouse uses the Docker volume `deploycrate-ce-clickhouse`. Its `metric_rollups_v2` and `otel_logs` tables expire rows after seven days. Metric rollups are exported in deterministic JSONEachRow format into each daily server backup; operational logs are not included in that export. The live Docker volume itself is not copied. Persistent volume capacity is not inferred from cgroup disk I/O and remains a separate collection problem.
 
 The installer also places the checksum-verified Buildpacks CLI at `/usr/local/bin/pack`. Caddy is installed from the pinned official Debian package at `/usr/bin/caddy` and held at the installer-supported version. Docker Engine and the remaining host packages use their standard Debian package locations.
 
@@ -219,10 +226,11 @@ The installer also writes host integration files outside the DeployCrate directo
 - `/etc/systemd/system/deploycrate-renew-ssh-host-certificate.timer` renews the control-plane SSH host certificate monthly.
 - `/etc/wireguard/wg0.conf` is managed by `wg-quick@wg0.service` and contains the live WireGuard interface configuration.
 - `/etc/systemd/system/caddy.service.d/deploycrate-ce.conf` makes Caddy resume its autosaved API configuration after reboot.
-- `/etc/caddy/Caddyfile` enables Caddy's local administration endpoint.
+- `/etc/caddy/Caddyfile` enables Caddy's local administration and Prometheus metrics endpoints.
+- `/etc/otelcol-contrib/config.yaml` configures journald and local OTLP ingestion, the persistent queue, and ClickHouse log export.
 - `/etc/systemd/journald.conf.d/deploycrate-ce.conf`, `/etc/fail2ban/jail.d/deploycrate-ce.conf`, and `/etc/ssh/sshd_config.d/99-deploycrate-ce.conf` configure host logging and SSH protection.
 - `/etc/sudoers.d/admin` and `/etc/sudoers.d/deploycrate` grant unrestricted passwordless sudo to the administrator and running application identities respectively. The `deploycrate` account remains locked, non-login, and excluded from SSH.
-- `/etc/docker/daemon.json` configures Docker log rotation.
+- `/etc/docker/daemon.json` sends container logs and approved identity labels to persistent journald storage.
 - `/swapfile` is created only when the host has no active swap.
 
 ### Post-install Inspection

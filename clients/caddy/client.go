@@ -72,7 +72,10 @@ func (client *Client) ApplyRoute(ctx context.Context, route Route) error {
 	if healthPath == "" {
 		healthPath = "/api/health"
 	}
-	handles := make([]routeHandle, 0, 2)
+	handles := []routeHandle{
+		{Handler: "log_append", Key: "deploycrate_route", Value: route.ID},
+		{Handler: "log_append", Key: "deploycrate_domain", Value: route.Domain},
+	}
 	if route.Authentication != nil {
 		handles = append(handles, routeHandle{
 			Handler: "authentication",
@@ -124,6 +127,9 @@ func (client *Client) applyRoute(ctx context.Context, entry routeEntry) error {
 	}
 	if !serverExists {
 		return client.createServerWithRoute(ctx, entry)
+	}
+	if err := client.ensureServerObservability(ctx); err != nil {
+		return err
 	}
 
 	payload, err := json.Marshal(entry)
@@ -243,6 +249,10 @@ func (client *Client) createServerWithRoute(ctx context.Context, route routeEntr
 				"servers": map[string]any{
 					"srv0": map[string]any{
 						"listen": []string{":443"},
+						"logs":   map[string]any{},
+						"metrics": map[string]any{
+							"per_host": true,
+						},
 						"routes": []routeEntry{route},
 					},
 				},
@@ -254,6 +264,18 @@ func (client *Client) createServerWithRoute(ctx context.Context, route routeEntr
 	}
 	if err := client.request(ctx, http.MethodPatch, "/config/", payload, http.StatusOK); err != nil {
 		return fmt.Errorf("caddy: create HTTP server with route %s: %w", route.ID, err)
+	}
+	return nil
+}
+
+func (client *Client) ensureServerObservability(ctx context.Context) error {
+	for path, payload := range map[string][]byte{
+		"/config/apps/http/servers/srv0/logs":    []byte(`{}`),
+		"/config/apps/http/servers/srv0/metrics": []byte(`{"per_host":true}`),
+	} {
+		if err := client.request(ctx, http.MethodPost, path, payload, http.StatusOK); err != nil {
+			return fmt.Errorf("caddy: enable server observability at %s: %w", path, err)
+		}
 	}
 	return nil
 }
@@ -397,6 +419,8 @@ type routeEntry struct {
 
 type routeHandle struct {
 	Handler       string                            `json:"handler"`
+	Key           string                            `json:"key,omitempty"`
+	Value         string                            `json:"value,omitempty"`
 	HealthChecks  *healthChecks                     `json:"health_checks,omitempty"`
 	LoadBalancing *loadBalancing                    `json:"load_balancing,omitempty"`
 	Upstreams     []upstream                        `json:"upstreams,omitempty"`

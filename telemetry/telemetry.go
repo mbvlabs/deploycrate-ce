@@ -8,10 +8,12 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"time"
 
 	"deploycrate-ce/config"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
@@ -19,14 +21,12 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 type Telemetry struct {
 	resource       *resource.Resource
-	loggerProvider *sdklog.LoggerProvider
 	meterProvider  *sdkmetric.MeterProvider
 	tracerProvider *sdktrace.TracerProvider
 	shutdownFuncs  []func(context.Context) error
@@ -38,11 +38,22 @@ func New(cfg config.Config) (*Telemetry, error) {
 
 	opts := []Option{
 		WithService(cfg.Telemetry.ServiceName, cfg.Telemetry.ServiceVersion),
+		WithServiceInstance(cfg.App.InstanceID),
 		WithBatchConfig(cfg.Telemetry.BatchSize, cfg.Telemetry.BatchTimeoutMs, 2048),
 		WithTraceSampleRate(cfg.Telemetry.TraceSampleRate),
 	}
 
-	opts = append(opts, WithLogExporters(NewStdoutExporter()))
+	logExporters := []LogExporter{NewStdoutExporter()}
+	if cfg.Telemetry.OtlpLogsEndpoint != "" {
+		logExporters = append(logExporters, NewOtlpLogExporter(
+			cfg.Telemetry.OtlpLogsEndpoint,
+			parseHeaders(cfg.Telemetry.OtlpHeaders),
+			cfg.Telemetry.BatchSize,
+			time.Duration(cfg.Telemetry.BatchTimeoutMs)*time.Millisecond,
+			2048,
+		))
+	}
+	opts = append(opts, WithLogExporters(logExporters...))
 
 	if cfg.Telemetry.OtlpMetricsEndpoint != "" {
 		opts = append(opts, WithMetricExporters(
@@ -84,12 +95,14 @@ func newWithOpts(ctx context.Context, opts ...Option) (*Telemetry, error) {
 		}
 	}
 
-	res, err := resource.New(ctx,
-		resource.WithAttributes(
-			semconv.ServiceNameKey.String(cfg.serviceName),
-			semconv.ServiceVersionKey.String(cfg.serviceVersion),
-		),
-	)
+	attributes := []attribute.KeyValue{
+		semconv.ServiceNameKey.String(cfg.serviceName),
+		semconv.ServiceVersionKey.String(cfg.serviceVersion),
+	}
+	if cfg.serviceInstance != "" {
+		attributes = append(attributes, semconv.ServiceInstanceIDKey.String(cfg.serviceInstance))
+	}
+	res, err := resource.New(ctx, resource.WithAttributes(attributes...))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
@@ -124,7 +137,7 @@ func (t *Telemetry) initLogging(ctx context.Context) error {
 
 	handlers := make([]slog.Handler, 0, len(t.config.logExporters))
 	for _, exporter := range t.config.logExporters {
-		handler, err := exporter.GetSlogHandler(ctx)
+		handler, err := exporter.GetSlogHandler(ctx, t.resource)
 		if err != nil {
 			return fmt.Errorf("failed to get slog handler from %s: %w", exporter.Name(), err)
 		}

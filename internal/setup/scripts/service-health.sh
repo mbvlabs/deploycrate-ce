@@ -25,7 +25,7 @@ if grep -Eq "^allowusers ([^ ]+ )*${SERVICE_USER}( |$)" <<<"${sshd_config}"; the
   exit 1
 fi
 
-for unit in wg-quick@wg0.service node-exporter.service docker.service caddy.service prometheus.service cadvisor.service deploycrate-ce@blue.service; do
+for unit in wg-quick@wg0.service node-exporter.service docker.service caddy.service otelcol-contrib.service prometheus.service cadvisor.service deploycrate-ce@blue.service; do
   systemctl is-active --quiet "${unit}" || {
     printf 'Required service is not active: %s\n' "${unit}" >&2
     exit 1
@@ -47,14 +47,26 @@ if ss -lnt | grep -Eq '(^|[[:space:]])(0\.0\.0\.0|\*):9100([[:space:]]|$)'; then
 fi
 ss -lnt | grep -Fq '127.0.0.1:9090'
 ss -lnt | grep -Fq '127.0.0.1:9101'
-if ss -lnt | grep -Eq '(^|[[:space:]])(0\.0\.0\.0|\*):9101([[:space:]]|$)'; then
-  printf 'cAdvisor is exposed outside localhost\n' >&2
-  exit 1
-fi
+ss -lnt | grep -Fq '127.0.0.1:2019'
+ss -lnt | grep -Fq '127.0.0.1:4318'
 ss -lnt | grep -Fq '127.0.0.1:8123'
+ss -lnt | grep -Fq '127.0.0.1:8888'
+ss -lnt | grep -Fq '127.0.0.1:9000'
+ss -lnt | grep -Fq '127.0.0.1:9363'
+ss -lnt | grep -Fq '127.0.0.1:13133'
+for port in 2019 4318 8123 8888 9000 9090 9101 9363 13133; do
+  if ss -lnt | grep -Eq "(^|[[:space:]])(0\\.0\\.0\\.0|\\*|\\[::\\]):${port}([[:space:]]|$)"; then
+    printf 'Local telemetry or control-plane port is publicly exposed: %s\n' "${port}" >&2
+    exit 1
+  fi
+done
 curl --fail --silent http://10.99.0.1:9100/metrics >/dev/null
 curl --fail --silent http://127.0.0.1:9090/-/ready >/dev/null
 curl --fail --silent http://127.0.0.1:9101/healthz >/dev/null
+curl --fail --silent http://127.0.0.1:2019/metrics >/dev/null
+curl --fail --silent http://127.0.0.1:8888/metrics >/dev/null
+curl --fail --silent http://127.0.0.1:9363/metrics >/dev/null
+curl --fail --silent http://127.0.0.1:13133/ >/dev/null
 prometheus_targets="$(curl --fail --silent http://127.0.0.1:9090/api/v1/targets)"
 grep -Fq '"health":"up"' <<<"${prometheus_targets}"
 if grep -Fq '"health":"down"' <<<"${prometheus_targets}"; then

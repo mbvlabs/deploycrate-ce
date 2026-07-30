@@ -10,6 +10,7 @@ type Option func(*telemetryOptions) error
 type telemetryOptions struct {
 	serviceName     string
 	serviceVersion  string
+	serviceInstance string
 	logExporters    []LogExporter
 	metricExporters []MetricExporter
 	traceExporters  []TraceExporter
@@ -17,6 +18,13 @@ type telemetryOptions struct {
 	batchTimeout    time.Duration
 	queueSize       int
 	traceSampleRate float64
+}
+
+func WithServiceInstance(instance string) Option {
+	return func(c *telemetryOptions) error {
+		c.serviceInstance = instance
+		return nil
+	}
 }
 
 func defaultConfig() *telemetryOptions {

@@ -24,6 +24,7 @@ const (
 	DockerComposePackageVersion    = "5.3.1-1~debian.13~trixie"
 	DockerContainerdPackageVersion = "2.2.6-1~debian.13~trixie"
 	DockerEngineVersion            = "29.6.2"
+	OpenTelemetryCollectorVersion  = "0.157.0"
 	ResticVersion                  = "0.18.1"
 )
 
@@ -125,7 +126,7 @@ func DefaultSteps(operations Operations) []Step {
 			nil,
 		),
 		scriptSetupStep(
-			"docker-29-6-2",
+			"docker-29-6-2-journald-v1",
 			"Install and configure the pinned Docker toolchain",
 			"docker.sh",
 			func(cfg Config) map[string]string {
@@ -147,15 +148,27 @@ func DefaultSteps(operations Operations) []Step {
 			nil,
 		),
 		scriptSetupStep(
-			"clickhouse-25-8-28-1",
-			"Start pinned ClickHouse metrics storage",
+			"clickhouse-25-8-28-1-observability-v1",
+			"Start pinned ClickHouse telemetry storage",
 			"clickhouse.sh",
 			func(cfg Config) map[string]string {
 				return map[string]string{"CLICKHOUSE_PASSWORD": cfg.Secrets.ClickHousePassword}
 			},
 		),
 		scriptSetupStep(
-			"prometheus-3-13-1",
+			"otel-collector-"+OpenTelemetryCollectorVersion,
+			"Install durable service and workload log collection",
+			"otel-collector.sh",
+			func(cfg Config) map[string]string {
+				return map[string]string{
+					"CLICKHOUSE_PASSWORD": cfg.Secrets.ClickHousePassword,
+					"INSTANCE_ID":         cfg.InstanceID,
+					"OTELCOL_VERSION":     OpenTelemetryCollectorVersion,
+				}
+			},
+		),
+		scriptSetupStep(
+			"prometheus-3-13-1-service-metrics-v1",
 			"Install Prometheus with 24-hour raw retention",
 			"prometheus.sh",
 			nil,
@@ -259,13 +272,13 @@ func sshCASetupStep() Step {
 
 func databaseStep(validateDatabase func(context.Context, string) error) Step {
 	return setupStep{
-		id: "database", description: "Configure local or external PostgreSQL",
+		id: "database-observability-v1", description: "Configure local or external PostgreSQL",
 		apply: func(ctx context.Context, cfg Config, runtime Runtime, report Reporter) error {
 			if runtime.DryRun {
 				report(
 					Event{
 						Kind:   EventLog,
-						StepID: "database",
+						StepID: "database-observability-v1",
 						Line:   "dry run: database setup skipped",
 					},
 				)
@@ -276,7 +289,7 @@ func databaseStep(validateDatabase func(context.Context, string) error) Step {
 				if err != nil {
 					return err
 				}
-				return runtime.Shell.Run(ctx, "database", script, map[string]string{
+				return runtime.Shell.Run(ctx, "database-observability-v1", script, map[string]string{
 					"DB_NAME":     cfg.Database.Name,
 					"DB_USER":     cfg.Database.User,
 					"DB_PASSWORD": cfg.Secrets.DatabasePassword,

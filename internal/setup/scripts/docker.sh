@@ -53,11 +53,10 @@ apt-mark hold \
 install -d -m 0755 /etc/docker
 cat > /etc/docker/daemon.json <<'EOF'
 {
-  "log-driver": "local",
+  "log-driver": "journald",
   "log-opts": {
-    "max-size": "10m",
-    "max-file": "5",
-    "compress": "true"
+    "tag": "{{.Name}}",
+    "labels": "com.deploycrate.application,com.deploycrate.environment,com.deploycrate.deployment,com.deploycrate.instance,com.deploycrate.release,com.deploycrate.resource-installation,com.deploycrate.component"
   },
   "live-restore": true
 }

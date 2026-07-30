@@ -63,21 +63,21 @@ var metricRollupDefinitions = []rollupDefinition{
 	{scope: "host", name: "oom_events", expression: `clamp_min(increase(node_vmstat_oom_kill[1m]), 0)`},
 	{scope: "host", name: "tasks", expression: `node_procs_running`},
 
-	{scope: "container", name: "cpu_cores_used", expression: `sum by (` + containerIdentityLabels + `) (rate(container_cpu_usage_seconds_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|deploycrate-ce"}[1m]))`},
-	{scope: "container", name: "memory_working_set_bytes", expression: `sum by (` + containerIdentityLabels + `) (container_memory_working_set_bytes{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|deploycrate-ce"})`},
-	{scope: "container", name: "disk_read_bytes_per_second", expression: `sum by (` + containerIdentityLabels + `) (rate(container_fs_reads_bytes_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|deploycrate-ce"}[1m]))`},
-	{scope: "container", name: "disk_write_bytes_per_second", expression: `sum by (` + containerIdentityLabels + `) (rate(container_fs_writes_bytes_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|deploycrate-ce"}[1m]))`},
-	{scope: "container", name: "network_receive_bytes_per_second", expression: `sum by (` + containerIdentityLabels + `) (rate(container_network_receive_bytes_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|deploycrate-ce"}[1m]))`},
-	{scope: "container", name: "network_transmit_bytes_per_second", expression: `sum by (` + containerIdentityLabels + `) (rate(container_network_transmit_bytes_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|deploycrate-ce"}[1m]))`},
-	{scope: "container", name: "oom_events", expression: `sum by (` + containerIdentityLabels + `) (clamp_min(increase(container_oom_events_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|deploycrate-ce"}[1m]), 0))`},
-	{scope: "container", name: "cpu_throttling_ratio", expression: `sum by (` + containerIdentityLabels + `) (rate(container_cpu_cfs_throttled_periods_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|deploycrate-ce"}[1m])) / clamp_min(sum by (` + containerIdentityLabels + `) (rate(container_cpu_cfs_periods_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|deploycrate-ce"}[1m])), 1)`},
-	{scope: "container", name: "tasks", expression: `sum by (` + containerIdentityLabels + `) (container_processes{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|deploycrate-ce"})`},
+	{scope: "container", name: "cpu_cores_used", expression: `sum by (` + containerIdentityLabels + `) (rate(container_cpu_usage_seconds_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m]))`},
+	{scope: "container", name: "memory_working_set_bytes", expression: `sum by (` + containerIdentityLabels + `) (container_memory_working_set_bytes{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"})`},
+	{scope: "container", name: "disk_read_bytes_per_second", expression: `sum by (` + containerIdentityLabels + `) (rate(container_fs_reads_bytes_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m]))`},
+	{scope: "container", name: "disk_write_bytes_per_second", expression: `sum by (` + containerIdentityLabels + `) (rate(container_fs_writes_bytes_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m]))`},
+	{scope: "container", name: "network_receive_bytes_per_second", expression: `sum by (` + containerIdentityLabels + `) (rate(container_network_receive_bytes_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m]))`},
+	{scope: "container", name: "network_transmit_bytes_per_second", expression: `sum by (` + containerIdentityLabels + `) (rate(container_network_transmit_bytes_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m]))`},
+	{scope: "container", name: "oom_events", expression: `sum by (` + containerIdentityLabels + `) (clamp_min(increase(container_oom_events_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m]), 0))`},
+	{scope: "container", name: "cpu_throttling_ratio", expression: `sum by (` + containerIdentityLabels + `) (rate(container_cpu_cfs_throttled_periods_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m])) / clamp_min(sum by (` + containerIdentityLabels + `) (rate(container_cpu_cfs_periods_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m])), 1)`},
+	{scope: "container", name: "tasks", expression: `sum by (` + containerIdentityLabels + `) (container_processes{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"})`},
 
-	{scope: "native", name: "cpu_cores_used", expression: `sum by (component) (rate(container_cpu_usage_seconds_total{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|deploycrate-ce@(blue|green))\\.service"}[1m]))`},
-	{scope: "native", name: "memory_working_set_bytes", expression: `sum by (component) (container_memory_working_set_bytes{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|deploycrate-ce@(blue|green))\\.service"})`},
-	{scope: "native", name: "disk_read_bytes_per_second", expression: `sum by (component) (rate(container_fs_reads_bytes_total{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|deploycrate-ce@(blue|green))\\.service"}[1m]))`},
-	{scope: "native", name: "disk_write_bytes_per_second", expression: `sum by (component) (rate(container_fs_writes_bytes_total{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|deploycrate-ce@(blue|green))\\.service"}[1m]))`},
-	{scope: "native", name: "tasks", expression: `sum by (component) (container_processes{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|deploycrate-ce@(blue|green))\\.service"})`},
+	{scope: "native", name: "cpu_cores_used", expression: `sum by (component) (rate(container_cpu_usage_seconds_total{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|otelcol-contrib|deploycrate-ce@(blue|green))\\.service"}[1m]))`},
+	{scope: "native", name: "memory_working_set_bytes", expression: `sum by (component) (container_memory_working_set_bytes{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|otelcol-contrib|deploycrate-ce@(blue|green))\\.service"})`},
+	{scope: "native", name: "disk_read_bytes_per_second", expression: `sum by (component) (rate(container_fs_reads_bytes_total{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|otelcol-contrib|deploycrate-ce@(blue|green))\\.service"}[1m]))`},
+	{scope: "native", name: "disk_write_bytes_per_second", expression: `sum by (component) (rate(container_fs_writes_bytes_total{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|otelcol-contrib|deploycrate-ce@(blue|green))\\.service"}[1m]))`},
+	{scope: "native", name: "tasks", expression: `sum by (component) (container_processes{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|otelcol-contrib|deploycrate-ce@(blue|green))\\.service"})`},
 }
 
 type SystemResourceUsage struct {
@@ -279,7 +279,7 @@ func (resolver *metricIdentityResolver) resolve(scope string, labels map[string]
 	case "host":
 		identity = models.MetricRollupIdentities{Server: resolver.system.Server}
 	case "native":
-		if !slices.Contains([]string{"prometheus", "node-exporter", "cadvisor", "docker", "caddy", "deploycrate-ce"}, labels["component"]) {
+		if !slices.Contains([]string{"prometheus", "node-exporter", "cadvisor", "docker", "caddy", "otel-collector", "deploycrate-ce"}, labels["component"]) {
 			return models.MetricRollupIdentities{}, errRejectedMetricIdentity
 		}
 		identity = models.MetricRollupIdentities{Server: resolver.system.Server}

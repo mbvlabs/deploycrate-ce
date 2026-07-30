@@ -63,6 +63,15 @@ func (s *SystemHealth) Run(ctx context.Context) SystemHealthReport {
 		{name: "cadvisor", run: func(ctx context.Context) (string, error) {
 			return getSystemHealth(ctx, "http://127.0.0.1:9101/healthz", "", "")
 		}},
+		{name: "caddy_metrics", run: func(ctx context.Context) (string, error) {
+			return getSystemHealth(ctx, "http://127.0.0.1:2019/metrics", "", "")
+		}},
+		{name: "otel_collector", run: func(ctx context.Context) (string, error) {
+			return getSystemHealth(ctx, "http://127.0.0.1:13133/", "", "")
+		}},
+		{name: "clickhouse_metrics", run: func(ctx context.Context) (string, error) {
+			return getSystemHealth(ctx, "http://127.0.0.1:9363/metrics", "", "")
+		}},
 		{name: "prometheus_targets", run: s.checkPrometheusTargets},
 		{name: "clickhouse", run: s.checkClickHouse},
 		{name: "disk_headroom", run: checkSystemDisk},
@@ -92,6 +101,7 @@ func checkSystemServices(ctx context.Context) (string, error) {
 		"node-exporter.service",
 		"docker.service",
 		"caddy.service",
+		"otelcol-contrib.service",
 		"prometheus.service",
 		"cadvisor.service",
 	}
@@ -108,7 +118,7 @@ func checkSystemServices(ctx context.Context) (string, error) {
 			return "", fmt.Errorf("%s is not active: %w", unit, err)
 		}
 	}
-	return "WireGuard, node-exporter, cAdvisor, Docker, Caddy, and Prometheus are active", nil
+	return "WireGuard, node-exporter, cAdvisor, Docker, Caddy, OpenTelemetry Collector, and Prometheus are active", nil
 }
 
 func checkSystemListeners(ctx context.Context) (string, error) {
@@ -116,7 +126,18 @@ func checkSystemListeners(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, listener := range []string{"10.99.0.1:9100", "127.0.0.1:9090", "127.0.0.1:9101", "127.0.0.1:8123"} {
+	for _, listener := range []string{
+		"10.99.0.1:9100",
+		"127.0.0.1:2019",
+		"127.0.0.1:4318",
+		"127.0.0.1:8123",
+		"127.0.0.1:8888",
+		"127.0.0.1:9000",
+		"127.0.0.1:9090",
+		"127.0.0.1:9101",
+		"127.0.0.1:9363",
+		"127.0.0.1:13133",
+	} {
 		if !strings.Contains(output, listener) {
 			return "", fmt.Errorf("required listener %s is absent", listener)
 		}
@@ -124,10 +145,27 @@ func checkSystemListeners(ctx context.Context) (string, error) {
 	if strings.Contains(output, "0.0.0.0:9100") || strings.Contains(output, "*:9100") {
 		return "", errors.New("node-exporter has a public listener")
 	}
-	if strings.Contains(output, "0.0.0.0:9101") || strings.Contains(output, "*:9101") {
-		return "", errors.New("cAdvisor has a public listener")
+	for _, listener := range []struct {
+		name string
+		port string
+	}{
+		{name: "Caddy admin API", port: "2019"},
+		{name: "OpenTelemetry OTLP receiver", port: "4318"},
+		{name: "ClickHouse HTTP", port: "8123"},
+		{name: "OpenTelemetry metrics", port: "8888"},
+		{name: "ClickHouse native protocol", port: "9000"},
+		{name: "Prometheus", port: "9090"},
+		{name: "cAdvisor", port: "9101"},
+		{name: "ClickHouse metrics", port: "9363"},
+		{name: "OpenTelemetry health check", port: "13133"},
+	} {
+		if strings.Contains(output, "0.0.0.0:"+listener.port) ||
+			strings.Contains(output, "*:"+listener.port) ||
+			strings.Contains(output, "[::]:"+listener.port) {
+			return "", fmt.Errorf("%s has a public listener", listener.name)
+		}
 	}
-	return "node-exporter is on WireGuard; cAdvisor, Prometheus, and ClickHouse are local", nil
+	return "node-exporter is on WireGuard; telemetry and control-plane listeners are local", nil
 }
 
 func checkSystemWireGuard(ctx context.Context) (string, error) {
