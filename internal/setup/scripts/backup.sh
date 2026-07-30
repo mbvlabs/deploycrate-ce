@@ -61,6 +61,7 @@ temporary_excludes="$(mktemp)"
 printf '%s\n' \
   /etc/deploycrate-ce \
   /etc/caddy \
+  /etc/prometheus \
   /etc/wireguard \
   /etc/ssh \
   /var/lib/deploycrate-ce \
@@ -74,6 +75,8 @@ printf '%s\n' \
   /etc/systemd/system/clickhouse.service \
   /etc/systemd/system/prometheus.service \
   /etc/systemd/system/node-exporter.service \
+  /etc/systemd/system/cadvisor.service \
+  /etc/systemd/system/docker.service.d/deploycrate-ce-accounting.conf \
   > "${temporary_sources}"
 
 printf '%s\n' \

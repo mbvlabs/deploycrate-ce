@@ -9,11 +9,16 @@ container="deploycrate-ce-postgres"
 volume="deploycrate-ce-postgres"
 
 docker volume create "${volume}" >/dev/null
+if docker container inspect "${container}" >/dev/null 2>&1 &&
+  [ "$(docker inspect --format '{{ index .Config.Labels "com.deploycrate.component" }}' "${container}")" != postgresql ]; then
+  docker rm --force "${container}" >/dev/null
+fi
 if docker container inspect "${container}" >/dev/null 2>&1; then
   docker start "${container}" >/dev/null
 else
   docker run --detach \
     --name "${container}" \
+    --label com.deploycrate.component=postgresql \
     --restart unless-stopped \
     --publish 127.0.0.1:5432:5432 \
     --env "POSTGRES_DB=${DB_NAME}" \

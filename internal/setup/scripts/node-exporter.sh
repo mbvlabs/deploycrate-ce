@@ -53,6 +53,10 @@ Group=node_exporter
 ExecStart=/usr/local/bin/node_exporter --web.listen-address=10.99.0.1:9100
 Restart=on-failure
 RestartSec=5
+CPUAccounting=yes
+MemoryAccounting=yes
+IOAccounting=yes
+TasksAccounting=yes
 NoNewPrivileges=true
 PrivateDevices=true
 PrivateTmp=true

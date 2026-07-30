@@ -63,6 +63,16 @@ cat > /etc/docker/daemon.json <<'EOF'
 }
 EOF
 
+install -d -m 0755 /etc/systemd/system/docker.service.d
+cat > /etc/systemd/system/docker.service.d/deploycrate-ce-accounting.conf <<'EOF'
+[Service]
+CPUAccounting=yes
+MemoryAccounting=yes
+IOAccounting=yes
+TasksAccounting=yes
+EOF
+
+systemctl daemon-reload
 systemctl enable --now docker
 systemctl restart docker
 installed_engine_version="$(docker version --format '{{.Server.Version}}')"

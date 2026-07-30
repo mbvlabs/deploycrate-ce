@@ -60,6 +60,9 @@ func (s *SystemHealth) Run(ctx context.Context) SystemHealthReport {
 		{name: "node_exporter", run: func(ctx context.Context) (string, error) {
 			return getSystemHealth(ctx, "http://10.99.0.1:9100/metrics", "", "")
 		}},
+		{name: "cadvisor", run: func(ctx context.Context) (string, error) {
+			return getSystemHealth(ctx, "http://127.0.0.1:9101/healthz", "", "")
+		}},
 		{name: "prometheus_targets", run: s.checkPrometheusTargets},
 		{name: "clickhouse", run: s.checkClickHouse},
 		{name: "disk_headroom", run: checkSystemDisk},
@@ -90,6 +93,7 @@ func checkSystemServices(ctx context.Context) (string, error) {
 		"docker.service",
 		"caddy.service",
 		"prometheus.service",
+		"cadvisor.service",
 	}
 	for _, unit := range units {
 		if _, err := systemHealthCommand(
@@ -104,7 +108,7 @@ func checkSystemServices(ctx context.Context) (string, error) {
 			return "", fmt.Errorf("%s is not active: %w", unit, err)
 		}
 	}
-	return "WireGuard, node-exporter, Docker, Caddy, and Prometheus are active", nil
+	return "WireGuard, node-exporter, cAdvisor, Docker, Caddy, and Prometheus are active", nil
 }
 
 func checkSystemListeners(ctx context.Context) (string, error) {
@@ -112,7 +116,7 @@ func checkSystemListeners(ctx context.Context) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, listener := range []string{"10.99.0.1:9100", "127.0.0.1:9090", "127.0.0.1:8123"} {
+	for _, listener := range []string{"10.99.0.1:9100", "127.0.0.1:9090", "127.0.0.1:9101", "127.0.0.1:8123"} {
 		if !strings.Contains(output, listener) {
 			return "", fmt.Errorf("required listener %s is absent", listener)
 		}
@@ -120,7 +124,10 @@ func checkSystemListeners(ctx context.Context) (string, error) {
 	if strings.Contains(output, "0.0.0.0:9100") || strings.Contains(output, "*:9100") {
 		return "", errors.New("node-exporter has a public listener")
 	}
-	return "node-exporter is on WireGuard; Prometheus and ClickHouse are local", nil
+	if strings.Contains(output, "0.0.0.0:9101") || strings.Contains(output, "*:9101") {
+		return "", errors.New("cAdvisor has a public listener")
+	}
+	return "node-exporter is on WireGuard; cAdvisor, Prometheus, and ClickHouse are local", nil
 }
 
 func checkSystemWireGuard(ctx context.Context) (string, error) {

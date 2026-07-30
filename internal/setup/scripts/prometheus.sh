@@ -55,12 +55,62 @@ scrape_configs:
         labels:
           server: control-plane
           target: prometheus
+          component: prometheus
   - job_name: node-exporter
     static_configs:
       - targets: ['10.99.0.1:9100']
         labels:
           server: control-plane
           target: control-plane
+          component: node-exporter
+  - job_name: cadvisor
+    static_configs:
+      - targets: ['127.0.0.1:9101']
+        labels:
+          server: control-plane
+          target: cadvisor
+          collector: cadvisor
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        action: keep
+        regex: 'container_(cpu_usage_seconds_total|cpu_cfs_throttled_seconds_total|cpu_cfs_periods_total|cpu_cfs_throttled_periods_total|memory_working_set_bytes|memory_usage_bytes|oom_events_total|fs_reads_bytes_total|fs_writes_bytes_total|network_receive_bytes_total|network_transmit_bytes_total|processes|tasks_state|spec_cpu_quota|spec_cpu_period|spec_memory_limit_bytes|last_seen)|process_.*|cadvisor_version_info|container_scrape_error'
+      - source_labels: [__name__, container_label_com_deploycrate_application, container_label_com_deploycrate_resource_installation, container_label_com_deploycrate_component, id]
+        separator: ';'
+        action: keep
+        regex: '(process_.*|cadvisor_version_info|container_scrape_error);.*|[^;]+;[^;]+;.*|[^;]+;;[^;]+;.*|[^;]+;;;[^;]+;.*|[^;]+;;;;/system\.slice/(prometheus|node-exporter|cadvisor|docker|caddy|deploycrate-ce@(blue|green))\.service'
+      - action: labelmap
+        regex: container_label_com_deploycrate_(application|environment|deployment|instance|release|resource_installation|component)
+        replacement: '$1'
+      - source_labels: [__name__]
+        regex: 'process_.*|cadvisor_version_info|container_scrape_error'
+        target_label: component
+        replacement: cadvisor
+      - source_labels: [id]
+        regex: '/system\.slice/prometheus\.service'
+        target_label: component
+        replacement: prometheus
+      - source_labels: [id]
+        regex: '/system\.slice/node-exporter\.service'
+        target_label: component
+        replacement: node-exporter
+      - source_labels: [id]
+        regex: '/system\.slice/cadvisor\.service'
+        target_label: component
+        replacement: cadvisor
+      - source_labels: [id]
+        regex: '/system\.slice/docker\.service'
+        target_label: component
+        replacement: docker
+      - source_labels: [id]
+        regex: '/system\.slice/caddy\.service'
+        target_label: component
+        replacement: caddy
+      - source_labels: [id]
+        regex: '/system\.slice/deploycrate-ce@(blue|green)\.service'
+        target_label: component
+        replacement: deploycrate-ce
+      - regex: 'container_label_.*|image|name|collector'
+        action: labeldrop
 EOF
 chown root:prometheus /etc/prometheus/prometheus.yml
 chmod 0640 /etc/prometheus/prometheus.yml
@@ -69,8 +119,8 @@ chmod 0640 /etc/prometheus/prometheus.yml
 cat > /etc/systemd/system/prometheus.service <<'EOF'
 [Unit]
 Description=Prometheus for DeployCrate
-Wants=network-online.target node-exporter.service
-After=network-online.target node-exporter.service
+Wants=network-online.target node-exporter.service cadvisor.service
+After=network-online.target node-exporter.service cadvisor.service
 
 [Service]
 Type=simple
@@ -79,6 +129,10 @@ Group=prometheus
 ExecStart=/usr/local/bin/prometheus --config.file=/etc/prometheus/prometheus.yml --storage.tsdb.path=/var/lib/prometheus --storage.tsdb.retention.time=24h --web.listen-address=127.0.0.1:9090
 Restart=on-failure
 RestartSec=5
+CPUAccounting=yes
+MemoryAccounting=yes
+IOAccounting=yes
+TasksAccounting=yes
 NoNewPrivileges=true
 PrivateDevices=true
 PrivateTmp=true

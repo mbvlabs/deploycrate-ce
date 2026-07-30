@@ -25,7 +25,7 @@ if grep -Eq "^allowusers ([^ ]+ )*${SERVICE_USER}( |$)" <<<"${sshd_config}"; the
   exit 1
 fi
 
-for unit in wg-quick@wg0.service node-exporter.service docker.service caddy.service prometheus.service deploycrate-ce@blue.service; do
+for unit in wg-quick@wg0.service node-exporter.service docker.service caddy.service prometheus.service cadvisor.service deploycrate-ce@blue.service; do
   systemctl is-active --quiet "${unit}" || {
     printf 'Required service is not active: %s\n' "${unit}" >&2
     exit 1
@@ -46,9 +46,15 @@ if ss -lnt | grep -Eq '(^|[[:space:]])(0\.0\.0\.0|\*):9100([[:space:]]|$)'; then
   exit 1
 fi
 ss -lnt | grep -Fq '127.0.0.1:9090'
+ss -lnt | grep -Fq '127.0.0.1:9101'
+if ss -lnt | grep -Eq '(^|[[:space:]])(0\.0\.0\.0|\*):9101([[:space:]]|$)'; then
+  printf 'cAdvisor is exposed outside localhost\n' >&2
+  exit 1
+fi
 ss -lnt | grep -Fq '127.0.0.1:8123'
 curl --fail --silent http://10.99.0.1:9100/metrics >/dev/null
 curl --fail --silent http://127.0.0.1:9090/-/ready >/dev/null
+curl --fail --silent http://127.0.0.1:9101/healthz >/dev/null
 prometheus_targets="$(curl --fail --silent http://127.0.0.1:9090/api/v1/targets)"
 grep -Fq '"health":"up"' <<<"${prometheus_targets}"
 if grep -Fq '"health":"down"' <<<"${prometheus_targets}"; then

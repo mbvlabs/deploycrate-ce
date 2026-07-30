@@ -17,6 +17,7 @@ import (
 
 const (
 	BuildpacksPackVersion          = "0.40.6"
+	CadvisorVersion                = "0.57.0"
 	CaddyVersion                   = "2.11.4"
 	DockerBuildxPackageVersion     = "0.35.0-1~debian.13~trixie"
 	DockerCEPackageVersion         = "5:29.6.2-1~debian.13~trixie"
@@ -138,6 +139,12 @@ func DefaultSteps(operations Operations) []Step {
 					"SERVICE_USER":                   cfg.ServiceUser,
 				}
 			},
+		),
+		scriptSetupStep(
+			"cadvisor-"+CadvisorVersion,
+			"Install localhost-only cAdvisor resource accounting",
+			"cadvisor.sh",
+			nil,
 		),
 		scriptSetupStep(
 			"clickhouse-25-8-28-1",

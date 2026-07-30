@@ -21,6 +21,16 @@
   type DeploymentEvent = { id: string; sequence: number; eventType: string; status: string; step: string; message: string; error: string; occurredAt: string }
   type DeploymentEventSnapshot = { deployment: Deployment; events: DeploymentEvent[]; nextSequence: number; hasMore: boolean }
   type Instance = { id: string; state: string; slot: string; ports: Record<string, number>; releaseId: string; observedAt: string }
+  type TelemetryPoint = { observedAt: string; cpuCores: number; memoryBytes: number; diskReadBytesPerSecond: number; diskWriteBytesPerSecond: number; networkReceiveBytesPerSecond: number; networkTransmitBytesPerSecond: number; cpuAvailable: boolean; memoryAvailable: boolean; diskReadAvailable: boolean; diskWriteAvailable: boolean; networkReceiveAvailable: boolean; networkTransmitAvailable: boolean }
+  type TelemetryRow = {
+    application: string; environment: string; release: string; deployment: string; target: string; instance: string
+    available: boolean; observedAt: string; cpuCores: number; memoryBytes: number
+    diskReadBytesPerSecond: number; diskWriteBytesPerSecond: number
+    networkReceiveBytesPerSecond: number; networkTransmitBytesPerSecond: number
+    oomEvents: number; cpuThrottlingRatio: number; tasks: number; history: TelemetryPoint[]
+    cpuAvailable: boolean; memoryAvailable: boolean; diskReadAvailable: boolean; diskWriteAvailable: boolean
+    networkReceiveAvailable: boolean; networkTransmitAvailable: boolean; oomAvailable: boolean; cpuThrottlingAvailable: boolean; tasksAvailable: boolean
+  }
   type Overview = {
     applicationId: string
     applicationName: string
@@ -40,7 +50,7 @@
     deployments: Deployment[]
     instances: Instance[]
   }
-  let { auth, environment }: { auth: { email: string }; environment: Overview } = $props()
+  let { auth, environment, telemetry }: { auth: { email: string }; environment: Overview; telemetry: TelemetryRow[] } = $props()
   let key = $state('')
   let value = $state('')
   let liveBuilds = $state<Build[] | null>(null)
@@ -69,6 +79,14 @@
   const activeBuildId = $derived(builds.find((build) => build.status === 'running')?.id ?? builds.find((build) => build.status === 'pending')?.id ?? '')
   const expandedDeploymentStatus = $derived(deployments.find((deployment) => deployment.id === expandedDeploymentId)?.status ?? '')
   const short = (value: string) => value ? value.slice(0, 12) : 'Unavailable'
+  const formatBytes = (value: number) => {
+    if (!Number.isFinite(value) || value < 0) return 'Unavailable'
+    if (value === 0) return '0 B'
+    const units = ['B', 'KB', 'MB', 'GB', 'TB']
+    const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1)
+    return `${(value / (1024 ** index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`
+  }
+  const formatRate = (value: number) => `${formatBytes(value)}/s`
   const stamp = (value: string) => value ? new Date(value).toLocaleString() : 'Pending'
   const stepLabel = (value: string) => value ? value.replaceAll('_', ' ') : 'waiting for worker'
   const deploymentStep = (deployment: Deployment) => deployment.active ? 'serving' : deployment.status === 'succeeded' ? 'superseded' : deployment.currentStep || 'queued'
@@ -307,6 +325,40 @@
     </header>
 
     <Card.Root><Card.Header><Card.Action><span class:text-success={environment.deployability.deployable} class:text-destructive={!environment.deployability.deployable}>{environment.deployability.deployable ? 'Ready' : 'Blocked'}</span></Card.Action><Card.Title>Desired state</Card.Title></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><DataField label="Repository" value={environment.repository} /><DataField label="Reference" value={environment.reference} /><DataField label="Build context" value={environment.contextPath} /><DataField label="Domain" value={environment.domain} /><DataField label="Registry" value={environment.registryName} /><DataField label="Registry endpoint" value={environment.registryEndpoint} />{#if !environment.deployability.deployable}<DataField label="Missing" value={environment.deployability.missing.join(', ')} />{/if}</Card.Content></Card.Root>
+
+    <Card.Root>
+      <Card.Header><Card.Title>Workload telemetry</Card.Title><Card.Description>Current and 24-hour cgroup usage grouped by stable Instance and Deployment identity.</Card.Description></Card.Header>
+      <Card.Content class="space-y-3">
+        {#each telemetry as row (row.instance)}
+          <details class="border border-border">
+            <summary class="cursor-pointer list-none p-4">
+              <div class="flex flex-wrap items-start justify-between gap-4">
+                <div><p class="font-medium">Instance {short(row.instance)}</p><p class="mt-1 font-mono text-[11px] text-muted-foreground">Deployment {short(row.deployment)} · Release {short(row.release)}</p></div>
+                <span class={row.available ? 'text-success' : 'text-warning'}>{row.available ? `Observed ${stamp(row.observedAt)}` : 'Stale'}</span>
+              </div>
+              <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-6">
+                <div><dt class="text-xs text-muted-foreground">CPU</dt><dd class="mt-1">{row.available && row.cpuAvailable ? `${row.cpuCores.toFixed(2)} cores` : 'Unavailable'}</dd></div>
+                <div><dt class="text-xs text-muted-foreground">Memory</dt><dd class="mt-1">{row.available && row.memoryAvailable ? formatBytes(row.memoryBytes) : 'Unavailable'}</dd></div>
+                <div><dt class="text-xs text-muted-foreground">Disk read / write</dt><dd class="mt-1">{row.available && row.diskReadAvailable ? formatRate(row.diskReadBytesPerSecond) : 'Unavailable'} / {row.available && row.diskWriteAvailable ? formatRate(row.diskWriteBytesPerSecond) : 'Unavailable'}</dd></div>
+                <div><dt class="text-xs text-muted-foreground">Network receive / transmit</dt><dd class="mt-1">{row.available && row.networkReceiveAvailable ? formatRate(row.networkReceiveBytesPerSecond) : 'Unavailable'} / {row.available && row.networkTransmitAvailable ? formatRate(row.networkTransmitBytesPerSecond) : 'Unavailable'}</dd></div>
+                <div><dt class="text-xs text-muted-foreground">Tasks</dt><dd class="mt-1">{row.available && row.tasksAvailable ? row.tasks.toFixed(0) : 'Unavailable'}</dd></div>
+                <div><dt class="text-xs text-muted-foreground">Throttling / OOM</dt><dd class="mt-1">{row.available && row.cpuThrottlingAvailable ? `${(row.cpuThrottlingRatio * 100).toFixed(1)}%` : 'Unavailable'} / {row.available && row.oomAvailable ? row.oomEvents.toFixed(0) : 'Unavailable'}</dd></div>
+              </dl>
+            </summary>
+            <div class="overflow-x-auto border-t border-border bg-muted/20">
+              {#if row.history.length}
+                <table class="w-full min-w-[760px] text-left text-xs">
+                  <thead class="text-muted-foreground"><tr><th class="px-4 py-2 font-medium">Minute</th><th class="px-4 py-2 font-medium">CPU</th><th class="px-4 py-2 font-medium">Memory</th><th class="px-4 py-2 font-medium">Disk read / write</th><th class="px-4 py-2 font-medium">Network receive / transmit</th></tr></thead>
+                  <tbody>{#each row.history.slice(-60) as point (point.observedAt)}<tr class="border-t border-border/70"><td class="px-4 py-2">{stamp(point.observedAt)}</td><td class="px-4 py-2">{point.cpuAvailable ? `${point.cpuCores.toFixed(2)} cores` : 'Unavailable'}</td><td class="px-4 py-2">{point.memoryAvailable ? formatBytes(point.memoryBytes) : 'Unavailable'}</td><td class="px-4 py-2">{point.diskReadAvailable ? formatRate(point.diskReadBytesPerSecond) : 'Unavailable'} / {point.diskWriteAvailable ? formatRate(point.diskWriteBytesPerSecond) : 'Unavailable'}</td><td class="px-4 py-2">{point.networkReceiveAvailable ? formatRate(point.networkReceiveBytesPerSecond) : 'Unavailable'} / {point.networkTransmitAvailable ? formatRate(point.networkTransmitBytesPerSecond) : 'Unavailable'}</td></tr>{/each}</tbody>
+                </table>
+              {:else}<p class="p-4 text-sm text-muted-foreground">Historical telemetry is not available yet.</p>{/if}
+            </div>
+          </details>
+        {:else}
+          <p class="text-sm text-muted-foreground">No workload telemetry is available. A missing sample is not treated as zero usage.</p>
+        {/each}
+      </Card.Content>
+    </Card.Root>
 
     <Card.Root><Card.Header><Card.Title>Resources</Card.Title><Card.Description>Explicit connections available to this Environment.</Card.Description></Card.Header><Card.Content class="space-y-2">{#each environment.resources as resource}<div class="grid gap-1 border border-border p-3 sm:grid-cols-3"><span class="font-mono text-sm">{resource.alias}</span><span>{resource.name}</span><span class="text-muted-foreground">{resource.kind}</span></div>{:else}<p class="text-sm text-muted-foreground">No Resources selected.</p>{/each}</Card.Content></Card.Root>
 

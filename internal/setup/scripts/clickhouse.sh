@@ -8,11 +8,16 @@ readonly container="deploycrate-ce-clickhouse"
 readonly volume="deploycrate-ce-clickhouse"
 
 docker volume create "${volume}" >/dev/null
+if docker container inspect "${container}" >/dev/null 2>&1 &&
+  [ "$(docker inspect --format '{{ index .Config.Labels "com.deploycrate.component" }}' "${container}")" != clickhouse ]; then
+  docker rm --force "${container}" >/dev/null
+fi
 if docker container inspect "${container}" >/dev/null 2>&1; then
   docker start "${container}" >/dev/null
 else
   docker run --detach \
     --name "${container}" \
+    --label com.deploycrate.component=clickhouse \
     --restart unless-stopped \
     --publish 127.0.0.1:8123:8123 \
     --publish 127.0.0.1:9000:9000 \
@@ -50,23 +55,30 @@ done
 if ! docker exec "${container}" clickhouse-client \
   --user deploycrate --password "${CLICKHOUSE_PASSWORD}" --multiquery --query '
 CREATE DATABASE IF NOT EXISTS deploycrate;
-CREATE TABLE IF NOT EXISTS deploycrate.metric_rollups
+CREATE TABLE IF NOT EXISTS deploycrate.metric_rollups_v2
 (
   bucket_start DateTime,
   observed_at DateTime64(3),
+  scope LowCardinality(String),
+  component LowCardinality(String),
   metric LowCardinality(String),
   average Float64,
   maximum Float64,
   last Float64,
   server String,
+  application String,
   environment String,
+  release String,
   deployment String,
   target String,
+  instance String,
   resource String,
+  installation String,
+  runtime_id String,
   observation_id UUID
 )
 ENGINE = MergeTree
-ORDER BY (metric, server, target, bucket_start, observation_id)
+ORDER BY (scope, metric, server, environment, component, instance, installation, bucket_start, observation_id)
 TTL bucket_start + INTERVAL 7 DAY DELETE;
 ' >/dev/null; then
   clickhouse_diagnostics

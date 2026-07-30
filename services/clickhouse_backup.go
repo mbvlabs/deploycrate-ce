@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 )
 
-const clickHouseMetricRollupSchemaVersion = "1"
+const clickHouseMetricRollupSchemaVersion = "2"
 
 type ClickHouseBackupArtifact struct {
 	Path          string `json:"path"`

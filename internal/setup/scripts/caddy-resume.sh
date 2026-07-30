@@ -8,6 +8,10 @@ cat > /etc/systemd/system/caddy.service.d/deploycrate-ce.conf <<'EOF'
 ExecStart=
 ExecStart=/usr/bin/caddy run --environ --resume
 ExecReload=
+CPUAccounting=yes
+MemoryAccounting=yes
+IOAccounting=yes
+TasksAccounting=yes
 EOF
 
 systemctl daemon-reload

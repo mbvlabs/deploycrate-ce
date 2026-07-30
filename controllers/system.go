@@ -47,6 +47,7 @@ func (s System) RegisterRoutes(r *router.Router) error {
 		handler echo.HandlerFunc
 	}{
 		{method: http.MethodGet, route: routes.SystemOverview, handler: s.Overview},
+		{method: http.MethodGet, route: routes.SystemTelemetry, handler: s.Telemetry},
 		{method: http.MethodGet, route: routes.SystemDeployments, handler: s.Deployments},
 		{method: http.MethodGet, route: routes.SystemResources, handler: s.Resources},
 		{method: http.MethodGet, route: routes.SystemResource, handler: s.Resource},
@@ -100,7 +101,7 @@ func (s System) Overview(etx *echo.Context) error {
 	if err != nil {
 		return s.renderLoadError(etx, "backup health", err)
 	}
-	telemetry, err := s.metric.SystemTelemetry(etx.Request().Context(), overview.ServerID)
+	telemetry, err := s.metric.HostTelemetry(etx.Request().Context(), overview.ServerID)
 	if err != nil {
 		slog.WarnContext(
 			etx.Request().Context(),
@@ -117,6 +118,30 @@ func (s System) Overview(etx *echo.Context) error {
 		"health":    s.health.Run(etx.Request().Context()),
 		"backups":   backups,
 		"telemetry": telemetry,
+	})
+}
+
+func (s System) Telemetry(etx *echo.Context) error {
+	overview, err := models.Application.FindSystemOverview(
+		etx.Request().Context(),
+		s.db.Executor(),
+	)
+	if err != nil {
+		return s.renderLoadError(etx, "telemetry", err)
+	}
+	metricData, err := s.metric.SystemTelemetry(etx.Request().Context(), overview.ServerID)
+	if err != nil {
+		slog.WarnContext(
+			etx.Request().Context(),
+			"failed to load DeployCrate CE extended telemetry",
+			"error",
+			err,
+		)
+	}
+	return inertia.Page(etx, "System/Telemetry", inertia.Props{
+		"auth":      s.authProps(etx),
+		"system":    overview,
+		"telemetry": metricData,
 	})
 }
 

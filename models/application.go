@@ -322,10 +322,15 @@ func (a application) FindSystemState(
 }
 
 type MetricRollupIdentities struct {
-	Server      string `bun:"server"`
-	Environment string `bun:"environment"`
-	Deployment  string `bun:"deployment"`
-	Target      string `bun:"target"`
+	Server       string `bun:"server"`
+	Application  string `bun:"application"`
+	Environment  string `bun:"environment"`
+	Release      string `bun:"release"`
+	Deployment   string `bun:"deployment"`
+	Target       string `bun:"target"`
+	Instance     string `bun:"instance"`
+	Resource     string `bun:"resource"`
+	Installation string `bun:"installation"`
 }
 
 func (a application) FindMetricRollupIdentities(
@@ -336,9 +341,12 @@ func (a application) FindMetricRollupIdentities(
 	if err := db.NewSelect().
 		TableExpr("applications AS application").
 		ColumnExpr("target.server_id::text AS server").
+		ColumnExpr("application.id::text AS application").
 		ColumnExpr("environment.id::text AS environment").
+		ColumnExpr("instance.release_id::text AS release").
 		ColumnExpr("deployment.id::text AS deployment").
 		ColumnExpr("target.id::text AS target").
+		ColumnExpr("instance.id::text AS instance").
 		Join("JOIN environments AS environment ON environment.application_id = application.id").
 		Join("JOIN environment_targets AS target ON target.environment_id = environment.id").
 		Join("JOIN instances AS instance ON instance.environment_target_id = target.id AND instance.state = 'serving'").
@@ -350,4 +358,46 @@ func (a application) FindMetricRollupIdentities(
 		return MetricRollupIdentities{}, err
 	}
 	return identities, nil
+}
+
+func (a application) FindMetricWorkloadIdentities(
+	ctx context.Context,
+	db storage.Executor,
+	instanceID uuid.UUID,
+) (MetricRollupIdentities, error) {
+	var identities MetricRollupIdentities
+	err := db.NewSelect().
+		TableExpr("instances AS instance").
+		ColumnExpr("target.server_id::text AS server").
+		ColumnExpr("application.id::text AS application").
+		ColumnExpr("environment.id::text AS environment").
+		ColumnExpr("instance.release_id::text AS release").
+		ColumnExpr("instance.deployment_id::text AS deployment").
+		ColumnExpr("target.id::text AS target").
+		ColumnExpr("instance.id::text AS instance").
+		Join("JOIN environment_targets AS target ON target.id = instance.environment_target_id").
+		Join("JOIN environments AS environment ON environment.id = target.environment_id").
+		Join("JOIN applications AS application ON application.id = environment.application_id").
+		Where("instance.id = ?", instanceID).
+		Limit(1).
+		Scan(ctx, &identities)
+	return identities, err
+}
+
+func (a application) FindMetricResourceIdentities(
+	ctx context.Context,
+	db storage.Executor,
+	installationID uuid.UUID,
+) (MetricRollupIdentities, error) {
+	var identities MetricRollupIdentities
+	err := db.NewSelect().
+		TableExpr("resource_installations AS installation").
+		ColumnExpr("installation.server_id::text AS server").
+		ColumnExpr("installation.resource_id::text AS resource").
+		ColumnExpr("installation.id::text AS installation").
+		Join("JOIN resources AS resource ON resource.id = installation.resource_id").
+		Where("installation.id = ?", installationID).
+		Limit(1).
+		Scan(ctx, &identities)
+	return identities, err
 }

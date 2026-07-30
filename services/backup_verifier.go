@@ -382,24 +382,49 @@ func verifyClickHouseExport(value []byte, expected ClickHouseBackupArtifact) err
 	rows := int64(0)
 	firstBucket := ""
 	lastBucket := ""
+	requiredColumns := []string{
+		"bucket_start", "observed_at", "scope", "component", "metric", "average", "maximum", "last",
+		"server", "application", "environment", "release", "deployment", "target", "instance",
+		"resource", "installation", "runtime_id", "observation_id",
+	}
 	for {
-		var row struct {
-			BucketStart string `json:"bucket_start"`
-		}
+		var row map[string]json.RawMessage
 		if err := decoder.Decode(&row); errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
 			return fmt.Errorf("decode ClickHouse metric rollup export: %w", err)
 		}
-		if row.BucketStart == "" {
+		for _, column := range requiredColumns {
+			if _, ok := row[column]; !ok {
+				return fmt.Errorf("ClickHouse metric rollup export is missing column %s", column)
+			}
+		}
+		var bucketStart, scope, metricName, server, observationID string
+		if json.Unmarshal(row["bucket_start"], &bucketStart) != nil ||
+			json.Unmarshal(row["scope"], &scope) != nil ||
+			json.Unmarshal(row["metric"], &metricName) != nil ||
+			json.Unmarshal(row["server"], &server) != nil ||
+			json.Unmarshal(row["observation_id"], &observationID) != nil {
+			return errors.New("ClickHouse metric rollup export contains invalid identity fields")
+		}
+		if bucketStart == "" {
 			return errors.New("ClickHouse metric rollup export contains an empty bucket_start")
 		}
-		rows++
-		if firstBucket == "" || row.BucketStart < firstBucket {
-			firstBucket = row.BucketStart
+		if !slices.Contains([]string{"host", "container", "native"}, scope) || metricName == "" {
+			return errors.New("ClickHouse metric rollup export contains an invalid metric scope")
 		}
-		if lastBucket == "" || row.BucketStart > lastBucket {
-			lastBucket = row.BucketStart
+		if _, err := uuid.Parse(server); err != nil {
+			return errors.New("ClickHouse metric rollup export contains an invalid server identity")
+		}
+		if _, err := uuid.Parse(observationID); err != nil {
+			return errors.New("ClickHouse metric rollup export contains an invalid observation identity")
+		}
+		rows++
+		if firstBucket == "" || bucketStart < firstBucket {
+			firstBucket = bucketStart
+		}
+		if lastBucket == "" || bucketStart > lastBucket {
+			lastBucket = bucketStart
 		}
 	}
 	if rows != expected.Rows || firstBucket != expected.FirstBucket || lastBucket != expected.LastBucket {

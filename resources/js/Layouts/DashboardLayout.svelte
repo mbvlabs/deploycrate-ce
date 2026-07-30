@@ -1,5 +1,6 @@
 <script lang="ts">
   import AppWindowIcon from '@lucide/svelte/icons/app-window'
+  import ActivityIcon from '@lucide/svelte/icons/activity'
   import BoxesIcon from '@lucide/svelte/icons/boxes'
   import ChevronDownIcon from '@lucide/svelte/icons/chevron-down'
   import DatabaseIcon from '@lucide/svelte/icons/database'
@@ -148,6 +149,16 @@
                   <Link {...props} href={routes.systemOverview()}>
                     <ShieldCheckIcon />
                     <span>Overview</span>
+                  </Link>
+                {/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.systemTelemetry())} tooltipContent="Telemetry">
+                {#snippet child({ props })}
+                  <Link {...props} href={routes.systemTelemetry()}>
+                    <ActivityIcon />
+                    <span>Telemetry</span>
                   </Link>
                 {/snippet}
               </Sidebar.MenuButton>

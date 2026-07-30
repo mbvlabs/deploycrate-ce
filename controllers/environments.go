@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -24,10 +25,16 @@ type Environments struct {
 	setup        *services.EnvironmentSetup
 	secrets      *services.EnvironmentSecrets
 	applications *services.ApplicationSetup
+	metric       services.MetricRollupService
 }
 
-func NewEnvironments(setup *services.EnvironmentSetup, secrets *services.EnvironmentSecrets, applications *services.ApplicationSetup) Environments {
-	return Environments{setup: setup, secrets: secrets, applications: applications}
+func NewEnvironments(
+	setup *services.EnvironmentSetup,
+	secrets *services.EnvironmentSecrets,
+	applications *services.ApplicationSetup,
+	metric services.MetricRollupService,
+) Environments {
+	return Environments{setup: setup, secrets: secrets, applications: applications, metric: metric}
 }
 
 func (controller Environments) RegisterRoutes(router *router.Router) error {
@@ -281,8 +288,19 @@ func (controller Environments) Show(etx *echo.Context) error {
 	if !overview.SetupComplete {
 		return inertia.Redirect(etx, routes.EnvironmentSetup.URL(params.routeParams()), http.StatusSeeOther)
 	}
+	telemetryRows, telemetryErr := controller.metric.EnvironmentTelemetry(etx.Request().Context(), params.EnvironmentID)
+	if telemetryErr != nil {
+		slog.ErrorContext(
+			etx.Request().Context(),
+			"failed to load Environment telemetry",
+			"environment_id", params.EnvironmentID,
+			"error", telemetryErr,
+		)
+		telemetryRows = []services.AttributedTelemetryRow{}
+	}
 	return inertia.Page(etx, "Applications/Environments/Show", inertia.Props{
-		"auth": authProps(etx), "environment": environmentOverviewProps(overview), "flash": environmentFlashProps(etx),
+		"auth": authProps(etx), "environment": environmentOverviewProps(overview),
+		"telemetry": telemetryRows, "flash": environmentFlashProps(etx),
 	})
 }
 

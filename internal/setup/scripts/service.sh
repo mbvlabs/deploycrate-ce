@@ -41,6 +41,10 @@ Restart=on-failure
 RestartSec=5
 TimeoutStopSec=30
 LimitNOFILE=65535
+CPUAccounting=yes
+MemoryAccounting=yes
+IOAccounting=yes
+TasksAccounting=yes
 
 [Install]
 WantedBy=multi-user.target
