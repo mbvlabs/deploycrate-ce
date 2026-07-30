@@ -319,14 +319,18 @@ func (service *BackupExecutor) postgreSQLTarget(scope BackupScope) (PostgreSQLBa
 		return PostgreSQLBackupTarget{}, errors.New("decrypt Resource administrator credential")
 	}
 	defer clear(plaintext)
-	var values map[string]string
-	if json.Unmarshal(plaintext, &values) != nil || strings.TrimSpace(values["password"]) == "" {
+	var payload struct {
+		SchemaVersion int               `json:"schema_version"`
+		Values        map[string]string `json:"values"`
+	}
+	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 ||
+		strings.TrimSpace(payload.Values["password"]) == "" {
 		return PostgreSQLBackupTarget{}, errors.New("Resource administrator credential is incomplete")
 	}
 	return PostgreSQLBackupTarget{
 		ResourceID: *scope.Backup.ResourceID, InstallationID: *scope.Backup.ResourceInstallationID,
 		ContainerName: scope.InstallationContainer, DatabaseName: scope.DatabaseName,
-		Username: scope.AdministratorUsername, Password: values["password"],
+		Username: scope.AdministratorUsername, Password: payload.Values["password"],
 		ExcludeRiverTableData: scope.ResourceSystemManaged,
 	}, nil
 }
