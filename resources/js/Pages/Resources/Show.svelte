@@ -72,14 +72,7 @@
   let volume = $state(initialVolume())
   let mount = $state(initialMount())
   let health = $state(initialHealth())
-  let backupPolicy = $state({
-    schedule: backups.policy?.schedule ?? '0 2 * * *',
-    backupDestinationId: backups.policy?.backupDestinationId ?? backups.destinations[0]?.id ?? '',
-    keepLast: backups.policy?.keepLast ?? 7,
-    keepDaily: backups.policy?.keepDaily ?? 7,
-    keepWeekly: backups.policy?.keepWeekly ?? 4,
-    keepMonthly: backups.policy?.keepMonthly ?? 6,
-  })
+  let backupPolicy = $state(initialBackupPolicy())
 
   $effect(() => {
     if (!enrollment?.clientConfiguration || !enrollment.grantId || enrollment.grantId === shownEnrollmentGrantId) return
@@ -93,6 +86,16 @@
   function initialVolume() { return { name: '', driver: 'local', configurationText: '{}', serverId: options.servers[0]?.id ?? '' } }
   function initialMount() { return { mountPath: '/data', readOnly: false, resourceVolumeId: resource.volumes[0]?.id ?? '', resourceInstallationId: resource.installations[0]?.id ?? '' } }
   function initialHealth() { return { name: 'Readiness', kind: definition?.healthCheckKinds?.[0] ?? 'tcp', configurationText: '{}', intervalSeconds: 30, timeoutSeconds: 5, failureThreshold: 3, successThreshold: 1, enabled: true, resourceInstallationId: resource.installations[0]?.id ?? '', resourceEndpointId: '', resourceCredentialId: '' } }
+  function initialBackupPolicy() {
+    return {
+      schedule: backups.policy?.schedule ?? '0 2 * * *',
+      backupDestinationId: backups.policy?.backupDestinationId ?? backups.destinations[0]?.id ?? '',
+      keepLast: backups.policy?.keepLast ?? 7,
+      keepDaily: backups.policy?.keepDaily ?? 7,
+      keepWeekly: backups.policy?.keepWeekly ?? 4,
+      keepMonthly: backups.policy?.keepMonthly ?? 6,
+    }
+  }
 
   function json(value: string) {
     try { jsonError = ''; return JSON.parse(value || '{}') }
