@@ -60,8 +60,13 @@ func (service *ResourceBackups) Details(ctx context.Context, resourceID uuid.UUI
 	if err != nil {
 		return models.ResourceBackupDetails{}, err
 	}
+	restores, err := models.ResourceRestore.RecentForResource(ctx, service.db.Executor(), resourceID, 10)
+	if err != nil {
+		return models.ResourceBackupDetails{}, err
+	}
 	return models.ResourceBackupDetails{
 		Eligibility: eligibility, Policy: policyPointer, Destinations: destinations, History: history,
+		Restores: restores,
 	}, nil
 }
 

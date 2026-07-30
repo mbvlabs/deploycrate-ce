@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Link, useForm } from '@inertiajs/svelte'
+  import { untrack } from 'svelte'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
   import FormField from '@/Components/FormField.svelte'
@@ -9,7 +10,7 @@
   type Registry = { id: string; name: string; endpoint: string }
   type FrontendSettings = { runtime: 'node'; package_manager: 'pnpm'; script: 'build' }
   let { auth, application, options, updateUrl, returnUrl }: { auth: { email: string }; application: any; options: { installations: any[]; repositories: Repository[]; registries: Registry[] }; updateUrl: string; returnUrl: string } = $props()
-  let buildFrontendAssets = $state(Boolean(application.buildpackSettings?.frontend))
+  let buildFrontendAssets = $state(untrack(() => Boolean(application.buildpackSettings?.frontend)))
   const form = useForm(() => ({ applicationName: '', applicationSlug: '', environmentName: '', environmentSlug: '', environmentKind: '', githubInstallationId: application.installationId, githubRepositoryId: application.repositoryId, reference: application.reference, autoBuild: application.autoBuild, contextPath: application.contextPath, builderReference: '', buildpackSettings: { schema_version: 1, frontend: (application.buildpackSettings?.frontend ?? null) as FrontendSettings | null }, containerRegistryId: application.registryId, imageRepository: application.imageRepository }))
   const repositories = $derived(options.repositories.filter((repository) => repository.githubInstallationId === $form.githubInstallationId))
   function submit(event: SubmitEvent) {

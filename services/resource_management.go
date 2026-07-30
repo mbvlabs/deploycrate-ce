@@ -426,6 +426,9 @@ func (service *ResourceManagement) UpdateResource(ctx context.Context, resourceI
 		return models.ResourceEntity{}, err
 	}
 	defer tx.Rollback()
+	if err := service.requireNoActiveRestore(ctx, tx, resourceID, nil); err != nil {
+		return models.ResourceEntity{}, err
+	}
 	resource, err := service.loadResource(ctx, tx, resourceID, true)
 	if err != nil {
 		return models.ResourceEntity{}, err
@@ -454,6 +457,9 @@ func (service *ResourceManagement) ArchiveResource(ctx context.Context, resource
 		return err
 	}
 	defer tx.Rollback()
+	if err := service.requireNoActiveRestore(ctx, tx, resourceID, nil); err != nil {
+		return err
+	}
 	if _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
 		return err
 	}
@@ -1605,6 +1611,9 @@ func (service *ResourceManagement) UpdateInstallation(ctx context.Context, resou
 		return models.ResourceInstallationEntity{}, err
 	}
 	defer tx.Rollback()
+	if err := service.requireNoActiveRestore(ctx, tx, resourceID, &installationID); err != nil {
+		return models.ResourceInstallationEntity{}, err
+	}
 	resource, err := service.loadResource(ctx, tx, resourceID, true)
 	if err != nil {
 		return models.ResourceInstallationEntity{}, err
@@ -1683,6 +1692,9 @@ func (service *ResourceManagement) UpdateInstallation(ctx context.Context, resou
 }
 
 func (service *ResourceManagement) RunInstallation(ctx context.Context, resourceID, installationID uuid.UUID) error {
+	if err := service.requireNoActiveRestore(ctx, service.db.Executor(), resourceID, &installationID); err != nil {
+		return err
+	}
 	resource, err := service.loadResource(ctx, service.db.Executor(), resourceID, false)
 	if err != nil {
 		return err
@@ -1781,6 +1793,9 @@ func (service *ResourceManagement) RemoveInstallationContainer(ctx context.Conte
 }
 
 func (service *ResourceManagement) controlInstallation(ctx context.Context, resourceID, installationID uuid.UUID, action string) error {
+	if err := service.requireNoActiveRestore(ctx, service.db.Executor(), resourceID, &installationID); err != nil {
+		return err
+	}
 	installation, err := service.loadInstallationForControl(ctx, resourceID, installationID)
 	if err != nil {
 		return err
@@ -1992,6 +2007,9 @@ func (service *ResourceManagement) ArchiveInstallation(ctx context.Context, reso
 		return err
 	}
 	defer tx.Rollback()
+	if err := service.requireNoActiveRestore(ctx, tx, resourceID, &installationID); err != nil {
+		return err
+	}
 	if _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
 		return err
 	}
@@ -2040,6 +2058,23 @@ func (service *ResourceManagement) installationHasActiveBackupPolicy(
 		Where("activated_at IS NOT NULL").
 		Count(ctx)
 	return count > 0, err
+}
+
+func (service *ResourceManagement) requireNoActiveRestore(ctx context.Context, db storage.Executor, resourceID uuid.UUID, installationID *uuid.UUID) error {
+	query := db.NewSelect().TableExpr("resource_restores").
+		Where("resource_id = ?", resourceID).
+		Where("status IN (?, ?, ?)", models.ResourceRestoreStatusPending, models.ResourceRestoreStatusSafetyBackup, models.ResourceRestoreStatusRestoring)
+	if installationID != nil {
+		query = query.Where("target_installation_id = ?", *installationID)
+	}
+	count, err := query.Count(ctx)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return domainError("resource", "restore_active", "Resource lifecycle changes are unavailable while a database restore is active")
+	}
+	return nil
 }
 
 func (service *ResourceManagement) CreateVolume(ctx context.Context, resourceID uuid.UUID, input ResourceVolumeInput) (models.ResourceVolumeEntity, error) {

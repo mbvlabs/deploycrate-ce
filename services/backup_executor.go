@@ -154,6 +154,7 @@ func (service *BackupExecutor) Execute(ctx context.Context, backupID uuid.UUID) 
 			defer cancel()
 			_ = models.Backup.MarkFailed(persistCtx, service.db.Executor(), backupID, returnErr)
 			_ = markBackupLifecycleFailed(persistCtx, service.db.Executor(), scope.Backup, returnErr)
+			_ = failResourceRestoreSafetyBackup(persistCtx, service.db, backupID, returnErr)
 		}
 	}()
 	if err := markBackupExecutionStarted(ctx, service.db.Executor(), scope.Backup); err != nil {
@@ -257,6 +258,7 @@ func (service *BackupExecutor) recordPreflightFailure(
 		operationErr,
 		models.Backup.MarkFailed(persistCtx, service.db.Executor(), backup.ID, operationErr),
 		markBackupLifecycleFailed(persistCtx, service.db.Executor(), backup, operationErr),
+		failResourceRestoreSafetyBackup(persistCtx, service.db, backup.ID, operationErr),
 	)
 }
 

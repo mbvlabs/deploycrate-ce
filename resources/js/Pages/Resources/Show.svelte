@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Link, router } from '@inertiajs/svelte'
+  import { onMount } from 'svelte'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
   import * as Dialog from '@/Components/ui/dialog'
@@ -16,8 +17,9 @@
   type Enrollment = { deviceId: string; grantId: string; clientConfiguration: string }
   type BackupDestination = { id: string; name: string; provider: string; endpoint: string; region: string; bucket: string; prefix: string; verifiedAt: string | null; lastUsedAt: string | null }
   type BackupPolicy = { id: string; schedule: string; active: boolean; nextRunAt: string; backupDestinationId: string; keepLast: number; keepDaily: number; keepWeekly: number; keepMonthly: number }
-  type BackupHistory = { id: string; status: string; triggerType: string; scheduledAt: string; finishedAt: string | null; verifiedAt: string | null; sizeBytes: number | null; error: string }
-  type Backups = { eligibility: { eligible: boolean; reason: string; installationId: string | null }; policy: BackupPolicy | null; destinations: BackupDestination[]; history: BackupHistory[] }
+  type BackupHistory = { id: string; status: string; triggerType: string; scheduledAt: string; finishedAt: string | null; verifiedAt: string | null; sizeBytes: number | null; error: string; canRestore: boolean }
+  type RestoreHistory = { id: string; status: string; requestedAt: string; startedAt: string | null; finishedAt: string | null; verifiedAt: string | null; cutoverAt: string | null; rolledBackAt: string | null; error: string; backupId: string; backupScheduledAt: string; safetyBackupId: string | null }
+  type Backups = { eligibility: { eligible: boolean; reason: string; installationId: string | null }; policy: BackupPolicy | null; destinations: BackupDestination[]; history: BackupHistory[]; restores: RestoreHistory[]; activeRestore: boolean }
   type DestructiveAction =
     | { kind: 'remove-container'; installationId: string; title: string; description: string; confirmationLabel: string }
     | { kind: 'disable-private-access'; title: string; description: string; confirmationLabel: string }
@@ -39,6 +41,7 @@
   const containerRunning = $derived(resource.installations.some((item: any) => item.serviceState === 'running'))
   const canAddApplicationUser = $derived(!managedPostgreSQL || containerRunning)
   const lastSuccessfulBackup = $derived(backups.history.find((item) => item.status === 'verified'))
+  const activeRestore = $derived(backups.activeRestore)
   const selectClass = 'h-9 w-full border border-input bg-background px-3 text-sm aria-invalid:border-destructive'
   const textareaClass = 'min-h-24 w-full border border-input bg-background px-3 py-2 font-mono text-xs'
   const overallStatus = $derived.by(() => {
@@ -60,6 +63,7 @@
   let mountDialogOpen = $state(false)
   let healthDialogOpen = $state(false)
   let destructiveActionDialogOpen = $state(false)
+  let restoreDialogOpen = $state(false)
   let wireGuardConfigurationDialogOpen = $state(false)
   let jsonError = $state('')
   let pendingAction = $state('')
@@ -73,6 +77,15 @@
   let mount = $state(initialMount())
   let health = $state(initialHealth())
   let backupPolicy = $state(initialBackupPolicy())
+  let restoreBackup = $state<BackupHistory | null>(null)
+  let restoreConfirmation = $state('')
+
+  onMount(() => {
+    const interval = window.setInterval(() => {
+      if (activeRestore) router.reload({ only: ['backups'] })
+    }, 5000)
+    return () => window.clearInterval(interval)
+  })
 
   $effect(() => {
     if (!enrollment?.clientConfiguration || !enrollment.grantId || enrollment.grantId === shownEnrollmentGrantId) return
@@ -150,6 +163,23 @@
   function confirmBackupPolicyArchive() {
     if (!backups.policy) return
     confirmDestructive({ kind: 'archive-backup-policy', policyId: backups.policy.id, title: 'Archive backup policy?', description: 'Future schedules stop immediately. Existing backup history and artifacts are retained.', confirmationLabel: 'Archive policy' })
+  }
+
+  function openRestoreDialog(backup: BackupHistory) {
+    restoreBackup = backup
+    restoreConfirmation = ''
+    restoreDialogOpen = true
+  }
+
+  function submitRestore() {
+    if (!restoreBackup || restoreConfirmation !== resource.name) return
+    router.post(routes.resourceRestoreCreate(resource.id), {
+      backupId: restoreBackup.id,
+      confirmation: restoreConfirmation,
+    }, {
+      onSuccess: () => { restoreDialogOpen = false; restoreBackup = null; restoreConfirmation = '' },
+      onError: () => (restoreDialogOpen = true),
+    })
   }
 
   function lifecycle(installationId: string, action: 'start' | 'stop' | 'restart' | 'remove') {
@@ -298,7 +328,18 @@
           {#each backups.history as item (item.id)}
             <div class="grid gap-3 border border-border p-3 text-sm sm:grid-cols-[1fr_auto]">
               <div><div class="flex flex-wrap items-center gap-2"><span class="font-medium capitalize">{item.status.replaceAll('_', ' ')}</span><span class="text-xs uppercase tracking-wider text-muted-foreground">{item.triggerType}</span></div><p class="mt-1 text-xs text-muted-foreground">{observedLabel(item.scheduledAt)} · {bytesLabel(item.sizeBytes)}</p>{#if item.error}<p class="mt-2 text-xs text-destructive">{item.error}</p>{/if}</div>
-              <span class="font-mono text-xs text-muted-foreground">{item.id.slice(0, 8)}</span>
+              <div class="flex items-center gap-3"><span class="font-mono text-xs text-muted-foreground">{item.id.slice(0, 8)}</span>{#if item.canRestore}<Button size="sm" variant="destructive" onclick={() => openRestoreDialog(item)}>Restore</Button>{/if}</div>
+            </div>
+          {/each}
+        </section>
+
+        <section class="space-y-3 border-t border-border pt-5">
+          <div class="flex flex-wrap items-start justify-between gap-3"><div><h3 class="text-sm font-medium">Restore history</h3><p class="mt-1 text-xs text-muted-foreground">A safety backup is verified before any database is changed.</p></div>{#if activeRestore}<span class="border border-primary/50 px-2 py-1 text-xs text-primary">Restore in progress</span>{/if}</div>
+          {#if backups.restores.length === 0}<p class="text-sm text-muted-foreground">No database restores have been requested.</p>{/if}
+          {#each backups.restores as restore (restore.id)}
+            <div class="grid gap-3 border border-border p-3 text-sm sm:grid-cols-[1fr_auto]">
+              <div><div class="flex flex-wrap items-center gap-2"><span class="font-medium capitalize">{restore.status.replaceAll('_', ' ')}</span><span class="text-xs text-muted-foreground">Source {observedLabel(restore.backupScheduledAt)}</span></div><p class="mt-1 text-xs text-muted-foreground">Requested {observedLabel(restore.requestedAt)}{restore.safetyBackupId ? ` · Safety backup ${restore.safetyBackupId.slice(0, 8)}` : ''}</p>{#if restore.error}<p class="mt-2 text-xs text-destructive">{restore.error}</p>{/if}</div>
+              <span class="font-mono text-xs text-muted-foreground">{restore.id.slice(0, 8)}</span>
             </div>
           {/each}
         </section>
@@ -431,6 +472,17 @@
         <Button type="button" variant="outline" onclick={() => (destructiveActionDialogOpen = false)}>Cancel</Button>
         <Button type="submit" variant="destructive">{destructiveAction?.confirmationLabel ?? 'Confirm'}</Button>
       </div>
+    </form>
+    </Dialog.Content>
+  </Dialog.Root>
+
+  <Dialog.Root bind:open={restoreDialogOpen} onOpenChange={(open) => { if (!open) { restoreBackup = null; restoreConfirmation = '' } }}>
+    <Dialog.Content>
+    <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); submitRestore() }}>
+      <div><h2 class="text-lg font-semibold">Restore database from backup?</h2><p class="mt-2 text-sm text-muted-foreground">DeployCrate will first create and verify a fresh safety backup. Existing database sessions will be terminated during the final cutover and clients must reconnect.</p></div>
+      {#if restoreBackup}<div class="border border-border bg-muted/20 p-3 text-sm"><p>Backup from {observedLabel(restoreBackup.scheduledAt)}</p><p class="mt-1 font-mono text-xs text-muted-foreground">{restoreBackup.id}</p></div>{/if}
+      <FormField label={`Enter ${resource.name} to confirm`} error={errors.confirmation}><Input bind:value={restoreConfirmation} autocomplete="off" /></FormField>
+      <div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (restoreDialogOpen = false)}>Cancel</Button><Button type="submit" variant="destructive" disabled={restoreConfirmation !== resource.name}>Create safety backup and restore</Button></div>
     </form>
     </Dialog.Content>
   </Dialog.Root>

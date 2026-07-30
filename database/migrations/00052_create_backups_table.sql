@@ -46,7 +46,7 @@ CREATE TABLE backups (
         (target_type = 'server' AND strategy = 'filesystem' AND driver = 'restic' AND format = 'restic') OR
         (target_type = 'resource' AND strategy = 'logical' AND driver = 'postgresql' AND format = 'tar.age')
     ),
-    CONSTRAINT backups_trigger_check CHECK (trigger_type IN ('installer', 'schedule', 'manual')),
+    CONSTRAINT backups_trigger_check CHECK (trigger_type IN ('installer', 'schedule', 'manual', 'pre_restore')),
     CONSTRAINT backups_status_check CHECK (
         status IN ('pending', 'running', 'uploaded', 'verified', 'verification_failed', 'failed', 'pruned')
     ),

@@ -62,6 +62,34 @@ type BackupRetentionArgs struct {
 	BackupPolicyID uuid.UUID `json:"backup_policy_id" river:"unique"`
 }
 
+type ResourceRestorePrepareArgs struct {
+	ResourceRestoreID uuid.UUID `json:"resource_restore_id" river:"unique"`
+}
+
+func (ResourceRestorePrepareArgs) Kind() string { return "resource_restore_prepare" }
+
+func (ResourceRestorePrepareArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{
+		Queue: BackupQueue, MaxAttempts: 1,
+		UniqueOpts: river.UniqueOpts{ByArgs: true},
+		Tags:       []string{"backup", "restore", "prepare"},
+	}
+}
+
+type ResourceRestoreApplyArgs struct {
+	ResourceRestoreID uuid.UUID `json:"resource_restore_id" river:"unique"`
+}
+
+func (ResourceRestoreApplyArgs) Kind() string { return "resource_restore_apply" }
+
+func (ResourceRestoreApplyArgs) InsertOpts() river.InsertOpts {
+	return river.InsertOpts{
+		Queue: BackupQueue, MaxAttempts: 1,
+		UniqueOpts: river.UniqueOpts{ByArgs: true},
+		Tags:       []string{"backup", "restore", "apply"},
+	}
+}
+
 func (BackupRetentionArgs) Kind() string { return "backup_retention" }
 
 func (BackupRetentionArgs) InsertOpts() river.InsertOpts {

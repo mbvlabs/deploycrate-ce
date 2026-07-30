@@ -102,3 +102,4 @@ var ResourceBackupPolicyPause = routing.NewRouteWithParams[ResourceBackupPolicyP
 var ResourceBackupPolicyResume = routing.NewRouteWithParams[ResourceBackupPolicyParams]("/:id/backups/:backupPolicyID/resume", "resources.backups.resume", ResourcesPrefix)
 var ResourceBackupPolicyDestroy = routing.NewRouteWithParams[ResourceBackupPolicyParams]("/:id/backups/:backupPolicyID", "resources.backups.destroy", ResourcesPrefix)
 var ResourceBackupPolicyRun = routing.NewRouteWithParams[ResourceBackupPolicyParams]("/:id/backups/:backupPolicyID/run", "resources.backups.run", ResourcesPrefix)
+var ResourceRestoreCreate = routing.NewRouteWithUUIDID("/:id/restores", "resources.restores.create", ResourcesPrefix)

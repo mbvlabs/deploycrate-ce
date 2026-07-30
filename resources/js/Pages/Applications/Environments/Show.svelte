@@ -6,6 +6,8 @@
   import ConfirmActionDialog from '@/Components/ConfirmActionDialog.svelte'
   import DataField from '@/Components/DataField.svelte'
   import EnvironmentDeleteDialog from '@/Components/EnvironmentDeleteDialog.svelte'
+  import TelemetryDonut from '@/Components/Applications/Environments/TelemetryDonut.svelte'
+  import TelemetryHistory from '@/Components/Applications/Environments/TelemetryHistory.svelte'
   import { Input } from '@/Components/ui/input'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
@@ -76,6 +78,13 @@
   const loadingDeployments = new Set<string>()
   const builds = $derived(liveBuilds ?? environment.builds)
   const deployments = $derived(liveDeployments ?? environment.deployments)
+  const activeDeployment = $derived(deployments.find((deployment) => deployment.active) ?? null)
+  const activeInstance = $derived(environment.instances.find((instance) => instance.state === 'serving') ?? null)
+  const activeTelemetry = $derived(
+    activeDeployment && activeInstance
+      ? telemetry.find((row) => row.deployment === activeDeployment.id && row.instance === activeInstance.id) ?? null
+      : null,
+  )
   const activeBuildId = $derived(builds.find((build) => build.status === 'running')?.id ?? builds.find((build) => build.status === 'pending')?.id ?? '')
   const expandedDeploymentStatus = $derived(deployments.find((deployment) => deployment.id === expandedDeploymentId)?.status ?? '')
   const short = (value: string) => value ? value.slice(0, 12) : 'Unavailable'
@@ -87,6 +96,8 @@
     return `${(value / (1024 ** index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`
   }
   const formatRate = (value: number) => `${formatBytes(value)}/s`
+  const formatPercent = (value: number) => `${(value * 100).toFixed(1)}%`
+  const formatCores = (value: number) => `${value.toFixed(2)} cores`
   const stamp = (value: string) => value ? new Date(value).toLocaleString() : 'Pending'
   const stepLabel = (value: string) => value ? value.replaceAll('_', ' ') : 'waiting for worker'
   const deploymentStep = (deployment: Deployment) => deployment.active ? 'serving' : deployment.status === 'succeeded' ? 'superseded' : deployment.currentStep || 'queued'
@@ -260,7 +271,7 @@
           return
         }
         if (snapshot.build.status !== 'pending' && snapshot.build.status !== 'running') {
-          router.reload({ only: ['environment'], preserveScroll: true })
+          router.reload({ only: ['environment', 'telemetry'], preserveScroll: true })
           return
         }
       } catch {
@@ -297,7 +308,7 @@
           return
         }
         if (snapshot.deployment.status !== 'queued' && snapshot.deployment.status !== 'running') {
-          router.reload({ only: ['environment'], preserveScroll: true })
+          router.reload({ only: ['environment', 'telemetry'], preserveScroll: true })
           return
         }
       } catch {
@@ -326,39 +337,64 @@
 
     <Card.Root><Card.Header><Card.Action><span class:text-success={environment.deployability.deployable} class:text-destructive={!environment.deployability.deployable}>{environment.deployability.deployable ? 'Ready' : 'Blocked'}</span></Card.Action><Card.Title>Desired state</Card.Title></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><DataField label="Repository" value={environment.repository} /><DataField label="Reference" value={environment.reference} /><DataField label="Build context" value={environment.contextPath} /><DataField label="Domain" value={environment.domain} /><DataField label="Registry" value={environment.registryName} /><DataField label="Registry endpoint" value={environment.registryEndpoint} />{#if !environment.deployability.deployable}<DataField label="Missing" value={environment.deployability.missing.join(', ')} />{/if}</Card.Content></Card.Root>
 
-    <Card.Root>
-      <Card.Header><Card.Title>Workload telemetry</Card.Title><Card.Description>Current and 24-hour cgroup usage grouped by stable Instance and Deployment identity.</Card.Description></Card.Header>
-      <Card.Content class="space-y-3">
-        {#each telemetry as row (row.instance)}
-          <details class="border border-border">
-            <summary class="cursor-pointer list-none p-4">
-              <div class="flex flex-wrap items-start justify-between gap-4">
-                <div><p class="font-medium">Instance {short(row.instance)}</p><p class="mt-1 font-mono text-[11px] text-muted-foreground">Deployment {short(row.deployment)} · Release {short(row.release)}</p></div>
-                <span class={row.available ? 'text-success' : 'text-warning'}>{row.available ? `Observed ${stamp(row.observedAt)}` : 'Stale'}</span>
-              </div>
-              <dl class="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-6">
-                <div><dt class="text-xs text-muted-foreground">CPU</dt><dd class="mt-1">{row.available && row.cpuAvailable ? `${row.cpuCores.toFixed(2)} cores` : 'Unavailable'}</dd></div>
-                <div><dt class="text-xs text-muted-foreground">Memory</dt><dd class="mt-1">{row.available && row.memoryAvailable ? formatBytes(row.memoryBytes) : 'Unavailable'}</dd></div>
-                <div><dt class="text-xs text-muted-foreground">Disk read / write</dt><dd class="mt-1">{row.available && row.diskReadAvailable ? formatRate(row.diskReadBytesPerSecond) : 'Unavailable'} / {row.available && row.diskWriteAvailable ? formatRate(row.diskWriteBytesPerSecond) : 'Unavailable'}</dd></div>
-                <div><dt class="text-xs text-muted-foreground">Network receive / transmit</dt><dd class="mt-1">{row.available && row.networkReceiveAvailable ? formatRate(row.networkReceiveBytesPerSecond) : 'Unavailable'} / {row.available && row.networkTransmitAvailable ? formatRate(row.networkTransmitBytesPerSecond) : 'Unavailable'}</dd></div>
-                <div><dt class="text-xs text-muted-foreground">Tasks</dt><dd class="mt-1">{row.available && row.tasksAvailable ? row.tasks.toFixed(0) : 'Unavailable'}</dd></div>
-                <div><dt class="text-xs text-muted-foreground">Throttling / OOM</dt><dd class="mt-1">{row.available && row.cpuThrottlingAvailable ? `${(row.cpuThrottlingRatio * 100).toFixed(1)}%` : 'Unavailable'} / {row.available && row.oomAvailable ? row.oomEvents.toFixed(0) : 'Unavailable'}</dd></div>
-              </dl>
-            </summary>
-            <div class="overflow-x-auto border-t border-border bg-muted/20">
-              {#if row.history.length}
-                <table class="w-full min-w-[760px] text-left text-xs">
-                  <thead class="text-muted-foreground"><tr><th class="px-4 py-2 font-medium">Minute</th><th class="px-4 py-2 font-medium">CPU</th><th class="px-4 py-2 font-medium">Memory</th><th class="px-4 py-2 font-medium">Disk read / write</th><th class="px-4 py-2 font-medium">Network receive / transmit</th></tr></thead>
-                  <tbody>{#each row.history.slice(-60) as point (point.observedAt)}<tr class="border-t border-border/70"><td class="px-4 py-2">{stamp(point.observedAt)}</td><td class="px-4 py-2">{point.cpuAvailable ? `${point.cpuCores.toFixed(2)} cores` : 'Unavailable'}</td><td class="px-4 py-2">{point.memoryAvailable ? formatBytes(point.memoryBytes) : 'Unavailable'}</td><td class="px-4 py-2">{point.diskReadAvailable ? formatRate(point.diskReadBytesPerSecond) : 'Unavailable'} / {point.diskWriteAvailable ? formatRate(point.diskWriteBytesPerSecond) : 'Unavailable'}</td><td class="px-4 py-2">{point.networkReceiveAvailable ? formatRate(point.networkReceiveBytesPerSecond) : 'Unavailable'} / {point.networkTransmitAvailable ? formatRate(point.networkTransmitBytesPerSecond) : 'Unavailable'}</td></tr>{/each}</tbody>
-                </table>
-              {:else}<p class="p-4 text-sm text-muted-foreground">Historical telemetry is not available yet.</p>{/if}
-            </div>
-          </details>
-        {:else}
-          <p class="text-sm text-muted-foreground">No workload telemetry is available. A missing sample is not treated as zero usage.</p>
-        {/each}
-      </Card.Content>
-    </Card.Root>
+    <section aria-labelledby="workload-telemetry-heading" class="space-y-4">
+      <div class="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h2 id="workload-telemetry-heading" class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Workload telemetry</h2>
+          <p class="mt-1 text-xs text-muted-foreground">Current rates and 24-hour usage for the active container</p>
+        </div>
+        {#if activeTelemetry}
+          <div class="text-left text-xs sm:text-right">
+            <p class="font-medium">Instance {short(activeTelemetry.instance)}</p>
+            <p class="mt-1 font-mono text-[11px] text-muted-foreground">Deployment {short(activeTelemetry.deployment)} · Release {short(activeTelemetry.release)}</p>
+            <p class={`mt-1 ${activeTelemetry.available ? 'text-success' : 'text-warning'}`}>{activeTelemetry.available ? `Observed ${stamp(activeTelemetry.observedAt)}` : 'Stale'}</p>
+          </div>
+        {/if}
+      </div>
+
+      {#if activeTelemetry}
+        <div class="grid gap-3 lg:grid-cols-3">
+          <TelemetryDonut
+            label="Disk throughput"
+            primaryLabel="Read"
+            secondaryLabel="Write"
+            primary={activeTelemetry.diskReadBytesPerSecond}
+            secondary={activeTelemetry.diskWriteBytesPerSecond}
+            centerValue={activeTelemetry.diskReadBytesPerSecond + activeTelemetry.diskWriteBytesPerSecond}
+            centerLabel="total"
+            formatValue={formatRate}
+            available={activeTelemetry.available && activeTelemetry.diskReadAvailable && activeTelemetry.diskWriteAvailable}
+          />
+          <TelemetryDonut
+            label="Network throughput"
+            primaryLabel="Receive"
+            secondaryLabel="Transmit"
+            primary={activeTelemetry.networkReceiveBytesPerSecond}
+            secondary={activeTelemetry.networkTransmitBytesPerSecond}
+            centerValue={activeTelemetry.networkReceiveBytesPerSecond + activeTelemetry.networkTransmitBytesPerSecond}
+            centerLabel="total"
+            formatValue={formatRate}
+            available={activeTelemetry.available && activeTelemetry.networkReceiveAvailable && activeTelemetry.networkTransmitAvailable}
+          />
+          <TelemetryDonut
+            label="CPU throttling"
+            primaryLabel="Throttled"
+            secondaryLabel="Unthrottled"
+            primary={activeTelemetry.cpuThrottlingRatio}
+            secondary={1 - activeTelemetry.cpuThrottlingRatio}
+            centerValue={activeTelemetry.cpuThrottlingRatio}
+            centerLabel="throttled"
+            formatValue={formatPercent}
+            available={activeTelemetry.available && activeTelemetry.cpuThrottlingAvailable}
+          />
+        </div>
+        <TelemetryHistory points={activeTelemetry.history} formatCPU={formatCores} formatMemory={formatBytes} />
+      {:else}
+        <div class="border border-border bg-card/35 px-5 py-16 text-center">
+          <p class="text-sm text-muted-foreground">No telemetry is available for the active container yet.</p>
+        </div>
+      {/if}
+    </section>
 
     <Card.Root><Card.Header><Card.Title>Resources</Card.Title><Card.Description>Explicit connections available to this Environment.</Card.Description></Card.Header><Card.Content class="space-y-2">{#each environment.resources as resource}<div class="grid gap-1 border border-border p-3 sm:grid-cols-3"><span class="font-mono text-sm">{resource.alias}</span><span>{resource.name}</span><span class="text-muted-foreground">{resource.kind}</span></div>{:else}<p class="text-sm text-muted-foreground">No Resources selected.</p>{/each}</Card.Content></Card.Root>
 
@@ -454,9 +490,7 @@
       </Card.Content>
     </Card.Root>
 
-    <Card.Root><Card.Header><Card.Title>Instances</Card.Title></Card.Header><Card.Content class="space-y-2">{#each environment.instances as instance}<div class="grid gap-1 border border-border p-3 text-sm sm:grid-cols-4"><span class="font-mono">{short(instance.id)}</span><span>{instance.state}</span><span>{instance.slot}</span><span class="text-muted-foreground">{instance.ports?.http ? `127.0.0.1:${instance.ports.http}` : 'No observed port'}</span></div>{:else}<p class="text-sm text-muted-foreground">No Instances yet.</p>{/each}</Card.Content></Card.Root>
-
-    <Card.Root><Card.Header><Card.Title>Recovery guidance</Card.Title></Card.Header><Card.Content class="grid gap-3 text-sm text-muted-foreground md:grid-cols-2"><p>GitHub failures: verify the App installation and repository access, then use Build & deploy.</p><p>Registry failures: verify the managed registry Resource, credential, public TLS route, and Docker reachability.</p><p>Build failures: inspect the bounded Build error, confirm go.mod and the pinned Paketo-supported Go version, then build again.</p><p>Secret or Resource failures: restore the referenced immutable value or connection, then redeploy the intended Release.</p><p>Docker or health failures: the previous serving Instance remains active. Fix the workload health path, then retry.</p><p>Caddy failures: verify DNS, certificate issuance, local admin API health, and the recorded backend weights before retrying.</p></Card.Content></Card.Root>
+    <Card.Root><Card.Header><Card.Title>Active instance</Card.Title></Card.Header><Card.Content>{#if activeInstance}<div class="grid gap-1 border border-border p-3 text-sm sm:grid-cols-4"><span class="font-mono">{short(activeInstance.id)}</span><span>{activeInstance.state}</span><span>{activeInstance.slot}</span><span class="text-muted-foreground">{activeInstance.ports?.http ? `127.0.0.1:${activeInstance.ports.http}` : 'No observed port'}</span></div>{:else}<p class="text-sm text-muted-foreground">No active Instance yet.</p>{/if}</Card.Content></Card.Root>
   </div>
 
   <ConfirmActionDialog

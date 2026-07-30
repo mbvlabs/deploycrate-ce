@@ -17,6 +17,8 @@
   type AttributedTelemetry = {
     scope: string
     component: string
+    resourceName: string
+    containerName: string
     application: string
     environment: string
     release: string
@@ -137,10 +139,12 @@
   const label = (value: string) => value ? value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) : 'Unknown'
   const current = (row: AttributedTelemetry, metricAvailable: boolean, value: string) => row.available && metricAvailable ? value : 'Unavailable'
   const systemContainerName = (row: AttributedTelemetry) => {
+    if (row.resourceName) return row.resourceName
     if (row.installation) return `Managed resource ${short(row.resource)}`
     return label(row.component)
   }
   const systemContainerIdentity = (row: AttributedTelemetry) => {
+    if (row.containerName) return row.containerName
     if (row.installation) return `Installation ${short(row.installation)}`
     return 'System container'
   }
@@ -159,6 +163,7 @@
   const attributionRows = $derived([...platform, ...systemContainers])
   const rowName = (row: AttributedTelemetry) => {
     if (row.scope === 'native') return label(row.component)
+    if (row.resourceName) return row.resourceName
     if (row.installation) return `Managed resource ${short(row.resource)}`
     return label(row.component)
   }

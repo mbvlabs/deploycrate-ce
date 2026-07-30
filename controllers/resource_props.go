@@ -145,12 +145,31 @@ func resourceBackupProps(detail models.ResourceBackupDetails) inertia.Props {
 			"prefix": destination.Prefix, "verifiedAt": destination.VerifiedAt, "lastUsedAt": destination.LastUsedAt,
 		})
 	}
+	activeRestore := false
+	for _, restore := range detail.Restores {
+		if restore.Status == models.ResourceRestoreStatusPending || restore.Status == models.ResourceRestoreStatusSafetyBackup || restore.Status == models.ResourceRestoreStatusRestoring {
+			activeRestore = true
+			break
+		}
+	}
 	history := make([]inertia.Props, 0, len(detail.History))
 	for _, backup := range detail.History {
 		history = append(history, inertia.Props{
 			"id": backup.ID, "status": backup.Status, "triggerType": backup.TriggerType,
 			"scheduledAt": backup.ScheduledAt, "finishedAt": backup.FinishedAt,
 			"verifiedAt": backup.VerifiedAt, "sizeBytes": backup.SizeBytes, "error": backup.Error,
+			"canRestore": backup.Status == models.BackupStatusVerified && detail.Policy != nil && detail.Policy.Schedulable() && detail.Eligibility.Eligible && !activeRestore,
+		})
+	}
+	restores := make([]inertia.Props, 0, len(detail.Restores))
+	for _, restore := range detail.Restores {
+		restores = append(restores, inertia.Props{
+			"id": restore.ID, "status": restore.Status, "requestedAt": restore.RequestedAt,
+			"startedAt": restore.StartedAt, "finishedAt": restore.FinishedAt,
+			"verifiedAt": restore.VerifiedAt, "cutoverAt": restore.CutoverAt,
+			"rolledBackAt": restore.RolledBackAt, "error": restore.Error,
+			"backupId": restore.BackupID, "backupScheduledAt": restore.BackupScheduledAt,
+			"safetyBackupId": restore.SafetyBackupID,
 		})
 	}
 	var policy inertia.Props
@@ -170,6 +189,7 @@ func resourceBackupProps(detail models.ResourceBackupDetails) inertia.Props {
 			"installationId": detail.Eligibility.InstallationID,
 		},
 		"policy": policy, "destinations": destinations, "history": history,
+		"restores": restores, "activeRestore": activeRestore,
 	}
 }
 

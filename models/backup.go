@@ -88,7 +88,8 @@ func (entity *BackupEntity) Validate() error {
 		(entity.Strategy != "logical" || entity.Driver != "postgresql" || entity.Format != "tar.age") {
 		builder.Add("driver", "incompatible", "database backups require logical, postgresql, and tar.age")
 	}
-	if entity.TriggerType != "installer" && entity.TriggerType != "schedule" && entity.TriggerType != "manual" {
+	if entity.TriggerType != "installer" && entity.TriggerType != "schedule" &&
+		entity.TriggerType != "manual" && entity.TriggerType != "pre_restore" {
 		builder.Add("trigger_type", "unsupported", "backup trigger is unsupported")
 	}
 	if entity.ScheduledAt.IsZero() || entity.RequestedAt.IsZero() {
@@ -296,6 +297,7 @@ func (backup) FindVerifiedByPolicy(
 		Model(&backups).
 		Where("backups.backup_policy_id = ?", policyID).
 		Where("backups.status = ?", BackupStatusVerified).
+		Where("NOT EXISTS (SELECT 1 FROM resource_restores AS restore WHERE (restore.backup_id = backups.id OR restore.safety_backup_id = backups.id) AND restore.status IN ('pending', 'safety_backup', 'restoring'))").
 		OrderExpr("backups.scheduled_at DESC").
 		Scan(ctx, &backups); err != nil {
 		return nil, err

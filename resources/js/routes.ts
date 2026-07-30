@@ -95,6 +95,7 @@ export const routes = {
   resourcePrivateAccessDestroy: (id: string) => `/resources/${id}/private-access`,
   resourcePrivateAccessDeviceCreate: (id: string) => `/resources/${id}/private-access/devices`,
   resourcePrivateAccessDeviceDestroy: (id: string, deviceID: string) => `/resources/${id}/private-access/devices/${deviceID}`,
+  resourceRestoreCreate: (id: string) => `/resources/${id}/restores`,
   resourceShow: (id: string) => `/resources/${id}`,
   resourceUpdate: (id: string) => `/resources/${id}`,
   resourceVolumeCreate: (id: string) => `/resources/${id}/volumes`,

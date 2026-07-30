@@ -25,10 +25,11 @@ type Resources struct {
 	service *services.ResourceManagement
 	access  *services.ResourcePrivateAccess
 	backups *services.ResourceBackups
+	restore *services.ResourceRestore
 }
 
-func NewResources(service *services.ResourceManagement, access *services.ResourcePrivateAccess, backups *services.ResourceBackups) Resources {
-	return Resources{service: service, access: access, backups: backups}
+func NewResources(service *services.ResourceManagement, access *services.ResourcePrivateAccess, backups *services.ResourceBackups, restore *services.ResourceRestore) Resources {
+	return Resources{service: service, access: access, backups: backups, restore: restore}
 }
 
 func (controller Resources) RegisterRoutes(r *router.Router) error {
@@ -83,6 +84,7 @@ func (controller Resources) RegisterRoutes(r *router.Router) error {
 		{http.MethodPost, routes.ResourceBackupPolicyResume, controller.ResumeBackupPolicy},
 		{http.MethodDelete, routes.ResourceBackupPolicyDestroy, controller.ArchiveBackupPolicy},
 		{http.MethodPost, routes.ResourceBackupPolicyRun, controller.RunBackupPolicy},
+		{http.MethodPost, routes.ResourceRestoreCreate, controller.CreateRestore},
 	}
 	errList := make([]error, 0, len(definitions))
 	for _, definition := range definitions {
@@ -936,6 +938,33 @@ func (controller Resources) RunBackupPolicy(etx *echo.Context) error {
 		_, err = controller.backups.Manual(etx.Request().Context(), resourceID, policyID)
 	}
 	return controller.finishChildMutation(etx, resourceID, err, "Backup requested")
+}
+
+type resourceRestorePayload struct {
+	BackupID     string `json:"backupId"`
+	Confirmation string `json:"confirmation"`
+}
+
+func (controller Resources) CreateRestore(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	var payload resourceRestorePayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	backupID := uuid.Nil
+	if err == nil {
+		backupID, err = uuid.Parse(payload.BackupID)
+		if err != nil {
+			err = domainPayloadError("backupId", "Backup is required")
+		}
+	}
+	if err == nil {
+		_, err = controller.restore.Request(etx.Request().Context(), resourceID, services.ResourceRestoreInput{
+			BackupID: backupID, Confirmation: payload.Confirmation,
+			ActorID: cookies.ExtractFromCookieApp(etx).UserID,
+		})
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Database restore queued")
 }
 
 func (controller Resources) renderShow(etx *echo.Context, resourceID uuid.UUID, option inertia.PageOption) error {

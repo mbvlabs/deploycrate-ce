@@ -152,6 +152,8 @@ type AttributedTelemetryPoint struct {
 type AttributedTelemetryRow struct {
 	Scope                    string                     `json:"scope"`
 	Component                string                     `json:"component"`
+	ResourceName             string                     `json:"resourceName"`
+	ContainerName            string                     `json:"containerName"`
 	Application              string                     `json:"application"`
 	Environment              string                     `json:"environment"`
 	Release                  string                     `json:"release"`
@@ -217,8 +219,10 @@ func (service MetricRollupService) Collect(ctx context.Context) (resultErr error
 		cache: make(map[string]models.MetricRollupIdentities),
 	}
 	rollups := make([]clickhouseclient.MetricRollup, 0)
+	queryErrors := make([]error, 0)
 	for _, definition := range metricRollupDefinitions {
 		values := make(map[string]*clickhouseclient.MetricRollup)
+		definitionFailed := false
 		for _, statistic := range []struct {
 			name     string
 			function string
@@ -230,7 +234,9 @@ func (service MetricRollupService) Collect(ctx context.Context) (resultErr error
 			expression := fmt.Sprintf("%s((%s)[1m:15s])", statistic.function, definition.expression)
 			samples, queryErr := service.prometheus.Query(ctx, expression, observedAt)
 			if queryErr != nil {
-				return fmt.Errorf("collect %s %s: %w", definition.name, statistic.name, queryErr)
+				queryErrors = append(queryErrors, fmt.Errorf("collect %s %s: %w", definition.name, statistic.name, queryErr))
+				definitionFailed = true
+				break
 			}
 			for _, sample := range samples {
 				identities, resolveErr := resolver.resolve(definition.scope, sample.Labels)
@@ -239,7 +245,8 @@ func (service MetricRollupService) Collect(ctx context.Context) (resultErr error
 					continue
 				}
 				if resolveErr != nil {
-					return fmt.Errorf("resolve %s metric identity: %w", definition.scope, resolveErr)
+					queryErrors = append(queryErrors, fmt.Errorf("resolve %s metric identity: %w", definition.scope, resolveErr))
+					continue
 				}
 				key := rollupIdentity(definition.scope, identities, sample.Labels)
 				rollup := values[key]
@@ -266,19 +273,29 @@ func (service MetricRollupService) Collect(ctx context.Context) (resultErr error
 				}
 			}
 		}
+		if definitionFailed {
+			continue
+		}
 		for _, rollup := range values {
 			rollups = append(rollups, *rollup)
 		}
 	}
 	client, err := service.clickhouse.Client(ctx)
 	if err != nil {
-		return err
+		return errors.Join(append(queryErrors, err)...)
 	}
 	if err := client.InsertMetricRollups(ctx, rollups); err != nil {
-		return err
+		return errors.Join(append(queryErrors, err)...)
 	}
 	insertedRows = len(rollups)
-	slog.InfoContext(ctx, "metric rollup completed", "inserted_rows", insertedRows, "rejected_samples", rejectedSamples)
+	if len(queryErrors) > 0 {
+		slog.WarnContext(ctx, "metric rollup completed with partial query failures", "inserted_rows", insertedRows, "rejected_samples", rejectedSamples, "failed_queries", len(queryErrors), "error", errors.Join(queryErrors...))
+		if insertedRows == 0 {
+			return errors.Join(queryErrors...)
+		}
+	} else {
+		slog.InfoContext(ctx, "metric rollup completed", "inserted_rows", insertedRows, "rejected_samples", rejectedSamples)
+	}
 	return nil
 }
 
@@ -374,16 +391,23 @@ func rollupIdentity(scope string, identity models.MetricRollupIdentities, labels
 }
 
 func (service MetricRollupService) HostTelemetry(ctx context.Context, server string) (SystemTelemetry, error) {
+	result := emptySystemTelemetry()
 	if !service.enabled || server == "" {
-		return SystemTelemetry{}, nil
+		return result, nil
 	}
 	client, err := service.clickhouse.Client(ctx)
 	if err != nil {
-		return SystemTelemetry{}, err
+		return result, err
 	}
-	values, err := client.LatestSystemMetricValues(ctx, server)
-	if err != nil {
-		return SystemTelemetry{}, err
+	values, latestErr := client.LatestSystemMetricValues(ctx, server)
+	history, historyErr := client.SystemMetricHistory(ctx, server, service.now().UTC().Add(-systemTelemetryHistoryWindow))
+	if historyErr == nil {
+		result.MemoryHistory = systemResourceHistory(history, "memory_available_bytes", "memory_total_bytes")
+		result.StorageHistory = systemResourceHistory(history, "root_filesystem_available_bytes", "root_filesystem_size_bytes")
+		result.HostHistory = systemThroughputHistory(history)
+	}
+	if latestErr != nil {
+		return result, errors.Join(latestErr, historyErr)
 	}
 	metrics := make(map[string]clickhouseclient.MetricValue, len(values))
 	for _, value := range values {
@@ -397,7 +421,7 @@ func (service MetricRollupService) HostTelemetry(ctx context.Context, server str
 	for _, metric := range required {
 		value, ok := metrics[metric]
 		if !ok || service.now().UTC().Sub(value.ObservedAt) > systemTelemetryFreshness {
-			return SystemTelemetry{}, nil
+			return result, historyErr
 		}
 		if value.ObservedAt.Before(observedAt) {
 			observedAt = value.ObservedAt
@@ -407,7 +431,7 @@ func (service MetricRollupService) HostTelemetry(ctx context.Context, server str
 	storageTotal := metrics["root_filesystem_size_bytes"].Value
 	cpuTotal := metrics["cpu_cores_total"].Value
 	if memoryTotal <= 0 || storageTotal <= 0 || cpuTotal <= 0 {
-		return SystemTelemetry{}, nil
+		return result, historyErr
 	}
 	cpuCores := clamp(metrics["cpu_cores_used"].Value, 0, cpuTotal)
 	cpuUsed := cpuCores / cpuTotal * 100
@@ -419,63 +443,116 @@ func (service MetricRollupService) HostTelemetry(ctx context.Context, server str
 	networkTransmit, networkTransmitAvailable := freshSystemMetric(metrics, "network_transmit_bytes_per_second", service.now().UTC())
 	oomEvents, oomAvailable := freshSystemMetric(metrics, "oom_events", service.now().UTC())
 	tasks, tasksAvailable := freshSystemMetric(metrics, "tasks", service.now().UTC())
-	result := SystemTelemetry{
-		Available: true, ObservedAt: observedAt,
-		CPU:          SystemResourceUsage{Used: cpuUsed, Free: 100 - cpuUsed},
-		CPUCoresUsed: cpuCores, CPUCoresTotal: cpuTotal,
-		DiskReadBytesPS: diskRead, DiskReadAvailable: diskReadAvailable,
-		DiskWriteBytesPS: diskWrite, DiskWriteAvailable: diskWriteAvailable,
-		NetworkReceiveBPS: networkReceive, NetworkReceiveAvailable: networkReceiveAvailable,
-		NetworkTransmitBPS: networkTransmit, NetworkTransmitAvailable: networkTransmitAvailable,
-		OOMEvents: oomEvents, OOMAvailable: oomAvailable, Tasks: tasks, TasksAvailable: tasksAvailable,
-		Memory:        SystemResourceUsage{Used: memoryTotal - memoryFree, Free: memoryFree},
-		Storage:       SystemResourceUsage{Used: storageTotal - storageFree, Free: storageFree},
-		MemoryHistory: []SystemTelemetryHistoryPoint{}, StorageHistory: []SystemTelemetryHistoryPoint{},
+	result.Available = true
+	result.ObservedAt = observedAt
+	result.CPU = SystemResourceUsage{Used: cpuUsed, Free: 100 - cpuUsed}
+	result.CPUCoresUsed = cpuCores
+	result.CPUCoresTotal = cpuTotal
+	result.DiskReadBytesPS, result.DiskReadAvailable = diskRead, diskReadAvailable
+	result.DiskWriteBytesPS, result.DiskWriteAvailable = diskWrite, diskWriteAvailable
+	result.NetworkReceiveBPS, result.NetworkReceiveAvailable = networkReceive, networkReceiveAvailable
+	result.NetworkTransmitBPS, result.NetworkTransmitAvailable = networkTransmit, networkTransmitAvailable
+	result.OOMEvents, result.OOMAvailable = oomEvents, oomAvailable
+	result.Tasks, result.TasksAvailable = tasks, tasksAvailable
+	result.Memory = SystemResourceUsage{Used: memoryTotal - memoryFree, Free: memoryFree}
+	result.Storage = SystemResourceUsage{Used: storageTotal - storageFree, Free: storageFree}
+	return result, historyErr
+}
+
+func emptySystemTelemetry() SystemTelemetry {
+	return SystemTelemetry{
+		MemoryHistory:    []SystemTelemetryHistoryPoint{},
+		StorageHistory:   []SystemTelemetryHistoryPoint{},
 		HostHistory:      []SystemThroughputHistoryPoint{},
 		Platform:         []AttributedTelemetryRow{},
 		SystemContainers: []AttributedTelemetryRow{},
 	}
-	history, err := client.SystemMetricHistory(ctx, server, service.now().UTC().Add(-systemTelemetryHistoryWindow))
-	if err != nil {
-		return result, err
-	}
-	result.MemoryHistory = systemResourceHistory(history, "memory_available_bytes", "memory_total_bytes")
-	result.StorageHistory = systemResourceHistory(history, "root_filesystem_available_bytes", "root_filesystem_size_bytes")
-	result.HostHistory = systemThroughputHistory(history)
-	return result, nil
 }
 
 func (service MetricRollupService) SystemTelemetry(ctx context.Context, server string) (SystemTelemetry, error) {
-	result, err := service.HostTelemetry(ctx, server)
-	if err != nil || !service.enabled || server == "" {
-		return result, err
+	result, hostErr := service.HostTelemetry(ctx, server)
+	if server == "" {
+		return result, hostErr
+	}
+	serverID, err := uuid.Parse(server)
+	if err != nil {
+		return result, errors.Join(hostErr, fmt.Errorf("parse system telemetry server: %w", err))
+	}
+	inventory, inventoryErr := models.Application.FindSystemTelemetryContainers(ctx, service.db.Executor(), serverID)
+	result.SystemContainers = mergeSystemContainerInventory(result.SystemContainers, inventory)
+	if !service.enabled {
+		return result, errors.Join(hostErr, inventoryErr)
 	}
 	client, err := service.clickhouse.Client(ctx)
 	if err != nil {
-		return result, err
+		return result, errors.Join(hostErr, inventoryErr, err)
 	}
+	queryErrors := []error{hostErr, inventoryErr}
 	platform, err := client.LatestAttributedMetricValues(ctx, "native", server, "")
 	if err != nil {
-		return result, err
+		queryErrors = append(queryErrors, err)
+	} else {
+		historySince := service.now().UTC().Add(-systemTelemetryHistoryWindow)
+		platformHistory, historyErr := client.AttributedMetricHistory(ctx, "native", server, "", historySince)
+		if historyErr != nil {
+			queryErrors = append(queryErrors, historyErr)
+		}
+		result.Platform = attributedTelemetryRows(platform, platformHistory, service.now().UTC())
 	}
-	historySince := service.now().UTC().Add(-systemTelemetryHistoryWindow)
-	platformHistory, err := client.AttributedMetricHistory(ctx, "native", server, "", historySince)
-	if err != nil {
-		return result, err
-	}
-	result.Platform = attributedTelemetryRows(platform, platformHistory, service.now().UTC())
 	containers, err := client.LatestAttributedMetricValues(ctx, "container", server, "")
 	if err != nil {
-		return result, err
+		queryErrors = append(queryErrors, err)
+	} else {
+		containers = systemContainerMetricValues(containers)
+		containerHistory, historyErr := client.AttributedMetricHistory(ctx, "container", server, "", service.now().UTC().Add(-systemTelemetryHistoryWindow))
+		if historyErr != nil {
+			queryErrors = append(queryErrors, historyErr)
+		}
+		containerHistory = systemContainerMetricValues(containerHistory)
+		rows := attributedTelemetryRows(containers, containerHistory, service.now().UTC())
+		result.SystemContainers = mergeSystemContainerInventory(rows, inventory)
 	}
-	containers = systemContainerMetricValues(containers)
-	containerHistory, err := client.AttributedMetricHistory(ctx, "container", server, "", historySince)
-	if err != nil {
-		return result, err
+	return result, errors.Join(queryErrors...)
+}
+
+func mergeSystemContainerInventory(
+	rows []AttributedTelemetryRow,
+	inventory []models.SystemTelemetryContainer,
+) []AttributedTelemetryRow {
+	result := slices.Clone(rows)
+	matched := make([]bool, len(result))
+	for _, container := range inventory {
+		match := -1
+		for index := range result {
+			if matched[index] {
+				continue
+			}
+			if result[index].Installation == container.InstallationID ||
+				(result[index].Installation == "" && result[index].Resource == "" && result[index].Component == container.ResourceKind) {
+				match = index
+				break
+			}
+		}
+		if match < 0 {
+			result = append(result, AttributedTelemetryRow{
+				Scope: "container", Component: container.ResourceKind,
+				Resource: container.ResourceID, Installation: container.InstallationID,
+				ResourceName: container.ResourceName, ContainerName: container.ContainerName,
+				History: []AttributedTelemetryPoint{},
+			})
+			matched = append(matched, true)
+			continue
+		}
+		matched[match] = true
+		result[match].Resource = container.ResourceID
+		result[match].Installation = container.InstallationID
+		result[match].ResourceName = container.ResourceName
+		result[match].ContainerName = container.ContainerName
 	}
-	containerHistory = systemContainerMetricValues(containerHistory)
-	result.SystemContainers = attributedTelemetryRows(containers, containerHistory, service.now().UTC())
-	return result, nil
+	slices.SortFunc(result, func(a, b AttributedTelemetryRow) int {
+		return strings.Compare(a.ResourceName+a.Component+a.ContainerName, b.ResourceName+b.Component+b.ContainerName)
+	})
+	return result
 }
 
 func systemContainerMetricValues(values []clickhouseclient.AttributedMetricValue) []clickhouseclient.AttributedMetricValue {

@@ -23,6 +23,36 @@ type SystemResourceIndexItem struct {
 	Health        string `bun:"health"`
 }
 
+type SystemTelemetryContainer struct {
+	ResourceID     string `bun:"resource_id"`
+	ResourceName   string `bun:"resource_name"`
+	ResourceKind   string `bun:"resource_kind"`
+	InstallationID string `bun:"installation_id"`
+	ContainerName  string `bun:"container_name"`
+}
+
+func (application) FindSystemTelemetryContainers(
+	ctx context.Context,
+	db storage.Executor,
+	serverID uuid.UUID,
+) ([]SystemTelemetryContainer, error) {
+	containers := make([]SystemTelemetryContainer, 0)
+	err := db.NewSelect().
+		TableExpr("resources AS resource").
+		ColumnExpr("resource.id::text AS resource_id").
+		ColumnExpr("resource.name AS resource_name").
+		ColumnExpr("resource.kind AS resource_kind").
+		ColumnExpr("installation.id::text AS installation_id").
+		ColumnExpr("installation.container_name AS container_name").
+		Join("JOIN resource_installations AS installation ON installation.resource_id = resource.id AND installation.archived_at IS NULL").
+		Where("resource.system_managed = TRUE").
+		Where("resource.archived_at IS NULL").
+		Where("installation.server_id = ?", serverID).
+		OrderExpr("resource.name, installation.created_at").
+		Scan(ctx, &containers)
+	return containers, err
+}
+
 func (application) FindSystemResourceIndex(ctx context.Context, db storage.Executor) ([]SystemResourceIndexItem, error) {
 	items := make([]SystemResourceIndexItem, 0)
 	err := db.NewSelect().

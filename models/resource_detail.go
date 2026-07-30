@@ -83,6 +83,7 @@ type ResourceBackupDetails struct {
 	Policy       *BackupPolicyEntity
 	Destinations []BackupDestinationSummary
 	History      []ResourceBackupHistory
+	Restores     []ResourceRestoreHistory
 }
 
 type ResourcePrivateAccessDetails struct {
