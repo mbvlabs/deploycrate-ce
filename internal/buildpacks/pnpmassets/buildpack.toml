@@ -1,0 +1,12 @@
+api = "0.12"
+
+[buildpack]
+id = "com.deploycrate.pnpm-assets"
+name = "DeployCrate pnpm Assets"
+version = "0.2.0"
+
+[metadata]
+default-pnpm-version = "11.18.0"
+
+[[targets]]
+os = "linux"

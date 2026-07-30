@@ -2,6 +2,7 @@ package services
 
 import (
 	"database/sql"
+	"deploycrate-ce/models"
 	"encoding/json"
 
 	"github.com/google/uuid"
@@ -21,9 +22,15 @@ type buildSnapshot struct {
 	RegistryEndpoint           string          `json:"registry_endpoint"`
 	Settings                   json.RawMessage `json:"settings"`
 	BPGOTargets                string          `json:"bp_go_targets"`
+	parsedSettings             models.BuildpackSettings
 }
 
 func marshalBuildSnapshot(snapshot buildSnapshot) (json.RawMessage, error) {
+	settings, err := models.CanonicalBuildpackSettings(snapshot.Settings)
+	if err != nil {
+		return nil, err
+	}
+	snapshot.Settings = settings
 	return json.Marshal(snapshot)
 }
 

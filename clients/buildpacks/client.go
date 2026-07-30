@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"slices"
 	"strings"
 	"sync"
 
+	"deploycrate-ce/internal/buildpacks/pnpmassets"
 	"deploycrate-ce/internal/sudo"
 
 	"github.com/google/uuid"
@@ -21,6 +23,7 @@ const (
 	dockerExecutable       = "/usr/bin/docker"
 	NobleBuilderAMD64      = "docker.io/paketobuildpacks/ubuntu-noble-builder@sha256:44aa874655716b237568f3c8b98fea1eae9984bf0e85bffe6847c286b610c767"
 	NobleBuilderARM64      = "docker.io/paketobuildpacks/ubuntu-noble-builder@sha256:29a6861e7a6cac353f34478fcf5cfd2fe606f9bcb2e431bc73033e05fb4d722b"
+	NodeEngineBuildpack    = "paketo-buildpacks/node-engine@8.4.1"
 	GoBuildpackAMD64       = "docker.io/paketobuildpacks/go@sha256:506156f52901969a3dcca288793f86800a57b540c1d5f63329bd3f22b677e659"
 	GoBuildpackARM64       = "docker.io/paketobuildpacks/go@sha256:123f547694d9e3ae99e332e9388612c604d6fdfb72dbdfe0f0be674389519bd6"
 	NobleRunImageAMD64     = "docker.io/paketobuildpacks/ubuntu-noble-run@sha256:7b47badbf2e31f418d56204bcc25ef8d7e5dd8e8f824fcf87119031bd36db882"
@@ -41,6 +44,7 @@ type BuildSpec struct {
 	PullPolicy         string
 	DockerEnvironment  []string
 	BPGOTargets        string
+	FrontendScript     string
 	Output             io.Writer
 }
 
@@ -74,7 +78,7 @@ func (Client) Build(ctx context.Context, spec BuildSpec) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	buildpack, err := PinnedGoBuildpack()
+	goBuildpack, err := PinnedGoBuildpack()
 	if err != nil {
 		return Result{}, err
 	}
@@ -82,12 +86,25 @@ func (Client) Build(ctx context.Context, spec BuildSpec) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	arguments := []string{"build", spec.Image, "--path", spec.Path, "--builder", builder,
-		"--buildpack", buildpack, "--trust-extra-buildpacks", "--run-image", runImage, "--publish",
+	arguments := []string{"build", spec.Image, "--path", spec.Path, "--builder", builder}
+	if spec.FrontendScript != "" {
+		assetsBuildpack, materializeErr := pnpmassets.Materialize(filepath.Join(spec.TemporaryDirectory, "buildpacks"))
+		if materializeErr != nil {
+			return Result{}, materializeErr
+		}
+		arguments = append(arguments,
+			"--buildpack", NodeEngineBuildpack,
+			"--buildpack", assetsBuildpack,
+			"--env", "BP_DEPLOYCRATE_FRONTEND_SCRIPT="+spec.FrontendScript,
+		)
+	}
+	arguments = append(arguments,
+		"--buildpack", goBuildpack, "--trust-extra-buildpacks", "--run-image", runImage, "--publish",
 		"--cache", cacheArgument("build", spec.BuildCache),
 		"--cache", cacheArgument("launch", spec.LaunchCache),
 		"--pull-policy", spec.PullPolicy, "--timestamps",
-		"--report-output-dir", spec.ReportDirectory}
+		"--report-output-dir", spec.ReportDirectory,
+	)
 	if spec.PreviousImage != "" {
 		arguments = append(arguments, "--previous-image", spec.PreviousImage)
 	}

@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"path"
-	"slices"
 	"strings"
 	"time"
 
@@ -46,9 +45,11 @@ func (e *BuildpackConfigurationEntity) Validate() error {
 	if len(e.Settings) == 0 || !json.Valid(e.Settings) {
 		builder.Add("settings", "invalid", "Buildpacks settings must be valid JSON")
 	} else {
-		var settings any
-		if json.Unmarshal(e.Settings, &settings) != nil || containsSecretSetting(settings) {
-			builder.Add("settings", "secret", "Buildpacks settings cannot contain secret values")
+		canonical, settingsErr := CanonicalBuildpackSettings(e.Settings)
+		if settingsErr != nil {
+			builder.Add("settings", "invalid", settingsErr.Error())
+		} else {
+			e.Settings = canonical
 		}
 	}
 	return builder.Err()
@@ -67,27 +68,6 @@ func normalizeBuildContextPath(value string) (string, error) {
 		return "", errors.New("build context cannot traverse outside the repository")
 	}
 	return cleaned, nil
-}
-
-func containsSecretSetting(value any) bool {
-	switch typed := value.(type) {
-	case map[string]any:
-		for key, nested := range typed {
-			key = strings.ToLower(key)
-			if strings.Contains(key, "secret") || strings.Contains(key, "token") ||
-				strings.Contains(key, "password") || strings.Contains(key, "private_key") {
-				return true
-			}
-			if containsSecretSetting(nested) {
-				return true
-			}
-		}
-	case []any:
-		if slices.ContainsFunc(typed, containsSecretSetting) {
-			return true
-		}
-	}
-	return false
 }
 
 func (bc buildpackConfiguration) Find(

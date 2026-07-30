@@ -310,6 +310,8 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	if err := sudo.CommandContext(ctx, "/usr/bin/test", "-f", filepath.Join(contextPath, "go.mod")).Run(); err != nil {
 		return fail(errors.New("Go Buildpacks context must contain go.mod"))
 	}
+	buildCtx, cancel := context.WithTimeout(ctx, buildTimeout)
+	defer cancel()
 	if err := progress("loading_registry", "Loading registry credentials"); err != nil {
 		return err
 	}
@@ -355,8 +357,6 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	} else if err := logger.System(ctx, fmt.Sprintf("Using Pack caches %s and %s with previous Release image %s", caches.Build, caches.Launch, previousImage)); err != nil {
 		return err
 	}
-	buildCtx, cancel := context.WithTimeout(ctx, buildTimeout)
-	defer cancel()
 	reportDirectory := filepath.Join(workspace, "report")
 	if err := createBuildDirectory(ctx, reportDirectory); err != nil {
 		return fmt.Errorf("create Pack report directory: %w", err)
@@ -365,14 +365,18 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	if err := createBuildDirectory(ctx, temporaryDirectory); err != nil {
 		return fmt.Errorf("create Pack temporary directory: %w", err)
 	}
-	if err := progress("building_image", "Running Pack and publishing the application image"); err != nil {
+	if err := progress("building_image", "Running Cloud Native Buildpacks and publishing the application image"); err != nil {
 		return err
+	}
+	frontendScript := ""
+	if snapshot.parsedSettings.Frontend != nil {
+		frontendScript = snapshot.parsedSettings.Frontend.Script
 	}
 	packStarted := time.Now()
 	_, err = service.pack.Build(buildCtx, buildpacksclient.BuildSpec{
 		Image: imageTag, Path: contextPath, ReportDirectory: reportDirectory, TemporaryDirectory: temporaryDirectory,
 		BuildCache: caches.Build, LaunchCache: caches.Launch, PreviousImage: previousImage, PullPolicy: buildpacksclient.PullPolicyIfNotPresent,
-		DockerEnvironment: authentication.Environment(), BPGOTargets: snapshot.BPGOTargets,
+		DockerEnvironment: authentication.Environment(), BPGOTargets: snapshot.BPGOTargets, FrontendScript: frontendScript,
 		Output: logger,
 	})
 	recordTiming("Pack execution", packStarted)
@@ -535,6 +539,11 @@ func parseBuildSnapshot(build models.BuildEntity) (buildSnapshot, error) {
 	if snapshot.BPGOTargets != "" && (!goTargetsPattern.MatchString(snapshot.BPGOTargets) || strings.Contains(snapshot.BPGOTargets, "..")) {
 		return snapshot, errors.New("BP_GO_TARGETS is invalid")
 	}
+	settings, err := models.ParseBuildpackSettings(snapshot.Settings)
+	if err != nil {
+		return snapshot, fmt.Errorf("Buildpacks settings are invalid: %w", err)
+	}
+	snapshot.parsedSettings = settings
 	return snapshot, nil
 }
 

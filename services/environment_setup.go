@@ -1412,7 +1412,7 @@ func (service *EnvironmentSetup) DeleteEnvironment(
 		}
 	}
 	if err := service.buildpacks.DeleteEnvironmentCaches(ctx, environmentID); err != nil {
-		return fmt.Errorf("delete Environment Pack caches: %w", err)
+		return fmt.Errorf("delete Environment Build caches: %w", err)
 	}
 
 	tx, err := service.db.BeginTx(ctx, nil)

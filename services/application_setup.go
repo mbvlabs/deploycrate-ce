@@ -105,7 +105,7 @@ func (service *ApplicationSetup) Create(ctx context.Context, data ApplicationSet
 		return ApplicationSetupResult{}, errors.Join(models.ErrDomainValidation, errors.New("application, environment, and source identity are required"))
 	}
 	if len(data.BuildpackSettings) == 0 {
-		data.BuildpackSettings = json.RawMessage(`{"schema_version":1}`)
+		data.BuildpackSettings = models.DefaultBuildpackSettings()
 	}
 	repository, installation, err := service.validateRepository(ctx, data.GitHubInstallationID, data.GitHubRepositoryID)
 	if err != nil {
@@ -324,7 +324,7 @@ func (service *ApplicationSetup) updateSource(
 		return errors.Join(models.ErrDomainValidation, errors.New("container registry is unavailable"))
 	}
 	if len(data.BuildpackSettings) == 0 {
-		data.BuildpackSettings = json.RawMessage(`{"schema_version":1}`)
+		data.BuildpackSettings = models.DefaultBuildpackSettings()
 	}
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
