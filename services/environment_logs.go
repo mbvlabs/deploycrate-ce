@@ -12,6 +12,7 @@ import (
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/google/uuid"
 )
 
@@ -98,7 +99,7 @@ func (service *EnvironmentLogs) Snapshot(
 		}
 		nextCursor = encodedCursor
 		logs = append(logs, EnvironmentLog{
-			ID: encodedCursor, Message: row.Message, Stream: row.Stream,
+			ID: encodedCursor, Message: ansi.Strip(row.Message), Stream: row.Stream,
 			Container: row.Container, Deployment: row.Deployment,
 			Instance: row.Instance, Release: row.Release,
 			OccurredAt: row.Cursor.Timestamp,

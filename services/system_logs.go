@@ -20,18 +20,19 @@ const (
 var ErrInvalidSystemLogCursor = errors.New("system log cursor is invalid")
 
 type SystemLog struct {
-	ID             string    `json:"id"`
-	Message        string    `json:"message"`
-	Severity       string    `json:"severity"`
-	SeverityNumber uint8     `json:"severityNumber"`
-	TraceID        string    `json:"traceId"`
-	SpanID         string    `json:"spanId"`
-	Scope          string    `json:"scope"`
-	Source         string    `json:"source"`
-	Line           string    `json:"line"`
-	Instance       string    `json:"instance"`
-	Slot           string    `json:"slot"`
-	OccurredAt     time.Time `json:"occurredAt"`
+	ID             string            `json:"id"`
+	Message        string            `json:"message"`
+	Severity       string            `json:"severity"`
+	SeverityNumber uint8             `json:"severityNumber"`
+	Attributes     map[string]string `json:"attributes"`
+	TraceID        string            `json:"traceId"`
+	SpanID         string            `json:"spanId"`
+	Scope          string            `json:"scope"`
+	Source         string            `json:"source"`
+	Line           string            `json:"line"`
+	Instance       string            `json:"instance"`
+	Slot           string            `json:"slot"`
+	OccurredAt     time.Time         `json:"occurredAt"`
 }
 
 type SystemLogSnapshot struct {
@@ -86,7 +87,8 @@ func (service *SystemLogs) Snapshot(ctx context.Context, after string) (SystemLo
 		nextCursor = encodedCursor
 		logs = append(logs, SystemLog{
 			ID: encodedCursor, Message: row.Message, Severity: row.Severity,
-			SeverityNumber: row.SeverityNumber, TraceID: row.TraceID, SpanID: row.SpanID,
+			SeverityNumber: row.SeverityNumber, Attributes: row.Attributes,
+			TraceID: row.TraceID, SpanID: row.SpanID,
 			Scope: row.Scope, Source: row.Source, Line: row.Line,
 			Instance: row.Instance, Slot: row.Slot, OccurredAt: row.Cursor.Timestamp,
 		})

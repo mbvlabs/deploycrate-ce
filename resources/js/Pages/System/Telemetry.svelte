@@ -125,6 +125,7 @@
     message: string
     severity: string
     severityNumber: number
+    attributes: Record<string, string>
     traceId: string
     spanId: string
     scope: string
@@ -230,6 +231,10 @@
     if (log.source) return log.line ? `${log.source}:${log.line}` : log.source
     return log.scope || 'application'
   }
+  const systemLogContext = (log: SystemLog) => Object.entries(log.attributes ?? {})
+    .filter(([key, value]) => value && key !== 'code.file.path' && key !== 'code.line.number'
+      && (key !== 'trace_id' || !log.traceId) && (key !== 'span_id' || !log.spanId))
+    .sort(([left], [right]) => left.localeCompare(right))
 
   async function loadSystemLogs(signal?: AbortSignal) {
     const endpoint = new URL(routes.systemTelemetryLogs(), window.location.origin)
@@ -447,6 +452,16 @@
                     {systemLogLevel(log)} · {log.slot || 'slot unknown'} · {systemLogSource(log)}{#if log.traceId} · trace {short(log.traceId)}{/if}{#if log.instance} · instance {short(log.instance)}{/if}
                   </p>
                   <pre class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
+                  {#if systemLogContext(log).length > 0}
+                    <dl class="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
+                      {#each systemLogContext(log) as [key, value] (key)}
+                        <div class="flex min-w-0 gap-1">
+                          <dt class="shrink-0">{key}=</dt>
+                          <dd class="break-all text-foreground/80">{value}</dd>
+                        </div>
+                      {/each}
+                    </dl>
+                  {/if}
                 </div>
               </div>
             {:else}

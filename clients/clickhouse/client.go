@@ -105,6 +105,7 @@ type SystemLog struct {
 	Message        string
 	Severity       string
 	SeverityNumber uint8
+	Attributes     map[string]string
 	TraceID        string
 	SpanID         string
 	Scope          string
@@ -539,9 +540,10 @@ func (client Client) SystemLogs(
 	limit uint64,
 ) (SystemLogPage, error) {
 	const fingerprint = "sipHash64(SeverityText, Body, TraceId, SpanId, ScopeName, toString(LogAttributes), toString(ResourceAttributes))"
-	const columns = "toString(toUnixTimestamp64Nano(Timestamp)) AS timestamp_nanoseconds, toString(" + fingerprint + ") AS fingerprint, Body AS message, SeverityText AS severity, SeverityNumber AS severity_number, TraceId AS trace_id, SpanId AS span_id, ScopeName AS scope, LogAttributes['code.file.path'] AS source, LogAttributes['code.line.number'] AS line, ResourceAttributes['service.instance.id'] AS instance, ResourceAttributes['deploycrate.slot'] AS slot"
-	const initialQuery = "SELECT " + columns + " FROM otel_logs WHERE ServiceName = {service:String} ORDER BY Timestamp DESC, " + fingerprint + " DESC LIMIT {limit:UInt64} FORMAT JSONEachRow"
-	const incrementalQuery = "SELECT " + columns + " FROM otel_logs WHERE ServiceName = {service:String} AND (Timestamp, " + fingerprint + ") > (fromUnixTimestamp64Nano({after_nanoseconds:Int64}), {after_fingerprint:UInt64}) ORDER BY Timestamp, " + fingerprint + " LIMIT {limit:UInt64} FORMAT JSONEachRow"
+	const columns = "toString(toUnixTimestamp64Nano(Timestamp)) AS timestamp_nanoseconds, toString(" + fingerprint + ") AS fingerprint, Body AS message, SeverityText AS severity, SeverityNumber AS severity_number, LogAttributes AS attributes, TraceId AS trace_id, SpanId AS span_id, ScopeName AS scope, LogAttributes['code.file.path'] AS source, LogAttributes['code.line.number'] AS line, ResourceAttributes['service.instance.id'] AS instance, ResourceAttributes['deploycrate.slot'] AS slot"
+	const filter = "ServiceName = {service:String} AND SeverityNumber >= 9"
+	const initialQuery = "SELECT " + columns + " FROM otel_logs WHERE " + filter + " ORDER BY Timestamp DESC, " + fingerprint + " DESC LIMIT {limit:UInt64} FORMAT JSONEachRow"
+	const incrementalQuery = "SELECT " + columns + " FROM otel_logs WHERE " + filter + " AND (Timestamp, " + fingerprint + ") > (fromUnixTimestamp64Nano({after_nanoseconds:Int64}), {after_fingerprint:UInt64}) ORDER BY Timestamp, " + fingerprint + " LIMIT {limit:UInt64} FORMAT JSONEachRow"
 
 	endpoint, err := url.Parse(client.baseURL)
 	if err != nil {
@@ -583,18 +585,19 @@ func (client Client) SystemLogs(
 	decoder := json.NewDecoder(response.Body)
 	for {
 		var row struct {
-			TimestampNanoseconds string `json:"timestamp_nanoseconds"`
-			Fingerprint          string `json:"fingerprint"`
-			Message              string `json:"message"`
-			Severity             string `json:"severity"`
-			SeverityNumber       uint8  `json:"severity_number"`
-			TraceID              string `json:"trace_id"`
-			SpanID               string `json:"span_id"`
-			Scope                string `json:"scope"`
-			Source               string `json:"source"`
-			Line                 string `json:"line"`
-			Instance             string `json:"instance"`
-			Slot                 string `json:"slot"`
+			TimestampNanoseconds string            `json:"timestamp_nanoseconds"`
+			Fingerprint          string            `json:"fingerprint"`
+			Message              string            `json:"message"`
+			Severity             string            `json:"severity"`
+			SeverityNumber       uint8             `json:"severity_number"`
+			Attributes           map[string]string `json:"attributes"`
+			TraceID              string            `json:"trace_id"`
+			SpanID               string            `json:"span_id"`
+			Scope                string            `json:"scope"`
+			Source               string            `json:"source"`
+			Line                 string            `json:"line"`
+			Instance             string            `json:"instance"`
+			Slot                 string            `json:"slot"`
 		}
 		if err := decoder.Decode(&row); errors.Is(err, io.EOF) {
 			break
@@ -615,7 +618,8 @@ func (client Client) SystemLogs(
 				Fingerprint: fingerprint,
 			},
 			Message: row.Message, Severity: row.Severity, SeverityNumber: row.SeverityNumber,
-			TraceID: row.TraceID, SpanID: row.SpanID, Scope: row.Scope,
+			Attributes: row.Attributes,
+			TraceID:    row.TraceID, SpanID: row.SpanID, Scope: row.Scope,
 			Source: row.Source, Line: row.Line, Instance: row.Instance, Slot: row.Slot,
 		})
 	}

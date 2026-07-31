@@ -106,6 +106,7 @@ processors:
       - set(log.attributes["log.iostream"], "stderr") where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil and log.body["PRIORITY"] == "3"
       - set(log.attributes["log.iostream"], "stdout") where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil and log.body["PRIORITY"] != "3"
       - set(log.body, log.body["MESSAGE"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil and log.body["MESSAGE"] != nil
+      - replace_pattern(log.body, "\\\\x1B\\\\[[0-?]*[ -/]*[@-~]", "") where log.attributes["deploycrate.environment.id"] != nil and IsString(log.body)
   resource/host:
     attributes:
       - key: service.namespace
