@@ -353,7 +353,7 @@ func (service *EnvironmentSecrets) RotateManagedResource(
 	if _, err := models.ChangeStateRevision.Create(ctx, db, models.CreateChangeStateRevisionData{Role: "result", ChangeID: change.ID, EnvironmentStateRevisionID: revision.ID}); err != nil {
 		return err
 	}
-	if _, err := db.NewUpdate().TableExpr("environment_target_states AS state").Set("desired_revision_id = ?", revision.ID).Set("updated_at = ?", now).
+	if _, err := db.NewUpdate().TableExpr("environment_target_states AS state").Set("desired_revision_id = ?", revision.ID).Set("state = 'pending'").Set("updated_at = ?", now).
 		Where("EXISTS (SELECT 1 FROM environment_targets target WHERE target.id = state.environment_target_id AND target.environment_id = ? AND target.detached_at IS NULL)", environment.ID).Exec(ctx); err != nil {
 		return err
 	}
@@ -457,7 +457,7 @@ func (service *EnvironmentSecrets) commitSecretRevision(
 		return models.EnvironmentStateRevisionEntity{}, err
 	}
 	if _, err := db.NewUpdate().TableExpr("environment_target_states AS state").
-		Set("desired_revision_id = ?", revision.ID).Set("updated_at = ?", now).
+		Set("desired_revision_id = ?", revision.ID).Set("state = 'pending'").Set("updated_at = ?", now).
 		Where("EXISTS (SELECT 1 FROM environment_targets target WHERE target.id = state.environment_target_id AND target.environment_id = ? AND target.detached_at IS NULL)", environment.ID).
 		Exec(ctx); err != nil {
 		return models.EnvironmentStateRevisionEntity{}, err

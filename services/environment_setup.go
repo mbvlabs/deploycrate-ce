@@ -139,24 +139,24 @@ type EnvironmentEditInput struct {
 }
 
 type EnvironmentOverview struct {
-	ApplicationID    uuid.UUID                          `json:"applicationId"`
-	ApplicationName  string                             `json:"applicationName"`
-	Environment      models.EnvironmentEntity           `json:"environment"`
-	SetupComplete    bool                               `json:"setupComplete"`
-	Repository       string                             `json:"repository"`
-	Reference        string                             `json:"reference"`
-	ContextPath      string                             `json:"contextPath"`
-	RegistryName     string                             `json:"registryName"`
-	RegistryEndpoint string                             `json:"registryEndpoint"`
-	Deployability    models.EnvironmentDeployability    `json:"deployability"`
-	Secrets          []models.EnvironmentSecretMetadata `json:"secrets"`
-	Variables        []EnvironmentVariableActivity      `json:"variables"`
-	Domain           string                             `json:"domain"`
-	Resources        []EnvironmentResourceActivity      `json:"resources"`
-	Builds           []EnvironmentBuildActivity         `json:"builds"`
-	Releases         []EnvironmentReleaseActivity       `json:"releases"`
-	Deployments      []EnvironmentDeploymentActivity    `json:"deployments"`
-	Instances        []EnvironmentInstanceActivity      `json:"instances"`
+	ApplicationID    uuid.UUID                       `json:"applicationId"`
+	ApplicationName  string                          `json:"applicationName"`
+	Environment      models.EnvironmentEntity        `json:"environment"`
+	SetupComplete    bool                            `json:"setupComplete"`
+	Repository       string                          `json:"repository"`
+	Reference        string                          `json:"reference"`
+	ContextPath      string                          `json:"contextPath"`
+	RegistryName     string                          `json:"registryName"`
+	RegistryEndpoint string                          `json:"registryEndpoint"`
+	Deployability    models.EnvironmentDeployability `json:"deployability"`
+	Secrets          []EnvironmentSecretActivity     `json:"secrets"`
+	Variables        []EnvironmentVariableActivity   `json:"variables"`
+	Domain           string                          `json:"domain"`
+	Resources        []EnvironmentResourceActivity   `json:"resources"`
+	Builds           []EnvironmentBuildActivity      `json:"builds"`
+	Releases         []EnvironmentReleaseActivity    `json:"releases"`
+	Deployments      []EnvironmentDeploymentActivity `json:"deployments"`
+	Instances        []EnvironmentInstanceActivity   `json:"instances"`
 }
 
 type EnvironmentListItem struct {
@@ -206,6 +206,17 @@ type EnvironmentVariableActivity struct {
 	Value    string `json:"value"`
 	Source   string `json:"source"`
 	SourceID string `json:"sourceId"`
+}
+
+type EnvironmentSecretActivity struct {
+	ID           uuid.UUID `json:"id"`
+	Key          string    `json:"key"`
+	DigestPrefix string    `json:"digestPrefix"`
+	SourceType   string    `json:"sourceType"`
+	SourceID     uuid.UUID `json:"sourceId"`
+	CreatedAt    time.Time `json:"createdAt"`
+	Status       string    `json:"status"`
+	Desired      bool      `json:"desired"`
 }
 
 type EnvironmentBuildActivity struct {
@@ -318,16 +329,13 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 	if err != nil && setupComplete {
 		return EnvironmentOverview{}, err
 	}
-	activeSecrets, err := models.EnvironmentSecret.ActiveForEnvironment(ctx, service.db.Executor(), environmentID)
-	if err != nil {
-		return EnvironmentOverview{}, err
-	}
-	secretMetadata := make([]models.EnvironmentSecretMetadata, 0, len(activeSecrets))
-	for _, secret := range activeSecrets {
-		secretMetadata = append(secretMetadata, secret.Sanitized())
-	}
+	secretActivity := make([]EnvironmentSecretActivity, 0)
 	variables := make([]EnvironmentVariableActivity, 0)
 	if setupComplete {
+		secretActivity, err = service.environmentSecretActivity(ctx, environmentID)
+		if err != nil {
+			return EnvironmentOverview{}, err
+		}
 		revision, revisionErr := models.EnvironmentStateRevision.LatestCommitted(ctx, service.db.Executor(), environmentID)
 		if revisionErr != nil {
 			return EnvironmentOverview{}, revisionErr
@@ -381,9 +389,121 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 		ApplicationID: applicationID, ApplicationName: source.ApplicationName, Environment: environment, SetupComplete: setupComplete,
 		Repository: source.Repository, Reference: source.Reference, ContextPath: source.ContextPath,
 		RegistryName: source.RegistryName, RegistryEndpoint: source.RegistryEndpoint,
-		Deployability: deployability, Secrets: secretMetadata, Variables: variables, Domain: domain,
+		Deployability: deployability, Secrets: secretActivity, Variables: variables, Domain: domain,
 		Resources: resources, Builds: builds, Releases: releases, Deployments: deployments, Instances: instances,
 	}, nil
+}
+
+func (service *EnvironmentSetup) environmentSecretActivity(ctx context.Context, environmentID uuid.UUID) ([]EnvironmentSecretActivity, error) {
+	target, err := models.EnvironmentTarget.ActiveForEnvironment(ctx, service.db.Executor(), environmentID)
+	if err != nil {
+		return nil, err
+	}
+	var targetState models.EnvironmentTargetStateEntity
+	if err := service.db.Executor().NewSelect().Model(&targetState).
+		Where("environment_target_id = ?", target.ID).Limit(1).Scan(ctx); err != nil {
+		return nil, err
+	}
+
+	desired, err := service.environmentRevisionSecrets(ctx, targetState.DesiredRevisionID)
+	if err != nil {
+		return nil, err
+	}
+	applying, err := service.environmentRevisionSecrets(ctx, targetState.ApplyingRevisionID)
+	if err != nil {
+		return nil, err
+	}
+	applied, err := service.environmentRevisionSecrets(ctx, targetState.AppliedRevisionID)
+	if err != nil {
+		return nil, err
+	}
+	failedRevisionID, err := service.environmentLatestFailedRevisionID(ctx, target.ID)
+	if err != nil {
+		return nil, err
+	}
+	desiredRevisionFailed := targetState.State == "failed" && targetState.DesiredRevisionID != nil &&
+		failedRevisionID != nil && *targetState.DesiredRevisionID == *failedRevisionID
+
+	activity := make([]EnvironmentSecretActivity, 0, len(desired)+len(applied))
+	for _, descriptor := range desired {
+		secret, findErr := models.EnvironmentSecret.FindForEnvironment(ctx, service.db.Executor(), environmentID, descriptor.ID)
+		if findErr != nil {
+			return nil, findErr
+		}
+		metadata := secret.Sanitized()
+		status := "pending"
+		if sameEnvironmentSecretDescriptor(descriptor, applied[descriptor.Key]) {
+			status = "deployed"
+		} else if sameEnvironmentSecretDescriptor(descriptor, applying[descriptor.Key]) {
+			status = "deploying"
+		} else if desiredRevisionFailed {
+			status = "failed"
+		}
+		activity = append(activity, EnvironmentSecretActivity{
+			ID: metadata.ID, Key: metadata.Key, DigestPrefix: metadata.DigestPrefix,
+			SourceType: metadata.SourceType, SourceID: metadata.SourceID, CreatedAt: metadata.CreatedAt,
+			Status: status, Desired: true,
+		})
+	}
+	for key, descriptor := range applied {
+		if _, stillDesired := desired[key]; stillDesired {
+			continue
+		}
+		secret, findErr := models.EnvironmentSecret.FindForEnvironment(ctx, service.db.Executor(), environmentID, descriptor.ID)
+		if findErr != nil {
+			return nil, findErr
+		}
+		metadata := secret.Sanitized()
+		activity = append(activity, EnvironmentSecretActivity{
+			ID: metadata.ID, Key: metadata.Key, DigestPrefix: metadata.DigestPrefix,
+			SourceType: metadata.SourceType, SourceID: metadata.SourceID, CreatedAt: metadata.CreatedAt,
+			Status: "pending_removal", Desired: false,
+		})
+	}
+	sort.Slice(activity, func(left, right int) bool { return activity[left].Key < activity[right].Key })
+	return activity, nil
+}
+
+func (service *EnvironmentSetup) environmentLatestFailedRevisionID(ctx context.Context, targetID uuid.UUID) (*uuid.UUID, error) {
+	var revisionID uuid.UUID
+	err := service.db.Executor().NewSelect().TableExpr("deployments AS deployment").
+		ColumnExpr("association.environment_state_revision_id").
+		Join("JOIN change_state_revisions AS association ON association.change_id = deployment.change_id AND association.role = 'result'").
+		Where("deployment.environment_target_id = ?", targetID).Where("deployment.status = 'failed'").
+		OrderExpr("deployment.finished_at DESC NULLS LAST, deployment.created_at DESC").Limit(1).Scan(ctx, &revisionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &revisionID, nil
+}
+
+func (service *EnvironmentSetup) environmentRevisionSecrets(
+	ctx context.Context,
+	revisionID *uuid.UUID,
+) (map[string]models.EnvironmentSecretDescriptor, error) {
+	secrets := make(map[string]models.EnvironmentSecretDescriptor)
+	if revisionID == nil {
+		return secrets, nil
+	}
+	revision, err := models.EnvironmentStateRevision.Find(ctx, service.db.Executor(), *revisionID)
+	if err != nil {
+		return nil, err
+	}
+	state, err := models.ParseEnvironmentDesiredState(revision.State)
+	if err != nil {
+		return nil, err
+	}
+	for _, descriptor := range state.Secrets {
+		secrets[descriptor.Key] = descriptor
+	}
+	return secrets, nil
+}
+
+func sameEnvironmentSecretDescriptor(left, right models.EnvironmentSecretDescriptor) bool {
+	return left.ID != uuid.Nil && left.ID == right.ID && left.Digest == right.Digest
 }
 
 func (service *EnvironmentSetup) EditData(
@@ -926,7 +1046,7 @@ func (service *EnvironmentSetup) QueueReleaseDeployment(
 	if _, err := models.ChangeStateRevision.Create(ctx, tx, models.CreateChangeStateRevisionData{Role: "result", ChangeID: change.ID, EnvironmentStateRevisionID: revision.ID}); err != nil {
 		return models.DeploymentEntity{}, err
 	}
-	if _, err := tx.NewUpdate().TableExpr("environment_target_states").Set("desired_revision_id = ?", revision.ID).
+	if _, err := tx.NewUpdate().TableExpr("environment_target_states").Set("desired_revision_id = ?", revision.ID).Set("state = 'pending'").
 		Set("updated_at = ?", now).Where("environment_target_id = ?", target.ID).Exec(ctx); err != nil {
 		return models.DeploymentEntity{}, err
 	}
