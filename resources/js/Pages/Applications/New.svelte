@@ -10,18 +10,18 @@
   type Installation = { id: string; accountLogin: string }
   type Repository = { id: string; githubInstallationId: string; fullName: string; defaultBranch: string }
   type Registry = { id: string; name: string; endpoint: string }
-  type FrontendSettings = { runtime: 'node'; package_manager: 'pnpm'; script: 'build' }
+  type FrontendSettings = { runtime: 'node'; script: 'build' }
   let { auth, options, environmentIntent = false }: { auth: { email: string }; options: { installations: Installation[]; repositories: Repository[]; registries: Registry[] }; environmentIntent?: boolean } = $props()
   const installations = $derived(options.installations ?? [])
   const repositoryOptions = $derived(options.repositories ?? [])
   const registries = $derived(options.registries ?? [])
   let step = $state(1)
   let buildFrontendAssets = $state(false)
-  const form = useForm(() => ({ applicationName: '', applicationSlug: '', environmentName: 'Production', environmentSlug: 'production', environmentKind: 'production', githubInstallationId: installations[0]?.id ?? '', githubRepositoryId: '', reference: '', autoBuild: true, contextPath: '.', builderReference: '', buildpackSettings: { schema_version: 1, frontend: null as FrontendSettings | null }, containerRegistryId: registries[0]?.id ?? '', imageRepository: '' }))
+  const form = useForm(() => ({ applicationName: '', applicationSlug: '', environmentName: 'Production', environmentSlug: 'production', environmentKind: 'production', githubInstallationId: installations[0]?.id ?? '', githubRepositoryId: '', reference: '', autoBuild: true, contextPath: '.', builderReference: '', buildpackSettings: { schema_version: 2, frontend: null as FrontendSettings | null }, containerRegistryId: registries[0]?.id ?? '', imageRepository: '' }))
   const repositories = $derived(repositoryOptions.filter((repository) => repository.githubInstallationId === $form.githubInstallationId))
   function submit(event: SubmitEvent) {
     event.preventDefault()
-    $form.buildpackSettings.frontend = buildFrontendAssets ? { runtime: 'node', package_manager: 'pnpm', script: 'build' } : null
+    $form.buildpackSettings.frontend = buildFrontendAssets ? { runtime: 'node', script: 'build' } : null
     $form.post(environmentIntent ? routes.environmentCreate() : routes.applicationCreate())
   }
 </script>
@@ -57,7 +57,7 @@
               </div>
               <label class="flex gap-3 border border-border p-4 sm:col-span-2">
                 <input class="mt-1" type="checkbox" bind:checked={buildFrontendAssets} />
-                <span><span class="font-medium">Build Node frontend assets</span><span class="mt-1 block text-xs text-muted-foreground">Requires package.json, pnpm-lock.yaml, and a build script. DeployCrate provisions and caches pnpm during the build lifecycle.</span></span>
+                <span><span class="font-medium">Build Node frontend assets</span><span class="mt-1 block text-xs text-muted-foreground">Requires package.json, a supported npm, pnpm, or Bun lockfile, and a build script. DeployCrate detects and caches the selected package manager during Builds.</span></span>
               </label>
               {#if $form.errors.settings}<p class="text-xs text-destructive sm:col-span-2">{$form.errors.settings}</p>{/if}
             {:else}

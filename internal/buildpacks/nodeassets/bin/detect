@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+if [[ -z "${BP_DEPLOYCRATE_FRONTEND_SCRIPT:-}" ]]; then
+  exit 100
+fi
+
+if [[ ! -f package.json ]]; then
+  echo "DeployCrate Node Assets requires package.json" >&2
+  exit 1
+fi
+
+supported_lockfiles=(package-lock.json npm-shrinkwrap.json pnpm-lock.yaml bun.lock bun.lockb)
+found_lockfiles=()
+for lockfile in "${supported_lockfiles[@]}"; do
+  if [[ -f "${lockfile}" ]]; then
+    found_lockfiles+=("${lockfile}")
+  fi
+done
+
+if (( ${#found_lockfiles[@]} == 0 )); then
+  echo "DeployCrate Node Assets requires one lockfile: package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, bun.lock, or bun.lockb" >&2
+  exit 1
+fi
+if (( ${#found_lockfiles[@]} > 1 )); then
+  printf -v conflicts '%s, ' "${found_lockfiles[@]}"
+  conflicts="${conflicts%, }"
+  echo "DeployCrate Node Assets found multiple lockfiles: ${conflicts}. Keep only the lockfile for the package manager used by this project." >&2
+  exit 1
+fi
+
+cat > "${CNB_BUILD_PLAN_PATH}" <<'PLAN'
+[[requires]]
+name = "node"
+
+[requires.metadata]
+build = true
+launch = false
+
+[[requires]]
+name = "npm"
+
+[requires.metadata]
+build = true
+launch = false
+PLAN

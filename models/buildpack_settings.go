@@ -9,14 +9,13 @@ import (
 	"strings"
 )
 
-const BuildpackSettingsSchemaVersion = 1
+const BuildpackSettingsSchemaVersion = 2
 
 var buildpackScriptPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9:_-]{0,63}$`)
 
 type BuildpackFrontendSettings struct {
-	Runtime        string `json:"runtime"`
-	PackageManager string `json:"package_manager"`
-	Script         string `json:"script"`
+	Runtime string `json:"runtime"`
+	Script  string `json:"script"`
 }
 
 type BuildpackSettings struct {
@@ -25,7 +24,7 @@ type BuildpackSettings struct {
 }
 
 func DefaultBuildpackSettings() json.RawMessage {
-	return json.RawMessage(`{"schema_version":1}`)
+	return json.RawMessage(`{"schema_version":2}`)
 }
 
 func ParseBuildpackSettings(value json.RawMessage) (BuildpackSettings, error) {
@@ -45,13 +44,9 @@ func ParseBuildpackSettings(value json.RawMessage) (BuildpackSettings, error) {
 		return settings, nil
 	}
 	settings.Frontend.Runtime = strings.TrimSpace(settings.Frontend.Runtime)
-	settings.Frontend.PackageManager = strings.TrimSpace(settings.Frontend.PackageManager)
 	settings.Frontend.Script = strings.TrimSpace(settings.Frontend.Script)
 	if settings.Frontend.Runtime != "node" {
 		return settings, errors.New("frontend runtime must be node")
-	}
-	if settings.Frontend.PackageManager != "pnpm" {
-		return settings, errors.New("frontend package manager must be pnpm")
 	}
 	if !buildpackScriptPattern.MatchString(settings.Frontend.Script) {
 		return settings, errors.New("frontend script must be a package script name")

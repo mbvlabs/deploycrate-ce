@@ -1,4 +1,4 @@
-package pnpmassets
+package nodeassets
 
 import (
 	"embed"
@@ -13,11 +13,11 @@ var files embed.FS
 
 func Materialize(parent string) (string, error) {
 	if !filepath.IsAbs(parent) {
-		return "", errors.New("pnpm assets buildpack directory must be absolute")
+		return "", errors.New("node assets buildpack directory must be absolute")
 	}
-	root := filepath.Join(parent, "pnpm-assets")
+	root := filepath.Join(parent, "node-assets")
 	if err := os.MkdirAll(filepath.Join(root, "bin"), 0o755); err != nil {
-		return "", fmt.Errorf("create pnpm assets buildpack directory: %w", err)
+		return "", fmt.Errorf("create node assets buildpack directory: %w", err)
 	}
 	for _, file := range []struct {
 		name string
@@ -29,10 +29,10 @@ func Materialize(parent string) (string, error) {
 	} {
 		value, err := files.ReadFile(file.name)
 		if err != nil {
-			return "", fmt.Errorf("read embedded pnpm assets buildpack file %s: %w", file.name, err)
+			return "", fmt.Errorf("read embedded node assets buildpack file %s: %w", file.name, err)
 		}
 		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(file.name)), value, file.mode); err != nil {
-			return "", fmt.Errorf("materialize pnpm assets buildpack file %s: %w", file.name, err)
+			return "", fmt.Errorf("materialize node assets buildpack file %s: %w", file.name, err)
 		}
 	}
 	return root, nil

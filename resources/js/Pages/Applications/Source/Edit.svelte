@@ -8,14 +8,14 @@
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   type Repository = { id: string; githubInstallationId: string; fullName: string }
   type Registry = { id: string; name: string; endpoint: string }
-  type FrontendSettings = { runtime: 'node'; package_manager: 'pnpm'; script: 'build' }
+  type FrontendSettings = { runtime: 'node'; script: 'build' }
   let { auth, application, options, updateUrl, returnUrl }: { auth: { email: string }; application: any; options: { installations: any[]; repositories: Repository[]; registries: Registry[] }; updateUrl: string; returnUrl: string } = $props()
   let buildFrontendAssets = $state(untrack(() => Boolean(application.buildpackSettings?.frontend)))
-  const form = useForm(() => ({ applicationName: '', applicationSlug: '', environmentName: '', environmentSlug: '', environmentKind: '', githubInstallationId: application.installationId, githubRepositoryId: application.repositoryId, reference: application.reference, autoBuild: application.autoBuild, contextPath: application.contextPath, builderReference: '', buildpackSettings: { schema_version: 1, frontend: (application.buildpackSettings?.frontend ?? null) as FrontendSettings | null }, containerRegistryId: application.registryId, imageRepository: application.imageRepository }))
+  const form = useForm(() => ({ applicationName: '', applicationSlug: '', environmentName: '', environmentSlug: '', environmentKind: '', githubInstallationId: application.installationId, githubRepositoryId: application.repositoryId, reference: application.reference, autoBuild: application.autoBuild, contextPath: application.contextPath, builderReference: '', buildpackSettings: { schema_version: 2, frontend: (application.buildpackSettings?.frontend ?? null) as FrontendSettings | null }, containerRegistryId: application.registryId, imageRepository: application.imageRepository }))
   const repositories = $derived(options.repositories.filter((repository) => repository.githubInstallationId === $form.githubInstallationId))
   function submit(event: SubmitEvent) {
     event.preventDefault()
-    $form.buildpackSettings.frontend = buildFrontendAssets ? { runtime: 'node', package_manager: 'pnpm', script: 'build' } : null
+    $form.buildpackSettings.frontend = buildFrontendAssets ? { runtime: 'node', script: 'build' } : null
     $form.patch(updateUrl)
   }
 </script>
@@ -28,7 +28,7 @@
         <FormField label="Repository"><select bind:value={$form.githubRepositoryId} class="h-9 border border-input bg-background px-3 text-sm">{#each repositories as repository}<option value={repository.id}>{repository.fullName}</option>{/each}</select></FormField>
         <FormField label="Reference"><Input bind:value={$form.reference} required /></FormField><FormField label="Build context"><Input bind:value={$form.contextPath} required /></FormField>
         <div class="border border-border bg-muted/20 px-3 py-2"><p class="text-[10px] uppercase tracking-wider text-muted-foreground">Builder</p><p class="mt-1 text-sm">Paketo Ubuntu Noble</p><p class="mt-1 text-xs text-muted-foreground">Managed and digest-pinned by DeployCrate for this server.</p></div>
-        <label class="flex gap-3 border border-border p-4"><input class="mt-1" type="checkbox" bind:checked={buildFrontendAssets} /><span><span class="font-medium">Build Node frontend assets</span><span class="mt-1 block text-xs text-muted-foreground">Requires package.json, pnpm-lock.yaml, and a build script. DeployCrate provisions and caches pnpm during the build lifecycle.</span></span></label>
+        <label class="flex gap-3 border border-border p-4"><input class="mt-1" type="checkbox" bind:checked={buildFrontendAssets} /><span><span class="font-medium">Build Node frontend assets</span><span class="mt-1 block text-xs text-muted-foreground">Requires package.json, a supported npm, pnpm, or Bun lockfile, and a build script. DeployCrate detects and caches the selected package manager during Builds.</span></span></label>
         {#if $form.errors.settings}<p class="text-xs text-destructive sm:col-span-2">{$form.errors.settings}</p>{/if}
         <FormField label="Registry"><select bind:value={$form.containerRegistryId} class="h-9 border border-input bg-background px-3 text-sm">{#each options.registries as registry}<option value={registry.id}>{registry.name} · {registry.endpoint}</option>{/each}</select></FormField><FormField label="Image repository"><Input bind:value={$form.imageRepository} required /></FormField>
         <label class="flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={$form.autoBuild} /> Build automatically</label>

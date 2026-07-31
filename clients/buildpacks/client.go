@@ -12,7 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"deploycrate-ce/internal/buildpacks/pnpmassets"
+	"deploycrate-ce/internal/buildpacks/nodeassets"
 	"deploycrate-ce/internal/sudo"
 
 	"github.com/google/uuid"
@@ -88,7 +88,7 @@ func (Client) Build(ctx context.Context, spec BuildSpec) (Result, error) {
 	}
 	arguments := []string{"build", spec.Image, "--path", spec.Path, "--builder", builder}
 	if spec.FrontendScript != "" {
-		assetsBuildpack, materializeErr := pnpmassets.Materialize(filepath.Join(spec.TemporaryDirectory, "buildpacks"))
+		assetsBuildpack, materializeErr := nodeassets.Materialize(filepath.Join(spec.TemporaryDirectory, "buildpacks"))
 		if materializeErr != nil {
 			return Result{}, materializeErr
 		}
