@@ -1005,6 +1005,62 @@ func (service *ResourceManagement) credentialSecretValues(credential models.Reso
 }
 
 func (service *ResourceManagement) reconcilePostgreSQLCredential(ctx context.Context, db storage.Executor, resource models.ResourceEntity, credential models.ResourceCredentialEntity, administrator *models.ResourceCredentialEntity) error {
+	database := ""
+	if credential.ResourceInstallationID == nil {
+		database = resource.DatabaseName
+	}
+	return service.reconcilePostgreSQLCredentialInDatabase(ctx, db, resource, credential, administrator, database)
+}
+
+func (service *ResourceManagement) reconcilePostgreSQLDatabaseCredentials(ctx context.Context, resourceID, installationID uuid.UUID, database string) error {
+	resource, err := models.Resource.Find(ctx, service.db.Executor(), resourceID)
+	if err != nil {
+		return err
+	}
+	if resource.ArchivedAt.Valid || resource.Kind != "postgresql" || resource.ManagementMode != models.ResourceManagementManaged {
+		return errors.New("PostgreSQL credential reconciliation requires an active managed Resource")
+	}
+	installations, err := service.db.Executor().NewSelect().TableExpr("resource_installations").
+		Where("id = ?", installationID).
+		Where("resource_id = ?", resourceID).
+		Where("archived_at IS NULL").
+		Count(ctx)
+	if err != nil {
+		return err
+	}
+	if installations != 1 {
+		return errors.New("PostgreSQL credential reconciliation requires the active target installation")
+	}
+	administrators := make([]models.ResourceCredentialEntity, 0, 2)
+	if err := service.db.Executor().NewSelect().Model(&administrators).
+		Where("resource_id = ?", resourceID).
+		Where("resource_installation_id = ?", installationID).
+		Where("archived_at IS NULL").
+		Limit(2).
+		Scan(ctx); err != nil {
+		return err
+	}
+	if len(administrators) != 1 {
+		return errors.New("PostgreSQL credential reconciliation requires exactly one Resource administrator credential")
+	}
+	credentials := make([]models.ResourceCredentialEntity, 0)
+	if err := service.db.Executor().NewSelect().Model(&credentials).
+		Where("resource_id = ?", resourceID).
+		Where("resource_installation_id IS NULL").
+		Where("archived_at IS NULL").
+		OrderExpr("created_at").
+		Scan(ctx); err != nil {
+		return err
+	}
+	for _, credential := range credentials {
+		if err := service.reconcilePostgreSQLCredentialInDatabase(ctx, service.db.Executor(), resource, credential, &administrators[0], database); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (service *ResourceManagement) reconcilePostgreSQLCredentialInDatabase(ctx context.Context, db storage.Executor, resource models.ResourceEntity, credential models.ResourceCredentialEntity, administrator *models.ResourceCredentialEntity, database string) error {
 	var installationID uuid.UUID
 	if credential.ResourceInstallationID != nil {
 		installationID = *credential.ResourceInstallationID
@@ -1069,10 +1125,6 @@ func (service *ResourceManagement) reconcilePostgreSQLCredential(ctx context.Con
 	}
 	if err != nil {
 		return err
-	}
-	database := ""
-	if credential.ResourceInstallationID == nil {
-		database = resource.DatabaseName
 	}
 	if err := service.postgres.ReconcileLoginRole(ctx, postgresqlclient.Connection{
 		Host: origin.Address, Port: origin.Port,

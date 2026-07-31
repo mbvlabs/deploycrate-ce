@@ -14,12 +14,13 @@ import (
 )
 
 type DatabaseRestore struct {
-	artifact *DatabaseArtifact
-	database *DatabaseBackup
+	artifact  *DatabaseArtifact
+	database  *DatabaseBackup
+	resources *ResourceManagement
 }
 
-func NewDatabaseRestore(artifact *DatabaseArtifact, database *DatabaseBackup) *DatabaseRestore {
-	return &DatabaseRestore{artifact: artifact, database: database}
+func NewDatabaseRestore(artifact *DatabaseArtifact, database *DatabaseBackup, resources *ResourceManagement) *DatabaseRestore {
+	return &DatabaseRestore{artifact: artifact, database: database, resources: resources}
 }
 
 type DatabaseRestoreResult struct {
@@ -65,6 +66,9 @@ func (service *DatabaseRestore) Run(
 	}()
 	if err := service.restoreDump(ctx, target, stagingName, loaded.DumpPath); err != nil {
 		return DatabaseRestoreResult{}, fmt.Errorf("restore staging database: %w", err)
+	}
+	if err := service.resources.reconcilePostgreSQLDatabaseCredentials(ctx, target.ResourceID, target.InstallationID, stagingName); err != nil {
+		return DatabaseRestoreResult{}, fmt.Errorf("reconcile restored database credentials: %w", err)
 	}
 	if err := service.verifyDatabase(ctx, target, stagingName); err != nil {
 		return DatabaseRestoreResult{}, fmt.Errorf("verify staging database: %w", err)
@@ -153,7 +157,7 @@ func (service *DatabaseRestore) restoreDump(ctx context.Context, target PostgreS
 	}
 	defer dump.Close()
 	return service.database.runContainerPostgres(ctx, target, dump, nil, "pg_restore",
-		"--username", target.Username, "--dbname", databaseName, "--exit-on-error", "--no-password", "--no-owner")
+		"--username", target.Username, "--dbname", databaseName, "--exit-on-error", "--no-password")
 }
 
 func (service *DatabaseRestore) verifyDatabase(ctx context.Context, target PostgreSQLBackupTarget, databaseName string) error {
