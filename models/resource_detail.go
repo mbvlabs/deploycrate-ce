@@ -56,9 +56,13 @@ type ResourceMountDetail struct {
 
 type ResourceHealthCheckDetail struct {
 	ResourceHealthCheckEntity
-	State      string       `bun:"state"`
-	Message    string       `bun:"message"`
-	ObservedAt sql.NullTime `bun:"observed_at"`
+	State                string        `bun:"state"`
+	Message              string        `bun:"message"`
+	LatencyMs            sql.NullInt32 `bun:"latency_ms"`
+	ConsecutiveSuccesses int32         `bun:"consecutive_successes"`
+	ConsecutiveFailures  int32         `bun:"consecutive_failures"`
+	ObservedAt           sql.NullTime  `bun:"observed_at"`
+	ExpiresAt            sql.NullTime  `bun:"expires_at"`
 }
 
 type ResourceDetails struct {

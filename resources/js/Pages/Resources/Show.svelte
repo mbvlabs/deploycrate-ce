@@ -47,6 +47,9 @@
   const overallStatus = $derived.by(() => {
     if (resource.managementMode === 'external') return { label: 'External', tone: 'neutral', detail: 'Lifecycle is managed outside DeployCrate.' }
     if (resource.installations.length === 0) return { label: 'Not deployed', tone: 'neutral', detail: 'No runtime installation is configured.' }
+    if (resource.healthChecks.some((item: any) => item.enabled && item.state === 'unhealthy')) return { label: 'Unhealthy', tone: 'bad', detail: 'A Resource health check reached its failure threshold.' }
+    if (resource.healthChecks.some((item: any) => item.enabled && item.state === 'degraded')) return { label: 'Degraded', tone: 'warn', detail: 'A Resource health check is failing below its failure threshold.' }
+    if (resource.healthChecks.some((item: any) => item.enabled && item.state === 'unknown')) return { label: 'Health unknown', tone: 'neutral', detail: 'A Resource health check has no fresh observation.' }
     if (resource.installations.some((item: any) => item.health === 'unhealthy')) return { label: 'Degraded', tone: 'bad', detail: 'At least one installation reports an unhealthy container.' }
     const running = resource.installations.filter((item: any) => item.serviceState === 'running').length
     if (running === resource.installations.length) return { label: 'Running', tone: 'good', detail: 'All installations are running.' }
@@ -81,10 +84,16 @@
   let restoreConfirmation = $state('')
 
   onMount(() => {
-    const interval = window.setInterval(() => {
+    const restoreInterval = window.setInterval(() => {
       if (activeRestore) router.reload({ only: ['backups'] })
     }, 5000)
-    return () => window.clearInterval(interval)
+    const healthInterval = window.setInterval(() => {
+      if (resource.healthChecks.some((item: any) => item.enabled)) router.reload({ only: ['resource'] })
+    }, 15000)
+    return () => {
+      window.clearInterval(restoreInterval)
+      window.clearInterval(healthInterval)
+    }
   })
 
   $effect(() => {
@@ -98,7 +107,7 @@
   }
   function initialVolume() { return { name: '', driver: 'local', configurationText: '{}', serverId: options.servers[0]?.id ?? '' } }
   function initialMount() { return { mountPath: '/data', readOnly: false, resourceVolumeId: resource.volumes[0]?.id ?? '', resourceInstallationId: resource.installations[0]?.id ?? '' } }
-  function initialHealth() { return { name: 'Readiness', kind: definition?.healthCheckKinds?.[0] ?? 'tcp', configurationText: '{}', intervalSeconds: 30, timeoutSeconds: 5, failureThreshold: 3, successThreshold: 1, enabled: true, resourceInstallationId: resource.installations[0]?.id ?? '', resourceEndpointId: '', resourceCredentialId: '' } }
+  function initialHealth() { return { name: 'Readiness', kind: resource.kind === 'postgresql' || resource.kind === 'clickhouse' ? resource.kind : definition?.healthCheckKinds?.[0] ?? 'tcp', configurationText: '{}', intervalSeconds: 30, timeoutSeconds: 5, failureThreshold: 3, successThreshold: 1, enabled: true, resourceInstallationId: resource.installations[0]?.id ?? '', resourceEndpointId: primaryEndpoint?.id ?? '', resourceCredentialId: administratorCredentials[0]?.id ?? '' } }
   function initialBackupPolicy() {
     return {
       schedule: backups.policy?.schedule ?? '0 2 * * *',
@@ -437,7 +446,7 @@
 
     <div class="grid gap-6 lg:grid-cols-2">
       <Card.Root><Card.Header><Card.Action>{#if resource.managementMode === 'managed' && (resource.volumes.length === 0 || (resource.volumes.length === 1 && resource.installations.length === 1 && resource.mounts.length === 0))}<div class="flex gap-2">{#if resource.volumes.length === 0}<Button size="sm" variant="outline" onclick={() => (volumeDialogOpen = true)}>Add volume</Button>{/if}{#if resource.volumes.length === 1 && resource.installations.length === 1 && resource.mounts.length === 0}<Button size="sm" variant="outline" onclick={() => (mountDialogOpen = true)}>Add mount</Button>{/if}</div>{/if}</Card.Action><Card.Title>Storage</Card.Title><Card.Description>The primary durable volume and its installation mount.</Card.Description></Card.Header><Card.Content class="space-y-3">{#if resource.volumes.length === 0}<p class="text-sm text-muted-foreground">No primary volume configured.</p>{/if}{#each resource.volumes as item}<div class="border border-border p-3"><p class="font-medium">{item.name}</p><p class="mt-2 text-xs text-muted-foreground">{item.driver} on {item.serverName}</p>{#each resource.mounts.filter((mount: any) => mount.resourceVolumeId === item.id) as mount}<p class="mt-2 font-mono text-xs">{mount.mountPath} → {mount.containerName}{mount.readOnly ? ' (read only)' : ''}</p>{/each}</div>{/each}</Card.Content></Card.Root>
-      <Card.Root><Card.Header><Card.Action><Button size="sm" variant="outline" disabled={resource.installations.length === 0} onclick={() => (healthDialogOpen = true)}>Add check</Button></Card.Action><Card.Title>Health checks</Card.Title><Card.Description>Desired checks and their latest observations.</Card.Description></Card.Header><Card.Content class="space-y-3">{#if resource.healthChecks.length === 0}<p class="text-sm text-muted-foreground">No health checks configured.</p>{/if}{#each resource.healthChecks as item}<div class="border border-border p-3"><div class="flex justify-between gap-3"><p class="font-medium">{item.name}</p><span class="text-xs capitalize">{item.state || 'Unknown'}</span></div><p class="mt-2 text-xs text-muted-foreground">{item.kind} · every {item.intervalSeconds}s · {item.enabled ? 'Enabled' : 'Disabled'}</p>{#if item.message}<p class="mt-2 text-xs text-muted-foreground">{item.message}</p>{/if}</div>{/each}</Card.Content></Card.Root>
+      <Card.Root><Card.Header><Card.Action><Button size="sm" variant="outline" disabled={resource.installations.length === 0} onclick={() => (healthDialogOpen = true)}>Add check</Button></Card.Action><Card.Title>Health checks</Card.Title><Card.Description>Desired checks and their latest observations.</Card.Description></Card.Header><Card.Content class="space-y-3">{#if resource.healthChecks.length === 0}<p class="text-sm text-muted-foreground">No health checks configured.</p>{/if}{#each resource.healthChecks as item}<div class="border border-border p-3"><div class="flex justify-between gap-3"><p class="font-medium">{item.name}</p><span class:text-success={item.state === 'healthy'} class:text-warning={item.state === 'degraded'} class:text-destructive={item.state === 'unhealthy'} class="text-xs capitalize">{item.state || 'Unknown'}</span></div><p class="mt-2 text-xs text-muted-foreground">{item.kind} · every {item.intervalSeconds}s · {item.enabled ? 'Enabled' : 'Disabled'}</p><p class="mt-1 text-xs text-muted-foreground">Observed {observedLabel(item.observedAt)}{item.latencyMs !== null ? ` · ${item.latencyMs} ms` : ''} · successes {item.consecutiveSuccesses} · failures {item.consecutiveFailures}</p>{#if item.message}<p class="mt-2 text-xs text-muted-foreground">{item.message}</p>{/if}</div>{/each}</Card.Content></Card.Root>
     </div>
 
     <Card.Root>

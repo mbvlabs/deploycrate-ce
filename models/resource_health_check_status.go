@@ -256,6 +256,7 @@ func (rhcs resourceHealthCheckStatus) Upsert(
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (health_check_id) DO UPDATE").
+		Set("updated_at = excluded.updated_at").
 		Set("state = excluded.state").
 		Set("status_code = excluded.status_code").
 		Set("latency_ms = excluded.latency_ms").
@@ -265,8 +266,12 @@ func (rhcs resourceHealthCheckStatus) Upsert(
 		Set("details = excluded.details").
 		Set("observed_at = excluded.observed_at").
 		Set("expires_at = excluded.expires_at").
+		Where("resource_health_check_statuses.observed_at < excluded.observed_at").
 		Returning("*").
 		Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return rhcs.Find(ctx, db, data.HealthCheckID)
+		}
 		return ResourceHealthCheckStatusEntity{}, err
 	}
 

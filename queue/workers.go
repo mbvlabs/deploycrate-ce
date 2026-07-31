@@ -11,6 +11,7 @@ var wrksConstructors = fx.Provide(
 	NewSendTransactionalEmailWorker,
 	NewSendMarketingEmailWorker,
 	NewMetricRollupWorker,
+	NewResourceHealthSweepWorker,
 	NewBackupScheduleWorker,
 	NewBackupExecuteWorker,
 	NewBackupVerifyWorker,
@@ -31,6 +32,9 @@ var WorkersModule = fx.Module(
 		return worker.Register(workers)
 	}),
 	fx.Invoke(func(workers *river.Workers, worker *MetricRollupWorker) error {
+		return worker.Register(workers)
+	}),
+	fx.Invoke(func(workers *river.Workers, worker *ResourceHealthSweepWorker) error {
 		return worker.Register(workers)
 	}),
 	fx.Invoke(func(workers *river.Workers, worker *BackupScheduleWorker) error {

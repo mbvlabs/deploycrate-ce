@@ -85,7 +85,11 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 			"failureThreshold": healthCheck.FailureThreshold, "successThreshold": healthCheck.SuccessThreshold,
 			"enabled": healthCheck.Enabled, "resourceInstallationId": healthCheck.ResourceInstallationID,
 			"resourceEndpointId": healthCheck.ResourceEndpointID, "resourceCredentialId": healthCheck.ResourceCredentialID,
-			"state": healthCheck.State, "message": healthCheck.Message, "observedAt": nullTime(healthCheck.ObservedAt),
+			"state": healthCheck.State, "message": healthCheck.Message,
+			"latencyMs":            nullInt32(healthCheck.LatencyMs),
+			"consecutiveSuccesses": healthCheck.ConsecutiveSuccesses,
+			"consecutiveFailures":  healthCheck.ConsecutiveFailures,
+			"observedAt":           nullTime(healthCheck.ObservedAt), "expiresAt": nullTime(healthCheck.ExpiresAt),
 		})
 	}
 	deviceGrants := make([]inertia.Props, 0, len(privateAccess.DeviceGrants))
@@ -269,4 +273,11 @@ func nullTime(value sql.NullTime) *time.Time {
 		return nil
 	}
 	return &value.Time
+}
+
+func nullInt32(value sql.NullInt32) *int32 {
+	if !value.Valid {
+		return nil
+	}
+	return &value.Int32
 }

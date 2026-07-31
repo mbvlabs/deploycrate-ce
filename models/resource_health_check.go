@@ -33,6 +33,26 @@ type ResourceHealthCheckEntity struct {
 	ResourceCredentialID   *uuid.UUID      `bun:"resource_credential_id,type:uuid"`
 }
 
+type DueResourceHealthCheck struct {
+	ResourceHealthCheckEntity
+	ResourceID                 uuid.UUID       `bun:"resource_id"`
+	ResourceName               string          `bun:"resource_name"`
+	ResourceKind               string          `bun:"resource_kind"`
+	ResourceDatabaseName       string          `bun:"resource_database_name"`
+	EndpointAddress            string          `bun:"endpoint_address"`
+	EndpointPort               int32           `bun:"endpoint_port"`
+	EndpointProtocol           string          `bun:"endpoint_protocol"`
+	EndpointTLSMode            string          `bun:"endpoint_tls_mode"`
+	EndpointSettings           json.RawMessage `bun:"endpoint_settings"`
+	CredentialUsername         sql.NullString  `bun:"credential_username"`
+	CredentialEncryptedPayload []byte          `bun:"credential_encrypted_payload"`
+	StatusPresent              bool            `bun:"status_present"`
+	StatusState                string          `bun:"status_state"`
+	StatusConsecutiveSuccesses int32           `bun:"status_consecutive_successes"`
+	StatusConsecutiveFailures  int32           `bun:"status_consecutive_failures"`
+	StatusExpiresAt            sql.NullTime    `bun:"status_expires_at"`
+}
+
 func (e *ResourceHealthCheckEntity) Validate() error {
 	e.Name = strings.TrimSpace(e.Name)
 	e.Kind = strings.ToLower(strings.TrimSpace(e.Kind))
@@ -89,6 +109,53 @@ func (rhc resourceHealthCheck) Find(
 	}
 
 	return entity, nil
+}
+
+func (rhc resourceHealthCheck) DueApplicationChecks(
+	ctx context.Context,
+	db storage.Executor,
+	now time.Time,
+	limit int,
+) ([]DueResourceHealthCheck, error) {
+	if limit < 1 {
+		limit = 100
+	}
+	checks := make([]DueResourceHealthCheck, 0, limit)
+	err := db.NewSelect().
+		TableExpr("resource_health_checks AS health_check").
+		ColumnExpr("health_check.*").
+		ColumnExpr("resource.id AS resource_id").
+		ColumnExpr("resource.name AS resource_name").
+		ColumnExpr("resource.kind AS resource_kind").
+		ColumnExpr("resource.database_name AS resource_database_name").
+		ColumnExpr("COALESCE(endpoint.address, '') AS endpoint_address").
+		ColumnExpr("COALESCE(endpoint.port, 0) AS endpoint_port").
+		ColumnExpr("COALESCE(endpoint.protocol, '') AS endpoint_protocol").
+		ColumnExpr("COALESCE(endpoint.tls_mode, '') AS endpoint_tls_mode").
+		ColumnExpr("COALESCE(endpoint.settings, '{}'::jsonb) AS endpoint_settings").
+		ColumnExpr("credential.username AS credential_username").
+		ColumnExpr("credential.enc_payload AS credential_encrypted_payload").
+		ColumnExpr("status.health_check_id IS NOT NULL AS status_present").
+		ColumnExpr("COALESCE(status.state, 'unknown') AS status_state").
+		ColumnExpr("COALESCE(status.consecutive_successes, 0) AS status_consecutive_successes").
+		ColumnExpr("COALESCE(status.consecutive_failures, 0) AS status_consecutive_failures").
+		ColumnExpr("status.expires_at AS status_expires_at").
+		Join("JOIN resource_installations AS installation ON installation.id = health_check.resource_installation_id AND installation.archived_at IS NULL").
+		Join("JOIN resources AS resource ON resource.id = installation.resource_id AND resource.archived_at IS NULL").
+		Join("LEFT JOIN resource_endpoints AS endpoint ON endpoint.id = health_check.resource_endpoint_id AND endpoint.resource_id = resource.id AND endpoint.archived_at IS NULL").
+		Join("LEFT JOIN resource_credentials AS credential ON credential.id = health_check.resource_credential_id AND credential.resource_id = resource.id AND credential.archived_at IS NULL").
+		Join("LEFT JOIN resource_health_check_statuses AS status ON status.health_check_id = health_check.id").
+		Where("resource.system_managed = FALSE").
+		Where("resource.management_mode = 'managed'").
+		Where("resource.kind IN ('postgresql', 'clickhouse')").
+		Where("health_check.kind = resource.kind").
+		Where("health_check.enabled = TRUE").
+		Where("health_check.archived_at IS NULL").
+		Where("status.health_check_id IS NULL OR status.observed_at + health_check.interval_seconds * INTERVAL '1 second' <= ?", now).
+		OrderExpr("COALESCE(status.observed_at, health_check.created_at), health_check.id").
+		Limit(limit).
+		Scan(ctx, &checks)
+	return checks, err
 }
 
 type CreateResourceHealthCheckData struct {

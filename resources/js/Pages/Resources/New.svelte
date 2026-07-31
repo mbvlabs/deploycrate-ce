@@ -35,7 +35,7 @@
       installation: { imageReference: '', imageDigest: '', containerName: '', restartPolicy: 'unless-stopped', configuration: {}, portMappings: [{ hostPort: initialKind?.defaultPort ?? 5432, containerPort: initialKind?.defaultPort ?? 5432, protocol: 'tcp' }], serverId: '', registryCredentialId: '' },
       volume: { name: '', driver: 'local', configuration: {}, serverId: '' }, mount: { mountPath: '/data', readOnly: false, resourceVolumeId: '', resourceInstallationId: '' },
       credential: { name: 'Resource administrator', username: '', metadata: {}, secretValues: {} },
-      healthCheck: { name: 'Readiness', kind: initialKind?.healthCheckKinds[0] ?? 'tcp', configuration: {}, intervalSeconds: 30, timeoutSeconds: 5, failureThreshold: 3, successThreshold: 1, enabled: true, resourceInstallationId: '', resourceEndpointId: '', resourceCredentialId: '' },
+      healthCheck: { name: 'Readiness', kind: defaultHealthKind(initialKind), configuration: {}, intervalSeconds: 30, timeoutSeconds: 5, failureThreshold: 3, successThreshold: 1, enabled: true, resourceInstallationId: '', resourceEndpointId: '', resourceCredentialId: '' },
     }
   }
 
@@ -59,8 +59,13 @@
     form.endpoint.role = selected.endpointRoles[0] ?? 'primary'
     form.endpoint.tlsMode = selected.defaultTlsMode
     form.installation.portMappings = [{ hostPort: selected.defaultPort, containerPort: selected.defaultPort, protocol: 'tcp' }]
-    form.healthCheck.kind = selected.healthCheckKinds[0] ?? 'tcp'
+    form.healthCheck.kind = defaultHealthKind(selected)
     form.credential.secretValues = {}
+  }
+
+  function defaultHealthKind(kind: Kind | undefined) {
+    if (kind?.kind === 'postgresql' || kind?.kind === 'clickhouse') return kind.kind
+    return kind?.healthCheckKinds[0] ?? 'tcp'
   }
 
   function chooseServer(serverId: string) {
@@ -259,13 +264,13 @@
       <Card.Root>
         <Card.Header>
           <Card.Title>Health check</Card.Title>
-          <Card.Description>Optionally define an initial observed health target.</Card.Description>
+          <Card.Description>{form.kind === 'postgresql' || form.kind === 'clickhouse' ? 'This managed Resource receives a database-aware health check automatically.' : 'Optionally define an initial observed health target.'}</Card.Description>
         </Card.Header>
         <Card.Content class="grid gap-5 sm:grid-cols-2">
           {#if form.managementMode !== 'managed'}
             <p class="col-span-full text-sm text-muted-foreground">Health checks require a managed installation and can be added later.</p>
           {:else}
-            <label class="col-span-full flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={includeHealth} /> Add an initial health check</label>
+            <label class="col-span-full flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={includeHealth} /> {form.kind === 'postgresql' || form.kind === 'clickhouse' ? 'Customize the initial health check' : 'Add an initial health check'}</label>
             {#if includeHealth}
               <FormField label="Name" error={errors['healthCheck.name']}><Input bind:value={form.healthCheck.name} aria-invalid={Boolean(errors['healthCheck.name'])} /></FormField>
               <FormField label="Kind" error={errors['healthCheck.kind']}><select bind:value={form.healthCheck.kind} class={selectClass} aria-invalid={Boolean(errors['healthCheck.kind'])}>{#each definition.healthCheckKinds as kind}<option value={kind}>{kind}</option>{/each}</select></FormField>

@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -19,6 +22,44 @@ type Connection struct {
 type Client struct{}
 
 func New() Client { return Client{} }
+
+func (Client) Check(ctx context.Context, connection Connection, database, tlsMode string) error {
+	database = strings.TrimSpace(database)
+	if database == "" {
+		database = "postgres"
+	}
+	tlsMode = strings.TrimSpace(tlsMode)
+	if tlsMode == "" {
+		tlsMode = "disable"
+	}
+	databaseURL := &url.URL{
+		Scheme: "postgres",
+		User:   url.UserPassword(strings.TrimSpace(connection.Username), connection.Password),
+		Host: net.JoinHostPort(
+			strings.TrimSpace(connection.Host),
+			strconv.Itoa(int(connection.Port)),
+		),
+		Path: database,
+	}
+	query := databaseURL.Query()
+	query.Set("sslmode", tlsMode)
+	databaseURL.RawQuery = query.Encode()
+
+	postgres, err := pgx.Connect(ctx, databaseURL.String())
+	if err != nil {
+		return fmt.Errorf("connect to PostgreSQL Resource: %w", err)
+	}
+	defer postgres.Close(context.WithoutCancel(ctx))
+
+	var result int
+	if err := postgres.QueryRow(ctx, "SELECT 1").Scan(&result); err != nil {
+		return fmt.Errorf("query PostgreSQL Resource: %w", err)
+	}
+	if result != 1 {
+		return errors.New("PostgreSQL Resource returned an unexpected readiness result")
+	}
+	return nil
+}
 
 func (Client) ReconcileLoginRole(ctx context.Context, connection Connection, database, username, password string) error {
 	database = strings.TrimSpace(database)

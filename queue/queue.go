@@ -207,5 +207,6 @@ var Module = fx.Module(
 		NewBackupScheduleSeeder,
 		NewProcessor,
 		fx.Annotate(NewMetricRollupPeriodicJob, fx.ResultTags(periodicJobsGroup)),
+		fx.Annotate(NewResourceHealthPeriodicJob, fx.ResultTags(periodicJobsGroup)),
 	),
 )

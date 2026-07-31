@@ -128,6 +128,30 @@ type ResourceHealthCheckInput struct {
 	ResourceCredentialID   *uuid.UUID
 }
 
+func defaultResourceHealthCheckInput(
+	resource models.ResourceEntity,
+	installation models.ResourceInstallationEntity,
+	endpoint models.ResourceEndpointEntity,
+	credential *models.ResourceCredentialEntity,
+) *ResourceHealthCheckInput {
+	if resource.Kind != "postgresql" && resource.Kind != "clickhouse" {
+		return nil
+	}
+	name := "PostgreSQL readiness"
+	if resource.Kind == "clickhouse" {
+		name = "ClickHouse readiness"
+	}
+	input := &ResourceHealthCheckInput{
+		Name: name, Kind: resource.Kind, Configuration: json.RawMessage(`{}`),
+		IntervalSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 3, SuccessThreshold: 1,
+		Enabled: true, ResourceInstallationID: installation.ID, ResourceEndpointID: &endpoint.ID,
+	}
+	if credential != nil {
+		input.ResourceCredentialID = &credential.ID
+	}
+	return input
+}
+
 func (service *ResourceManagement) List(ctx context.Context, filters models.ResourceListFilters) ([]models.ResourceListItem, error) {
 	items := make([]models.ResourceListItem, 0)
 	query := service.db.Executor().NewSelect().
@@ -141,13 +165,26 @@ func (service *ResourceManagement) List(ctx context.Context, filters models.Reso
 				SELECT 1 FROM resource_health_checks AS health_check
 				JOIN resource_installations AS installation ON installation.id = health_check.resource_installation_id AND installation.archived_at IS NULL
 				JOIN resource_health_check_statuses AS status ON status.health_check_id = health_check.id
-				WHERE installation.resource_id = resource.id AND health_check.archived_at IS NULL AND status.state IN ('unhealthy', 'failed', 'critical')
+				WHERE installation.resource_id = resource.id AND health_check.archived_at IS NULL AND health_check.enabled = TRUE
+					AND status.expires_at > CURRENT_TIMESTAMP AND status.state = 'unhealthy'
 			) THEN 'unhealthy'
 			WHEN EXISTS (
 				SELECT 1 FROM resource_health_checks AS health_check
 				JOIN resource_installations AS installation ON installation.id = health_check.resource_installation_id AND installation.archived_at IS NULL
 				JOIN resource_health_check_statuses AS status ON status.health_check_id = health_check.id
-				WHERE installation.resource_id = resource.id AND health_check.archived_at IS NULL AND status.state IN ('healthy', 'passing')
+				WHERE installation.resource_id = resource.id AND health_check.archived_at IS NULL AND health_check.enabled = TRUE
+					AND status.expires_at > CURRENT_TIMESTAMP AND status.state = 'degraded'
+			) THEN 'degraded'
+			WHEN EXISTS (
+				SELECT 1 FROM resource_health_checks AS health_check
+				JOIN resource_installations AS installation ON installation.id = health_check.resource_installation_id AND installation.archived_at IS NULL
+				WHERE installation.resource_id = resource.id AND health_check.archived_at IS NULL AND health_check.enabled = TRUE
+			) AND NOT EXISTS (
+				SELECT 1 FROM resource_health_checks AS health_check
+				JOIN resource_installations AS installation ON installation.id = health_check.resource_installation_id AND installation.archived_at IS NULL
+				LEFT JOIN resource_health_check_statuses AS status ON status.health_check_id = health_check.id
+				WHERE installation.resource_id = resource.id AND health_check.archived_at IS NULL AND health_check.enabled = TRUE
+					AND (status.health_check_id IS NULL OR status.expires_at <= CURRENT_TIMESTAMP OR status.state <> 'healthy')
 			) THEN 'healthy'
 			ELSE 'unknown'
 		END AS health`).
@@ -292,7 +329,9 @@ func (service *ResourceManagement) Details(ctx context.Context, resourceID uuid.
 		},
 		func() error {
 			return service.db.Executor().NewSelect().TableExpr("resource_health_checks AS health_check").ColumnExpr("health_check.*").
-				ColumnExpr("COALESCE(status.state, '') AS state, COALESCE(status.message, '') AS message, status.observed_at").
+				ColumnExpr("CASE WHEN status.expires_at > CURRENT_TIMESTAMP THEN status.state ELSE 'unknown' END AS state").
+				ColumnExpr("CASE WHEN status.health_check_id IS NOT NULL AND status.expires_at <= CURRENT_TIMESTAMP THEN 'Health status is stale.' ELSE COALESCE(status.message, '') END AS message").
+				ColumnExpr("status.latency_ms, COALESCE(status.consecutive_successes, 0) AS consecutive_successes, COALESCE(status.consecutive_failures, 0) AS consecutive_failures, status.observed_at, status.expires_at").
 				Join("JOIN resource_installations AS installation ON installation.id = health_check.resource_installation_id").
 				Join("LEFT JOIN resource_health_check_statuses AS status ON status.health_check_id = health_check.id").
 				Where("installation.resource_id = ?", resourceID).Where("health_check.archived_at IS NULL").OrderExpr("health_check.name").Scan(ctx, &detail.HealthChecks)
@@ -398,19 +437,23 @@ func (service *ResourceManagement) CreateResource(ctx context.Context, input Cre
 		}
 		credential = &created
 	}
-	if input.HealthCheck != nil {
+	healthInput := input.HealthCheck
+	if healthInput == nil && installation != nil && endpoint != nil {
+		healthInput = defaultResourceHealthCheckInput(resource, *installation, *endpoint, credential)
+	}
+	if healthInput != nil {
 		if installation == nil {
 			return models.ResourceEntity{}, domainError("healthCheck", "topology", "an initial health check requires an installation")
 		}
-		healthInput := *input.HealthCheck
-		healthInput.ResourceInstallationID = installation.ID
+		candidate := *healthInput
+		candidate.ResourceInstallationID = installation.ID
 		if endpoint != nil {
-			healthInput.ResourceEndpointID = &endpoint.ID
+			candidate.ResourceEndpointID = &endpoint.ID
 		}
 		if credential != nil {
-			healthInput.ResourceCredentialID = &credential.ID
+			candidate.ResourceCredentialID = &credential.ID
 		}
-		if _, err := service.createHealthCheck(ctx, tx, resource, healthInput); err != nil {
+		if _, err := service.createHealthCheck(ctx, tx, resource, candidate); err != nil {
 			return models.ResourceEntity{}, prefixResourceValidation(err, "healthCheck")
 		}
 	}
@@ -1609,8 +1652,14 @@ func (service *ResourceManagement) CreateInstallation(ctx context.Context, resou
 	if err != nil {
 		return models.ResourceInstallationEntity{}, err
 	}
-	if _, err := service.createManagedPrimaryEndpoint(ctx, tx, resource, installation); err != nil {
+	endpoint, err := service.createManagedPrimaryEndpoint(ctx, tx, resource, installation)
+	if err != nil {
 		return models.ResourceInstallationEntity{}, err
+	}
+	if healthInput := defaultResourceHealthCheckInput(resource, installation, endpoint, nil); healthInput != nil {
+		if _, err := service.createHealthCheck(ctx, tx, resource, *healthInput); err != nil {
+			return models.ResourceInstallationEntity{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return models.ResourceInstallationEntity{}, mapResourceConflict(err)

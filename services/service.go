@@ -44,6 +44,7 @@ var Module = fx.Module(
 		NewDeploymentExecution,
 		NewWorkloadReconciliation,
 		NewResourceManagement,
+		NewResourceHealth,
 		NewResourcePrivateAccess,
 	),
 )
