@@ -3,6 +3,8 @@ package telemetry
 import (
 	"fmt"
 	"time"
+
+	"go.opentelemetry.io/otel/attribute"
 )
 
 type Option func(*telemetryOptions) error
@@ -11,6 +13,7 @@ type telemetryOptions struct {
 	serviceName     string
 	serviceVersion  string
 	serviceInstance string
+	resourceAttrs   []attribute.KeyValue
 	logExporters    []LogExporter
 	metricExporters []MetricExporter
 	traceExporters  []TraceExporter
@@ -18,6 +21,13 @@ type telemetryOptions struct {
 	batchTimeout    time.Duration
 	queueSize       int
 	traceSampleRate float64
+}
+
+func WithResourceAttributes(attrs ...attribute.KeyValue) Option {
+	return func(c *telemetryOptions) error {
+		c.resourceAttrs = append(c.resourceAttrs, attrs...)
+		return nil
+	}
 }
 
 func WithServiceInstance(instance string) Option {

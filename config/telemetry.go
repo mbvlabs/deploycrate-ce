@@ -3,8 +3,8 @@ package config
 import "github.com/caarlos0/env/v11"
 
 type telemetry struct {
-	ServiceName         string  `env:"TELEMETRY_SERVICE_NAME"     envDefault:"deploycrate-ce"`
-	ServiceVersion      string  `env:"TELEMETRY_SERVICE_VERSION"  envDefault:"1.0.0"`
+	ServiceName         string  `env:"TELEMETRY_SERVICE_NAME"      envDefault:"deploycrate-ce"`
+	ServiceNamespace    string  `env:"TELEMETRY_SERVICE_NAMESPACE" envDefault:"deploycrate-ce"`
 	OtlpLogsEndpoint    string  `env:"OTLP_LOGS_ENDPOINT"         envDefault:""`
 	OtlpMetricsEndpoint string  `env:"OTLP_METRICS_ENDPOINT"      envDefault:""`
 	OtlpTracesEndpoint  string  `env:"OTLP_TRACES_ENDPOINT"       envDefault:""`

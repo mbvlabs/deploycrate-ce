@@ -120,6 +120,7 @@ export const routes = {
   systemResourceWireGuardDeviceDestroy: (resourceID: string, deviceID: string) => `/system/resources/${resourceID}/wireguard-devices/${deviceID}`,
   systemResources: () => '/system/resources',
   systemTelemetry: () => '/system/telemetry',
+  systemTelemetryLogs: () => '/system/telemetry/logs',
   systemUpdate: () => '/system/update',
   systemUpdateCreate: () => '/system/update',
   systemUpdateStatus: () => '/system/update/status',

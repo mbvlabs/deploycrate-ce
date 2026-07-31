@@ -69,6 +69,7 @@ func main() {
 		fx.Provide(
 			func() context.Context { return ctx },
 			func() services.CurrentVersion { return services.CurrentVersion(appVersion) },
+			func() telemetry.ServiceVersion { return telemetry.ServiceVersion(appVersion) },
 			func(service services.MetricRollupService) queue.MetricRollupCollector { return service },
 			func(cfg config.Config) (email.TransactionalSender, email.MarketingSender) {
 				if config.Env == server.ProdEnvironment {

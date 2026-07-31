@@ -2,9 +2,7 @@ package telemetry
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
-	"strings"
 
 	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
@@ -14,7 +12,6 @@ import (
 
 type OtlpHttpMetricExporter struct {
 	endpoint string
-	insecure bool
 	headers  map[string]string
 	exporter sdkmetric.Exporter
 }
@@ -25,22 +22,6 @@ func NewOtlpMetricExporter(endpoint string, headers map[string]string) *OtlpHttp
 	}
 	return &OtlpHttpMetricExporter{
 		endpoint: endpoint,
-		insecure: false,
-		headers:  headers,
-		exporter: nil,
-	}
-}
-
-func NewOtlpMetricExporterInsecure(
-	endpoint string,
-	headers map[string]string,
-) *OtlpHttpMetricExporter {
-	if endpoint == "" {
-		return nil
-	}
-	return &OtlpHttpMetricExporter{
-		endpoint: endpoint,
-		insecure: true,
 		headers:  headers,
 		exporter: nil,
 	}
@@ -54,19 +35,8 @@ func (o *OtlpHttpMetricExporter) GetSdkMetricExporter(
 	ctx context.Context,
 	res *resource.Resource,
 ) (sdkmetric.Exporter, error) {
-	endpoint := strings.TrimPrefix(o.endpoint, "http://")
-	endpoint = strings.TrimPrefix(endpoint, "https://")
-
 	opts := []otlpmetrichttp.Option{
-		otlpmetrichttp.WithEndpoint(endpoint),
-	}
-
-	if o.insecure {
-		opts = append(opts, otlpmetrichttp.WithInsecure())
-	} else {
-		opts = append(opts, otlpmetrichttp.WithTLSClientConfig(&tls.Config{
-			MinVersion: tls.VersionTLS12,
-		}))
+		otlpmetrichttp.WithEndpointURL(o.endpoint),
 	}
 
 	if len(o.headers) > 0 {

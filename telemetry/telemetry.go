@@ -12,8 +12,10 @@ import (
 
 	"deploycrate-ce/config"
 
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/sdk/resource"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
 
@@ -33,12 +35,20 @@ type Telemetry struct {
 	config         *telemetryOptions
 }
 
-func New(cfg config.Config) (*Telemetry, error) {
+type ServiceVersion string
+
+func New(cfg config.Config, lifecycle fx.Lifecycle, version ServiceVersion) (*Telemetry, error) {
 	ctx := context.Background()
 
 	opts := []Option{
-		WithService(cfg.Telemetry.ServiceName, cfg.Telemetry.ServiceVersion),
-		WithServiceInstance(cfg.App.InstanceID),
+		WithService(cfg.Telemetry.ServiceName, string(version)),
+		WithServiceInstance(uuid.NewString()),
+		WithResourceAttributes(
+			semconv.ServiceNamespaceKey.String(cfg.Telemetry.ServiceNamespace),
+			semconv.HostIDKey.String(cfg.App.InstanceID),
+			semconv.DeploymentEnvironment(config.Env),
+			attribute.String("deploycrate.slot", cfg.App.Slot),
+		),
 		WithBatchConfig(cfg.Telemetry.BatchSize, cfg.Telemetry.BatchTimeoutMs, 2048),
 		WithTraceSampleRate(cfg.Telemetry.TraceSampleRate),
 	}
@@ -71,8 +81,6 @@ func New(cfg config.Config) (*Telemetry, error) {
 				parseHeaders(cfg.Telemetry.OtlpHeaders),
 			),
 		))
-	} else {
-		opts = append(opts, WithTraceExporters(NewNoopTraceExporter()))
 	}
 
 	tel, err := newWithOpts(ctx, opts...)
@@ -83,6 +91,7 @@ func New(cfg config.Config) (*Telemetry, error) {
 	if err := tel.HealthCheck(ctx); err != nil {
 		slog.Warn("telemetry health check failed", "error", err)
 	}
+	lifecycle.Append(fx.Hook{OnStop: tel.Shutdown})
 
 	return tel, nil
 }
@@ -102,7 +111,16 @@ func newWithOpts(ctx context.Context, opts ...Option) (*Telemetry, error) {
 	if cfg.serviceInstance != "" {
 		attributes = append(attributes, semconv.ServiceInstanceIDKey.String(cfg.serviceInstance))
 	}
-	res, err := resource.New(ctx, resource.WithAttributes(attributes...))
+	attributes = append(attributes, cfg.resourceAttrs...)
+	res, err := resource.New(
+		ctx,
+		resource.WithFromEnv(),
+		resource.WithTelemetrySDK(),
+		resource.WithProcess(),
+		resource.WithOS(),
+		resource.WithHost(),
+		resource.WithAttributes(attributes...),
+	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
@@ -126,6 +144,10 @@ func newWithOpts(ctx context.Context, opts ...Option) (*Telemetry, error) {
 		_ = t.Shutdown(ctx)
 		return nil, fmt.Errorf("failed to initialize tracing: %w", err)
 	}
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
 
 	return t, nil
 }
@@ -171,7 +193,6 @@ func (t *Telemetry) initMetrics(ctx context.Context) error {
 			return fmt.Errorf("failed to get metric exporter from %s: %w", exporter.Name(), err)
 		}
 		exporters = append(exporters, exp)
-		t.shutdownFuncs = append(t.shutdownFuncs, exporter.Shutdown)
 	}
 
 	opts := []sdkmetric.Option{
@@ -206,12 +227,13 @@ func (t *Telemetry) initTracing(ctx context.Context) error {
 			return fmt.Errorf("failed to get span exporter from %s: %w", exporter.Name(), err)
 		}
 		exporters = append(exporters, exp)
-		t.shutdownFuncs = append(t.shutdownFuncs, exporter.Shutdown)
 	}
 
 	opts := []sdktrace.TracerProviderOption{
 		sdktrace.WithResource(t.resource),
-		sdktrace.WithSampler(sdktrace.TraceIDRatioBased(t.config.traceSampleRate)),
+		sdktrace.WithSampler(sdktrace.ParentBased(
+			sdktrace.TraceIDRatioBased(t.config.traceSampleRate),
+		)),
 	}
 
 	for _, exp := range exporters {

@@ -13,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"deploycrate-ce/telemetry"
 )
 
 type MetricRollup struct {
@@ -93,6 +95,29 @@ type EnvironmentLogPage struct {
 	Logs []EnvironmentLog
 }
 
+type SystemLogCursor struct {
+	Timestamp   time.Time
+	Fingerprint uint64
+}
+
+type SystemLog struct {
+	Cursor         SystemLogCursor
+	Message        string
+	Severity       string
+	SeverityNumber uint8
+	TraceID        string
+	SpanID         string
+	Scope          string
+	Source         string
+	Line           string
+	Instance       string
+	Slot           string
+}
+
+type SystemLogPage struct {
+	Logs []SystemLog
+}
+
 type Client struct {
 	baseURL  string
 	database string
@@ -104,7 +129,7 @@ type Client struct {
 func New(baseURL, database, user, password string) Client {
 	return Client{
 		baseURL: baseURL, database: database, user: user, password: password,
-		client: &http.Client{Timeout: 15 * time.Second},
+		client: telemetry.NewHTTPClient(15 * time.Second),
 	}
 }
 
@@ -155,7 +180,7 @@ func (client Client) InsertMetricRollups(ctx context.Context, rollups []MetricRo
 	}
 	query := endpoint.Query()
 	query.Set("database", client.database)
-	query.Set("query", "INSERT INTO metric_rollups_v2 FORMAT JSONEachRow")
+	query.Set("query", "INSERT INTO metric_rollups FORMAT JSONEachRow")
 	query.Set("date_time_input_format", "best_effort")
 	endpoint.RawQuery = query.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), &body)
@@ -188,7 +213,7 @@ func (client Client) LatestSystemMetricValues(
 	query.Set("param_server", server)
 	query.Set(
 		"query",
-		"SELECT metric, argMax(`last`, observed_at) AS value, toString(toUnixTimestamp64Milli(max(observed_at))) AS observed_at_milliseconds FROM metric_rollups_v2 WHERE scope = 'host' AND server = {server:String} AND metric IN ('cpu_cores_used', 'cpu_cores_total', 'memory_available_bytes', 'memory_total_bytes', 'root_filesystem_available_bytes', 'root_filesystem_size_bytes', 'disk_read_bytes_per_second', 'disk_write_bytes_per_second', 'network_receive_bytes_per_second', 'network_transmit_bytes_per_second', 'oom_events', 'tasks') GROUP BY metric FORMAT JSONEachRow",
+		"SELECT metric, argMax(`last`, observed_at) AS value, toString(toUnixTimestamp64Milli(max(observed_at))) AS observed_at_milliseconds FROM metric_rollups WHERE scope = 'host' AND server = {server:String} AND metric IN ('cpu_cores_used', 'cpu_cores_total', 'memory_available_bytes', 'memory_total_bytes', 'root_filesystem_available_bytes', 'root_filesystem_size_bytes', 'disk_read_bytes_per_second', 'disk_write_bytes_per_second', 'network_receive_bytes_per_second', 'network_transmit_bytes_per_second', 'oom_events', 'tasks') GROUP BY metric FORMAT JSONEachRow",
 	)
 	endpoint.RawQuery = query.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), nil)
@@ -255,7 +280,7 @@ func (client Client) SystemMetricHistory(
 	query.Set("param_since_seconds", strconv.FormatInt(since.Unix(), 10))
 	query.Set(
 		"query",
-		"SELECT toString(toUInt64(toUnixTimestamp(bucket_start)) * 1000) AS bucket_start_milliseconds, metric, argMax(`last`, observed_at) AS value FROM metric_rollups_v2 WHERE scope = 'host' AND server = {server:String} AND bucket_start >= toDateTime({since_seconds:UInt32}) AND metric IN ('cpu_cores_used', 'cpu_cores_total', 'memory_available_bytes', 'memory_total_bytes', 'root_filesystem_available_bytes', 'root_filesystem_size_bytes', 'disk_read_bytes_per_second', 'disk_write_bytes_per_second', 'network_receive_bytes_per_second', 'network_transmit_bytes_per_second', 'oom_events', 'tasks') GROUP BY bucket_start, metric ORDER BY bucket_start, metric FORMAT JSONEachRow",
+		"SELECT toString(toUInt64(toUnixTimestamp(bucket_start)) * 1000) AS bucket_start_milliseconds, metric, argMax(`last`, observed_at) AS value FROM metric_rollups WHERE scope = 'host' AND server = {server:String} AND bucket_start >= toDateTime({since_seconds:UInt32}) AND metric IN ('cpu_cores_used', 'cpu_cores_total', 'memory_available_bytes', 'memory_total_bytes', 'root_filesystem_available_bytes', 'root_filesystem_size_bytes', 'disk_read_bytes_per_second', 'disk_write_bytes_per_second', 'network_receive_bytes_per_second', 'network_transmit_bytes_per_second', 'oom_events', 'tasks') GROUP BY bucket_start, metric ORDER BY bucket_start, metric FORMAT JSONEachRow",
 	)
 	endpoint.RawQuery = query.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), nil)
@@ -313,7 +338,7 @@ func (client Client) LatestAttributedMetricValues(
 	server string,
 	environment string,
 ) ([]AttributedMetricValue, error) {
-	const query = "SELECT scope, component, application, environment, release, deployment, target, instance, resource, installation, argMax(runtime_id, observed_at) AS runtime_id, metric, argMax(`last`, observed_at) AS value, toString(toUnixTimestamp64Milli(max(observed_at))) AS observed_at_milliseconds FROM metric_rollups_v2 WHERE scope = {scope:String} AND server = {server:String} AND ({environment:String} = '' OR environment = {environment:String}) GROUP BY scope, component, application, environment, release, deployment, target, instance, resource, installation, metric ORDER BY component, application, environment, instance, installation, metric FORMAT JSONEachRow"
+	const query = "SELECT scope, component, application, environment, release, deployment, target, instance, resource, installation, argMax(runtime_id, observed_at) AS runtime_id, metric, argMax(`last`, observed_at) AS value, toString(toUnixTimestamp64Milli(max(observed_at))) AS observed_at_milliseconds FROM metric_rollups WHERE scope = {scope:String} AND server = {server:String} AND ({environment:String} = '' OR environment = {environment:String}) GROUP BY scope, component, application, environment, release, deployment, target, instance, resource, installation, metric ORDER BY component, application, environment, instance, installation, metric FORMAT JSONEachRow"
 	return client.queryAttributedMetrics(ctx, query, scope, server, environment, time.Time{})
 }
 
@@ -324,7 +349,7 @@ func (client Client) AttributedMetricHistory(
 	environment string,
 	since time.Time,
 ) ([]AttributedMetricValue, error) {
-	const query = "SELECT bucket_start, scope, component, application, environment, release, deployment, target, instance, resource, installation, argMax(runtime_id, observed_at) AS runtime_id, metric, argMax(`last`, observed_at) AS value, toString(toUnixTimestamp64Milli(max(observed_at))) AS observed_at_milliseconds FROM metric_rollups_v2 WHERE scope = {scope:String} AND server = {server:String} AND ({environment:String} = '' OR environment = {environment:String}) AND bucket_start >= toDateTime({since_seconds:UInt32}) GROUP BY bucket_start, scope, component, application, environment, release, deployment, target, instance, resource, installation, metric ORDER BY bucket_start, component, application, environment, instance, installation, metric FORMAT JSONEachRow"
+	const query = "SELECT bucket_start, scope, component, application, environment, release, deployment, target, instance, resource, installation, argMax(runtime_id, observed_at) AS runtime_id, metric, argMax(`last`, observed_at) AS value, toString(toUnixTimestamp64Milli(max(observed_at))) AS observed_at_milliseconds FROM metric_rollups WHERE scope = {scope:String} AND server = {server:String} AND ({environment:String} = '' OR environment = {environment:String}) AND bucket_start >= toDateTime({since_seconds:UInt32}) GROUP BY bucket_start, scope, component, application, environment, release, deployment, target, instance, resource, installation, metric ORDER BY bucket_start, component, application, environment, instance, installation, metric FORMAT JSONEachRow"
 	return client.queryAttributedMetrics(ctx, query, scope, server, environment, since)
 }
 
@@ -507,6 +532,99 @@ func (client Client) EnvironmentLogs(
 	return EnvironmentLogPage{Logs: logs}, nil
 }
 
+func (client Client) SystemLogs(
+	ctx context.Context,
+	service string,
+	after *SystemLogCursor,
+	limit uint64,
+) (SystemLogPage, error) {
+	const fingerprint = "sipHash64(SeverityText, Body, TraceId, SpanId, ScopeName, toString(LogAttributes), toString(ResourceAttributes))"
+	const columns = "toString(toUnixTimestamp64Nano(Timestamp)) AS timestamp_nanoseconds, toString(" + fingerprint + ") AS fingerprint, Body AS message, SeverityText AS severity, SeverityNumber AS severity_number, TraceId AS trace_id, SpanId AS span_id, ScopeName AS scope, LogAttributes['code.file.path'] AS source, LogAttributes['code.line.number'] AS line, ResourceAttributes['service.instance.id'] AS instance, ResourceAttributes['deploycrate.slot'] AS slot"
+	const initialQuery = "SELECT " + columns + " FROM otel_logs WHERE ServiceName = {service:String} ORDER BY Timestamp DESC, " + fingerprint + " DESC LIMIT {limit:UInt64} FORMAT JSONEachRow"
+	const incrementalQuery = "SELECT " + columns + " FROM otel_logs WHERE ServiceName = {service:String} AND (Timestamp, " + fingerprint + ") > (fromUnixTimestamp64Nano({after_nanoseconds:Int64}), {after_fingerprint:UInt64}) ORDER BY Timestamp, " + fingerprint + " LIMIT {limit:UInt64} FORMAT JSONEachRow"
+
+	endpoint, err := url.Parse(client.baseURL)
+	if err != nil {
+		return SystemLogPage{}, fmt.Errorf("build ClickHouse URL: %w", err)
+	}
+	query := endpoint.Query()
+	query.Set("database", client.database)
+	query.Set("param_service", service)
+	query.Set("param_limit", strconv.FormatUint(limit, 10))
+	queryText := initialQuery
+	if after != nil {
+		queryText = incrementalQuery
+		query.Set("param_after_nanoseconds", strconv.FormatInt(after.Timestamp.UnixNano(), 10))
+		query.Set("param_after_fingerprint", strconv.FormatUint(after.Fingerprint, 10))
+	}
+	query.Set("query", queryText)
+	endpoint.RawQuery = query.Encode()
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), nil)
+	if err != nil {
+		return SystemLogPage{}, fmt.Errorf("build ClickHouse system log request: %w", err)
+	}
+	request.SetBasicAuth(client.user, client.password)
+	response, err := client.client.Do(request)
+	if err != nil {
+		return SystemLogPage{}, fmt.Errorf("query ClickHouse system logs: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 800))
+		return SystemLogPage{}, fmt.Errorf(
+			"query ClickHouse system logs: unexpected status %s: %s",
+			response.Status,
+			string(message),
+		)
+	}
+
+	logs := make([]SystemLog, 0, limit)
+	decoder := json.NewDecoder(response.Body)
+	for {
+		var row struct {
+			TimestampNanoseconds string `json:"timestamp_nanoseconds"`
+			Fingerprint          string `json:"fingerprint"`
+			Message              string `json:"message"`
+			Severity             string `json:"severity"`
+			SeverityNumber       uint8  `json:"severity_number"`
+			TraceID              string `json:"trace_id"`
+			SpanID               string `json:"span_id"`
+			Scope                string `json:"scope"`
+			Source               string `json:"source"`
+			Line                 string `json:"line"`
+			Instance             string `json:"instance"`
+			Slot                 string `json:"slot"`
+		}
+		if err := decoder.Decode(&row); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return SystemLogPage{}, fmt.Errorf("decode ClickHouse system log: %w", err)
+		}
+		timestampNanoseconds, err := strconv.ParseInt(row.TimestampNanoseconds, 10, 64)
+		if err != nil {
+			return SystemLogPage{}, fmt.Errorf("decode ClickHouse system log timestamp: %w", err)
+		}
+		fingerprint, err := strconv.ParseUint(row.Fingerprint, 10, 64)
+		if err != nil {
+			return SystemLogPage{}, fmt.Errorf("decode ClickHouse system log fingerprint: %w", err)
+		}
+		logs = append(logs, SystemLog{
+			Cursor: SystemLogCursor{
+				Timestamp:   time.Unix(0, timestampNanoseconds).UTC(),
+				Fingerprint: fingerprint,
+			},
+			Message: row.Message, Severity: row.Severity, SeverityNumber: row.SeverityNumber,
+			TraceID: row.TraceID, SpanID: row.SpanID, Scope: row.Scope,
+			Source: row.Source, Line: row.Line, Instance: row.Instance, Slot: row.Slot,
+		})
+	}
+	if after == nil {
+		slices.Reverse(logs)
+	}
+	return SystemLogPage{Logs: logs}, nil
+}
+
 func (client Client) ExportMetricRollups(
 	ctx context.Context,
 	destination io.Writer,
@@ -519,7 +637,7 @@ func (client Client) ExportMetricRollups(
 	query.Set("database", client.database)
 	query.Set(
 		"query",
-		"SELECT bucket_start, observed_at, scope, component, metric, average, maximum, `last`, server, application, environment, release, deployment, target, instance, resource, installation, runtime_id, observation_id FROM metric_rollups_v2 ORDER BY bucket_start, scope, metric, server, environment, component, instance, installation, runtime_id, observation_id FORMAT JSONEachRow",
+		"SELECT bucket_start, observed_at, scope, component, metric, average, maximum, `last`, server, application, environment, release, deployment, target, instance, resource, installation, runtime_id, observation_id FROM metric_rollups ORDER BY bucket_start, scope, metric, server, environment, component, instance, installation, runtime_id, observation_id FORMAT JSONEachRow",
 	)
 	endpoint.RawQuery = query.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), nil)

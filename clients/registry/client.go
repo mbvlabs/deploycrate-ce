@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	"deploycrate-ce/telemetry"
+
 	"deploycrate-ce/internal/sudo"
 )
 
@@ -199,9 +201,10 @@ func (Client) ResolveRemoteDigest(ctx context.Context, credentials Credentials, 
 		"application/vnd.oci.image.manifest.v1+json",
 		"application/vnd.docker.distribution.manifest.v2+json",
 	}, ", ")
-	client := &http.Client{Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error {
+	client := telemetry.NewHTTPClient(30 * time.Second)
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return errors.New("registry manifest inspection does not allow redirects")
-	}}
+	}
 	response, err := manifestHead(ctx, client, requestURL, accept, credentials, "")
 	if err != nil {
 		return "", fmt.Errorf("inspect published registry manifest: %w", err)

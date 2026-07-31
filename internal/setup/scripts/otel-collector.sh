@@ -114,19 +114,26 @@ processors:
       - key: host.id
         value: "${INSTANCE_ID}"
         action: upsert
-  batch:
-    send_batch_size: 1024
-    send_batch_max_size: 4096
-    timeout: 5s
-
 exporters:
   clickhouse:
     endpoint: tcp://127.0.0.1:9000?dial_timeout=10s
     database: deploycrate
     username: deploycrate
     password: \${env:CLICKHOUSE_PASSWORD}
-    create_schema: true
+    create_schema: false
     logs_table_name: otel_logs
+    traces_table_name: otel_traces
+    metrics_tables:
+      gauge:
+        name: otel_metrics_gauge
+      sum:
+        name: otel_metrics_sum
+      summary:
+        name: otel_metrics_summary
+      histogram:
+        name: otel_metrics_histogram
+      exponential_histogram:
+        name: otel_metrics_exp_histogram
     ttl: 168h
     async_insert: true
     compress: lz4
@@ -134,8 +141,15 @@ exporters:
     sending_queue:
       enabled: true
       storage: file_storage
-      queue_size: 4096
+      queue_size: 20000
+      sizer: items
+      block_on_overflow: true
       num_consumers: 4
+      batch:
+        flush_timeout: 5s
+        min_size: 5000
+        max_size: 10000
+        sizer: items
     retry_on_failure:
       enabled: true
       initial_interval: 1s
@@ -160,7 +174,15 @@ service:
   pipelines:
     logs:
       receivers: [journald, otlp]
-      processors: [memory_limiter, transform/workload_logs, resource/host, batch]
+      processors: [memory_limiter, transform/workload_logs, resource/host]
+      exporters: [clickhouse]
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/host]
+      exporters: [clickhouse]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/host]
       exporters: [clickhouse]
 EOF
 chown root:otelcol-contrib /etc/otelcol-contrib/config.yaml
@@ -168,7 +190,7 @@ chmod 0640 /etc/otelcol-contrib/config.yaml
 
 cat > /etc/systemd/system/otelcol-contrib.service <<'EOF'
 [Unit]
-Description=OpenTelemetry log collector for DeployCrate
+Description=OpenTelemetry collector for DeployCrate application signals
 Wants=network-online.target docker.service
 After=network-online.target docker.service
 

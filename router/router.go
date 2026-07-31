@@ -15,6 +15,7 @@ import (
 	"deploycrate-ce/internal/server"
 	"deploycrate-ce/router/cookies"
 	"deploycrate-ce/router/middleware"
+	"deploycrate-ce/router/routes"
 	"deploycrate-ce/telemetry"
 
 	"github.com/google/uuid"
@@ -79,7 +80,16 @@ func New(
 
 	router.Use(globalMiddleware...)
 
-	handler := otelhttp.NewHandler(router, "http")
+	assetsPrefix := strings.TrimSuffix(routes.AssetsPrefix, "/")
+	handler := otelhttp.NewHandler(
+		router,
+		"http",
+		otelhttp.WithFilter(func(request *http.Request) bool {
+			return request.URL.Path != assetsPrefix &&
+				!strings.HasPrefix(request.URL.Path, assetsPrefix+"/") &&
+				request.URL.Path != routes.SystemTelemetryLogs.Path()
+		}),
+	)
 
 	return &Router{
 		e:       router,

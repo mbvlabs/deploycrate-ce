@@ -16,6 +16,12 @@ var SystemTelemetry = routing.NewSimpleRoute(
 	SystemPrefix,
 )
 
+var SystemTelemetryLogs = routing.NewSimpleRoute(
+	"/telemetry/logs",
+	"system.telemetry.logs",
+	SystemPrefix,
+)
+
 var SystemDeployments = routing.NewSimpleRoute(
 	"/deployments",
 	"system.deployments",

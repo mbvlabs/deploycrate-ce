@@ -14,6 +14,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"deploycrate-ce/telemetry"
 )
 
 const (
@@ -59,7 +61,7 @@ func New(baseURL string) *Client {
 	}
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
-		http:    &http.Client{Timeout: 10 * time.Second},
+		http:    telemetry.NewHTTPClient(10 * time.Second),
 	}
 }
 
@@ -193,7 +195,7 @@ func (client *Client) VerifyPublic(ctx context.Context, domain, healthPath strin
 	}
 	verificationCtx, cancel := context.WithTimeout(ctx, publicVerifyTimeout)
 	defer cancel()
-	httpClient := &http.Client{Timeout: publicVerifyRequestLimit}
+	httpClient := telemetry.NewHTTPClient(publicVerifyRequestLimit)
 	var lastErr error
 	for {
 		request, err := http.NewRequestWithContext(verificationCtx, http.MethodGet, "https://"+domain+healthPath, nil)

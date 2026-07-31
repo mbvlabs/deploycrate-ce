@@ -275,6 +275,8 @@ func applicationEnvironmentValues(cfg Config) [][2]string {
 		{"METRICS_ROLLUP_ENABLED", "true"},
 		{"PROMETHEUS_URL", "http://127.0.0.1:9090"},
 		{"OTLP_LOGS_ENDPOINT", "http://127.0.0.1:4318/v1/logs"},
+		{"OTLP_METRICS_ENDPOINT", "http://127.0.0.1:4318/v1/metrics"},
+		{"OTLP_TRACES_ENDPOINT", "http://127.0.0.1:4318/v1/traces"},
 		{"CLICKHOUSE_PROTOCOL", "http"},
 		{"CLICKHOUSE_HOST", "127.0.0.1"},
 		{"CLICKHOUSE_PORT", "8123"},

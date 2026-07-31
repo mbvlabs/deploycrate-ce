@@ -200,7 +200,7 @@ The remaining DeployCrate-managed locations are:
 | `/var/lib/deploycrate-builds/` | Build workspace owned by the `deploycrate` user. Builder images, build containers, and Environment-owned Pack cache volumes remain Docker-managed. |
 | `/home/admin/.ssh/authorized_keys` | Generated administrator key and optional ordinary owner key for SSH access as `admin`. |
 
-ClickHouse uses the Docker volume `deploycrate-ce-clickhouse`. Its `metric_rollups_v2` and `otel_logs` tables expire rows after seven days. Metric rollups are exported in deterministic JSONEachRow format into each daily server backup; operational logs are not included in that export. The live Docker volume itself is not copied. Persistent volume capacity is not inferred from cgroup disk I/O and remains a separate collection problem.
+ClickHouse uses the Docker volume `deploycrate-ce-clickhouse`. Its `metric_rollups` and OpenTelemetry tables expire rows after seven days. Metric rollups are exported in deterministic JSONEachRow format into each daily server backup; operational telemetry is not included in that export. The live Docker volume itself is not copied. Persistent volume capacity is not inferred from cgroup disk I/O and remains a separate collection problem.
 
 The installer also places the checksum-verified Buildpacks CLI at `/usr/local/bin/pack`. Caddy is installed from the pinned official Debian package at `/usr/bin/caddy` and held at the installer-supported version. Docker Engine and the remaining host packages use their standard Debian package locations.
 
@@ -702,7 +702,7 @@ CSRF_TRUSTED_ORIGINS=
 
 # Telemetry (optional)
 TELEMETRY_SERVICE_NAME=deploycrate-ce
-TELEMETRY_SERVICE_VERSION=1.0.0
+TELEMETRY_SERVICE_NAMESPACE=deploycrate-ce
 OTLP_LOGS_ENDPOINT=
 OTLP_METRICS_ENDPOINT=
 OTLP_TRACES_ENDPOINT=

@@ -148,7 +148,7 @@ func DefaultSteps(operations Operations) []Step {
 			nil,
 		),
 		scriptSetupStep(
-			"clickhouse-25-8-28-1-observability-v1",
+			"clickhouse-25-8-28-1-observability-v2",
 			"Start pinned ClickHouse telemetry storage",
 			"clickhouse.sh",
 			func(cfg Config) map[string]string {
@@ -156,8 +156,8 @@ func DefaultSteps(operations Operations) []Step {
 			},
 		),
 		scriptSetupStep(
-			"otel-collector-"+OpenTelemetryCollectorVersion+"-workload-attribution-v1",
-			"Install durable service and workload log collection",
+			"otel-collector-"+OpenTelemetryCollectorVersion+"-application-signals-v2",
+			"Install durable logs, traces, and metrics collection",
 			"otel-collector.sh",
 			func(cfg Config) map[string]string {
 				return map[string]string{

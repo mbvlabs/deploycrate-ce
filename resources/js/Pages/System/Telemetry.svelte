@@ -1,7 +1,9 @@
 <script lang="ts">
+  import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
   import TelemetryHistory from '@/Components/System/TelemetryHistory.svelte'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
+  import { routes } from '@/routes'
 
   type SystemIdentity = {
     applicationName: string
@@ -118,11 +120,40 @@
     systemContainers: AttributedTelemetry[]
   }
 
+  type SystemLog = {
+    id: string
+    message: string
+    severity: string
+    severityNumber: number
+    traceId: string
+    spanId: string
+    scope: string
+    source: string
+    line: string
+    instance: string
+    slot: string
+    occurredAt: string
+  }
+
+  type SystemLogSnapshot = {
+    logs: SystemLog[]
+    nextCursor: string
+    hasMore: boolean
+  }
+
   let { auth, system, telemetry }: {
     auth: { email: string }
     system: SystemIdentity
     telemetry: SystemTelemetry
   } = $props()
+
+  let systemLogs = $state<SystemLog[]>([])
+  let systemLogCursor = $state('')
+  let systemLogsLoaded = $state(false)
+  let systemLogsPaused = $state(false)
+  let systemLogConnectionError = $state('')
+  let followingSystemLogs = $state(true)
+  let systemLogViewport: HTMLDivElement
 
   const formatBytes = (value: number) => {
     if (!Number.isFinite(value) || value < 0) return 'Unavailable'
@@ -187,6 +218,78 @@
   ])
   const attributedCPUSeries = $derived(attributedSeries('cpu'))
   const attributedMemorySeries = $derived(attributedSeries('memory'))
+
+  const systemLogLevel = (log: SystemLog) => {
+    if (log.severity) return log.severity.toUpperCase()
+    if (log.severityNumber >= 17) return 'ERROR'
+    if (log.severityNumber >= 13) return 'WARN'
+    if (log.severityNumber >= 9) return 'INFO'
+    return 'DEBUG'
+  }
+  const systemLogSource = (log: SystemLog) => {
+    if (log.source) return log.line ? `${log.source}:${log.line}` : log.source
+    return log.scope || 'application'
+  }
+
+  async function loadSystemLogs(signal?: AbortSignal) {
+    const endpoint = new URL(routes.systemTelemetryLogs(), window.location.origin)
+    if (systemLogCursor) endpoint.searchParams.set('after', systemLogCursor)
+    const response = await window.fetch(endpoint, {
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+      signal,
+    })
+    if (!response.ok) throw new Error(`System logs returned ${response.status}`)
+    const snapshot = (await response.json()) as SystemLogSnapshot
+    if (snapshot.logs.length > 0) systemLogs = [...systemLogs, ...snapshot.logs].slice(-2000)
+    systemLogCursor = snapshot.nextCursor
+    systemLogsLoaded = true
+    systemLogConnectionError = ''
+    return snapshot
+  }
+
+  function updateSystemLogFollow() {
+    followingSystemLogs = systemLogViewport.scrollHeight
+      - systemLogViewport.scrollTop
+      - systemLogViewport.clientHeight < 48
+  }
+
+  $effect(() => {
+    systemLogs.length
+    if (!followingSystemLogs) return
+    const frame = window.requestAnimationFrame(() => {
+      systemLogViewport?.scrollTo({ top: systemLogViewport.scrollHeight })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  })
+
+  $effect(() => {
+    if (systemLogsPaused) return
+    const abortController = new AbortController()
+    let timer: number | undefined
+    let retryDelay = 2000
+
+    async function poll() {
+      try {
+        const snapshot = await loadSystemLogs(abortController.signal)
+        if (abortController.signal.aborted) return
+        retryDelay = 2000
+        timer = window.setTimeout(poll, snapshot.hasMore ? 0 : retryDelay)
+      } catch {
+        if (abortController.signal.aborted) return
+        systemLogConnectionError = 'Reconnecting to the DeployCrate CE log stream...'
+        retryDelay = Math.min(retryDelay * 2, 10000)
+        timer = window.setTimeout(poll, retryDelay)
+      }
+    }
+
+    timer = window.setTimeout(poll, 0)
+    return () => {
+      abortController.abort()
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  })
 </script>
 
 <svelte:head><title>System telemetry</title></svelte:head>
@@ -314,6 +417,42 @@
               </table>
             </div>
           {:else}<p class="p-6 text-sm text-muted-foreground">No system container telemetry is available yet.</p>{/if}
+        </Card.Content>
+      </Card.Root>
+    </section>
+
+    <section aria-labelledby="deploycrate-logs-heading">
+      <Card.Root>
+        <Card.Header>
+          <Card.Action><Button size="sm" variant="outline" onclick={() => (systemLogsPaused = !systemLogsPaused)}>{systemLogsPaused ? 'Resume' : 'Pause'}</Button></Card.Action>
+          <Card.Title id="deploycrate-logs-heading">DeployCrate CE logs</Card.Title>
+          <Card.Description>Live structured application logs from OpenTelemetry. ClickHouse retains logs for seven days.</Card.Description>
+        </Card.Header>
+        <Card.Content>
+          {#if systemLogConnectionError}<p class="mb-3 text-xs text-warning">{systemLogConnectionError}</p>{/if}
+          <div
+            bind:this={systemLogViewport}
+            onscroll={updateSystemLogFollow}
+            class="max-h-[36rem] min-h-48 overflow-auto border border-border bg-black/35 p-3 font-mono text-[11px] leading-relaxed"
+          >
+            {#each systemLogs as log (log.id)}
+              <div
+                class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 py-1"
+                class:text-warning={log.severityNumber >= 13 && log.severityNumber < 17}
+                class:text-destructive={log.severityNumber >= 17}
+              >
+                <span class="select-none whitespace-nowrap text-muted-foreground">{stamp(log.occurredAt)}</span>
+                <div class="min-w-0">
+                  <p class="select-none text-[10px] text-muted-foreground">
+                    {systemLogLevel(log)} · {log.slot || 'slot unknown'} · {systemLogSource(log)}{#if log.traceId} · trace {short(log.traceId)}{/if}{#if log.instance} · instance {short(log.instance)}{/if}
+                  </p>
+                  <pre class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
+                </div>
+              </div>
+            {:else}
+              <p class="text-muted-foreground">{systemLogsLoaded ? 'No DeployCrate CE logs have been collected yet.' : 'Loading DeployCrate CE logs...'}</p>
+            {/each}
+          </div>
         </Card.Content>
       </Card.Root>
     </section>

@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"deploycrate-ce/telemetry"
 )
 
 type Sample struct {
@@ -21,7 +23,7 @@ type Client struct {
 }
 
 func New(baseURL string) Client {
-	return Client{baseURL: baseURL, client: &http.Client{Timeout: 10 * time.Second}}
+	return Client{baseURL: baseURL, client: telemetry.NewHTTPClient(10 * time.Second)}
 }
 
 func (client Client) Query(ctx context.Context, expression string, at time.Time) ([]Sample, error) {

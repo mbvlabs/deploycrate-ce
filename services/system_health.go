@@ -14,6 +14,7 @@ import (
 	"deploycrate-ce/config"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
+	"deploycrate-ce/telemetry"
 )
 
 const (
@@ -217,7 +218,7 @@ func (s *SystemHealth) checkPrometheusTargets(ctx context.Context) (string, erro
 	if err != nil {
 		return "", err
 	}
-	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	response, err := telemetry.NewHTTPClient(5 * time.Second).Do(request)
 	if err != nil {
 		return "", fmt.Errorf("query Prometheus targets: %w", err)
 	}
@@ -320,7 +321,7 @@ func getSystemHealth(ctx context.Context, endpoint, username, password string) (
 	if username != "" || password != "" {
 		request.SetBasicAuth(username, password)
 	}
-	response, err := (&http.Client{Timeout: 5 * time.Second}).Do(request)
+	response, err := telemetry.NewHTTPClient(5 * time.Second).Do(request)
 	if err != nil {
 		return "", err
 	}

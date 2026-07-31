@@ -72,6 +72,7 @@ func (p Processor) DeleteJob(ctx context.Context, id int64) (*rivertype.JobRow, 
 
 func NewProcessor(params ProcessorParams) (Processor, error) {
 	riverClient, err := river.NewClient(riverdatabasesql.New(params.DB.Conn()), &river.Config{
+		Middleware:   []rivertype.Middleware{&TelemetryMiddleware{}},
 		PeriodicJobs: params.PeriodicJobs,
 		Queues: map[string]river.QueueConfig{
 			river.QueueDefault:   {MaxWorkers: 100},

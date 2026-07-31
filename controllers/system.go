@@ -25,6 +25,7 @@ type System struct {
 	db     storage.Pool
 	health *services.SystemHealth
 	metric services.MetricRollupService
+	logs   *services.SystemLogs
 	access *services.ResourcePrivateAccess
 }
 
@@ -32,9 +33,10 @@ func NewSystem(
 	db storage.Pool,
 	health *services.SystemHealth,
 	metric services.MetricRollupService,
+	logs *services.SystemLogs,
 	access *services.ResourcePrivateAccess,
 ) System {
-	return System{db: db, health: health, metric: metric, access: access}
+	return System{db: db, health: health, metric: metric, logs: logs, access: access}
 }
 
 func (s System) RegisterRoutes(r *router.Router) error {
@@ -48,6 +50,7 @@ func (s System) RegisterRoutes(r *router.Router) error {
 	}{
 		{method: http.MethodGet, route: routes.SystemOverview, handler: s.Overview},
 		{method: http.MethodGet, route: routes.SystemTelemetry, handler: s.Telemetry},
+		{method: http.MethodGet, route: routes.SystemTelemetryLogs, handler: s.TelemetryLogs},
 		{method: http.MethodGet, route: routes.SystemDeployments, handler: s.Deployments},
 		{method: http.MethodGet, route: routes.SystemResources, handler: s.Resources},
 		{method: http.MethodGet, route: routes.SystemResource, handler: s.Resource},
@@ -141,6 +144,23 @@ func (s System) Telemetry(etx *echo.Context) error {
 		"system":    overview,
 		"telemetry": metricData,
 	})
+}
+
+func (s System) TelemetryLogs(etx *echo.Context) error {
+	snapshot, err := s.logs.Snapshot(etx.Request().Context(), etx.QueryParam("after"))
+	if errors.Is(err, services.ErrInvalidSystemLogCursor) {
+		return etx.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	if err != nil {
+		slog.ErrorContext(
+			etx.Request().Context(),
+			"failed to load DeployCrate CE logs",
+			"error", err,
+		)
+		return etx.JSON(http.StatusInternalServerError, map[string]string{"error": "DeployCrate CE logs could not be loaded"})
+	}
+	etx.Response().Header().Set("Cache-Control", "no-store")
+	return etx.JSON(http.StatusOK, snapshot)
 }
 
 func (s System) Deployments(etx *echo.Context) error {

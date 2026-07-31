@@ -7,6 +7,7 @@ import (
 	registryclient "deploycrate-ce/clients/registry"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
+	"deploycrate-ce/telemetry"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -484,7 +485,7 @@ func waitForWorkloadHealth(ctx context.Context, port int32, healthPath string) e
 			return false
 		}
 		request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+healthPath, nil)
-		response, err := (&http.Client{Timeout: 2 * time.Second}).Do(request)
+		response, err := telemetry.NewHTTPClient(2 * time.Second).Do(request)
 		if err != nil {
 			return false
 		}

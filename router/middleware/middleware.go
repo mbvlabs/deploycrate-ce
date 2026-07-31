@@ -18,6 +18,7 @@ import (
 
 	"github.com/labstack/echo/v5"
 	echomw "github.com/labstack/echo/v5/middleware"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
@@ -189,7 +190,8 @@ func Logger(tel *telemetry.Telemetry) echo.MiddlewareFunc {
 
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
-			if isAssetsPath(c.Request().URL.Path) || isAPIPath(c.Request().URL.Path) {
+			if isAssetsPath(c.Request().URL.Path) || isAPIPath(c.Request().URL.Path) ||
+				c.Request().URL.Path == routes.SystemTelemetryLogs.Path() {
 				return next(c)
 			}
 
@@ -237,28 +239,30 @@ func Logger(tel *telemetry.Telemetry) echo.MiddlewareFunc {
 func TraceRouteAttributes(tel *telemetry.Telemetry) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
-			if isAssetsPath(c.Request().URL.Path) || isAPIPath(c.Request().URL.Path) {
+			if isAssetsPath(c.Request().URL.Path) {
 				return next(c)
 			}
 
 			err := next(c)
-			if !tel.HasTracing() {
-				return err
-			}
-
 			routeInfo := c.RouteInfo()
 			if routeInfo.Path == "" {
 				return err
 			}
+			ctx := c.Request().Context()
+			if labeler, ok := otelhttp.LabelerFromContext(ctx); ok {
+				labeler.Add(semconv.HTTPRoute(routeInfo.Path))
+			}
+			if !tel.HasTracing() {
+				return err
+			}
 
-			span := trace.SpanFromContext(c.Request().Context())
+			span := trace.SpanFromContext(ctx)
 			if !span.SpanContext().IsValid() {
 				return err
 			}
 
-			span.SetAttributes(
-				semconv.HTTPRoute(routeInfo.Path),
-			)
+			span.SetName(c.Request().Method + " " + routeInfo.Path)
+			span.SetAttributes(semconv.HTTPRoute(routeInfo.Path))
 
 			return err
 		}

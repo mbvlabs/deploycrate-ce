@@ -18,6 +18,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"deploycrate-ce/telemetry"
 )
 
 const (
@@ -109,7 +111,7 @@ func (c *Client) DownloadArchive(
 }
 
 func NewClient() *Client {
-	return &Client{httpClient: &http.Client{Timeout: 20 * time.Second}, baseURL: defaultBaseURL}
+	return &Client{httpClient: telemetry.NewHTTPClient(20 * time.Second), baseURL: defaultBaseURL}
 }
 
 type Account struct {

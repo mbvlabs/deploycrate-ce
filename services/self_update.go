@@ -25,6 +25,7 @@ import (
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/sudo"
 	"deploycrate-ce/models"
+	"deploycrate-ce/telemetry"
 
 	"github.com/google/uuid"
 	"go.uber.org/fx"
@@ -168,7 +169,7 @@ func NewSelfUpdate(
 		currentVersion = "dev"
 	}
 
-	httpClient := &http.Client{Timeout: 30 * time.Second}
+	httpClient := telemetry.NewHTTPClient(30 * time.Second)
 	service := &SelfUpdate{
 		status: SelfUpdateStatus{
 			State:  SelfUpdateIdle,
