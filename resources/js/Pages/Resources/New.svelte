@@ -14,43 +14,37 @@
   type Server = { id: string; name: string; address: string }
   type PrivateNetwork = { id: string; name: string; serverIds: string[]; serverAddresses: Record<string, string> }
   type Options = { kinds: Kind[]; servers: Server[]; privateNetworks: PrivateNetwork[]; registryCredentials: Array<{ id: string; name: string }> }
+  type ResourcePreset = { id: string; label: string; badge: string; category: string; description: string; kind?: string; href?: string; mountPath?: string; imagePlaceholder?: string }
   let { auth, options, errors = {} }: { auth: { email: string }; options: Options; errors?: Record<string, string> } = $props()
   let includeVolume = $state(true)
   let includeHealth = $state(false)
   let runtime = $state('docker')
   let processing = $state(false)
+  const resourceKinds = $derived(options.kinds.filter((kind) => kind.kind !== 'postgresql'))
   let form = $state<any>(initialForm())
-  const categoryLabels: Record<string, string> = { database: 'Database', cache: 'Cache', service: 'Service' }
-  const categories = $derived([...new Set(options.kinds.map((kind) => kind.category))])
-  const filteredKinds = $derived(options.kinds.filter((kind) => kind.category === form.category))
-  const definition = $derived(options.kinds.find((kind) => kind.kind === form.kind) ?? filteredKinds[0] ?? options.kinds[0])
+  const presets: ResourcePreset[] = [
+    { id: 'postgresql', label: 'PostgreSQL', badge: 'PG', category: 'Database', description: 'Create a managed relational database with dedicated cluster and node controls.', href: routes.resourceDatabaseNew() },
+    { id: 'mysql', label: 'MySQL', badge: 'MY', category: 'Database', description: 'Run a MySQL relational database from a Docker image.', kind: 'mysql', mountPath: '/var/lib/mysql', imagePlaceholder: 'mysql:8.4' },
+    { id: 'redis', label: 'Redis', badge: 'RD', category: 'Cache', description: 'Run an in-memory data store and cache in Docker.', kind: 'redis', mountPath: '/data', imagePlaceholder: 'redis:8' },
+    { id: 'clickhouse', label: 'ClickHouse', badge: 'CH', category: 'Analytics', description: 'Run a column-oriented analytical database in Docker.', kind: 'clickhouse', mountPath: '/var/lib/clickhouse', imagePlaceholder: 'clickhouse/clickhouse-server' },
+    { id: 'docker', label: 'Docker Image', badge: 'DK', category: 'Container', description: 'Deploy any compatible container image as a managed Resource.', kind: 'http', mountPath: '/data', imagePlaceholder: 'registry.example.com/image:tag' },
+  ]
+  let selectedPreset = $state<string | null>(null)
+  const selectedPresetDefinition = $derived(presets.find((preset) => preset.id === selectedPreset))
+  const definition = $derived(resourceKinds.find((kind) => kind.kind === form.kind) ?? resourceKinds[0])
   const errorEntries = $derived(Object.entries(errors))
   const selectClass = 'h-9 w-full border border-input bg-background px-3 text-sm aria-invalid:border-destructive aria-invalid:ring-1 aria-invalid:ring-destructive/20'
 
   function initialForm() {
-    const initialKind = options.kinds[0]
+    const initialKind = resourceKinds[0]
     return {
-      name: '', category: initialKind?.category ?? 'database', kind: initialKind?.kind ?? 'postgresql', databaseName: '', sharingScope: 'environment', managementMode: 'managed',
+      name: '', slug: '', category: initialKind?.category ?? 'cache', kind: initialKind?.kind ?? 'redis', sharingScope: 'environment', managementMode: 'managed',
       endpoint: { name: 'Primary', role: initialKind?.endpointRoles[0] ?? 'primary', address: '127.0.0.1', port: initialKind?.defaultPort ?? 5432, protocol: initialKind?.defaultProtocol ?? 'postgresql', tlsMode: initialKind?.defaultTlsMode ?? 'prefer', settings: {}, resourceInstallationId: '', privateNetworkId: '' },
       installation: { imageReference: '', imageDigest: '', containerName: '', restartPolicy: 'unless-stopped', configuration: {}, portMappings: [{ hostPort: initialKind?.defaultPort ?? 5432, containerPort: initialKind?.defaultPort ?? 5432, protocol: 'tcp' }], serverId: '', registryCredentialId: '' },
       volume: { name: '', driver: 'local', configuration: {}, serverId: '' }, mount: { mountPath: '/data', readOnly: false, resourceVolumeId: '', resourceInstallationId: '' },
       credential: { name: 'Resource administrator', username: '', metadata: {}, secretValues: {} },
       healthCheck: { name: 'Readiness', kind: defaultHealthKind(initialKind), configuration: {}, intervalSeconds: 30, timeoutSeconds: 5, failureThreshold: 3, successThreshold: 1, enabled: true, resourceInstallationId: '', resourceEndpointId: '', resourceCredentialId: '' },
     }
-  }
-
-  function chooseCategory() {
-    const selected = options.kinds.find((kind) => kind.category === form.category)
-    if (!selected) return
-    form.kind = selected.kind
-    applyKindDefaults(selected)
-  }
-
-  function chooseKind() {
-    const selected = options.kinds.find((kind) => kind.kind === form.kind)
-    if (!selected) return
-    form.category = selected.category
-    applyKindDefaults(selected)
   }
 
   function applyKindDefaults(selected: Kind) {
@@ -61,6 +55,20 @@
     form.installation.portMappings = [{ hostPort: selected.defaultPort, containerPort: selected.defaultPort, protocol: 'tcp' }]
     form.healthCheck.kind = defaultHealthKind(selected)
     form.credential.secretValues = {}
+  }
+
+  function choosePreset(preset: ResourcePreset) {
+    if (!preset.kind) return
+    const selected = resourceKinds.find((kind) => kind.kind === preset.kind)
+    if (!selected) return
+    form.category = selected.category
+    form.kind = selected.kind
+    form.installation.imageReference = ''
+    form.installation.containerName = ''
+    form.volume.name = ''
+    form.mount.mountPath = preset.mountPath ?? '/data'
+    applyKindDefaults(selected)
+    selectedPreset = preset.id
   }
 
   function defaultHealthKind(kind: Kind | undefined) {
@@ -85,8 +93,7 @@
     processing = true
     const managed = form.managementMode === 'managed'
     router.post(routes.resourceCreate(), {
-      name: form.name, category: form.category,
-      kind: form.kind, databaseName: form.databaseName, sharingScope: form.sharingScope, managementMode: form.managementMode,
+      name: form.name, slug: form.slug, kind: form.kind, sharingScope: form.sharingScope, managementMode: form.managementMode,
       endpoint: managed ? null : form.endpoint,
       installation: managed ? form.installation : null,
       volume: managed && includeVolume ? { ...form.volume, serverId: form.installation.serverId } : null,
@@ -99,11 +106,50 @@
 
 <svelte:head><title>New Resource</title></svelte:head>
 <DashboardLayout email={auth.email}>
+  {#if selectedPreset === null}
+    <div class="mx-auto max-w-5xl space-y-8">
+      <header>
+        <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">New Resource</p>
+        <h1 class="mt-3 text-3xl font-semibold">What would you like to deploy?</h1>
+        <p class="mt-2 max-w-2xl text-sm text-muted-foreground">Choose a datastore or start from a Docker image. You can configure placement and access in the next step.</p>
+      </header>
+
+      <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        {#each presets as preset (preset.id)}
+          {#if preset.href}
+            <a href={preset.href} class="group flex min-h-52 flex-col border border-border bg-card p-5 text-left transition-colors hover:border-primary/60 hover:bg-muted/30 focus-visible:border-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary">
+              <span class="flex items-start justify-between gap-4">
+                <span class="grid size-11 place-items-center border border-primary/25 bg-primary/10 font-mono text-sm font-semibold text-primary">{preset.badge}</span>
+                <span class="text-xs text-muted-foreground transition-transform group-hover:translate-x-0.5">Open →</span>
+              </span>
+              <span class="mt-7 text-base font-semibold">{preset.label}</span>
+              <span class="mt-2 flex-1 text-sm leading-6 text-muted-foreground">{preset.description}</span>
+              <span class="mt-5 text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">{preset.category}</span>
+            </a>
+          {:else}
+            <button type="button" onclick={() => choosePreset(preset)} class="group flex min-h-52 flex-col border border-border bg-card p-5 text-left transition-colors hover:border-primary/60 hover:bg-muted/30 focus-visible:border-primary focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary">
+              <span class="flex w-full items-start justify-between gap-4">
+                <span class="grid size-11 place-items-center border border-primary/25 bg-primary/10 font-mono text-sm font-semibold text-primary">{preset.badge}</span>
+                <span class="text-xs text-muted-foreground transition-transform group-hover:translate-x-0.5">Configure →</span>
+              </span>
+              <span class="mt-7 text-base font-semibold">{preset.label}</span>
+              <span class="mt-2 flex-1 text-sm leading-6 text-muted-foreground">{preset.description}</span>
+              <span class="mt-5 text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">{preset.category}</span>
+            </button>
+          {/if}
+        {/each}
+      </div>
+
+      <div class="flex items-center justify-between border-t border-border pt-5">
+        <p class="text-xs text-muted-foreground">More Resource templates can be added without changing the creation workflow.</p>
+        <Button variant="outline" href={routes.resources()}>Cancel</Button>
+      </div>
+    </div>
+  {:else}
   <form class="mx-auto max-w-5xl space-y-6" onsubmit={submit}>
-    <header>
-      <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">Resources</p>
-      <h1 class="mt-3 text-3xl font-semibold">Create a Resource</h1>
-      <p class="mt-2 max-w-2xl text-sm text-muted-foreground">Define the resource, its runtime, and any initial connection or placement details on one page.</p>
+    <header class="flex flex-wrap items-end justify-between gap-4">
+      <div><p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">{selectedPresetDefinition?.label ?? 'Docker'} Resource</p><h1 class="mt-3 text-3xl font-semibold">Configure {selectedPresetDefinition?.label ?? 'Resource'}</h1><p class="mt-2 max-w-2xl text-sm text-muted-foreground">Define its identity, runtime, placement, and initial access details.</p></div>
+      <Button type="button" variant="outline" onclick={() => selectedPreset = null}>Change Resource type</Button>
     </header>
 
     {#if errorEntries.length > 0}
@@ -118,10 +164,11 @@
     <Card.Root>
       <Card.Header>
         <Card.Title>Resource</Card.Title>
-        <Card.Description>Choose the identity, category, and sharing policy.</Card.Description>
+		<Card.Description>Choose the stable identity and sharing policy for this {definition.label} Resource.</Card.Description>
       </Card.Header>
       <Card.Content class="grid gap-5 sm:grid-cols-2">
         <FormField label="Name" error={errors.name}><Input bind:value={form.name} aria-invalid={Boolean(errors.name)} required /></FormField>
+		<FormField label="Slug" error={errors.slug}><Input bind:value={form.slug} aria-invalid={Boolean(errors.slug)} placeholder="shared-cache" required /></FormField>
         <FormField label="Sharing scope" error={errors.sharingScope}>
           <select bind:value={form.sharingScope} class={selectClass} aria-invalid={Boolean(errors.sharingScope)}>
             <option value="environment">Environment policy</option>
@@ -129,17 +176,7 @@
             <option value="global">Global policy</option>
           </select>
         </FormField>
-        <FormField label="Category" error={errors.category}>
-          <select bind:value={form.category} onchange={chooseCategory} class={selectClass} aria-invalid={Boolean(errors.category)} required>
-            {#each categories as category}<option value={category}>{categoryLabels[category] ?? category}</option>{/each}
-          </select>
-        </FormField>
-        <FormField label="Kind" error={errors.kind}>
-          <select bind:value={form.kind} onchange={chooseKind} class={selectClass} aria-invalid={Boolean(errors.kind)} required>
-            {#each filteredKinds as kind}<option value={kind.kind}>{kind.label}</option>{/each}
-          </select>
-        </FormField>
-        {#if form.kind === 'postgresql'}<FormField label="Database" error={errors.databaseName}><Input bind:value={form.databaseName} aria-invalid={Boolean(errors.databaseName)} placeholder="application_production" required /></FormField>{/if}
+        <div class="border border-border bg-muted/20 px-3 py-2"><p class="text-[10px] uppercase tracking-wider text-muted-foreground">Resource type</p><p class="mt-1 text-sm font-medium">{selectedPresetDefinition?.label ?? definition.label}</p></div>
       </Card.Content>
     </Card.Root>
 
@@ -224,7 +261,7 @@
           <p class="col-span-full text-sm text-muted-foreground">External Resources do not have DeployCrate-managed installations or storage.</p>
         {:else}
           <FormField label="Server" error={errors['installation.serverId']}><select bind:value={form.installation.serverId} onchange={(event) => chooseServer(event.currentTarget.value)} class={selectClass} aria-invalid={Boolean(errors['installation.serverId'])} required><option value="">Select a Server</option>{#each options.servers as server}<option value={server.id}>{server.name} · {server.address}</option>{/each}</select></FormField>
-            <FormField label="Image reference" error={errors['installation.imageReference']}><Input bind:value={form.installation.imageReference} aria-invalid={Boolean(errors['installation.imageReference'])} placeholder="registry.example.com/image:tag" /></FormField>
+            <FormField label="Image reference" error={errors['installation.imageReference']}><Input bind:value={form.installation.imageReference} aria-invalid={Boolean(errors['installation.imageReference'])} placeholder={selectedPresetDefinition?.imagePlaceholder ?? 'registry.example.com/image:tag'} /></FormField>
             <FormField label="Container name" error={errors['installation.containerName']}><Input bind:value={form.installation.containerName} aria-invalid={Boolean(errors['installation.containerName'])} /></FormField>
             <FormField label="Restart policy" error={errors['installation.restartPolicy']}><select bind:value={form.installation.restartPolicy} class={selectClass} aria-invalid={Boolean(errors['installation.restartPolicy'])}><option value="no">No restart</option><option value="always">Always</option><option value="on-failure">On failure</option><option value="unless-stopped">Unless stopped</option></select></FormField>
             <FormField label="Registry credential" error={errors['installation.registryCredentialId']}><select bind:value={form.installation.registryCredentialId} class={selectClass} aria-invalid={Boolean(errors['installation.registryCredentialId'])}><option value="">None</option>{#each options.registryCredentials as credential}<option value={credential.id}>{credential.name}</option>{/each}</select></FormField>
@@ -290,4 +327,5 @@
       </div>
     </div>
   </form>
+  {/if}
 </DashboardLayout>
