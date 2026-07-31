@@ -105,8 +105,6 @@
     return `${(value / (1024 ** index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`
   }
   const formatRate = (value: number) => `${formatBytes(value)}/s`
-  const formatPercent = (value: number) => `${(value * 100).toFixed(1)}%`
-  const formatCores = (value: number) => `${value.toFixed(2)} cores`
   const stamp = (value: string) => value ? new Date(value).toLocaleString() : 'Pending'
   const stepLabel = (value: string) => value ? value.replaceAll('_', ' ') : 'waiting for worker'
   const deploymentStep = (deployment: Deployment) => deployment.active ? 'serving' : deployment.status === 'succeeded' ? 'superseded' : deployment.currentStep || 'queued'
@@ -427,7 +425,7 @@
       </div>
 
       {#if activeTelemetry}
-        <div class="grid gap-3 lg:grid-cols-3">
+        <div class="grid gap-3 lg:grid-cols-2">
           <TelemetryDonut
             label="Disk throughput"
             primaryLabel="Read"
@@ -450,19 +448,8 @@
             formatValue={formatRate}
             available={activeTelemetry.available && activeTelemetry.networkReceiveAvailable && activeTelemetry.networkTransmitAvailable}
           />
-          <TelemetryDonut
-            label="CPU throttling"
-            primaryLabel="Throttled"
-            secondaryLabel="Unthrottled"
-            primary={activeTelemetry.cpuThrottlingRatio}
-            secondary={1 - activeTelemetry.cpuThrottlingRatio}
-            centerValue={activeTelemetry.cpuThrottlingRatio}
-            centerLabel="throttled"
-            formatValue={formatPercent}
-            available={activeTelemetry.available && activeTelemetry.cpuThrottlingAvailable}
-          />
         </div>
-        <TelemetryHistory points={activeTelemetry.history} formatCPU={formatCores} formatMemory={formatBytes} />
+        <TelemetryHistory points={activeTelemetry.history} />
       {:else}
         <div class="border border-border bg-card/35 px-5 py-16 text-center">
           <p class="text-sm text-muted-foreground">No telemetry is available for the active container yet.</p>
