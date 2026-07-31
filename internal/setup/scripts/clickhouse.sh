@@ -89,7 +89,10 @@ fi
 metric_rollup_scope_column="$(docker exec "${container}" clickhouse-client \
   --user deploycrate --password "${CLICKHOUSE_PASSWORD}" \
   --query "SELECT count() FROM system.columns WHERE database = 'deploycrate' AND table = 'metric_rollups' AND name = 'scope'")"
-if [ "${metric_rollup_scope_column}" != 1 ]; then
+metric_rollup_database_node_column="$(docker exec "${container}" clickhouse-client \
+  --user deploycrate --password "${CLICKHOUSE_PASSWORD}" \
+  --query "SELECT count() FROM system.columns WHERE database = 'deploycrate' AND table = 'metric_rollups' AND name = 'database_cluster_node'")"
+if [ "${metric_rollup_scope_column}" != 1 ] || [ "${metric_rollup_database_node_column}" != 1 ]; then
   docker exec "${container}" clickhouse-client \
     --user deploycrate --password "${CLICKHOUSE_PASSWORD}" \
     --query 'DROP TABLE IF EXISTS deploycrate.metric_rollups' >/dev/null
@@ -119,6 +122,8 @@ CREATE TABLE IF NOT EXISTS deploycrate.metric_rollups
   instance String,
   resource String,
   installation String,
+  database_cluster String,
+  database_cluster_node String,
   runtime_id String,
   observation_id UUID
 )

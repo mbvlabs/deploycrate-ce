@@ -81,24 +81,6 @@ func (e *CredentialEntity) Validate() error {
 			builder.Add("metadata", "invalid", "GitHub App credential metadata is incomplete or incompatible")
 		}
 	}
-	if e.Provider == "container_registry" {
-		var metadata struct {
-			SchemaVersion        int       `json:"schema_version"`
-			CredentialKind       string    `json:"credential_kind"`
-			ResourceID           uuid.UUID `json:"resource_id"`
-			ResourceEndpointID   uuid.UUID `json:"resource_endpoint_id"`
-			ResourceCredentialID uuid.UUID `json:"resource_credential_id"`
-			Username             string    `json:"username"`
-			BasicAuthHash        string    `json:"basic_auth_hash"`
-		}
-		unmarshalErr := json.Unmarshal(e.Metadata, &metadata)
-		external := metadata.CredentialKind == "external_registry" && strings.TrimSpace(metadata.Username) != ""
-		managed := metadata.CredentialKind == "" && metadata.ResourceID != uuid.Nil && metadata.ResourceEndpointID != uuid.Nil &&
-			metadata.ResourceCredentialID != uuid.Nil && strings.TrimSpace(metadata.Username) != "" && strings.TrimSpace(metadata.BasicAuthHash) != ""
-		if unmarshalErr != nil || metadata.SchemaVersion != 1 || (!external && !managed) {
-			builder.Add("metadata", "invalid", "container registry credential metadata is incomplete or incompatible")
-		}
-	}
 	if e.ArchivedAt.Valid && e.VerifiedAt.Valid && e.VerifiedAt.Time.After(e.ArchivedAt.Time) {
 		builder.Add("verified_at", "invalid", "archived credentials cannot be verified after archival")
 	}

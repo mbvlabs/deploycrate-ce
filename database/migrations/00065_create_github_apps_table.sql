@@ -13,7 +13,7 @@ CREATE TABLE github_apps (
     name TEXT NOT NULL,
     owner_id BIGINT NOT NULL,
     owner_login TEXT NOT NULL,
-    owner_type TEXT NOT NULL CHECK (owner_type IN ('User', 'Organization')),
+    owner_type TEXT NOT NULL,
     html_url TEXT NOT NULL,
     permissions JSONB NOT NULL,
     events JSONB NOT NULL,

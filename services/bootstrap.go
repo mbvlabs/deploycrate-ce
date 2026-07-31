@@ -30,22 +30,25 @@ const (
 )
 
 type BootstrapInput struct {
-	Domain               string
-	Version              string
-	ArtifactReference    string
-	ArtifactDigest       []byte
-	Distribution         string
-	DistributionVersion  string
-	Architecture         string
-	SessionEncryptionKey string
-	Capabilities         BootstrapCapabilitiesInput
-	DatabaseExternal     bool
-	DatabaseHost         string
-	DatabasePort         int
-	DatabaseName         string
-	DatabaseSSLMode      string
-	WireGuard            BootstrapWireGuardInput
-	Backup               BootstrapBackupInput
+	Domain                 string
+	Version                string
+	ArtifactReference      string
+	ArtifactDigest         []byte
+	Distribution           string
+	DistributionVersion    string
+	Architecture           string
+	SessionEncryptionKey   string
+	Capabilities           BootstrapCapabilitiesInput
+	DatabaseExternal       bool
+	DatabaseHost           string
+	DatabasePort           int
+	DatabaseName           string
+	DatabaseUser           string
+	DatabasePassword       string
+	DatabaseSSLMode        string
+	DatabaseInstallationID uuid.UUID
+	WireGuard              BootstrapWireGuardInput
+	Backup                 BootstrapBackupInput
 }
 
 type BootstrapCapabilitiesInput struct {
@@ -154,16 +157,12 @@ func (service BootstrapService) Bootstrap(
 }
 
 func (service BootstrapService) reconcileRegistryContainer(ctx context.Context) error {
-	registry, err := models.ContainerRegistry.ActiveManaged(ctx, service.db.Executor())
-	if err != nil {
-		return fmt.Errorf("load managed registry container: %w", err)
-	}
-	_, metadata, err := loadManagedRegistryCredential(ctx, service.db.Executor(), registry)
+	registry, err := loadManagedRegistry(ctx, service.db.Executor())
 	if err != nil {
 		return err
 	}
 	var installation models.ResourceInstallationEntity
-	if err := service.db.Executor().NewSelect().Model(&installation).Where("resource_id = ?", metadata.ResourceID).
+	if err := service.db.Executor().NewSelect().Model(&installation).Where("resource_id = ?", registry.ResourceID).
 		Where("archived_at IS NULL").Limit(1).Scan(ctx); err != nil {
 		return fmt.Errorf("load managed registry installation: %w", err)
 	}
@@ -197,52 +196,58 @@ func (service BootstrapService) reconcileRegistryContainer(ctx context.Context) 
 }
 
 func (service BootstrapService) reconcileRegistry(ctx context.Context) error {
-	registry, err := models.ContainerRegistry.ActiveManaged(ctx, service.db.Executor())
-	if err != nil {
-		return fmt.Errorf("load managed registry: %w", err)
-	}
-	_, metadata, err := loadManagedRegistryCredential(ctx, service.db.Executor(), registry)
+	registry, err := loadManagedRegistry(ctx, service.db.Executor())
 	if err != nil {
 		return err
 	}
-	endpoint, err := models.ResourceEndpoint.Find(ctx, service.db.Executor(), metadata.ResourceEndpointID)
+	endpoint, err := models.ResourceEndpoint.Find(ctx, service.db.Executor(), registry.ResourceEndpointID)
 	if err != nil {
 		return fmt.Errorf("load managed registry endpoint: %w", err)
 	}
 	return service.routes.ReconcileRegistry(
-		ctx, registryRouteID(registry.Endpoint), registry.Endpoint,
-		fmt.Sprintf("%s:%d", endpoint.Address, endpoint.Port), metadata.Username, metadata.BasicAuthHash,
+		ctx, registryRouteID(registry.RouteHost), registry.RouteHost,
+		fmt.Sprintf("%s:%d", endpoint.Address, endpoint.Port), registry.Username, registry.BasicAuthHash,
 	)
 }
 
-func loadManagedRegistryCredential(
-	ctx context.Context,
-	db storage.Executor,
-	registry models.ContainerRegistryEntity,
-) (models.CredentialEntity, managedRegistryCredentialMetadata, error) {
-	credential, err := models.Credential.Find(ctx, db, registry.CredentialID)
-	if err != nil || credential.ArchivedAt.Valid || credential.Provider != "container_registry" {
-		return models.CredentialEntity{}, managedRegistryCredentialMetadata{}, errors.New("managed registry credential is unavailable")
+type managedRegistry struct {
+	ResourceID         uuid.UUID
+	ResourceEndpointID uuid.UUID
+	RouteHost          string
+	Username           string
+	BasicAuthHash      string
+}
+
+func loadManagedRegistry(ctx context.Context, db storage.Executor) (managedRegistry, error) {
+	var row struct {
+		ResourceID         uuid.UUID       `bun:"resource_id"`
+		ResourceEndpointID uuid.UUID       `bun:"resource_endpoint_id"`
+		Configuration      json.RawMessage `bun:"configuration"`
+		Username           string          `bun:"username"`
+		CredentialMetadata json.RawMessage `bun:"credential_metadata"`
 	}
-	var metadata managedRegistryCredentialMetadata
-	if json.Unmarshal(credential.Metadata, &metadata) != nil || metadata.SchemaVersion != 1 ||
-		metadata.ResourceID == uuid.Nil || metadata.ResourceEndpointID == uuid.Nil || metadata.ResourceCredentialID == uuid.Nil ||
-		metadata.Username == "" || metadata.BasicAuthHash == "" {
-		return models.CredentialEntity{}, managedRegistryCredentialMetadata{}, errors.New("managed registry authentication metadata is invalid")
+	err := db.NewSelect().TableExpr("registry_resources AS registry").
+		ColumnExpr("registry.resource_id, registry.configuration").
+		ColumnExpr("endpoint.id AS resource_endpoint_id").
+		ColumnExpr("credential.username, credential.metadata AS credential_metadata").
+		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.kind = 'registry' AND resource.management_mode = 'managed' AND resource.system_managed = TRUE AND resource.archived_at IS NULL").
+		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = resource.id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL").
+		Join("JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.archived_at IS NULL").
+		Scan(ctx, &row)
+	if err != nil {
+		return managedRegistry{}, fmt.Errorf("load managed Registry: %w", err)
 	}
-	resource, err := models.Resource.Find(ctx, db, metadata.ResourceID)
-	if err != nil || resource.ArchivedAt.Valid || !resource.SystemManaged || resource.Kind != "registry" {
-		return models.CredentialEntity{}, managedRegistryCredentialMetadata{}, errors.New("managed registry Resource is unavailable")
+	var configuration struct {
+		RouteHost string `json:"route_host"`
 	}
-	endpoint, err := models.ResourceEndpoint.Find(ctx, db, metadata.ResourceEndpointID)
-	if err != nil || endpoint.ArchivedAt.Valid || endpoint.ResourceID != resource.ID {
-		return models.CredentialEntity{}, managedRegistryCredentialMetadata{}, errors.New("managed registry endpoint is unavailable")
+	var metadata struct {
+		BasicAuthHash string `json:"basic_auth_hash"`
 	}
-	resourceCredential, err := models.ResourceCredential.Find(ctx, db, metadata.ResourceCredentialID)
-	if err != nil || resourceCredential.ArchivedAt.Valid || resourceCredential.ResourceID != resource.ID {
-		return models.CredentialEntity{}, managedRegistryCredentialMetadata{}, errors.New("managed registry Resource credential is unavailable")
+	if json.Unmarshal(row.Configuration, &configuration) != nil || strings.TrimSpace(configuration.RouteHost) == "" ||
+		json.Unmarshal(row.CredentialMetadata, &metadata) != nil || strings.TrimSpace(row.Username) == "" || strings.TrimSpace(metadata.BasicAuthHash) == "" {
+		return managedRegistry{}, errors.New("managed Registry authentication is invalid")
 	}
-	return credential, metadata, nil
+	return managedRegistry{ResourceID: row.ResourceID, ResourceEndpointID: row.ResourceEndpointID, RouteHost: configuration.RouteHost, Username: row.Username, BasicAuthHash: metadata.BasicAuthHash}, nil
 }
 
 func (service BootstrapService) VerifyRoute(ctx context.Context, externalID string) error {
@@ -586,7 +591,7 @@ func createBootstrapClickHouseResource(
 	environmentID, serverID, networkID uuid.UUID,
 ) error {
 	resource, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
-		Name: "DeployCrate CE ClickHouse", Category: "database", Kind: "clickhouse",
+		Name: "DeployCrate CE ClickHouse", Slug: "deploycrate-ce-clickhouse", Kind: "clickhouse",
 		ManagementMode: models.ResourceManagementManaged,
 		SharingScope:   models.ResourceSharingEnvironment, SystemManaged: true,
 	})
@@ -650,6 +655,9 @@ func createBootstrapClickHouseResource(
 	}); err != nil {
 		return fmt.Errorf("create bootstrap ClickHouse WireGuard endpoint: %w", err)
 	}
+	if _, err := models.ResourceEnvironmentGrant.Create(ctx, exec, resource.ID, environmentID); err != nil {
+		return fmt.Errorf("grant bootstrap ClickHouse Resource: %w", err)
+	}
 	if _, err := models.EnvironmentResource.Create(
 		ctx,
 		exec,
@@ -672,15 +680,6 @@ const (
 	registryImageReference = "registry@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33"
 )
 
-type managedRegistryCredentialMetadata struct {
-	SchemaVersion        int       `json:"schema_version"`
-	ResourceID           uuid.UUID `json:"resource_id"`
-	ResourceEndpointID   uuid.UUID `json:"resource_endpoint_id"`
-	ResourceCredentialID uuid.UUID `json:"resource_credential_id"`
-	Username             string    `json:"username"`
-	BasicAuthHash        string    `json:"basic_auth_hash"`
-}
-
 func createBootstrapRegistryResource(
 	ctx context.Context,
 	exec storage.Executor,
@@ -688,12 +687,22 @@ func createBootstrapRegistryResource(
 	serverID uuid.UUID,
 ) error {
 	resource, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
-		Name: "DeployCrate CE Registry", Category: "service", Kind: "registry",
+		Name: "DeployCrate CE Registry", Slug: "deploycrate-ce-registry", Kind: "registry",
 		ManagementMode: models.ResourceManagementManaged,
 		SharingScope:   models.ResourceSharingGlobal, SystemManaged: true,
 	})
 	if err != nil {
 		return fmt.Errorf("create bootstrap registry Resource: %w", err)
+	}
+	registryDomain := "registry-" + strings.TrimSpace(input.Domain)
+	registryConfiguration, err := json.Marshal(map[string]any{"schema_version": 1, "route_host": registryDomain})
+	if err != nil {
+		return fmt.Errorf("encode managed Registry configuration: %w", err)
+	}
+	if _, err := models.RegistryResource.Create(ctx, exec, models.CreateRegistryResourceData{
+		ResourceID: resource.ID, Provider: "distribution", Configuration: registryConfiguration,
+	}); err != nil {
+		return fmt.Errorf("create bootstrap Registry backing: %w", err)
 	}
 	installation, err := models.ResourceInstallation.Create(ctx, exec, models.CreateResourceInstallationData{
 		ImageReference: registryImageReference,
@@ -727,7 +736,7 @@ func createBootstrapRegistryResource(
 		return fmt.Errorf("hash registry password: %w", err)
 	}
 	payload, err := json.Marshal(map[string]any{
-		"schema_version": 1, "username": username, "password": password,
+		"schema_version": 1, "values": map[string]string{"password": password},
 	})
 	if err != nil {
 		return fmt.Errorf("encode registry credential: %w", err)
@@ -741,47 +750,25 @@ func createBootstrapRegistryResource(
 		return errors.New("registry credential digest key is invalid")
 	}
 	digest := hmac.New(sha256.New, masterKey)
-	_, _ = digest.Write([]byte("registry-credential/digest/v1\x00"))
 	_, _ = digest.Write(payload)
 	resourceCredentialMetadata, err := json.Marshal(map[string]any{
-		"schema_version": 1, "username": username, "basic_auth_hash": string(passwordHash),
+		"schema_version": 1, "roles": []string{"push", "pull"}, "basic_auth_hash": string(passwordHash),
 	})
 	if err != nil {
 		return fmt.Errorf("encode registry credential metadata: %w", err)
 	}
-	credential, err := models.ResourceCredential.Create(ctx, exec, models.CreateResourceCredentialData{
+	_, err = models.ResourceCredential.Create(ctx, exec, models.CreateResourceCredentialData{
 		Name: "Registry publisher", Username: sql.NullString{String: username, Valid: true},
 		Metadata: resourceCredentialMetadata, EncPayload: encrypted, Digest: digest.Sum(nil),
-		ResourceID: resource.ID, ResourceInstallationID: &installation.ID,
+		ResourceID: resource.ID,
 	})
 	if err != nil {
 		return fmt.Errorf("create bootstrap registry credential: %w", err)
 	}
-	registryMetadata, err := json.Marshal(managedRegistryCredentialMetadata{
-		SchemaVersion: 1, ResourceID: resource.ID, ResourceEndpointID: endpoint.ID,
-		ResourceCredentialID: credential.ID, Username: username, BasicAuthHash: string(passwordHash),
-	})
-	if err != nil {
-		return fmt.Errorf("encode registry projection credential metadata: %w", err)
-	}
-	registryCredential, err := models.Credential.Create(ctx, exec, models.CreateCredentialData{
-		Name: "DeployCrate CE Registry", Provider: "container_registry", Metadata: registryMetadata,
-		EncPayload: encrypted, VerifiedAt: sql.NullTime{Time: time.Now().UTC(), Valid: true},
-	})
-	if err != nil {
-		return fmt.Errorf("create registry projection credential: %w", err)
-	}
-	registryDomain := "registry-" + strings.TrimSpace(input.Domain)
-	if _, err := models.ContainerRegistry.Create(ctx, exec, models.CreateContainerRegistryData{
-		Name: "DeployCrate CE Registry", Provider: "distribution", Endpoint: registryDomain,
-		CredentialID: registryCredential.ID,
-	}); err != nil {
-		return fmt.Errorf("create bootstrap registry projection: %w", err)
-	}
 	if _, err := models.ResourceHealthCheck.Create(ctx, exec, models.CreateResourceHealthCheckData{
 		Name: "Registry API", Kind: "http", Configuration: json.RawMessage(`{"path":"/v2/","expected_status":200}`),
 		IntervalSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 3, SuccessThreshold: 1, Enabled: true,
-		ResourceInstallationID: installation.ID, ResourceEndpointID: &endpoint.ID,
+		ResourceID: resource.ID, ResourceInstallationID: &installation.ID, ResourceEndpointID: &endpoint.ID,
 	}); err != nil {
 		return fmt.Errorf("create bootstrap registry health check: %w", err)
 	}
@@ -789,9 +776,8 @@ func createBootstrapRegistryResource(
 }
 
 type bootstrapDatabaseTopology struct {
-	ResourceID            uuid.UUID
+	DatabaseID            uuid.UUID
 	EnvironmentResourceID uuid.UUID
-	InstallationID        *uuid.UUID
 }
 
 func createBootstrapDatabaseResource(
@@ -800,105 +786,189 @@ func createBootstrapDatabaseResource(
 	input BootstrapInput,
 	environmentID, serverID, networkID uuid.UUID,
 ) (bootstrapDatabaseTopology, error) {
-	managementMode := models.ResourceManagementManaged
+	managementMode := models.ResourceManagementManaged.String()
+	desiredMethod := sql.NullString{String: models.DatabaseInstallDocker, Valid: true}
 	if input.DatabaseExternal {
-		managementMode = models.ResourceManagementExternal
+		managementMode = models.ResourceManagementExternal.String()
+		desiredMethod = sql.NullString{}
+	}
+	cluster, err := models.DatabaseCluster.Create(ctx, exec, models.CreateDatabaseClusterData{
+		Name: "DeployCrate CE PostgreSQL", Slug: "deploycrate-ce-postgresql",
+		Engine: models.DatabaseEnginePostgreSQL, EngineVersion: "17",
+		SharingMode:    models.DatabaseSharingDedicated,
+		ManagementMode: managementMode, DesiredInstallationMethod: desiredMethod,
+		Topology:          json.RawMessage(`{"primary_count":1,"replica_count":0}`),
+		MaintenancePolicy: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap Database Cluster: %w", err)
+	}
+
+	var endpointNetworkID *uuid.UUID
+	if !input.DatabaseExternal {
+		node, err := models.DatabaseClusterNode.Create(ctx, exec, models.CreateDatabaseClusterNodeData{
+			Name: "primary", Role: "primary", DesiredState: "running",
+			DatabaseClusterID: cluster.ID, ServerID: serverID,
+		})
+		if err != nil {
+			return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap Database Cluster Node: %w", err)
+		}
+		storageRecord, err := models.DatabaseNodeStorage.Create(ctx, exec, models.CreateDatabaseNodeStorageData{
+			Name: "PostgreSQL data", Driver: "docker",
+			ExternalID: sql.NullString{String: "deploycrate-ce-postgres", Valid: true},
+			DataPath:   "/var/lib/postgresql/data", Configuration: json.RawMessage(`{"volume":"deploycrate-ce-postgres"}`),
+			DatabaseClusterNodeID: node.ID, ServerID: serverID,
+		})
+		if err != nil {
+			return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap Database Node storage: %w", err)
+		}
+		observedAt := sql.NullTime{Time: time.Now().UTC(), Valid: true}
+		installation, err := models.DatabaseNodeInstallation.Create(ctx, exec, models.CreateDatabaseNodeInstallationData{
+			ID:                 input.DatabaseInstallationID,
+			InstallationMethod: models.DatabaseInstallDocker, DesiredState: "running", ObservedState: "running",
+			InstalledVersion: sql.NullString{String: "17", Valid: true}, ServiceState: "running", Health: "healthy",
+			ObservedAt: observedAt, ExternalRuntimeID: sql.NullString{String: "deploycrate-ce-postgres", Valid: true},
+			DatabaseClusterNodeID: node.ID, ServerID: serverID, DatabaseNodeStorageID: storageRecord.ID,
+		})
+		if err != nil {
+			return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap Database Node Installation: %w", err)
+		}
+		if _, err := models.DockerDatabaseInstallation.Create(ctx, exec, models.CreateDockerDatabaseNodeInstallationData{
+			DatabaseNodeInstallationID: installation.ID, ImageReference: "postgres:17-alpine",
+			ContainerName: "deploycrate-ce-postgres", RestartPolicy: "unless-stopped",
+			PortMappings:  json.RawMessage(`[{"hostPort":5432,"containerPort":5432,"protocol":"tcp"}]`),
+			Configuration: json.RawMessage(`{"mount_path":"/var/lib/postgresql/data"}`),
+		}); err != nil {
+			return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap Docker Database Node Installation: %w", err)
+		}
+		endpointNetworkID = &networkID
+	}
+
+	credentialPayload, err := json.Marshal(map[string]any{
+		"schema_version": 1, "values": map[string]string{"password": input.DatabasePassword},
+	})
+	if err != nil {
+		return bootstrapDatabaseTopology{}, fmt.Errorf("encode bootstrap Database Cluster credential: %w", err)
+	}
+	encryptedCredential, err := secretcrypto.EncryptForPurpose(credentialPayload, input.SessionEncryptionKey, databaseClusterCredentialPurpose)
+	if err != nil {
+		return bootstrapDatabaseTopology{}, fmt.Errorf("encrypt bootstrap Database Cluster credential: %w", err)
+	}
+	credentialKey, err := hex.DecodeString(input.SessionEncryptionKey)
+	if err != nil || len(credentialKey) != 32 {
+		return bootstrapDatabaseTopology{}, errors.New("bootstrap Database Cluster credential digest key is invalid")
+	}
+	credentialDigest := hmac.New(sha256.New, credentialKey)
+	_, _ = credentialDigest.Write(credentialPayload)
+	if _, err := models.DatabaseClusterCredential.Create(ctx, exec, models.CreateDatabaseClusterCredentialData{
+		Name: "Cluster administrator", Role: "administrator", Username: input.DatabaseUser,
+		Metadata: json.RawMessage(`{"schema_version":1}`), EncPayload: encryptedCredential,
+		Digest: credentialDigest.Sum(nil), DatabaseClusterID: cluster.ID,
+	}); err != nil {
+		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap Database Cluster credential: %w", err)
+	}
+
+	clusterEndpoint, err := models.DatabaseClusterEndpoint.Create(ctx, exec, models.CreateDatabaseClusterEndpointData{
+		Name:         "Primary PostgreSQL",
+		Role:         "primary",
+		Address:      input.DatabaseHost,
+		Port:         int32(input.DatabasePort),
+		Protocol:     "postgresql",
+		TLSMode:      input.DatabaseSSLMode,
+		DesiredState: "available", ObservedState: "available", Settings: json.RawMessage(`{}`),
+		DatabaseClusterID: cluster.ID,
+	})
+	if err != nil {
+		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap Database Cluster endpoint: %w", err)
+	}
+	database, err := models.Database.Create(ctx, exec, models.CreateDatabaseData{
+		Name: input.DatabaseName, Settings: json.RawMessage(`{}`), DesiredState: "provisioned",
+		ObservedState: "provisioned", DatabaseClusterID: cluster.ID,
+	})
+	if err != nil {
+		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap Database: %w", err)
 	}
 	resource, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
-		Name: "DeployCrate CE PostgreSQL", Category: "database", Kind: "postgresql",
-		DatabaseName:   input.DatabaseName,
-		ManagementMode: managementMode,
+		Name: "DeployCrate CE PostgreSQL", Slug: "deploycrate-ce-postgresql", Kind: "postgresql",
+		ManagementMode: models.ResourceManagementModeEnum(managementMode),
 		SharingScope:   models.ResourceSharingEnvironment, SystemManaged: true,
 	})
 	if err != nil {
-		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap database resource: %w", err)
+		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap Database Resource: %w", err)
 	}
-
-	var installationID *uuid.UUID
-	var endpointNetworkID *uuid.UUID
-	if !input.DatabaseExternal {
-		installation, err := models.ResourceInstallation.Create(
-			ctx,
-			exec,
-			models.CreateResourceInstallationData{
-				ImageReference: "postgres:17-alpine",
-				ContainerName:  "deploycrate-ce-postgres",
-				RestartPolicy:  "unless-stopped",
-				Configuration: json.RawMessage(
-					`{"volume":"deploycrate-ce-postgres","bind":"127.0.0.1:5432"}`,
-				),
-				ResourceID: resource.ID,
-				ServerID:   serverID,
-			},
-		)
-		if err != nil {
-			return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap database installation: %w", err)
-		}
-		if err := createBootstrapResourceVolume(
-			ctx,
-			exec,
-			resource.ID,
-			installation.ID,
-			serverID,
-			"deploycrate-ce-postgres",
-			"/var/lib/postgresql/data",
-		); err != nil {
-			return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap database volume: %w", err)
-		}
-		installationID = &installation.ID
-		endpointNetworkID = &networkID
+	if _, err := models.DatabaseResource.Create(ctx, exec, resource.ID, database.ID); err != nil {
+		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap Database Resource backing: %w", err)
 	}
-	endpoint, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
-		Name:     "Primary PostgreSQL",
-		Role:     "primary",
-		Address:  input.DatabaseHost,
-		Port:     int32(input.DatabasePort),
-		Protocol: "postgresql",
-		TlsMode:  input.DatabaseSSLMode,
-		Settings: json.RawMessage(
-			fmt.Sprintf(
-				`{"database":%q,"external":%t}`,
-				input.DatabaseName,
-				input.DatabaseExternal,
-			),
-		),
-		ResourceID:             resource.ID,
-		ResourceInstallationID: installationID,
-		PrivateNetworkID:       endpointNetworkID,
+	resourceCredentialPayload, err := secretcrypto.EncryptForPurpose(credentialPayload, input.SessionEncryptionKey, resourceCredentialPurpose)
+	if err != nil {
+		return bootstrapDatabaseTopology{}, fmt.Errorf("encrypt bootstrap Database Resource credential: %w", err)
+	}
+	resourceCredential, err := models.ResourceCredential.Create(ctx, exec, models.CreateResourceCredentialData{
+		Name: "Database user", Username: sql.NullString{String: input.DatabaseUser, Valid: true},
+		Metadata:   json.RawMessage(`{"schema_version":1,"credential_kind":"database_user"}`),
+		EncPayload: resourceCredentialPayload, Digest: credentialDigest.Sum(nil), ResourceID: resource.ID,
 	})
 	if err != nil {
-		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap database endpoint: %w", err)
+		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap Database Resource credential: %w", err)
 	}
-	if !input.DatabaseExternal {
-		if _, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
-			Name:                   "WireGuard PostgreSQL",
-			Role:                   "wireguard",
-			Address:                WireGuardPrivateAddress,
-			Port:                   int32(input.DatabasePort),
-			Protocol:               "postgresql",
-			TlsMode:                input.DatabaseSSLMode,
-			Settings:               json.RawMessage(fmt.Sprintf(`{"database":%q,"external":false}`, input.DatabaseName)),
-			ResourceID:             resource.ID,
-			ResourceInstallationID: installationID,
-			PrivateNetworkID:       endpointNetworkID,
-		}); err != nil {
-			return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap database WireGuard endpoint: %w", err)
+	endpoint, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
+		Name: "Primary PostgreSQL", Role: "primary", Address: clusterEndpoint.Address,
+		Port: clusterEndpoint.Port, Protocol: clusterEndpoint.Protocol, TlsMode: clusterEndpoint.TLSMode,
+		Settings:   json.RawMessage(fmt.Sprintf(`{"database":%q}`, input.DatabaseName)),
+		ResourceID: resource.ID, PrivateNetworkID: endpointNetworkID,
+	})
+	if err != nil {
+		return bootstrapDatabaseTopology{}, fmt.Errorf("publish bootstrap Database Resource endpoint: %w", err)
+	}
+	if _, err := models.DatabaseResourceEndpoint.Create(ctx, exec, endpoint.ID, clusterEndpoint.ID); err != nil {
+		return bootstrapDatabaseTopology{}, fmt.Errorf("link bootstrap Database Resource endpoint: %w", err)
+	}
+	if _, err := models.ResourceHealthCheck.Create(ctx, exec, models.CreateResourceHealthCheckData{
+		Name: "PostgreSQL readiness", Kind: "postgresql", Configuration: json.RawMessage(`{}`),
+		IntervalSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 3, SuccessThreshold: 1, Enabled: true,
+		ResourceID: resource.ID, ResourceEndpointID: &endpoint.ID, ResourceCredentialID: &resourceCredential.ID,
+	}); err != nil {
+		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap Database Resource health check: %w", err)
+	}
+	if endpointNetworkID != nil {
+		wireGuardClusterEndpoint, err := models.DatabaseClusterEndpoint.Create(ctx, exec, models.CreateDatabaseClusterEndpointData{
+			Name: "WireGuard PostgreSQL", Role: "wireguard", Address: WireGuardPrivateAddress,
+			Port: clusterEndpoint.Port, Protocol: clusterEndpoint.Protocol, TLSMode: clusterEndpoint.TLSMode,
+			DesiredState: "available", ObservedState: "available", Settings: json.RawMessage(`{}`),
+			DatabaseClusterID: cluster.ID, PrivateNetworkID: endpointNetworkID,
+		})
+		if err != nil {
+			return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap WireGuard Database Cluster endpoint: %w", err)
+		}
+		wireGuardEndpoint, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
+			Name: "WireGuard PostgreSQL", Role: "wireguard", Address: WireGuardPrivateAddress,
+			Port: clusterEndpoint.Port, Protocol: clusterEndpoint.Protocol, TlsMode: clusterEndpoint.TLSMode,
+			Settings:   json.RawMessage(fmt.Sprintf(`{"database":%q}`, input.DatabaseName)),
+			ResourceID: resource.ID, PrivateNetworkID: endpointNetworkID,
+		})
+		if err != nil {
+			return bootstrapDatabaseTopology{}, fmt.Errorf("publish bootstrap WireGuard Database Resource endpoint: %w", err)
+		}
+		if _, err := models.DatabaseResourceEndpoint.Create(ctx, exec, wireGuardEndpoint.ID, wireGuardClusterEndpoint.ID); err != nil {
+			return bootstrapDatabaseTopology{}, fmt.Errorf("link bootstrap WireGuard Database Resource endpoint: %w", err)
 		}
 	}
+	if _, err := models.ResourceEnvironmentGrant.Create(ctx, exec, resource.ID, environmentID); err != nil {
+		return bootstrapDatabaseTopology{}, fmt.Errorf("grant bootstrap Database Resource: %w", err)
+	}
 	binding, err := models.EnvironmentResource.Create(ctx, exec, models.CreateEnvironmentResourceData{
-		Alias: "database",
-		Configuration: json.RawMessage(
-			`{"credential_source":"app_env","credential_record":"pending_encryption_contract"}`,
-		),
-		EnvironmentID:      environmentID,
-		ResourceID:         resource.ID,
-		ResourceEndpointID: endpoint.ID,
+		Alias:                "database",
+		Configuration:        json.RawMessage(fmt.Sprintf(`{"database":%q}`, input.DatabaseName)),
+		EnvironmentID:        environmentID,
+		ResourceID:           resource.ID,
+		ResourceEndpointID:   endpoint.ID,
+		ResourceCredentialID: &resourceCredential.ID,
 	})
 	if err != nil {
 		return bootstrapDatabaseTopology{}, fmt.Errorf("bind bootstrap database resource: %w", err)
 	}
 	return bootstrapDatabaseTopology{
-		ResourceID: resource.ID, EnvironmentResourceID: binding.ID, InstallationID: installationID,
+		DatabaseID: database.ID, EnvironmentResourceID: binding.ID,
 	}, nil
 }
 
@@ -1009,19 +1079,11 @@ func createBootstrapBackups(
 		return fmt.Errorf("calculate first database backup: %w", err)
 	}
 	if _, err := models.BackupPolicy.Create(ctx, exec, models.CreateBackupPolicyData{
-		Name:                   "Control-plane PostgreSQL",
-		Schedule:               input.Backup.DatabaseSchedule,
-		Strategy:               "logical",
-		Driver:                 "postgresql",
-		Retention:              input.Backup.DatabaseRetention,
-		Format:                 "tar.age",
-		Verification:           json.RawMessage(`{"every_backup":true,"pg_restore_list":true}`),
-		Settings:               json.RawMessage(`{"exclude_table_data":["river_*"]}`),
-		TargetType:             "resource",
-		ResourceID:             &database.ResourceID,
-		ResourceInstallationID: database.InstallationID,
-		NextRunAt:              databaseNextRun,
-		BackupDestinationID:    destination.ID,
+		Name: "Control-plane PostgreSQL", Schedule: input.Backup.DatabaseSchedule,
+		Strategy: "logical", Driver: "postgresql", Retention: input.Backup.DatabaseRetention,
+		Format: "tar.age", Verification: json.RawMessage(`{"every_backup":true,"pg_restore_list":true}`),
+		Settings: json.RawMessage(`{"exclude_table_data":["river_*"]}`), TargetType: "database",
+		DatabaseID: &database.DatabaseID, NextRunAt: databaseNextRun, BackupDestinationID: destination.ID,
 	}); err != nil {
 		return fmt.Errorf("create database backup policy: %w", err)
 	}
@@ -1029,6 +1091,9 @@ func createBootstrapBackups(
 }
 
 func validateBootstrapInput(input BootstrapInput) error {
+	if !input.DatabaseExternal && input.DatabaseInstallationID == uuid.Nil {
+		return errors.New("bootstrap Database installation ID is required")
+	}
 	if strings.TrimSpace(input.Domain) == "" {
 		return errors.New("bootstrap domain is required")
 	}
@@ -1057,6 +1122,9 @@ func validateBootstrapInput(input BootstrapInput) error {
 	if strings.TrimSpace(input.DatabaseHost) == "" || input.DatabasePort < 1 ||
 		input.DatabasePort > 65535 {
 		return errors.New("bootstrap database endpoint is invalid")
+	}
+	if strings.TrimSpace(input.DatabaseName) == "" || strings.TrimSpace(input.DatabaseUser) == "" || input.DatabasePassword == "" {
+		return errors.New("bootstrap database identity and administrator credential are required")
 	}
 	if strings.TrimSpace(input.WireGuard.Interface) == "" ||
 		strings.TrimSpace(input.WireGuard.Endpoint) == "" {

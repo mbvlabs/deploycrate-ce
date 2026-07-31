@@ -16,7 +16,7 @@ type (
 	wireGuardGrantApplication    struct{}
 	wireGuardDeviceStatus        struct{}
 	environment                  struct{}
-	containerRegistry            struct{}
+	registryResource             struct{}
 	environmentSource            struct{}
 	buildpackConfiguration       struct{}
 	runtimeConfiguration         struct{}
@@ -54,7 +54,20 @@ type (
 	backupDestination            struct{}
 	backupPolicy                 struct{}
 	backup                       struct{}
-	resourceRestore              struct{}
+	databaseRestore              struct{}
+	databaseCluster              struct{}
+	databaseClusterCredential    struct{}
+	databaseClusterNode          struct{}
+	databaseNodeStorage          struct{}
+	databaseNodeInstallation     struct{}
+	dockerDatabaseInstallation   struct{}
+	nativeDatabaseInstallation   struct{}
+	databaseClusterEndpoint      struct{}
+	database                     struct{}
+	databaseResource             struct{}
+	databaseResourceEndpoint     struct{}
+	resourceEnvironmentGrant     struct{}
+	resourceApplicationGrant     struct{}
 	outboxEvent                  struct{}
 	environmentStateRevision     struct{}
 	environmentTargetState       struct{}
@@ -82,7 +95,7 @@ var (
 	WireGuardGrantApplication    wireGuardGrantApplication
 	WireGuardDeviceStatus        wireGuardDeviceStatus
 	Environment                  environment
-	ContainerRegistry            containerRegistry
+	RegistryResource             registryResource
 	EnvironmentSource            environmentSource
 	BuildpackConfiguration       buildpackConfiguration
 	RuntimeConfiguration         runtimeConfiguration
@@ -120,7 +133,20 @@ var (
 	BackupDestination            backupDestination
 	BackupPolicy                 backupPolicy
 	Backup                       backup
-	ResourceRestore              resourceRestore
+	DatabaseRestore              databaseRestore
+	DatabaseCluster              databaseCluster
+	DatabaseClusterCredential    databaseClusterCredential
+	DatabaseClusterNode          databaseClusterNode
+	DatabaseNodeStorage          databaseNodeStorage
+	DatabaseNodeInstallation     databaseNodeInstallation
+	DockerDatabaseInstallation   dockerDatabaseInstallation
+	NativeDatabaseInstallation   nativeDatabaseInstallation
+	DatabaseClusterEndpoint      databaseClusterEndpoint
+	Database                     database
+	DatabaseResource             databaseResource
+	DatabaseResourceEndpoint     databaseResourceEndpoint
+	ResourceEnvironmentGrant     resourceEnvironmentGrant
+	ResourceApplicationGrant     resourceApplicationGrant
 	OutboxEvent                  outboxEvent
 	EnvironmentStateRevision     environmentStateRevision
 	EnvironmentTargetState       environmentTargetState

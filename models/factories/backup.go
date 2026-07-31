@@ -21,38 +21,38 @@ type BackupFactory struct {
 
 type BackupOption func(*BackupFactory)
 
-func BuildBackup(changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid.UUID, serverID *uuid.UUID, resourceID *uuid.UUID, environmentResourceID *uuid.UUID, resourceInstallationID *uuid.UUID, resourceVolumeID *uuid.UUID, backupDestinationID uuid.UUID, opts ...BackupOption) models.BackupEntity {
+func BuildBackup(changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid.UUID, serverID, databaseID, databaseClusterID, databaseClusterNodeID, databaseNodeInstallationID *uuid.UUID, backupDestinationID uuid.UUID, opts ...BackupOption) models.BackupEntity {
 	f := &BackupFactory{
 		BackupEntity: models.BackupEntity{
-			TargetType:             faker.Word(),
-			TriggerType:            faker.Word(),
-			ScheduledAt:            time.Time{},
-			Strategy:               faker.Word(),
-			Driver:                 faker.Word(),
-			Format:                 faker.Word(),
-			FormatVersion:          faker.Word(),
-			ArtifactReference:      faker.Word(),
-			ProviderMetadata:       json.RawMessage{},
-			Status:                 faker.Word(),
-			RequestedAt:            time.Time{},
-			StartedAt:              sql.NullTime{Time: time.Now(), Valid: true},
-			UploadedAt:             sql.NullTime{Time: time.Now(), Valid: true},
-			FinishedAt:             sql.NullTime{Time: time.Now(), Valid: true},
-			VerifiedAt:             sql.NullTime{Time: time.Now(), Valid: true},
-			PrunedAt:               sql.NullTime{Time: time.Now(), Valid: true},
-			SizeBytes:              sql.NullInt64{Int64: randomInt64(1, 1000, 100), Valid: true},
-			Digest:                 []byte{},
-			ProducerVersion:        faker.Word(),
-			Error:                  sql.NullString{String: faker.Word(), Valid: true},
-			ChangeID:               changeID,
-			ChangeTaskID:           changeTaskID,
-			BackupPolicyID:         backupPolicyID,
-			ServerID:               serverID,
-			ResourceID:             resourceID,
-			EnvironmentResourceID:  environmentResourceID,
-			ResourceInstallationID: resourceInstallationID,
-			ResourceVolumeID:       resourceVolumeID,
-			BackupDestinationID:    backupDestinationID,
+			TargetType:                 faker.Word(),
+			TriggerType:                faker.Word(),
+			ScheduledAt:                time.Time{},
+			Strategy:                   faker.Word(),
+			Driver:                     faker.Word(),
+			Format:                     faker.Word(),
+			FormatVersion:              faker.Word(),
+			ArtifactReference:          faker.Word(),
+			ProviderMetadata:           json.RawMessage{},
+			Status:                     faker.Word(),
+			RequestedAt:                time.Time{},
+			StartedAt:                  sql.NullTime{Time: time.Now(), Valid: true},
+			UploadedAt:                 sql.NullTime{Time: time.Now(), Valid: true},
+			FinishedAt:                 sql.NullTime{Time: time.Now(), Valid: true},
+			VerifiedAt:                 sql.NullTime{Time: time.Now(), Valid: true},
+			PrunedAt:                   sql.NullTime{Time: time.Now(), Valid: true},
+			SizeBytes:                  sql.NullInt64{Int64: randomInt64(1, 1000, 100), Valid: true},
+			Digest:                     []byte{},
+			ProducerVersion:            faker.Word(),
+			Error:                      sql.NullString{String: faker.Word(), Valid: true},
+			ChangeID:                   changeID,
+			ChangeTaskID:               changeTaskID,
+			BackupPolicyID:             backupPolicyID,
+			ServerID:                   serverID,
+			DatabaseID:                 databaseID,
+			DatabaseClusterID:          databaseClusterID,
+			DatabaseClusterNodeID:      databaseClusterNodeID,
+			DatabaseNodeInstallationID: databaseNodeInstallationID,
+			BackupDestinationID:        backupDestinationID,
 		},
 	}
 
@@ -63,42 +63,42 @@ func BuildBackup(changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid
 	return f.BackupEntity
 }
 
-func CreateBackup(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid.UUID, serverID *uuid.UUID, resourceID *uuid.UUID, environmentResourceID *uuid.UUID, resourceInstallationID *uuid.UUID, resourceVolumeID *uuid.UUID, backupDestinationID uuid.UUID, opts ...BackupOption) (models.BackupEntity, error) {
-	built := BuildBackup(changeID, changeTaskID, backupPolicyID, serverID, resourceID, environmentResourceID, resourceInstallationID, resourceVolumeID, backupDestinationID, opts...)
+func CreateBackup(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid.UUID, serverID, databaseID, databaseClusterID, databaseClusterNodeID, databaseNodeInstallationID *uuid.UUID, backupDestinationID uuid.UUID, opts ...BackupOption) (models.BackupEntity, error) {
+	built := BuildBackup(changeID, changeTaskID, backupPolicyID, serverID, databaseID, databaseClusterID, databaseClusterNodeID, databaseNodeInstallationID, backupDestinationID, opts...)
 
 	entity := models.BackupEntity{
-		ID:                     uuid.New(),
-		CreatedAt:              time.Now(),
-		UpdatedAt:              time.Now(),
-		TargetType:             built.TargetType,
-		TriggerType:            built.TriggerType,
-		ScheduledAt:            built.ScheduledAt,
-		Strategy:               built.Strategy,
-		Driver:                 built.Driver,
-		Format:                 built.Format,
-		FormatVersion:          built.FormatVersion,
-		ArtifactReference:      built.ArtifactReference,
-		ProviderMetadata:       built.ProviderMetadata,
-		Status:                 built.Status,
-		RequestedAt:            built.RequestedAt,
-		StartedAt:              built.StartedAt,
-		UploadedAt:             built.UploadedAt,
-		FinishedAt:             built.FinishedAt,
-		VerifiedAt:             built.VerifiedAt,
-		PrunedAt:               built.PrunedAt,
-		SizeBytes:              built.SizeBytes,
-		Digest:                 built.Digest,
-		ProducerVersion:        built.ProducerVersion,
-		Error:                  built.Error,
-		ChangeID:               built.ChangeID,
-		ChangeTaskID:           built.ChangeTaskID,
-		BackupPolicyID:         built.BackupPolicyID,
-		ServerID:               built.ServerID,
-		ResourceID:             built.ResourceID,
-		EnvironmentResourceID:  built.EnvironmentResourceID,
-		ResourceInstallationID: built.ResourceInstallationID,
-		ResourceVolumeID:       built.ResourceVolumeID,
-		BackupDestinationID:    built.BackupDestinationID,
+		ID:                         uuid.New(),
+		CreatedAt:                  time.Now(),
+		UpdatedAt:                  time.Now(),
+		TargetType:                 built.TargetType,
+		TriggerType:                built.TriggerType,
+		ScheduledAt:                built.ScheduledAt,
+		Strategy:                   built.Strategy,
+		Driver:                     built.Driver,
+		Format:                     built.Format,
+		FormatVersion:              built.FormatVersion,
+		ArtifactReference:          built.ArtifactReference,
+		ProviderMetadata:           built.ProviderMetadata,
+		Status:                     built.Status,
+		RequestedAt:                built.RequestedAt,
+		StartedAt:                  built.StartedAt,
+		UploadedAt:                 built.UploadedAt,
+		FinishedAt:                 built.FinishedAt,
+		VerifiedAt:                 built.VerifiedAt,
+		PrunedAt:                   built.PrunedAt,
+		SizeBytes:                  built.SizeBytes,
+		Digest:                     built.Digest,
+		ProducerVersion:            built.ProducerVersion,
+		Error:                      built.Error,
+		ChangeID:                   built.ChangeID,
+		ChangeTaskID:               built.ChangeTaskID,
+		BackupPolicyID:             built.BackupPolicyID,
+		ServerID:                   built.ServerID,
+		DatabaseID:                 built.DatabaseID,
+		DatabaseClusterID:          built.DatabaseClusterID,
+		DatabaseClusterNodeID:      built.DatabaseClusterNodeID,
+		DatabaseNodeInstallationID: built.DatabaseNodeInstallationID,
+		BackupDestinationID:        built.BackupDestinationID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -108,11 +108,11 @@ func CreateBackup(ctx context.Context, exec storage.Executor, changeID uuid.UUID
 	return entity, nil
 }
 
-func CreateBackups(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid.UUID, serverID *uuid.UUID, resourceID *uuid.UUID, environmentResourceID *uuid.UUID, resourceInstallationID *uuid.UUID, resourceVolumeID *uuid.UUID, backupDestinationID uuid.UUID, count int, opts ...BackupOption) ([]models.BackupEntity, error) {
+func CreateBackups(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid.UUID, serverID, databaseID, databaseClusterID, databaseClusterNodeID, databaseNodeInstallationID *uuid.UUID, backupDestinationID uuid.UUID, count int, opts ...BackupOption) ([]models.BackupEntity, error) {
 	backups := make([]models.BackupEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateBackup(ctx, exec, changeID, changeTaskID, backupPolicyID, serverID, resourceID, environmentResourceID, resourceInstallationID, resourceVolumeID, backupDestinationID, opts...)
+		entity, err := CreateBackup(ctx, exec, changeID, changeTaskID, backupPolicyID, serverID, databaseID, databaseClusterID, databaseClusterNodeID, databaseNodeInstallationID, backupDestinationID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create backup %d: %w", i+1, err)
 		}
@@ -266,27 +266,27 @@ func WithBackupsServerID(value *uuid.UUID) BackupOption {
 	}
 }
 
-func WithBackupsResourceID(value *uuid.UUID) BackupOption {
+func WithBackupsDatabaseID(value *uuid.UUID) BackupOption {
 	return func(f *BackupFactory) {
-		f.BackupEntity.ResourceID = value
+		f.BackupEntity.DatabaseID = value
 	}
 }
 
-func WithBackupsEnvironmentResourceID(value *uuid.UUID) BackupOption {
+func WithBackupsDatabaseClusterID(value *uuid.UUID) BackupOption {
 	return func(f *BackupFactory) {
-		f.BackupEntity.EnvironmentResourceID = value
+		f.BackupEntity.DatabaseClusterID = value
 	}
 }
 
-func WithBackupsResourceInstallationID(value *uuid.UUID) BackupOption {
+func WithBackupsDatabaseClusterNodeID(value *uuid.UUID) BackupOption {
 	return func(f *BackupFactory) {
-		f.BackupEntity.ResourceInstallationID = value
+		f.BackupEntity.DatabaseClusterNodeID = value
 	}
 }
 
-func WithBackupsResourceVolumeID(value *uuid.UUID) BackupOption {
+func WithBackupsDatabaseNodeInstallationID(value *uuid.UUID) BackupOption {
 	return func(f *BackupFactory) {
-		f.BackupEntity.ResourceVolumeID = value
+		f.BackupEntity.DatabaseNodeInstallationID = value
 	}
 }
 

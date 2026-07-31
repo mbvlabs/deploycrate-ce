@@ -111,7 +111,14 @@ func (service *ResourcePrivateAccess) Enable(ctx context.Context, resourceID, pr
 		return models.ResourceEndpointEntity{}, err
 	}
 	if origin.ResourceInstallationID == nil {
-		return models.ResourceEndpointEntity{}, errors.Join(models.ErrDomainValidation, errors.New("managed Resource primary endpoint is not installation-backed"))
+		endpoint, err := service.enableDatabasePrivateAccess(ctx, tx, resource, origin, privateNetworkID)
+		if err != nil {
+			return models.ResourceEndpointEntity{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return models.ResourceEndpointEntity{}, err
+		}
+		return endpoint, nil
 	}
 
 	privateEndpoints, err := tx.NewSelect().TableExpr("resource_endpoints").
@@ -166,6 +173,58 @@ func (service *ResourcePrivateAccess) Enable(ctx context.Context, resourceID, pr
 		return models.ResourceEndpointEntity{}, err
 	}
 	if err := tx.Commit(); err != nil {
+		return models.ResourceEndpointEntity{}, err
+	}
+	return endpoint, nil
+}
+
+func (service *ResourcePrivateAccess) enableDatabasePrivateAccess(
+	ctx context.Context,
+	tx storage.Executor,
+	resource models.ResourceEntity,
+	origin models.ResourceEndpointEntity,
+	privateNetworkID uuid.UUID,
+) (models.ResourceEndpointEntity, error) {
+	var producer struct {
+		ClusterEndpointID uuid.UUID `bun:"cluster_endpoint_id"`
+		Address           string    `bun:"address"`
+		Port              int32     `bun:"port"`
+		Protocol          string    `bun:"protocol"`
+		TLSMode           string    `bun:"tls_mode"`
+		ServerID          uuid.UUID `bun:"server_id"`
+		AttachmentAddress string    `bun:"attachment_address"`
+	}
+	err := tx.NewSelect().TableExpr("database_resources AS backing").
+		ColumnExpr("cluster_endpoint.id AS cluster_endpoint_id, cluster_endpoint.address, cluster_endpoint.port, cluster_endpoint.protocol, cluster_endpoint.tls_mode").
+		ColumnExpr("installation.server_id, COALESCE(attachment.configuration ->> 'address', '') AS attachment_address").
+		Join("JOIN databases AS database ON database.id = backing.database_id AND database.archived_at IS NULL").
+		Join("JOIN database_clusters AS cluster ON cluster.id = database.database_cluster_id AND cluster.archived_at IS NULL").
+		Join("JOIN database_cluster_endpoints AS cluster_endpoint ON cluster_endpoint.database_cluster_id = cluster.id AND cluster_endpoint.private_network_id = ? AND cluster_endpoint.archived_at IS NULL", privateNetworkID).
+		Join("JOIN database_cluster_nodes AS node ON node.database_cluster_id = cluster.id AND node.role = 'primary' AND node.archived_at IS NULL").
+		Join("JOIN database_node_installations AS installation ON installation.database_cluster_node_id = node.id AND installation.archived_at IS NULL").
+		Join("JOIN server_networks AS attachment ON attachment.server_id = installation.server_id AND attachment.private_network_id = cluster_endpoint.private_network_id AND attachment.driver = 'wireguard' AND attachment.removed_at IS NULL").
+		Where("backing.resource_id = ?", resource.ID).Limit(1).Scan(ctx, &producer)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.ResourceEndpointEntity{}, errors.Join(models.ErrDomainValidation, errors.New("Database Cluster primary Node cannot reach the selected private Cluster Endpoint"))
+	}
+	if err != nil {
+		return models.ResourceEndpointEntity{}, err
+	}
+	if strings.TrimSpace(producer.AttachmentAddress) != WireGuardPrivateAddress || strings.TrimSpace(producer.Address) != WireGuardPrivateAddress {
+		return models.ResourceEndpointEntity{}, errors.Join(models.ErrDomainValidation, errors.New("Database Cluster private endpoint must use the DeployCrate WireGuard listener address"))
+	}
+	if producer.Port != origin.Port || producer.Protocol != origin.Protocol || producer.TLSMode != origin.TlsMode {
+		return models.ResourceEndpointEntity{}, errors.Join(models.ErrDomainValidation, errors.New("Database Cluster private endpoint does not preserve the published origin protocol and port"))
+	}
+	endpoint, err := models.ResourceEndpoint.Create(ctx, tx, models.CreateResourceEndpointData{
+		Name: "Private access", Role: "wireguard", Address: producer.Address, Port: producer.Port,
+		Protocol: producer.Protocol, TlsMode: producer.TLSMode, Settings: origin.Settings,
+		ResourceID: resource.ID, PrivateNetworkID: &privateNetworkID,
+	})
+	if err != nil {
+		return models.ResourceEndpointEntity{}, err
+	}
+	if _, err := models.DatabaseResourceEndpoint.Create(ctx, tx, endpoint.ID, producer.ClusterEndpointID); err != nil {
 		return models.ResourceEndpointEntity{}, err
 	}
 	return endpoint, nil

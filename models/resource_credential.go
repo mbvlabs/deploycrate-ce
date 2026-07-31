@@ -15,18 +15,17 @@ import (
 )
 
 type ResourceCredentialEntity struct {
-	bun.BaseModel          `bun:"table:resource_credentials,alias:resource_credentials"`
-	ID                     uuid.UUID       `bun:"id,pk,type:uuid"`
-	CreatedAt              time.Time       `bun:"created_at"`
-	UpdatedAt              time.Time       `bun:"updated_at"`
-	Name                   string          `bun:"name"`
-	Username               sql.NullString  `bun:"username"`
-	Metadata               json.RawMessage `bun:"metadata,type:jsonb"`
-	EncPayload             []byte          `bun:"enc_payload"`
-	Digest                 []byte          `bun:"digest"`
-	ArchivedAt             sql.NullTime    `bun:"archived_at"`
-	ResourceID             uuid.UUID       `bun:"resource_id,type:uuid"`
-	ResourceInstallationID *uuid.UUID      `bun:"resource_installation_id,type:uuid"`
+	bun.BaseModel `bun:"table:resource_credentials,alias:resource_credentials"`
+	ID            uuid.UUID       `bun:"id,pk,type:uuid"`
+	CreatedAt     time.Time       `bun:"created_at"`
+	UpdatedAt     time.Time       `bun:"updated_at"`
+	Name          string          `bun:"name"`
+	Username      sql.NullString  `bun:"username"`
+	Metadata      json.RawMessage `bun:"metadata,type:jsonb"`
+	EncPayload    []byte          `bun:"enc_payload"`
+	Digest        []byte          `bun:"digest"`
+	ArchivedAt    sql.NullTime    `bun:"archived_at"`
+	ResourceID    uuid.UUID       `bun:"resource_id,type:uuid"`
 }
 
 func (e *ResourceCredentialEntity) Validate() error {
@@ -69,14 +68,13 @@ func (rc resourceCredential) Find(
 }
 
 type CreateResourceCredentialData struct {
-	Name                   string
-	Username               sql.NullString
-	Metadata               json.RawMessage
-	EncPayload             []byte
-	Digest                 []byte
-	ArchivedAt             sql.NullTime
-	ResourceID             uuid.UUID
-	ResourceInstallationID *uuid.UUID
+	Name       string
+	Username   sql.NullString
+	Metadata   json.RawMessage
+	EncPayload []byte
+	Digest     []byte
+	ArchivedAt sql.NullTime
+	ResourceID uuid.UUID
 }
 
 func (rc resourceCredential) Create(
@@ -85,17 +83,16 @@ func (rc resourceCredential) Create(
 	data CreateResourceCredentialData,
 ) (ResourceCredentialEntity, error) {
 	entity := ResourceCredentialEntity{
-		ID:                     uuid.New(),
-		CreatedAt:              time.Now(),
-		UpdatedAt:              time.Now(),
-		Name:                   data.Name,
-		Username:               data.Username,
-		Metadata:               data.Metadata,
-		EncPayload:             data.EncPayload,
-		Digest:                 data.Digest,
-		ArchivedAt:             data.ArchivedAt,
-		ResourceID:             data.ResourceID,
-		ResourceInstallationID: data.ResourceInstallationID,
+		ID:         uuid.New(),
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+		Name:       data.Name,
+		Username:   data.Username,
+		Metadata:   data.Metadata,
+		EncPayload: data.EncPayload,
+		Digest:     data.Digest,
+		ArchivedAt: data.ArchivedAt,
+		ResourceID: data.ResourceID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -113,16 +110,15 @@ func (rc resourceCredential) Create(
 }
 
 type UpdateResourceCredentialData struct {
-	ID                     uuid.UUID
-	UpdatedAt              time.Time
-	Name                   string
-	Username               sql.NullString
-	Metadata               json.RawMessage
-	EncPayload             []byte
-	Digest                 []byte
-	ArchivedAt             sql.NullTime
-	ResourceID             uuid.UUID
-	ResourceInstallationID *uuid.UUID
+	ID         uuid.UUID
+	UpdatedAt  time.Time
+	Name       string
+	Username   sql.NullString
+	Metadata   json.RawMessage
+	EncPayload []byte
+	Digest     []byte
+	ArchivedAt sql.NullTime
+	ResourceID uuid.UUID
 }
 
 func (rc resourceCredential) Update(
@@ -131,16 +127,15 @@ func (rc resourceCredential) Update(
 	data UpdateResourceCredentialData,
 ) (ResourceCredentialEntity, error) {
 	entity := ResourceCredentialEntity{
-		ID:                     data.ID,
-		UpdatedAt:              time.Now(),
-		Name:                   data.Name,
-		Username:               data.Username,
-		Metadata:               data.Metadata,
-		EncPayload:             data.EncPayload,
-		Digest:                 data.Digest,
-		ArchivedAt:             data.ArchivedAt,
-		ResourceID:             data.ResourceID,
-		ResourceInstallationID: data.ResourceInstallationID,
+		ID:         data.ID,
+		UpdatedAt:  time.Now(),
+		Name:       data.Name,
+		Username:   data.Username,
+		Metadata:   data.Metadata,
+		EncPayload: data.EncPayload,
+		Digest:     data.Digest,
+		ArchivedAt: data.ArchivedAt,
+		ResourceID: data.ResourceID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -160,7 +155,6 @@ func (rc resourceCredential) Update(
 		Column("digest").
 		Column("archived_at").
 		Column("resource_id").
-		Column("resource_installation_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -250,17 +244,16 @@ func (rc resourceCredential) Upsert(
 	data CreateResourceCredentialData,
 ) (ResourceCredentialEntity, error) {
 	entity := ResourceCredentialEntity{
-		ID:                     uuid.New(),
-		CreatedAt:              time.Now(),
-		UpdatedAt:              time.Now(),
-		Name:                   data.Name,
-		Username:               data.Username,
-		Metadata:               data.Metadata,
-		EncPayload:             data.EncPayload,
-		Digest:                 data.Digest,
-		ArchivedAt:             data.ArchivedAt,
-		ResourceID:             data.ResourceID,
-		ResourceInstallationID: data.ResourceInstallationID,
+		ID:         uuid.New(),
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+		Name:       data.Name,
+		Username:   data.Username,
+		Metadata:   data.Metadata,
+		EncPayload: data.EncPayload,
+		Digest:     data.Digest,
+		ArchivedAt: data.ArchivedAt,
+		ResourceID: data.ResourceID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -280,7 +273,6 @@ func (rc resourceCredential) Upsert(
 		Set("digest = excluded.digest").
 		Set("archived_at = excluded.archived_at").
 		Set("resource_id = excluded.resource_id").
-		Set("resource_installation_id = excluded.resource_installation_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ResourceCredentialEntity{}, err

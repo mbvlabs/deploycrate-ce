@@ -40,19 +40,19 @@ func (j Jobs) RegisterRoutes(r *router.Router) error {
 	registrations := []echo.Route{
 		{
 			Method:      http.MethodGet,
-			Path:        routes.SystemJobs.Path(),
-			Name:        routes.SystemJobs.Name(),
+			Path:        routes.SystemTasks.Path(),
+			Name:        routes.SystemTasks.Name(),
 			Handler:     j.Index,
 			Middlewares: []echo.MiddlewareFunc{middleware.AuthOnly},
 		},
-		{Method: http.MethodPost, Path: routes.SystemJobRun.Path(), Name: routes.SystemJobRun.Name(), Handler: j.Run, Middlewares: []echo.MiddlewareFunc{middleware.AdminOnly}},
-		{Method: http.MethodPost, Path: routes.SystemJobRetry.Path(), Name: routes.SystemJobRetry.Name(), Handler: j.Retry, Middlewares: []echo.MiddlewareFunc{middleware.AdminOnly}},
-		{Method: http.MethodPost, Path: routes.SystemJobCancel.Path(), Name: routes.SystemJobCancel.Name(), Handler: j.Cancel, Middlewares: []echo.MiddlewareFunc{middleware.AdminOnly}},
-		{Method: http.MethodDelete, Path: routes.SystemJobDestroy.Path(), Name: routes.SystemJobDestroy.Name(), Handler: j.Destroy, Middlewares: []echo.MiddlewareFunc{middleware.AdminOnly}},
+		{Method: http.MethodPost, Path: routes.SystemTaskRun.Path(), Name: routes.SystemTaskRun.Name(), Handler: j.Run, Middlewares: []echo.MiddlewareFunc{middleware.AdminOnly}},
+		{Method: http.MethodPost, Path: routes.SystemTaskRetry.Path(), Name: routes.SystemTaskRetry.Name(), Handler: j.Retry, Middlewares: []echo.MiddlewareFunc{middleware.AdminOnly}},
+		{Method: http.MethodPost, Path: routes.SystemTaskCancel.Path(), Name: routes.SystemTaskCancel.Name(), Handler: j.Cancel, Middlewares: []echo.MiddlewareFunc{middleware.AdminOnly}},
+		{Method: http.MethodDelete, Path: routes.SystemTaskDestroy.Path(), Name: routes.SystemTaskDestroy.Name(), Handler: j.Destroy, Middlewares: []echo.MiddlewareFunc{middleware.AdminOnly}},
 		{
 			Method:      http.MethodGet,
-			Path:        routes.SystemJob.Path(),
-			Name:        routes.SystemJob.Name(),
+			Path:        routes.SystemTask.Path(),
+			Name:        routes.SystemTask.Name(),
 			Handler:     j.Show,
 			Middlewares: []echo.MiddlewareFunc{middleware.AuthOnly},
 		},
@@ -275,17 +275,17 @@ func jobIDParam(etx *echo.Context) (int64, error) {
 }
 
 func jobActionError(etx *echo.Context, jobID int64, action string, err error) error {
-	if flashErr := cookies.AddFlash(etx, cookies.FlashError, fmt.Sprintf("Could not %s job: %v", action, err)); flashErr != nil {
+	if flashErr := cookies.AddFlash(etx, cookies.FlashError, fmt.Sprintf("Could not %s System Task: %v", action, err)); flashErr != nil {
 		return flashErr
 	}
-	return inertia.Redirect(etx, routes.SystemJob.URL(jobID), http.StatusSeeOther)
+	return inertia.Redirect(etx, routes.SystemTask.URL(jobID), http.StatusSeeOther)
 }
 
 func jobActionSuccess(etx *echo.Context, jobID int64, message string) error {
 	if err := cookies.AddFlash(etx, cookies.FlashSuccess, message); err != nil {
 		return err
 	}
-	return inertia.Redirect(etx, routes.SystemJob.URL(jobID), http.StatusSeeOther)
+	return inertia.Redirect(etx, routes.SystemTask.URL(jobID), http.StatusSeeOther)
 }
 
 func (j Jobs) Run(etx *echo.Context) error {
@@ -296,7 +296,7 @@ func (j Jobs) Run(etx *echo.Context) error {
 	if _, err := j.processor.RunJobNow(etx.Request().Context(), jobID); err != nil {
 		return jobActionError(etx, jobID, "run", err)
 	}
-	return jobActionSuccess(etx, jobID, "Job made available to run now")
+	return jobActionSuccess(etx, jobID, "System Task made available to run now")
 }
 
 func (j Jobs) Retry(etx *echo.Context) error {
@@ -313,7 +313,7 @@ func (j Jobs) Retry(etx *echo.Context) error {
 	if err != nil {
 		return jobActionError(etx, jobID, "restart", err)
 	}
-	return jobActionSuccess(etx, jobID, "Job restarted and made available")
+	return jobActionSuccess(etx, jobID, "System Task restarted and made available")
 }
 
 func (j Jobs) Cancel(etx *echo.Context) error {
@@ -330,7 +330,7 @@ func (j Jobs) Cancel(etx *echo.Context) error {
 	if err != nil {
 		return jobActionError(etx, jobID, "cancel", err)
 	}
-	return jobActionSuccess(etx, jobID, "Job cancellation requested")
+	return jobActionSuccess(etx, jobID, "System Task cancellation requested")
 }
 
 func (j Jobs) Destroy(etx *echo.Context) error {
@@ -341,8 +341,8 @@ func (j Jobs) Destroy(etx *echo.Context) error {
 	if _, err := j.processor.DeleteJob(etx.Request().Context(), jobID); err != nil {
 		return jobActionError(etx, jobID, "delete", err)
 	}
-	if err := cookies.AddFlash(etx, cookies.FlashSuccess, "Job permanently deleted"); err != nil {
+	if err := cookies.AddFlash(etx, cookies.FlashSuccess, "System Task permanently deleted"); err != nil {
 		return err
 	}
-	return inertia.Redirect(etx, routes.SystemJobs.URL(), http.StatusSeeOther)
+	return inertia.Redirect(etx, routes.SystemTasks.URL(), http.StatusSeeOther)
 }

@@ -28,7 +28,8 @@ type ResourceHealthCheckEntity struct {
 	SuccessThreshold       int32           `bun:"success_threshold"`
 	Enabled                bool            `bun:"enabled"`
 	ArchivedAt             sql.NullTime    `bun:"archived_at"`
-	ResourceInstallationID uuid.UUID       `bun:"resource_installation_id,type:uuid"`
+	ResourceID             uuid.UUID       `bun:"resource_id,type:uuid"`
+	ResourceInstallationID *uuid.UUID      `bun:"resource_installation_id,type:uuid"`
 	ResourceEndpointID     *uuid.UUID      `bun:"resource_endpoint_id,type:uuid"`
 	ResourceCredentialID   *uuid.UUID      `bun:"resource_credential_id,type:uuid"`
 }
@@ -78,8 +79,8 @@ func (e *ResourceHealthCheckEntity) Validate() error {
 	if e.SuccessThreshold < 1 {
 		builder.Add("successThreshold", "positive", "success threshold must be positive")
 	}
-	if e.ResourceInstallationID == uuid.Nil {
-		builder.Add("resourceInstallationId", "required", "installation is required")
+	if e.ResourceID == uuid.Nil {
+		builder.Add("resourceId", "required", "Resource is required")
 	}
 	return builder.Err()
 }
@@ -127,7 +128,7 @@ func (rhc resourceHealthCheck) DueApplicationChecks(
 		ColumnExpr("resource.id AS resource_id").
 		ColumnExpr("resource.name AS resource_name").
 		ColumnExpr("resource.kind AS resource_kind").
-		ColumnExpr("resource.database_name AS resource_database_name").
+		ColumnExpr("COALESCE(database.name, '') AS resource_database_name").
 		ColumnExpr("COALESCE(endpoint.address, '') AS endpoint_address").
 		ColumnExpr("COALESCE(endpoint.port, 0) AS endpoint_port").
 		ColumnExpr("COALESCE(endpoint.protocol, '') AS endpoint_protocol").
@@ -140,13 +141,13 @@ func (rhc resourceHealthCheck) DueApplicationChecks(
 		ColumnExpr("COALESCE(status.consecutive_successes, 0) AS status_consecutive_successes").
 		ColumnExpr("COALESCE(status.consecutive_failures, 0) AS status_consecutive_failures").
 		ColumnExpr("status.expires_at AS status_expires_at").
-		Join("JOIN resource_installations AS installation ON installation.id = health_check.resource_installation_id AND installation.archived_at IS NULL").
-		Join("JOIN resources AS resource ON resource.id = installation.resource_id AND resource.archived_at IS NULL").
+		Join("JOIN resources AS resource ON resource.id = health_check.resource_id AND resource.archived_at IS NULL").
+		Join("LEFT JOIN resource_installations AS installation ON installation.id = health_check.resource_installation_id AND installation.resource_id = resource.id AND installation.archived_at IS NULL").
+		Join("LEFT JOIN database_resources AS database_backing ON database_backing.resource_id = resource.id").
+		Join("LEFT JOIN databases AS database ON database.id = database_backing.database_id AND database.archived_at IS NULL").
 		Join("LEFT JOIN resource_endpoints AS endpoint ON endpoint.id = health_check.resource_endpoint_id AND endpoint.resource_id = resource.id AND endpoint.archived_at IS NULL").
 		Join("LEFT JOIN resource_credentials AS credential ON credential.id = health_check.resource_credential_id AND credential.resource_id = resource.id AND credential.archived_at IS NULL").
 		Join("LEFT JOIN resource_health_check_statuses AS status ON status.health_check_id = health_check.id").
-		Where("resource.system_managed = FALSE").
-		Where("resource.management_mode = 'managed'").
 		Where("resource.kind IN ('postgresql', 'clickhouse')").
 		Where("health_check.kind = resource.kind").
 		Where("health_check.enabled = TRUE").
@@ -168,7 +169,8 @@ type CreateResourceHealthCheckData struct {
 	SuccessThreshold       int32
 	Enabled                bool
 	ArchivedAt             sql.NullTime
-	ResourceInstallationID uuid.UUID
+	ResourceID             uuid.UUID
+	ResourceInstallationID *uuid.UUID
 	ResourceEndpointID     *uuid.UUID
 	ResourceCredentialID   *uuid.UUID
 }
@@ -191,6 +193,7 @@ func (rhc resourceHealthCheck) Create(
 		SuccessThreshold:       data.SuccessThreshold,
 		Enabled:                data.Enabled,
 		ArchivedAt:             data.ArchivedAt,
+		ResourceID:             data.ResourceID,
 		ResourceInstallationID: data.ResourceInstallationID,
 		ResourceEndpointID:     data.ResourceEndpointID,
 		ResourceCredentialID:   data.ResourceCredentialID,
@@ -199,7 +202,7 @@ func (rhc resourceHealthCheck) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceHealthCheckEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if err := ensureActiveUnique(ctx, db, "resource-health-check:"+entity.ResourceInstallationID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceHealthCheckEntity)(nil)).Where("resource_installation_id = ?", entity.ResourceInstallationID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active health check already uses this name on the installation"); err != nil {
+	if err := ensureActiveUnique(ctx, db, "resource-health-check:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceHealthCheckEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active health check already uses this name on the Resource"); err != nil {
 		return ResourceHealthCheckEntity{}, err
 	}
 
@@ -222,7 +225,8 @@ type UpdateResourceHealthCheckData struct {
 	SuccessThreshold       int32
 	Enabled                bool
 	ArchivedAt             sql.NullTime
-	ResourceInstallationID uuid.UUID
+	ResourceID             uuid.UUID
+	ResourceInstallationID *uuid.UUID
 	ResourceEndpointID     *uuid.UUID
 	ResourceCredentialID   *uuid.UUID
 }
@@ -244,6 +248,7 @@ func (rhc resourceHealthCheck) Update(
 		SuccessThreshold:       data.SuccessThreshold,
 		Enabled:                data.Enabled,
 		ArchivedAt:             data.ArchivedAt,
+		ResourceID:             data.ResourceID,
 		ResourceInstallationID: data.ResourceInstallationID,
 		ResourceEndpointID:     data.ResourceEndpointID,
 		ResourceCredentialID:   data.ResourceCredentialID,
@@ -252,7 +257,7 @@ func (rhc resourceHealthCheck) Update(
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceHealthCheckEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if err := ensureActiveUnique(ctx, db, "resource-health-check:"+entity.ResourceInstallationID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceHealthCheckEntity)(nil)).Where("resource_installation_id = ?", entity.ResourceInstallationID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active health check already uses this name on the installation"); err != nil {
+	if err := ensureActiveUnique(ctx, db, "resource-health-check:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceHealthCheckEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active health check already uses this name on the Resource"); err != nil {
 		return ResourceHealthCheckEntity{}, err
 	}
 
@@ -268,6 +273,7 @@ func (rhc resourceHealthCheck) Update(
 		Column("success_threshold").
 		Column("enabled").
 		Column("archived_at").
+		Column("resource_id").
 		Column("resource_installation_id").
 		Column("resource_endpoint_id").
 		Column("resource_credential_id").
@@ -376,6 +382,7 @@ func (rhc resourceHealthCheck) Upsert(
 		SuccessThreshold:       data.SuccessThreshold,
 		Enabled:                data.Enabled,
 		ArchivedAt:             data.ArchivedAt,
+		ResourceID:             data.ResourceID,
 		ResourceInstallationID: data.ResourceInstallationID,
 		ResourceEndpointID:     data.ResourceEndpointID,
 		ResourceCredentialID:   data.ResourceCredentialID,
@@ -384,7 +391,7 @@ func (rhc resourceHealthCheck) Upsert(
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceHealthCheckEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if err := ensureActiveUnique(ctx, db, "resource-health-check:"+entity.ResourceInstallationID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceHealthCheckEntity)(nil)).Where("resource_installation_id = ?", entity.ResourceInstallationID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active health check already uses this name on the installation"); err != nil {
+	if err := ensureActiveUnique(ctx, db, "resource-health-check:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceHealthCheckEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active health check already uses this name on the Resource"); err != nil {
 		return ResourceHealthCheckEntity{}, err
 	}
 
@@ -400,6 +407,7 @@ func (rhc resourceHealthCheck) Upsert(
 		Set("success_threshold = excluded.success_threshold").
 		Set("enabled = excluded.enabled").
 		Set("archived_at = excluded.archived_at").
+		Set("resource_id = excluded.resource_id").
 		Set("resource_installation_id = excluded.resource_installation_id").
 		Set("resource_endpoint_id = excluded.resource_endpoint_id").
 		Set("resource_credential_id = excluded.resource_credential_id").

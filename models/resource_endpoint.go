@@ -97,10 +97,14 @@ func settingsContainSecret(settings json.RawMessage) bool {
 		case map[string]any:
 			for key, nested := range typed {
 				normalized := strings.ToLower(strings.ReplaceAll(key, "-", "_"))
-				for _, forbidden := range []string{"password", "secret", "token", "private_key", "credential"} {
+				for _, forbidden := range []string{"password", "secret", "token", "private_key"} {
 					if strings.Contains(normalized, forbidden) {
 						return true
 					}
+				}
+				if normalized == "credential" || normalized == "credentials" ||
+					strings.HasSuffix(normalized, "_credential") || strings.HasSuffix(normalized, "_credentials") {
+					return true
 				}
 				if contains(nested) {
 					return true

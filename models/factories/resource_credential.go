@@ -20,17 +20,16 @@ type ResourceCredentialFactory struct {
 
 type ResourceCredentialOption func(*ResourceCredentialFactory)
 
-func BuildResourceCredential(resourceID uuid.UUID, resourceInstallationID *uuid.UUID, opts ...ResourceCredentialOption) models.ResourceCredentialEntity {
+func BuildResourceCredential(resourceID uuid.UUID, opts ...ResourceCredentialOption) models.ResourceCredentialEntity {
 	f := &ResourceCredentialFactory{
 		ResourceCredentialEntity: models.ResourceCredentialEntity{
-			Name:                   faker.Word(),
-			Username:               sql.NullString{String: faker.Word(), Valid: true},
-			Metadata:               json.RawMessage{},
-			EncPayload:             []byte{},
-			Digest:                 []byte{},
-			ArchivedAt:             sql.NullTime{Time: time.Now(), Valid: true},
-			ResourceID:             resourceID,
-			ResourceInstallationID: resourceInstallationID,
+			Name:       faker.Word(),
+			Username:   sql.NullString{String: faker.Word(), Valid: true},
+			Metadata:   json.RawMessage{},
+			EncPayload: []byte{},
+			Digest:     []byte{},
+			ArchivedAt: sql.NullTime{Time: time.Now(), Valid: true},
+			ResourceID: resourceID,
 		},
 	}
 
@@ -41,21 +40,20 @@ func BuildResourceCredential(resourceID uuid.UUID, resourceInstallationID *uuid.
 	return f.ResourceCredentialEntity
 }
 
-func CreateResourceCredential(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, resourceInstallationID *uuid.UUID, opts ...ResourceCredentialOption) (models.ResourceCredentialEntity, error) {
-	built := BuildResourceCredential(resourceID, resourceInstallationID, opts...)
+func CreateResourceCredential(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, opts ...ResourceCredentialOption) (models.ResourceCredentialEntity, error) {
+	built := BuildResourceCredential(resourceID, opts...)
 
 	entity := models.ResourceCredentialEntity{
-		ID:                     uuid.New(),
-		CreatedAt:              time.Now(),
-		UpdatedAt:              time.Now(),
-		Name:                   built.Name,
-		Username:               built.Username,
-		Metadata:               built.Metadata,
-		EncPayload:             built.EncPayload,
-		Digest:                 built.Digest,
-		ArchivedAt:             built.ArchivedAt,
-		ResourceID:             built.ResourceID,
-		ResourceInstallationID: built.ResourceInstallationID,
+		ID:         uuid.New(),
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+		Name:       built.Name,
+		Username:   built.Username,
+		Metadata:   built.Metadata,
+		EncPayload: built.EncPayload,
+		Digest:     built.Digest,
+		ArchivedAt: built.ArchivedAt,
+		ResourceID: built.ResourceID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -65,11 +63,11 @@ func CreateResourceCredential(ctx context.Context, exec storage.Executor, resour
 	return entity, nil
 }
 
-func CreateResourceCredentials(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, resourceInstallationID *uuid.UUID, count int, opts ...ResourceCredentialOption) ([]models.ResourceCredentialEntity, error) {
+func CreateResourceCredentials(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, count int, opts ...ResourceCredentialOption) ([]models.ResourceCredentialEntity, error) {
 	resourcecredentials := make([]models.ResourceCredentialEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateResourceCredential(ctx, exec, resourceID, resourceInstallationID, opts...)
+		entity, err := CreateResourceCredential(ctx, exec, resourceID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resourcecredential %d: %w", i+1, err)
 		}
@@ -118,11 +116,5 @@ func WithResourceCredentialsArchivedAt(value sql.NullTime) ResourceCredentialOpt
 func WithResourceCredentialsResourceID(value uuid.UUID) ResourceCredentialOption {
 	return func(f *ResourceCredentialFactory) {
 		f.ResourceCredentialEntity.ResourceID = value
-	}
-}
-
-func WithResourceCredentialsResourceInstallationID(value *uuid.UUID) ResourceCredentialOption {
-	return func(f *ResourceCredentialFactory) {
-		f.ResourceCredentialEntity.ResourceInstallationID = value
 	}
 }

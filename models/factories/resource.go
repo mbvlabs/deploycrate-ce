@@ -22,9 +22,8 @@ func BuildResource(opts ...ResourceOption) models.ResourceEntity {
 	f := &ResourceFactory{
 		ResourceEntity: models.ResourceEntity{
 			Name:           faker.Word(),
-			Category:       "database",
+			Slug:           faker.Word(),
 			Kind:           "postgresql",
-			DatabaseName:   faker.Word(),
 			ManagementMode: models.ResourceManagementManaged,
 			SharingScope:   models.ResourceSharingEnvironment,
 			SystemManaged:  false,
@@ -44,9 +43,8 @@ func CreateResource(ctx context.Context, exec storage.Executor, opts ...Resource
 
 	entity, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
 		Name:           built.Name,
-		Category:       built.Category,
+		Slug:           built.Slug,
 		Kind:           built.Kind,
-		DatabaseName:   built.DatabaseName,
 		ManagementMode: built.ManagementMode,
 		SharingScope:   built.SharingScope,
 		SystemManaged:  built.SystemManaged,
@@ -79,21 +77,15 @@ func WithResourcesName(value string) ResourceOption {
 	}
 }
 
-func WithResourcesCategory(value string) ResourceOption {
+func WithResourcesSlug(value string) ResourceOption {
 	return func(f *ResourceFactory) {
-		f.ResourceEntity.Category = value
+		f.ResourceEntity.Slug = value
 	}
 }
 
 func WithResourcesKind(value string) ResourceOption {
 	return func(f *ResourceFactory) {
 		f.ResourceEntity.Kind = value
-	}
-}
-
-func WithResourcesDatabaseName(value string) ResourceOption {
-	return func(f *ResourceFactory) {
-		f.ResourceEntity.DatabaseName = value
 	}
 }
 

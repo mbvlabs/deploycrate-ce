@@ -224,8 +224,9 @@ func (service *GitHubWebhook) processPush(ctx context.Context, delivery models.G
 			SchemaVersion: 1, SourceEventID: event.ID, EnvironmentStateRevisionID: stateRevision.ID,
 			Repository: source.RepositoryFullName, Reference: source.Reference, SourceRevision: payload.After,
 			ContextPath: source.ContextPath, BuilderReference: nullableStringPointer(source.BuilderReference),
-			ImageRepository: source.ImageRepository, ContainerRegistryID: source.RegistryID,
-			RegistryEndpoint: source.RegistryEndpoint, Settings: source.BuildpackSettings,
+			ImageRepository: source.ImageRepository, RegistryResourceID: source.RegistryResourceID,
+			RegistryCredentialID: source.RegistryCredentialID,
+			RegistryEndpoint:     source.RegistryEndpoint, Settings: source.BuildpackSettings,
 			BPGOTargets: state.Runtime.BPGOTargets,
 		})
 		if err != nil {

@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE resource_restores (
+CREATE TABLE database_restores (
     id UUID NOT NULL PRIMARY KEY,
 
     created_at TIMESTAMPTZ NOT NULL,
@@ -19,20 +19,11 @@ CREATE TABLE resource_restores (
     change_task_id UUID NOT NULL REFERENCES change_tasks (id) ON DELETE RESTRICT,
     backup_id UUID NOT NULL REFERENCES backups (id) ON DELETE RESTRICT,
     safety_backup_id UUID REFERENCES backups (id) ON DELETE RESTRICT,
-    resource_id UUID NOT NULL REFERENCES resources (id) ON DELETE RESTRICT,
-    target_installation_id UUID NOT NULL REFERENCES resource_installations (id) ON DELETE RESTRICT,
-
-    CONSTRAINT resource_restores_status_check CHECK (
-        status IN ('pending', 'safety_backup', 'restoring', 'completed', 'rolled_back', 'failed')
-    )
+    database_id UUID NOT NULL REFERENCES databases (id) ON DELETE RESTRICT
 );
-
-CREATE UNIQUE INDEX resource_restores_active_installation_unique
-    ON resource_restores (target_installation_id)
-    WHERE status IN ('pending', 'safety_backup', 'restoring');
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-DROP TABLE resource_restores;
+DROP TABLE database_restores;
 -- +goose StatementEnd

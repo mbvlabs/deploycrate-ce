@@ -19,12 +19,14 @@ type ResourceListFilters struct {
 type ResourceListItem struct {
 	ID                uuid.UUID                  `bun:"id"`
 	Name              string                     `bun:"name"`
+	Slug              string                     `bun:"slug"`
 	Category          string                     `bun:"category"`
 	Kind              string                     `bun:"kind"`
 	DatabaseName      string                     `bun:"database_name"`
 	ManagementMode    ResourceManagementModeEnum `bun:"management_mode"`
 	SharingScope      ResourceSharingScopeEnum   `bun:"sharing_scope"`
 	ConnectionCount   int                        `bun:"connection_count"`
+	GrantCount        int                        `bun:"grant_count"`
 	InstallationCount int                        `bun:"installation_count"`
 	EndpointCount     int                        `bun:"endpoint_count"`
 	Health            string                     `bun:"health"`
@@ -66,14 +68,38 @@ type ResourceHealthCheckDetail struct {
 }
 
 type ResourceDetails struct {
-	Resource      ResourceEntity
-	Connections   []ResourceConnectionDetail
-	Endpoints     []ResourceEndpointEntity
-	Credentials   []ResourceCredentialEntity
-	Installations []ResourceInstallationDetail
-	Volumes       []ResourceVolumeDetail
-	Mounts        []ResourceMountDetail
-	HealthChecks  []ResourceHealthCheckDetail
+	Resource          ResourceEntity
+	Connections       []ResourceConnectionDetail
+	EnvironmentGrants []ResourceEnvironmentGrantDetail
+	ApplicationGrants []ResourceApplicationGrantDetail
+	Endpoints         []ResourceEndpointEntity
+	Credentials       []ResourceCredentialEntity
+	Installations     []ResourceInstallationDetail
+	Volumes           []ResourceVolumeDetail
+	Mounts            []ResourceMountDetail
+	HealthChecks      []ResourceHealthCheckDetail
+	DatabaseBacking   *ResourceDatabaseBackingDetail
+}
+
+type ResourceEnvironmentGrantDetail struct {
+	ResourceEnvironmentGrantEntity
+	EnvironmentName string    `bun:"environment_name"`
+	EnvironmentKind string    `bun:"environment_kind"`
+	ApplicationID   uuid.UUID `bun:"application_id"`
+	ApplicationName string    `bun:"application_name"`
+}
+
+type ResourceApplicationGrantDetail struct {
+	ResourceApplicationGrantEntity
+	ApplicationName string `bun:"application_name"`
+}
+
+type ResourceDatabaseBackingDetail struct {
+	DatabaseID   uuid.UUID `bun:"database_id"`
+	DatabaseName string    `bun:"database_name"`
+	ClusterID    uuid.UUID `bun:"cluster_id"`
+	ClusterName  string    `bun:"cluster_name"`
+	SharingMode  string    `bun:"sharing_mode"`
 }
 
 type ResourceBackupEligibility struct {
@@ -86,8 +112,8 @@ type ResourceBackupDetails struct {
 	Eligibility  ResourceBackupEligibility
 	Policy       *BackupPolicyEntity
 	Destinations []BackupDestinationSummary
-	History      []ResourceBackupHistory
-	Restores     []ResourceRestoreHistory
+	History      []DatabaseBackupHistory
+	Restores     []DatabaseRestoreHistory
 }
 
 type ResourcePrivateAccessDetails struct {
@@ -108,20 +134,20 @@ type ResourceConnectionDetail struct {
 }
 
 type ResourceCredentialSummary struct {
-	ID                     uuid.UUID
-	CreatedAt              time.Time
-	UpdatedAt              time.Time
-	Name                   string
-	Username               string
-	Metadata               json.RawMessage
-	HasEncryptedPayload    bool
-	ResourceInstallationID *uuid.UUID
+	ID                  uuid.UUID
+	CreatedAt           time.Time
+	UpdatedAt           time.Time
+	Name                string
+	Username            string
+	Metadata            json.RawMessage
+	HasEncryptedPayload bool
 }
 
 type ResourceEnvironmentOption struct {
 	ID              uuid.UUID `bun:"id"`
 	Name            string    `bun:"name"`
 	Kind            string    `bun:"kind"`
+	ApplicationID   uuid.UUID `bun:"application_id"`
 	ApplicationName string    `bun:"application_name"`
 }
 

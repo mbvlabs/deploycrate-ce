@@ -12,7 +12,7 @@ CREATE TABLE buildpack_configurations (
     settings JSONB NOT NULL,
 
     environment_source_id UUID NOT NULL REFERENCES environment_sources (id) ON DELETE RESTRICT,
-    container_registry_id UUID NOT NULL REFERENCES container_registries (id) ON DELETE RESTRICT
+    registry_resource_id UUID NOT NULL REFERENCES registry_resources (resource_id) ON DELETE RESTRICT
 );
 -- +goose StatementEnd
 

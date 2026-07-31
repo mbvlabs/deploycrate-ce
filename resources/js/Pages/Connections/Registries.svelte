@@ -26,17 +26,17 @@
 
   function submit(event: SubmitEvent) {
     event.preventDefault()
-    $form.post(routes.containerRegistryCreate(), { onSuccess: () => $form.reset() })
+		$form.post(routes.registryResourceCreate(), { onSuccess: () => $form.reset() })
   }
 </script>
 
-<svelte:head><title>Container registries</title></svelte:head>
+<svelte:head><title>Registry Resources</title></svelte:head>
 
 <DashboardLayout email={auth.email}>
   <div class="space-y-8">
     <header class="max-w-3xl">
       <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">Connections</p>
-      <h1 class="mt-3 text-3xl font-semibold">Container registries</h1>
+		<h1 class="mt-3 text-3xl font-semibold">Registry Resources</h1>
       <p class="mt-4 text-sm leading-6 text-muted-foreground">Publish Application images to the DeployCrate-managed registry, Docker Hub, or another authenticated OCI registry.</p>
     </header>
 
@@ -59,14 +59,14 @@
     <section class="space-y-4">
       <div><h2 class="text-xl font-semibold">Available registries</h2><p class="mt-1 text-sm text-muted-foreground">These destinations are selectable when creating or editing an Application source.</p></div>
       {#if registries.length === 0}
-        <Card.Root><Card.Content class="grid place-items-center gap-3 py-12 text-center"><BoxesIcon class="size-7 text-muted-foreground" /><p class="text-sm text-muted-foreground">No container registries are available.</p></Card.Content></Card.Root>
+        <Card.Root><Card.Content class="grid place-items-center gap-3 py-12 text-center"><BoxesIcon class="size-7 text-muted-foreground" /><p class="text-sm text-muted-foreground">No Registry Resources are available.</p></Card.Content></Card.Root>
       {:else}
         <div class="grid gap-4 md:grid-cols-2">
           {#each registries as registry (registry.id)}
             <Card.Root>
               <Card.Header><Card.Action><span class="text-xs" class:text-success={registry.managed}>{registry.managed ? 'Managed' : 'External'}</span></Card.Action><Card.Title>{registry.name}</Card.Title><Card.Description>{registry.endpoint}</Card.Description></Card.Header>
               <Card.Content class="grid gap-3 text-sm sm:grid-cols-2"><div><p class="text-xs text-muted-foreground">Protocol</p><p class="mt-1">OCI Distribution</p></div><div><p class="text-xs text-muted-foreground">Username</p><p class="mt-1 font-mono">{registry.username}</p></div></Card.Content>
-              {#if !registry.managed}<Card.Footer class="border-t border-border"><Button size="sm" variant="destructive" onclick={() => router.delete(routes.containerRegistryDestroy(registry.id))}>Archive</Button></Card.Footer>{/if}
+				{#if !registry.managed}<Card.Footer class="border-t border-border"><Button size="sm" variant="destructive" onclick={() => router.delete(routes.registryResourceDestroy(registry.id))}>Archive</Button></Card.Footer>{/if}
             </Card.Root>
           {/each}
         </div>

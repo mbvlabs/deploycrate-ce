@@ -83,16 +83,16 @@ func (controller Applications) newPage(etx *echo.Context, environmentIntent bool
 	return inertia.Page(etx, "Applications/New", inertia.Props{"auth": authProps(etx), "options": applicationSetupOptionsProps(options), "environmentIntent": environmentIntent})
 }
 
-type containerRegistryOptionProps struct {
+type registryResourceOptionProps struct {
 	ID       uuid.UUID `json:"id"`
 	Name     string    `json:"name"`
 	Endpoint string    `json:"endpoint"`
 }
 
 func applicationSetupOptionsProps(options services.ApplicationSetupOptions) map[string]any {
-	registries := make([]containerRegistryOptionProps, 0, len(options.Registries))
+	registries := make([]registryResourceOptionProps, 0, len(options.Registries))
 	for _, registry := range options.Registries {
-		registries = append(registries, containerRegistryOptionProps{ID: registry.ID, Name: registry.Name, Endpoint: registry.Endpoint})
+		registries = append(registries, registryResourceOptionProps{ID: registry.ID, Name: registry.Name, Endpoint: registry.Endpoint})
 	}
 	return map[string]any{
 		"installations": options.Installations,
@@ -114,7 +114,7 @@ type applicationSetupPayload struct {
 	ContextPath          string          `json:"contextPath"`
 	BuilderReference     string          `json:"builderReference"`
 	BuildpackSettings    json.RawMessage `json:"buildpackSettings"`
-	ContainerRegistryID  string          `json:"containerRegistryId"`
+	RegistryResourceID   string          `json:"registryResourceId"`
 	ImageRepository      string          `json:"imageRepository"`
 }
 
@@ -127,11 +127,11 @@ func (payload applicationSetupPayload) serviceData() (services.ApplicationSetupD
 	if err != nil {
 		return services.ApplicationSetupData{}, err
 	}
-	registryID, err := uuid.Parse(payload.ContainerRegistryID)
+	registryID, err := uuid.Parse(payload.RegistryResourceID)
 	if err != nil {
 		return services.ApplicationSetupData{}, err
 	}
-	return services.ApplicationSetupData{ApplicationName: payload.ApplicationName, ApplicationSlug: payload.ApplicationSlug, EnvironmentName: payload.EnvironmentName, EnvironmentSlug: payload.EnvironmentSlug, EnvironmentKind: payload.EnvironmentKind, GitHubInstallationID: installationID, GitHubRepositoryID: repositoryID, Reference: payload.Reference, AutoBuild: payload.AutoBuild, ContextPath: payload.ContextPath, BuilderReference: payload.BuilderReference, BuildpackSettings: payload.BuildpackSettings, ContainerRegistryID: registryID, ImageRepository: payload.ImageRepository}, nil
+	return services.ApplicationSetupData{ApplicationName: payload.ApplicationName, ApplicationSlug: payload.ApplicationSlug, EnvironmentName: payload.EnvironmentName, EnvironmentSlug: payload.EnvironmentSlug, EnvironmentKind: payload.EnvironmentKind, GitHubInstallationID: installationID, GitHubRepositoryID: repositoryID, Reference: payload.Reference, AutoBuild: payload.AutoBuild, ContextPath: payload.ContextPath, BuilderReference: payload.BuilderReference, BuildpackSettings: payload.BuildpackSettings, RegistryResourceID: registryID, ImageRepository: payload.ImageRepository}, nil
 }
 
 func (controller Applications) Create(etx *echo.Context) error {

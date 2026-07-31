@@ -18,29 +18,26 @@ import (
 type BackupPolicyNullTime = sql.NullTime
 
 type BackupPolicyEntity struct {
-	bun.BaseModel          `bun:"table:backup_policies,alias:backup_policies"`
-	ID                     uuid.UUID            `bun:"id,pk,type:uuid"`
-	CreatedAt              time.Time            `bun:"created_at"`
-	UpdatedAt              time.Time            `bun:"updated_at"`
-	Name                   string               `bun:"name"`
-	Schedule               string               `bun:"schedule"`
-	Strategy               string               `bun:"strategy"`
-	Driver                 string               `bun:"driver"`
-	Retention              json.RawMessage      `bun:"retention,type:jsonb"`
-	Format                 string               `bun:"format"`
-	Verification           json.RawMessage      `bun:"verification,type:jsonb"`
-	Settings               json.RawMessage      `bun:"settings,type:jsonb"`
-	ArchivedAt             BackupPolicyNullTime `bun:"archived_at"`
-	ActivatedAt            BackupPolicyNullTime `bun:"activated_at"`
-	TargetType             string               `bun:"target_type"`
-	ServerID               *uuid.UUID           `bun:"server_id,type:uuid"`
-	ResourceID             *uuid.UUID           `bun:"resource_id,type:uuid"`
-	EnvironmentResourceID  *uuid.UUID           `bun:"environment_resource_id,type:uuid"`
-	ResourceInstallationID *uuid.UUID           `bun:"resource_installation_id,type:uuid"`
-	ResourceVolumeID       *uuid.UUID           `bun:"resource_volume_id,type:uuid"`
-	NextRunAt              time.Time            `bun:"next_run_at"`
-	LastScheduledAt        BackupPolicyNullTime `bun:"last_scheduled_at"`
-	BackupDestinationID    uuid.UUID            `bun:"backup_destination_id,type:uuid"`
+	bun.BaseModel       `bun:"table:backup_policies,alias:backup_policies"`
+	ID                  uuid.UUID            `bun:"id,pk,type:uuid"`
+	CreatedAt           time.Time            `bun:"created_at"`
+	UpdatedAt           time.Time            `bun:"updated_at"`
+	Name                string               `bun:"name"`
+	Schedule            string               `bun:"schedule"`
+	Strategy            string               `bun:"strategy"`
+	Driver              string               `bun:"driver"`
+	Retention           json.RawMessage      `bun:"retention,type:jsonb"`
+	Format              string               `bun:"format"`
+	Verification        json.RawMessage      `bun:"verification,type:jsonb"`
+	Settings            json.RawMessage      `bun:"settings,type:jsonb"`
+	ArchivedAt          BackupPolicyNullTime `bun:"archived_at"`
+	ActivatedAt         BackupPolicyNullTime `bun:"activated_at"`
+	TargetType          string               `bun:"target_type"`
+	ServerID            *uuid.UUID           `bun:"server_id,type:uuid"`
+	DatabaseID          *uuid.UUID           `bun:"database_id,type:uuid"`
+	NextRunAt           time.Time            `bun:"next_run_at"`
+	LastScheduledAt     BackupPolicyNullTime `bun:"last_scheduled_at"`
+	BackupDestinationID uuid.UUID            `bun:"backup_destination_id,type:uuid"`
 }
 
 func (e *BackupPolicyEntity) Validate() error {
@@ -56,24 +53,21 @@ func (e *BackupPolicyEntity) Validate() error {
 		builder.Add("schedule", "invalid", "backup policy schedule must be a five-field cron expression")
 	}
 	if e.TargetType == "server" {
-		if e.ServerID == nil || *e.ServerID == uuid.Nil || e.ResourceID != nil ||
-			e.EnvironmentResourceID != nil || e.ResourceInstallationID != nil || e.ResourceVolumeID != nil {
+		if e.ServerID == nil || *e.ServerID == uuid.Nil || e.DatabaseID != nil {
 			builder.Add("target_type", "incoherent", "server policies must target only one server")
 		}
 		if e.Strategy != "filesystem" || e.Driver != "restic" || e.Format != "restic" {
 			builder.Add("driver", "incompatible", "server policies require filesystem, restic, and restic")
 		}
-	} else if e.TargetType == "resource" {
-		if e.ServerID != nil || e.ResourceID == nil || *e.ResourceID == uuid.Nil ||
-			e.ResourceInstallationID == nil || *e.ResourceInstallationID == uuid.Nil ||
-			e.EnvironmentResourceID != nil || e.ResourceVolumeID != nil {
-			builder.Add("target_type", "incoherent", "resource policies must target one Resource installation")
+	} else if e.TargetType == "database" {
+		if e.ServerID != nil || e.DatabaseID == nil || *e.DatabaseID == uuid.Nil {
+			builder.Add("target_type", "incoherent", "database policies must target one Database")
 		}
 		if e.Strategy != "logical" || e.Driver != "postgresql" || e.Format != "tar.age" {
 			builder.Add("driver", "incompatible", "database policies require logical, postgresql, and tar.age")
 		}
 	} else {
-		builder.Add("target_type", "unsupported", "backup policy target must be server or resource")
+		builder.Add("target_type", "unsupported", "backup policy target must be server or database")
 	}
 	if !validJSONObject(e.Retention) {
 		builder.Add("retention", "invalid", "backup retention must be a JSON object")
@@ -158,21 +152,21 @@ func NextBackupRun(expression string, after time.Time) (time.Time, error) {
 }
 
 type ScheduledBackupPolicy struct {
-	ID                     uuid.UUID  `bun:"id"`
-	Schedule               string     `bun:"schedule"`
-	Strategy               string     `bun:"strategy"`
-	Driver                 string     `bun:"driver"`
-	Format                 string     `bun:"format"`
-	TargetType             string     `bun:"target_type"`
-	ServerID               *uuid.UUID `bun:"server_id"`
-	ResourceID             *uuid.UUID `bun:"resource_id"`
-	EnvironmentResourceID  *uuid.UUID `bun:"environment_resource_id"`
-	ResourceVolumeID       *uuid.UUID `bun:"resource_volume_id"`
-	ResourceInstallationID *uuid.UUID `bun:"resource_installation_id"`
-	InstallationServerID   *uuid.UUID `bun:"installation_server_id"`
-	BackupDestinationID    uuid.UUID  `bun:"backup_destination_id"`
-	NextRunAt              time.Time  `bun:"next_run_at"`
-	EnvironmentID          uuid.UUID  `bun:"environment_id"`
+	ID                         uuid.UUID  `bun:"id"`
+	Schedule                   string     `bun:"schedule"`
+	Strategy                   string     `bun:"strategy"`
+	Driver                     string     `bun:"driver"`
+	Format                     string     `bun:"format"`
+	TargetType                 string     `bun:"target_type"`
+	ServerID                   *uuid.UUID `bun:"server_id"`
+	DatabaseID                 *uuid.UUID `bun:"database_id"`
+	DatabaseClusterID          *uuid.UUID `bun:"database_cluster_id"`
+	DatabaseClusterNodeID      *uuid.UUID `bun:"database_cluster_node_id"`
+	DatabaseNodeInstallationID *uuid.UUID `bun:"database_node_installation_id"`
+	ExecutionServerID          *uuid.UUID `bun:"execution_server_id"`
+	BackupDestinationID        uuid.UUID  `bun:"backup_destination_id"`
+	NextRunAt                  time.Time  `bun:"next_run_at"`
+	EnvironmentID              uuid.UUID  `bun:"environment_id"`
 }
 
 type BackupPolicySchedule struct {
@@ -201,13 +195,15 @@ func scheduledBackupPoliciesQuery(db storage.Executor) *bun.SelectQuery {
 	return db.NewSelect().
 		TableExpr("backup_policies AS policy").
 		ColumnExpr("policy.id, policy.schedule, policy.strategy, policy.driver, policy.format").
-		ColumnExpr("policy.target_type, policy.server_id, policy.resource_id").
-		ColumnExpr("policy.environment_resource_id, policy.resource_volume_id, policy.resource_installation_id").
-		ColumnExpr("resource_installation.server_id AS installation_server_id").
+		ColumnExpr("policy.target_type, policy.server_id, policy.database_id").
+		ColumnExpr("database.database_cluster_id, database_node.id AS database_cluster_node_id, database_installation.id AS database_node_installation_id").
+		ColumnExpr("database_installation.server_id AS execution_server_id").
 		ColumnExpr("policy.backup_destination_id, policy.next_run_at").
 		ColumnExpr("COALESCE(server_target.environment_id, system_environment.environment_id) AS environment_id").
 		Join("LEFT JOIN LATERAL (SELECT environment_id FROM environment_targets WHERE server_id = policy.server_id AND detached_at IS NULL ORDER BY attached_at DESC LIMIT 1) AS server_target ON TRUE").
-		Join("LEFT JOIN resource_installations AS resource_installation ON resource_installation.id = policy.resource_installation_id AND resource_installation.archived_at IS NULL").
+		Join("LEFT JOIN databases AS database ON database.id = policy.database_id AND database.archived_at IS NULL").
+		Join("LEFT JOIN database_cluster_nodes AS database_node ON database_node.database_cluster_id = database.database_cluster_id AND database_node.role = 'primary' AND database_node.archived_at IS NULL").
+		Join("LEFT JOIN database_node_installations AS database_installation ON database_installation.database_cluster_node_id = database_node.id AND database_installation.archived_at IS NULL").
 		Join("LEFT JOIN LATERAL (SELECT environment.id AS environment_id FROM environments AS environment JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL WHERE application.slug = ? AND environment.archived_at IS NULL ORDER BY environment.created_at LIMIT 1) AS system_environment ON TRUE", SystemApplicationSlug)
 }
 
@@ -328,25 +324,22 @@ func (bp backupPolicy) Find(
 }
 
 type CreateBackupPolicyData struct {
-	Name                   string
-	Schedule               string
-	Strategy               string
-	Driver                 string
-	Retention              json.RawMessage
-	Format                 string
-	Verification           json.RawMessage
-	Settings               json.RawMessage
-	ArchivedAt             sql.NullTime
-	ActivatedAt            sql.NullTime
-	TargetType             string
-	ServerID               *uuid.UUID
-	ResourceID             *uuid.UUID
-	EnvironmentResourceID  *uuid.UUID
-	ResourceInstallationID *uuid.UUID
-	ResourceVolumeID       *uuid.UUID
-	NextRunAt              time.Time
-	LastScheduledAt        sql.NullTime
-	BackupDestinationID    uuid.UUID
+	Name                string
+	Schedule            string
+	Strategy            string
+	Driver              string
+	Retention           json.RawMessage
+	Format              string
+	Verification        json.RawMessage
+	Settings            json.RawMessage
+	ArchivedAt          sql.NullTime
+	ActivatedAt         sql.NullTime
+	TargetType          string
+	ServerID            *uuid.UUID
+	DatabaseID          *uuid.UUID
+	NextRunAt           time.Time
+	LastScheduledAt     sql.NullTime
+	BackupDestinationID uuid.UUID
 }
 
 func (bp backupPolicy) Create(
@@ -355,32 +348,34 @@ func (bp backupPolicy) Create(
 	data CreateBackupPolicyData,
 ) (BackupPolicyEntity, error) {
 	entity := BackupPolicyEntity{
-		ID:                     uuid.New(),
-		CreatedAt:              time.Now(),
-		UpdatedAt:              time.Now(),
-		Name:                   data.Name,
-		Schedule:               data.Schedule,
-		Strategy:               data.Strategy,
-		Driver:                 data.Driver,
-		Retention:              data.Retention,
-		Format:                 data.Format,
-		Verification:           data.Verification,
-		Settings:               data.Settings,
-		ArchivedAt:             data.ArchivedAt,
-		ActivatedAt:            data.ActivatedAt,
-		TargetType:             data.TargetType,
-		ServerID:               data.ServerID,
-		ResourceID:             data.ResourceID,
-		EnvironmentResourceID:  data.EnvironmentResourceID,
-		ResourceInstallationID: data.ResourceInstallationID,
-		ResourceVolumeID:       data.ResourceVolumeID,
-		NextRunAt:              data.NextRunAt,
-		LastScheduledAt:        data.LastScheduledAt,
-		BackupDestinationID:    data.BackupDestinationID,
+		ID:                  uuid.New(),
+		CreatedAt:           time.Now(),
+		UpdatedAt:           time.Now(),
+		Name:                data.Name,
+		Schedule:            data.Schedule,
+		Strategy:            data.Strategy,
+		Driver:              data.Driver,
+		Retention:           data.Retention,
+		Format:              data.Format,
+		Verification:        data.Verification,
+		Settings:            data.Settings,
+		ArchivedAt:          data.ArchivedAt,
+		ActivatedAt:         data.ActivatedAt,
+		TargetType:          data.TargetType,
+		ServerID:            data.ServerID,
+		DatabaseID:          data.DatabaseID,
+		NextRunAt:           data.NextRunAt,
+		LastScheduledAt:     data.LastScheduledAt,
+		BackupDestinationID: data.BackupDestinationID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
 		return BackupPolicyEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if entity.TargetType == "database" && entity.DatabaseID != nil {
+		if err := ensureActiveUnique(ctx, db, "database-backup-policy:"+entity.DatabaseID.String(), entity.ID, db.NewSelect().Model((*BackupPolicyEntity)(nil)).Where("target_type = 'database'").Where("database_id = ?", *entity.DatabaseID), "databaseId", "the Database already has an active backup policy"); err != nil {
+			return BackupPolicyEntity{}, err
+		}
 	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
@@ -391,27 +386,24 @@ func (bp backupPolicy) Create(
 }
 
 type UpdateBackupPolicyData struct {
-	ID                     uuid.UUID
-	UpdatedAt              time.Time
-	Name                   string
-	Schedule               string
-	Strategy               string
-	Driver                 string
-	Retention              json.RawMessage
-	Format                 string
-	Verification           json.RawMessage
-	Settings               json.RawMessage
-	ArchivedAt             sql.NullTime
-	ActivatedAt            sql.NullTime
-	TargetType             string
-	ServerID               *uuid.UUID
-	ResourceID             *uuid.UUID
-	EnvironmentResourceID  *uuid.UUID
-	ResourceInstallationID *uuid.UUID
-	ResourceVolumeID       *uuid.UUID
-	NextRunAt              time.Time
-	LastScheduledAt        sql.NullTime
-	BackupDestinationID    uuid.UUID
+	ID                  uuid.UUID
+	UpdatedAt           time.Time
+	Name                string
+	Schedule            string
+	Strategy            string
+	Driver              string
+	Retention           json.RawMessage
+	Format              string
+	Verification        json.RawMessage
+	Settings            json.RawMessage
+	ArchivedAt          sql.NullTime
+	ActivatedAt         sql.NullTime
+	TargetType          string
+	ServerID            *uuid.UUID
+	DatabaseID          *uuid.UUID
+	NextRunAt           time.Time
+	LastScheduledAt     sql.NullTime
+	BackupDestinationID uuid.UUID
 }
 
 func (bp backupPolicy) Update(
@@ -420,31 +412,33 @@ func (bp backupPolicy) Update(
 	data UpdateBackupPolicyData,
 ) (BackupPolicyEntity, error) {
 	entity := BackupPolicyEntity{
-		ID:                     data.ID,
-		UpdatedAt:              time.Now(),
-		Name:                   data.Name,
-		Schedule:               data.Schedule,
-		Strategy:               data.Strategy,
-		Driver:                 data.Driver,
-		Retention:              data.Retention,
-		Format:                 data.Format,
-		Verification:           data.Verification,
-		Settings:               data.Settings,
-		ArchivedAt:             data.ArchivedAt,
-		ActivatedAt:            data.ActivatedAt,
-		TargetType:             data.TargetType,
-		ServerID:               data.ServerID,
-		ResourceID:             data.ResourceID,
-		EnvironmentResourceID:  data.EnvironmentResourceID,
-		ResourceInstallationID: data.ResourceInstallationID,
-		ResourceVolumeID:       data.ResourceVolumeID,
-		NextRunAt:              data.NextRunAt,
-		LastScheduledAt:        data.LastScheduledAt,
-		BackupDestinationID:    data.BackupDestinationID,
+		ID:                  data.ID,
+		UpdatedAt:           time.Now(),
+		Name:                data.Name,
+		Schedule:            data.Schedule,
+		Strategy:            data.Strategy,
+		Driver:              data.Driver,
+		Retention:           data.Retention,
+		Format:              data.Format,
+		Verification:        data.Verification,
+		Settings:            data.Settings,
+		ArchivedAt:          data.ArchivedAt,
+		ActivatedAt:         data.ActivatedAt,
+		TargetType:          data.TargetType,
+		ServerID:            data.ServerID,
+		DatabaseID:          data.DatabaseID,
+		NextRunAt:           data.NextRunAt,
+		LastScheduledAt:     data.LastScheduledAt,
+		BackupDestinationID: data.BackupDestinationID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
 		return BackupPolicyEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if entity.TargetType == "database" && entity.DatabaseID != nil {
+		if err := ensureActiveUnique(ctx, db, "database-backup-policy:"+entity.DatabaseID.String(), entity.ID, db.NewSelect().Model((*BackupPolicyEntity)(nil)).Where("target_type = 'database'").Where("database_id = ?", *entity.DatabaseID), "databaseId", "the Database already has an active backup policy"); err != nil {
+			return BackupPolicyEntity{}, err
+		}
 	}
 
 	if err := db.NewUpdate().
@@ -462,10 +456,7 @@ func (bp backupPolicy) Update(
 		Column("activated_at").
 		Column("target_type").
 		Column("server_id").
-		Column("resource_id").
-		Column("environment_resource_id").
-		Column("resource_installation_id").
-		Column("resource_volume_id").
+		Column("database_id").
 		Column("next_run_at").
 		Column("last_scheduled_at").
 		Column("backup_destination_id").
@@ -555,28 +546,25 @@ func (bp backupPolicy) Upsert(
 	data CreateBackupPolicyData,
 ) (BackupPolicyEntity, error) {
 	entity := BackupPolicyEntity{
-		ID:                     uuid.New(),
-		CreatedAt:              time.Now(),
-		UpdatedAt:              time.Now(),
-		Name:                   data.Name,
-		Schedule:               data.Schedule,
-		Strategy:               data.Strategy,
-		Driver:                 data.Driver,
-		Retention:              data.Retention,
-		Format:                 data.Format,
-		Verification:           data.Verification,
-		Settings:               data.Settings,
-		ArchivedAt:             data.ArchivedAt,
-		ActivatedAt:            data.ActivatedAt,
-		TargetType:             data.TargetType,
-		ServerID:               data.ServerID,
-		ResourceID:             data.ResourceID,
-		EnvironmentResourceID:  data.EnvironmentResourceID,
-		ResourceInstallationID: data.ResourceInstallationID,
-		ResourceVolumeID:       data.ResourceVolumeID,
-		NextRunAt:              data.NextRunAt,
-		LastScheduledAt:        data.LastScheduledAt,
-		BackupDestinationID:    data.BackupDestinationID,
+		ID:                  uuid.New(),
+		CreatedAt:           time.Now(),
+		UpdatedAt:           time.Now(),
+		Name:                data.Name,
+		Schedule:            data.Schedule,
+		Strategy:            data.Strategy,
+		Driver:              data.Driver,
+		Retention:           data.Retention,
+		Format:              data.Format,
+		Verification:        data.Verification,
+		Settings:            data.Settings,
+		ArchivedAt:          data.ArchivedAt,
+		ActivatedAt:         data.ActivatedAt,
+		TargetType:          data.TargetType,
+		ServerID:            data.ServerID,
+		DatabaseID:          data.DatabaseID,
+		NextRunAt:           data.NextRunAt,
+		LastScheduledAt:     data.LastScheduledAt,
+		BackupDestinationID: data.BackupDestinationID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -598,10 +586,7 @@ func (bp backupPolicy) Upsert(
 		Set("activated_at = excluded.activated_at").
 		Set("target_type = excluded.target_type").
 		Set("server_id = excluded.server_id").
-		Set("resource_id = excluded.resource_id").
-		Set("environment_resource_id = excluded.environment_resource_id").
-		Set("resource_installation_id = excluded.resource_installation_id").
-		Set("resource_volume_id = excluded.resource_volume_id").
+		Set("database_id = excluded.database_id").
 		Set("next_run_at = excluded.next_run_at").
 		Set("last_scheduled_at = excluded.last_scheduled_at").
 		Set("backup_destination_id = excluded.backup_destination_id").

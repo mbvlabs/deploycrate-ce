@@ -177,9 +177,9 @@ func (service *BackupScheduler) enqueue(
 	}
 	targetID := policy.ServerID
 	taskServerID := policy.ServerID
-	if policy.TargetType == "resource" {
-		targetID = policy.ResourceID
-		taskServerID = policy.InstallationServerID
+	if policy.TargetType == "database" {
+		targetID = policy.DatabaseID
+		taskServerID = policy.ExecutionServerID
 	}
 	if targetID == nil {
 		return uuid.Nil, errors.New("backup policy target is missing")
@@ -200,11 +200,10 @@ func (service *BackupScheduler) enqueue(
 		FormatVersion: "1", ProviderMetadata: json.RawMessage(`{}`),
 		Status: models.BackupStatusPending, RequestedAt: now,
 		ProducerVersion: string(service.version), ChangeID: change.ID, ChangeTaskID: task.ID,
-		BackupPolicyID: policy.ID, ServerID: policy.ServerID, ResourceID: policy.ResourceID,
-		EnvironmentResourceID:  policy.EnvironmentResourceID,
-		ResourceInstallationID: policy.ResourceInstallationID,
-		ResourceVolumeID:       policy.ResourceVolumeID,
-		BackupDestinationID:    policy.BackupDestinationID,
+		BackupPolicyID: policy.ID, ServerID: policy.ServerID, DatabaseID: policy.DatabaseID,
+		DatabaseClusterID: policy.DatabaseClusterID, DatabaseClusterNodeID: policy.DatabaseClusterNodeID,
+		DatabaseNodeInstallationID: policy.DatabaseNodeInstallationID,
+		BackupDestinationID:        policy.BackupDestinationID,
 	}); err != nil {
 		return uuid.Nil, fmt.Errorf("create pending backup: %w", err)
 	}

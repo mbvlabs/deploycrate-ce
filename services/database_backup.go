@@ -36,6 +36,9 @@ func NewDatabaseBackup(configuration config.Config, version CurrentVersion) *Dat
 
 type PostgreSQLBackupTarget struct {
 	ResourceID            uuid.UUID
+	DatabaseID            uuid.UUID
+	ClusterID             uuid.UUID
+	NodeID                uuid.UUID
 	InstallationID        uuid.UUID
 	ContainerName         string
 	DatabaseName          string
@@ -51,19 +54,20 @@ func (service *DatabaseBackup) Run(
 	credential BackupCredentialPayload,
 	store objectstorage.Store,
 ) (BackupArtifact, error) {
-	if scope.Backup.ResourceID == nil {
-		return BackupArtifact{}, errors.New("database backup is missing its resource target")
+	if scope.Backup.DatabaseID == nil {
+		return BackupArtifact{}, errors.New("database backup is missing its Database target")
 	}
 	objectKey := path.Join(
 		"databases",
-		scope.Backup.ResourceID.String(),
+		scope.Backup.DatabaseID.String(),
 		scope.Backup.ID.String()+".tar.age",
 	)
 	if remote, err := store.Head(ctx, objectKey); err == nil {
 		expected := map[string]string{
 			"backup-id": scope.Backup.ID.String(), "policy-id": scope.Backup.BackupPolicyID.String(),
-			"resource-id": target.ResourceID.String(), "resource-installation-id": target.InstallationID.String(),
-			"database-name": target.DatabaseName, "instance-id": service.config.App.InstanceID,
+			"database-id": target.DatabaseID.String(), "database-cluster-id": target.ClusterID.String(),
+			"database-node-installation-id": target.InstallationID.String(),
+			"database-name":                 target.DatabaseName, "instance-id": service.config.App.InstanceID,
 			"format-version": scope.Backup.FormatVersion,
 		}
 		for key, value := range expected {
@@ -105,17 +109,19 @@ func (service *DatabaseBackup) Run(
 		return BackupArtifact{}, fmt.Errorf("validate PostgreSQL custom dump: %w", err)
 	}
 	manifest := map[string]any{
-		"artifact_version":          scope.Backup.FormatVersion,
-		"instance_id":               service.config.App.InstanceID,
-		"backup_id":                 scope.Backup.ID.String(),
-		"policy_id":                 scope.Backup.BackupPolicyID.String(),
-		"resource_id":               scope.Backup.ResourceID.String(),
-		"resource_installation_id":  target.InstallationID.String(),
-		"database_name":             target.DatabaseName,
-		"scheduled_at":              scope.Backup.ScheduledAt.UTC().Format(time.RFC3339Nano),
-		"producer_version":          string(service.version),
-		"format":                    "postgresql-custom+globals+tar+age",
-		"river_table_data_excluded": target.ExcludeRiverTableData,
+		"artifact_version":              scope.Backup.FormatVersion,
+		"instance_id":                   service.config.App.InstanceID,
+		"backup_id":                     scope.Backup.ID.String(),
+		"policy_id":                     scope.Backup.BackupPolicyID.String(),
+		"database_id":                   target.DatabaseID.String(),
+		"database_cluster_id":           target.ClusterID.String(),
+		"database_cluster_node_id":      target.NodeID.String(),
+		"database_node_installation_id": target.InstallationID.String(),
+		"database_name":                 target.DatabaseName,
+		"scheduled_at":                  scope.Backup.ScheduledAt.UTC().Format(time.RFC3339Nano),
+		"producer_version":              string(service.version),
+		"format":                        "postgresql-custom+globals+tar+age",
+		"river_table_data_excluded":     target.ExcludeRiverTableData,
 	}
 	manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -147,14 +153,16 @@ func (service *DatabaseBackup) Run(
 	}
 	digestBytes := digest.Sum(nil)
 	metadata := map[string]string{
-		"backup-id":                scope.Backup.ID.String(),
-		"policy-id":                scope.Backup.BackupPolicyID.String(),
-		"resource-id":              scope.Backup.ResourceID.String(),
-		"resource-installation-id": target.InstallationID.String(),
-		"database-name":            target.DatabaseName,
-		"instance-id":              service.config.App.InstanceID,
-		"sha256":                   hex.EncodeToString(digestBytes),
-		"format-version":           scope.Backup.FormatVersion,
+		"backup-id":                     scope.Backup.ID.String(),
+		"policy-id":                     scope.Backup.BackupPolicyID.String(),
+		"database-id":                   target.DatabaseID.String(),
+		"database-cluster-id":           target.ClusterID.String(),
+		"database-cluster-node-id":      target.NodeID.String(),
+		"database-node-installation-id": target.InstallationID.String(),
+		"database-name":                 target.DatabaseName,
+		"instance-id":                   service.config.App.InstanceID,
+		"sha256":                        hex.EncodeToString(digestBytes),
+		"format-version":                scope.Backup.FormatVersion,
 	}
 	remote, uploadErr := store.Put(ctx, objectKey, file, metadata)
 	closeErr := file.Close()

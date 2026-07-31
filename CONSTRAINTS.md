@@ -120,47 +120,53 @@ Rules local to one entity belong in `models/`. Rules involving multiple records,
 - Sharing a server or resource never grants access to unrelated environments, endpoints, or services.
 - Applied and observed access state cannot claim success until the responsible target or server reports the intended rule.
 
-## Resources, installations, volumes, endpoints, dependencies, and bindings
+## Resources, grants, connections, and directly installed topology
 
-- A resource is a stable logical supporting service. Application release images remain part of the release and deployment lifecycle, not the resource lifecycle.
-- The current resource installation record describes a Docker container and therefore requires its image and container fields.
-- Native Server installations are planned, but their persistence shape and lifecycle are intentionally deferred rather than forced into the Docker installation record.
-- Externally managed services, clusters, and orchestration providers remain outside the managed CE resource installation model.
-- The desired image reference, optional resolved digest, container name, restart policy, registry credential, configuration, and server placement belong to the installation.
-- Container configuration stores credential and secret references only. It never stores plaintext or encrypted secret values.
-- Installations, volumes, endpoints, credentials, dependencies, and bindings cannot disagree about their resource identity.
-- A Resource exists independently of Environments. Its active name is globally unique without regard to case.
-- `system_managed` explicitly identifies DeployCrate-owned Resources and makes them immutable through user Resource workflows.
-- An installation belongs to one resource.
-- An installation selects one Docker-capable server. Its image reference and digest determine the desired container artifact.
-- Resource installation status is a current projection. Older observations cannot replace newer observations.
-- A resource volume is stable durable storage owned by one resource and placed on one server.
-- A volume mount connects a resource volume only to an installation of the same resource and records its absolute container mount path and access mode.
-- Replacing a container installation does not replace its resource volume. A new mount explicitly attaches the stable volume to the replacement installation.
-- An endpoint belongs to its resource and, when installation-backed, to an installation of that same resource.
-- An endpoint attached to a private network uses an address reachable through that network.
-- A resource credential belongs to its resource and, when installation-specific, to an installation of the same resource.
-- An Environment consumes a Resource only through an active `environment_resources` connection.
-- A dependency endpoint belongs to the dependency's resource. Its network is available to both the environment and endpoint.
-- Connection aliases are unique among active connections in an Environment, and an Environment connects to a Resource at most once.
-- A binding belongs to one dependency. Its resource and endpoint agree with the dependency.
-- The application defines whether a dependency permits one active binding or several named bindings and rejects ambiguous access provisioning.
-- Managed and self-managed provisioning and secret modes have separate, explicit model workflows.
-- Binding status follows the supported provisioning lifecycle and never skips required cleanup or verification steps.
+- A Resource is a stable consumption contract. It owns name, slug, kind, management mode, sharing scope, published endpoints, access credentials, access health, and Environment connections.
+- Resource kind is persisted. Category is derived from the Resource kind catalog and is never persisted independently.
+- A Resource has no required owner Environment and may exist with zero connections.
+- Active Resource names and slugs are globally unique without regard to case. `system_managed` Resources are immutable through user Resource workflows.
+- An Environment consumes a Resource only through an active `environment_resources` Resource Connection.
+- `environment` scope requires an active grant for the selected Environment. `application` scope requires an active grant for the Environment's Application. `global` scope requires no grant.
+- Environment grants and Application grants are mutually exclusive according to sharing scope. A restricted Resource may have zero grants.
+- Scope changes and grant revocation serialize with connection changes and are blocked when an active connection would become ineligible.
+- Connection creation validates selection eligibility, endpoint ownership, credential ownership, and private-network reachability in one transaction.
+- Generic directly installed Resources may own Docker Resource Installations, stable Resource Volumes, mounts, and installation-backed endpoints.
+- Database-backed Resources never own generic Resource Installations. Their producer topology belongs to Database Cluster Nodes and typed Node Installations.
+- An endpoint belongs to its Resource. A generic installation reference, when present, belongs to the same Resource. A database-backed endpoint maps explicitly to a Cluster Endpoint.
+- A Resource credential belongs to its Resource and represents consumer access, never Database Cluster administration.
 
-## Shared PostgreSQL resources and binding credentials
+## Database Clusters, Nodes, Databases, and database-backed Resources
 
-- One PostgreSQL resource represents one cluster, regardless of how many environment databases it contains.
-- Each environment-specific database and principal is owned through an explicit resource binding.
-- Database and principal names identify the intended objects within their cluster and are not reused across unrelated active bindings unless sharing is explicitly requested.
-- A binding cannot reference a database, principal, endpoint, installation, or credential from another resource.
-- Managed credential rotation creates a new immutable credential value. It never overwrites the previous value in place.
-- A managed credential value belongs to one binding and projects to identified Environment secret rows.
-- Managed Environment secrets identify their binding source and keyed digest and cannot be edited directly.
-- Self-managed mode references user-controlled secret material and never silently replaces it with generated credentials.
-- Retiring a credential value occurs only after dependent deployments stop using it or an explicitly supported overlap window ends.
-- Archiving a binding retires its managed credentials and secrets through a corrective change and cleanup tasks.
-- Resource changes that affect bound environments create changes for those environments before updating managed secrets or deployments.
+- A Database Cluster is the operational boundary for one engine installation. A single-node installation is still a Cluster.
+- Managed Clusters require a desired installation method of `docker` or `native`. External Clusters have registered endpoints and no managed Nodes or Node Installations.
+- A Cluster credential owns administrator access. Its secret payload is purpose-bound, encrypted, and never duplicated into Resource credentials or JSON metadata.
+- A Cluster Node belongs to one Cluster and one Server. Exactly one active primary Node exists per active Cluster.
+- Node storage owns durable storage identity and the canonical data path. Replacing an installation method preserves Node and storage identity.
+- A Node Installation owns common desired, observed, service, version, health, and Server state. Exactly one active typed Docker or native detail record describes its driver-specific installation contract.
+- Docker installation details own image, digest, container identity, restart policy, optional Registry Resource access, port mappings, and mount targets.
+- Native installation details own package, requested version, system service, configuration path, and validated service settings. Host commands accept validated identifiers and never place plaintext credentials in arguments, output, or persisted settings.
+- A Database belongs to exactly one Cluster. Its active logical name is unique within that Cluster.
+- One logical Database maps to exactly one Resource through `database_resources`. Database and Resource identities survive Node moves and installation-method replacement.
+- Database creation and deprovisioning use the Cluster administrator workflow. Deprovisioning is blocked by an active Resource, Resource Connection, or Database restore.
+- Archiving a Cluster requires all Databases to be archived and all managed Nodes to be retired.
+- Database process telemetry is attributed to Database Cluster, Cluster Node, and Node Installation, never to an arbitrary database Resource.
+
+## Registry Resources
+
+- Managed and external OCI registries are Resources with `kind = registry` and exactly one typed `registry_resources` backing record.
+- The typed backing stores provider configuration only. Resource owns identity, lifecycle, endpoint, access credential, health, and sharing policy.
+- A selectable Registry Resource has one active access credential with push and pull capability. The encrypted secret exists only in `resource_credentials`.
+- Buildpack configuration selects a Registry Resource and stores its image repository path separately. Environment Source owns source control only.
+- Build and deployment records retain the selected Registry Resource endpoint and credential identity for audit without snapshotting secret material.
+
+## Resource and database health
+
+- Resource access health owns `resource_id` directly. Endpoint, credential, and generic installation references are optional but must belong to that Resource.
+- Database Resource access checks require the published endpoint and Resource credential and do not require a generic Resource Installation.
+- PostgreSQL access health resolves the backing Database and verifies application access with `SELECT 1`.
+- Cluster, Cluster Endpoint, Node, and Node Installation operational health belongs to typed database health records.
+- Current health status is separate from historical telemetry. Older observations cannot replace newer status.
 
 ## Environment secrets
 
@@ -233,19 +239,19 @@ Rules local to one entity belong in `models/`. Rules involving multiple records,
 ## Backup destinations, policies, backups, and restores
 
 - A backup destination's credential supports its provider and remains active while policies or pending operations use it.
-- A backup policy has one unambiguous scope: a resource or a resource binding.
-- A binding-scoped policy belongs to the same resource as the binding.
-- A volume backup policy identifies one volume belonging to its resource. A logical backup policy targets the resource or binding and does not claim a volume as its data boundary.
-- Backup strategy and driver are explicit. Volume archives and service-aware logical backups are never treated as interchangeable artifacts.
+- A backup policy has one unambiguous target: a Server filesystem or a logical Database.
+- Logical backup policies target stable Database identity. The executing Cluster, Node, and Node Installation are resolved at execution time and recorded only as provenance.
+- Backup strategy and driver are explicit. Server filesystem archives and logical database backups are never treated as interchangeable artifacts.
 - Schedule, retention, format, verification, and provider settings are validated by the policy model.
-- A backup's policy, resource, binding, installation, volume, strategy, driver, and destination describe one coherent backup scope.
+- A backup's policy, Database or Server target, execution provenance, strategy, driver, and destination describe one coherent backup scope.
 - Successful backups record the immutable object location, format, size, digest, and completion time available from the provider.
 - Backup verification records what was verified and when. Verification failure does not rewrite a successful upload as if no artifact exists.
 - Backup records and artifact identities are immutable after completion.
-- A restore's source backup and target binding or installation are compatible in resource kind, format, and scope.
+- A Database restore's source backup and target Database are compatible in engine, format, and scope.
 - A restore never mutates or consumes its source backup.
-- Restoring one environment binding on a shared cluster cannot overwrite unrelated bindings.
-- A restore is complete only after provider execution and restoration verification succeed.
+- Restore orchestration creates a mandatory safety backup, restores through staging, reconciles access credentials, cuts over the target Database, verifies access, and rolls back on failure.
+- At most one active restore may operate on a Database. Restoring one Database cannot overwrite unrelated Databases in the same Cluster.
+- A restore is complete only after cutover and verification succeed.
 - Backup and restore state changes are executed through change tasks and retain their operation windows.
 
 ## Outbox events and JetStream delivery

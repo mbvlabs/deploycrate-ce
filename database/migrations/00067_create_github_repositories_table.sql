@@ -12,14 +12,10 @@ CREATE TABLE github_repositories (
     name TEXT NOT NULL,
     full_name TEXT NOT NULL,
     default_branch TEXT NOT NULL,
-    visibility TEXT NOT NULL CHECK (visibility IN ('public', 'private', 'internal')),
+    visibility TEXT NOT NULL,
     html_url TEXT NOT NULL,
     last_synced_at TIMESTAMPTZ NOT NULL
 );
-
-CREATE INDEX github_repositories_active_installation
-    ON github_repositories (github_installation_id, full_name)
-    WHERE removed_at IS NULL;
 -- +goose StatementEnd
 
 -- +goose Down

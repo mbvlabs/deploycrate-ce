@@ -23,6 +23,69 @@ type Client struct{}
 
 func New() Client { return Client{} }
 
+func (Client) CreateDatabase(ctx context.Context, connection Connection, database string) (bool, error) {
+	if err := validateDatabaseName(database); err != nil {
+		return false, err
+	}
+	postgres, err := connectAdministrator(ctx, connection, "postgres")
+	if err != nil {
+		return false, err
+	}
+	defer postgres.Close(context.WithoutCancel(ctx))
+	var exists bool
+	if err := postgres.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname = $1)", database).Scan(&exists); err != nil {
+		return false, fmt.Errorf("inspect PostgreSQL database %q: %w", database, err)
+	}
+	if exists {
+		return false, nil
+	}
+	if _, err := postgres.Exec(ctx, "CREATE DATABASE "+pgx.Identifier{database}.Sanitize()); err != nil {
+		return false, fmt.Errorf("create PostgreSQL database %q: %w", database, err)
+	}
+	return true, nil
+}
+
+func (Client) DropDatabase(ctx context.Context, connection Connection, database string) error {
+	if err := validateDatabaseName(database); err != nil {
+		return err
+	}
+	postgres, err := connectAdministrator(ctx, connection, "postgres")
+	if err != nil {
+		return err
+	}
+	defer postgres.Close(context.WithoutCancel(ctx))
+	if _, err := postgres.Exec(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{database}.Sanitize()+" WITH (FORCE)"); err != nil {
+		return fmt.Errorf("drop PostgreSQL database %q: %w", database, err)
+	}
+	return nil
+}
+
+func validateDatabaseName(database string) error {
+	database = strings.TrimSpace(database)
+	if database == "" || len([]byte(database)) > 63 || strings.ContainsRune(database, '\x00') {
+		return errors.New("PostgreSQL database name must be present, at most 63 bytes, and contain no null bytes")
+	}
+	return nil
+}
+
+func connectAdministrator(ctx context.Context, connection Connection, database string) (*pgx.Conn, error) {
+	configuration, err := pgx.ParseConfig("sslmode=disable")
+	if err != nil {
+		return nil, fmt.Errorf("prepare PostgreSQL administrator connection: %w", err)
+	}
+	configuration.Host = strings.TrimSpace(connection.Host)
+	configuration.Port = uint16(connection.Port)
+	configuration.Database = database
+	configuration.User = strings.TrimSpace(connection.Username)
+	configuration.Password = connection.Password
+	configuration.TLSConfig = nil
+	postgres, err := pgx.ConnectConfig(ctx, configuration)
+	if err != nil {
+		return nil, fmt.Errorf("connect to PostgreSQL with the Cluster administrator credential: %w", err)
+	}
+	return postgres, nil
+}
+
 func (Client) Check(ctx context.Context, connection Connection, database, tlsMode string) error {
 	database = strings.TrimSpace(database)
 	if database == "" {

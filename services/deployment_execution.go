@@ -27,18 +27,19 @@ func (failure *PermanentDeploymentError) Error() string { return failure.Err.Err
 func (failure *PermanentDeploymentError) Unwrap() error { return failure.Err }
 
 type deploymentScope struct {
-	Deployment       models.DeploymentEntity
-	Release          models.ReleaseEntity
-	Target           models.EnvironmentTargetEntity
-	Environment      models.EnvironmentEntity
-	Revision         models.EnvironmentStateRevisionEntity
-	State            models.EnvironmentDesiredState
-	Instance         models.InstanceEntity
-	Domain           models.EnvironmentDomainEntity
-	Runtime          models.RuntimeConfigurationEntity
-	ApplicationID    uuid.UUID
-	RegistryID       uuid.UUID
-	RegistryEndpoint string
+	Deployment           models.DeploymentEntity
+	Release              models.ReleaseEntity
+	Target               models.EnvironmentTargetEntity
+	Environment          models.EnvironmentEntity
+	Revision             models.EnvironmentStateRevisionEntity
+	State                models.EnvironmentDesiredState
+	Instance             models.InstanceEntity
+	Domain               models.EnvironmentDomainEntity
+	Runtime              models.RuntimeConfigurationEntity
+	ApplicationID        uuid.UUID
+	RegistryID           uuid.UUID
+	RegistryCredentialID uuid.UUID
+	RegistryEndpoint     string
 }
 
 type DeploymentExecution struct {
@@ -108,7 +109,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	if err := service.advance(ctx, deploymentID, "docker_candidate"); err != nil {
 		return err
 	}
-	credentials, err := service.builds.RegistryCredentials(ctx, scope.RegistryID, scope.RegistryEndpoint)
+	credentials, err := service.builds.RegistryCredentials(ctx, scope.RegistryID, scope.RegistryCredentialID, scope.RegistryEndpoint)
 	if err != nil {
 		return err
 	}
@@ -341,7 +342,7 @@ func (service *DeploymentExecution) loadScope(ctx context.Context, deployment mo
 	if err != nil {
 		return scope, errors.New("workload Release Build snapshot is invalid")
 	}
-	scope.RegistryID, scope.RegistryEndpoint = snapshot.ContainerRegistryID, snapshot.RegistryEndpoint
+	scope.RegistryID, scope.RegistryCredentialID, scope.RegistryEndpoint = snapshot.RegistryResourceID, snapshot.RegistryCredentialID, snapshot.RegistryEndpoint
 	return scope, nil
 }
 

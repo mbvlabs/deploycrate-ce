@@ -62,13 +62,13 @@ type BackupRetentionArgs struct {
 	BackupPolicyID uuid.UUID `json:"backup_policy_id" river:"unique"`
 }
 
-type ResourceRestorePrepareArgs struct {
-	ResourceRestoreID uuid.UUID `json:"resource_restore_id" river:"unique"`
+type DatabaseRestorePrepareArgs struct {
+	DatabaseRestoreID uuid.UUID `json:"database_restore_id" river:"unique"`
 }
 
-func (ResourceRestorePrepareArgs) Kind() string { return "resource_restore_prepare" }
+func (DatabaseRestorePrepareArgs) Kind() string { return "database_restore_prepare" }
 
-func (ResourceRestorePrepareArgs) InsertOpts() river.InsertOpts {
+func (DatabaseRestorePrepareArgs) InsertOpts() river.InsertOpts {
 	return river.InsertOpts{
 		Queue: BackupQueue, MaxAttempts: 1,
 		UniqueOpts: river.UniqueOpts{ByArgs: true},
@@ -76,13 +76,13 @@ func (ResourceRestorePrepareArgs) InsertOpts() river.InsertOpts {
 	}
 }
 
-type ResourceRestoreApplyArgs struct {
-	ResourceRestoreID uuid.UUID `json:"resource_restore_id" river:"unique"`
+type DatabaseRestoreApplyArgs struct {
+	DatabaseRestoreID uuid.UUID `json:"database_restore_id" river:"unique"`
 }
 
-func (ResourceRestoreApplyArgs) Kind() string { return "resource_restore_apply" }
+func (DatabaseRestoreApplyArgs) Kind() string { return "database_restore_apply" }
 
-func (ResourceRestoreApplyArgs) InsertOpts() river.InsertOpts {
+func (DatabaseRestoreApplyArgs) InsertOpts() river.InsertOpts {
 	return river.InsertOpts{
 		Queue: BackupQueue, MaxAttempts: 1,
 		UniqueOpts: river.UniqueOpts{ByArgs: true},

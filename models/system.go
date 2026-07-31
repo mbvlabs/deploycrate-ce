@@ -129,7 +129,7 @@ func (a application) FindSystemResources(
 		TableExpr("applications AS application").
 		ColumnExpr("resource.id::text AS id").
 		ColumnExpr("resource.name AS name").
-		ColumnExpr("resource.category AS category").
+		ColumnExpr("CASE WHEN resource.kind IN ('postgresql', 'mysql', 'clickhouse') THEN 'database' WHEN resource.kind = 'registry' THEN 'artifact' ELSE 'endpoint' END AS category").
 		ColumnExpr("resource.kind AS kind").
 		ColumnExpr("resource.sharing_scope AS sharing_scope").
 		ColumnExpr("binding.alias AS binding_alias").

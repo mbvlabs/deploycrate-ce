@@ -22,6 +22,22 @@ var ResourceConnectionCreate = routing.NewRouteWithUUIDID("/:id/connections", "r
 var ResourceConnectionUpdate = routing.NewRouteWithParams[ResourceConnectionParams]("/:id/connections/:connectionID", "resources.connections.update", ResourcesPrefix)
 var ResourceConnectionDestroy = routing.NewRouteWithParams[ResourceConnectionParams]("/:id/connections/:connectionID", "resources.connections.destroy", ResourcesPrefix)
 
+type ResourceEnvironmentGrantParams struct {
+	ResourceID    string `param:"id"`
+	EnvironmentID string `param:"environmentID"`
+}
+
+var ResourceEnvironmentGrantCreate = routing.NewRouteWithParams[ResourceEnvironmentGrantParams]("/:id/grants/environments/:environmentID", "resources.grants.environments.create", ResourcesPrefix)
+var ResourceEnvironmentGrantDestroy = routing.NewRouteWithParams[ResourceEnvironmentGrantParams]("/:id/grants/environments/:environmentID", "resources.grants.environments.destroy", ResourcesPrefix)
+
+type ResourceApplicationGrantParams struct {
+	ResourceID    string `param:"id"`
+	ApplicationID string `param:"applicationID"`
+}
+
+var ResourceApplicationGrantCreate = routing.NewRouteWithParams[ResourceApplicationGrantParams]("/:id/grants/applications/:applicationID", "resources.grants.applications.create", ResourcesPrefix)
+var ResourceApplicationGrantDestroy = routing.NewRouteWithParams[ResourceApplicationGrantParams]("/:id/grants/applications/:applicationID", "resources.grants.applications.destroy", ResourcesPrefix)
+
 type ResourceEndpointParams struct {
 	ResourceID string `param:"id"`
 	EndpointID string `param:"endpointID"`

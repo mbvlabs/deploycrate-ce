@@ -10,25 +10,25 @@ import (
 	"github.com/riverqueue/river"
 )
 
-type ResourceRestorePrepareWorker struct {
-	river.WorkerDefaults[jobs.ResourceRestorePrepareArgs]
-	service *services.ResourceRestore
+type DatabaseRestorePrepareWorker struct {
+	river.WorkerDefaults[jobs.DatabaseRestorePrepareArgs]
+	service *services.DatabaseRestoreWorkflow
 }
 
-func NewResourceRestorePrepareWorker(service *services.ResourceRestore) *ResourceRestorePrepareWorker {
-	return &ResourceRestorePrepareWorker{service: service}
+func NewDatabaseRestorePrepareWorker(service *services.DatabaseRestoreWorkflow) *DatabaseRestorePrepareWorker {
+	return &DatabaseRestorePrepareWorker{service: service}
 }
 
-func (worker *ResourceRestorePrepareWorker) Register(workers *river.Workers) error {
+func (worker *DatabaseRestorePrepareWorker) Register(workers *river.Workers) error {
 	return river.AddWorkerSafely(workers, worker)
 }
 
-func (worker *ResourceRestorePrepareWorker) Timeout(*river.Job[jobs.ResourceRestorePrepareArgs]) time.Duration {
+func (worker *DatabaseRestorePrepareWorker) Timeout(*river.Job[jobs.DatabaseRestorePrepareArgs]) time.Duration {
 	return time.Hour
 }
 
-func (worker *ResourceRestorePrepareWorker) Work(ctx context.Context, job *river.Job[jobs.ResourceRestorePrepareArgs]) error {
+func (worker *DatabaseRestorePrepareWorker) Work(ctx context.Context, job *river.Job[jobs.DatabaseRestorePrepareArgs]) error {
 	return runBackupWorker(ctx, "restore_prepare", job.ID, job.Attempt,
-		[]any{"resource_restore_id", job.Args.ResourceRestoreID},
-		func() error { return worker.service.Prepare(ctx, job.Args.ResourceRestoreID) })
+		[]any{"database_restore_id", job.Args.DatabaseRestoreID},
+		func() error { return worker.service.Prepare(ctx, job.Args.DatabaseRestoreID) })
 }

@@ -94,6 +94,10 @@ type Config struct {
 	Secrets           Secrets        `json:"-"`
 }
 
+func (c Config) DatabaseInstallationID() uuid.UUID {
+	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("deploycrate-ce:database-installation:"+c.InstanceID))
+}
+
 func NewConfig(version string) (Config, error) {
 	databasePassword, err := randomHex(24)
 	if err != nil {
@@ -338,7 +342,7 @@ func ConfigPaths() (string, string, string) {
 }
 
 func validHostname(value string) bool {
-	if value == "" || len(value) > 253 || strings.HasSuffix(value, ".") {
+	if value == "" || !strings.Contains(value, ".") || len(value) > 253 || strings.HasSuffix(value, ".") {
 		return false
 	}
 	for label := range strings.SplitSeq(value, ".") {

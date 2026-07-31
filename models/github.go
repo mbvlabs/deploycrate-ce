@@ -334,17 +334,18 @@ func (githubEnvironmentSource) Create(ctx context.Context, db storage.Executor, 
 }
 
 type GitHubMatchingSource struct {
-	EnvironmentSourceID uuid.UUID       `bun:"environment_source_id"`
-	EnvironmentID       uuid.UUID       `bun:"environment_id"`
-	Reference           string          `bun:"reference"`
-	AutoBuild           bool            `bun:"auto_build"`
-	RepositoryFullName  string          `bun:"repository_full_name"`
-	ContextPath         string          `bun:"context_path"`
-	BuilderReference    sql.NullString  `bun:"builder_reference"`
-	BuildpackSettings   json.RawMessage `bun:"buildpack_settings,type:jsonb"`
-	ImageRepository     string          `bun:"image_repository"`
-	RegistryID          uuid.UUID       `bun:"registry_id"`
-	RegistryEndpoint    string          `bun:"registry_endpoint"`
+	EnvironmentSourceID  uuid.UUID       `bun:"environment_source_id"`
+	EnvironmentID        uuid.UUID       `bun:"environment_id"`
+	Reference            string          `bun:"reference"`
+	AutoBuild            bool            `bun:"auto_build"`
+	RepositoryFullName   string          `bun:"repository_full_name"`
+	ContextPath          string          `bun:"context_path"`
+	BuilderReference     sql.NullString  `bun:"builder_reference"`
+	BuildpackSettings    json.RawMessage `bun:"buildpack_settings,type:jsonb"`
+	ImageRepository      string          `bun:"image_repository"`
+	RegistryResourceID   uuid.UUID       `bun:"registry_resource_id"`
+	RegistryCredentialID uuid.UUID       `bun:"registry_credential_id"`
+	RegistryEndpoint     string          `bun:"registry_endpoint"`
 }
 
 func (githubEnvironmentSource) MatchingActive(ctx context.Context, db storage.Executor, installationExternalID, repositoryExternalID int64, reference string) ([]GitHubMatchingSource, error) {
@@ -352,14 +353,18 @@ func (githubEnvironmentSource) MatchingActive(ctx context.Context, db storage.Ex
 	err := db.NewSelect().TableExpr("github_environment_sources AS binding").
 		ColumnExpr("source.id AS environment_source_id").ColumnExpr("source.environment_id").ColumnExpr("source.reference").ColumnExpr("source.auto_build").ColumnExpr("repository.full_name AS repository_full_name").
 		ColumnExpr("buildpack.context_path, buildpack.builder_reference, buildpack.settings AS buildpack_settings, buildpack.image_repository").
-		ColumnExpr("registry.id AS registry_id, registry.endpoint AS registry_endpoint").
+		ColumnExpr("registry_resource.id AS registry_resource_id, registry_credential.id AS registry_credential_id").
+		ColumnExpr("CASE WHEN registry_endpoint.port IN (80, 443) THEN registry_endpoint.address ELSE registry_endpoint.address || ':' || registry_endpoint.port::text END AS registry_endpoint").
 		Join("JOIN environment_sources AS source ON source.id = binding.environment_source_id").
 		Join("JOIN environments AS environment ON environment.id = source.environment_id").
 		Join("JOIN github_repositories AS repository ON repository.id = binding.github_repository_id").
 		Join("JOIN github_installations AS installation ON installation.id = repository.github_installation_id").
 		Join("JOIN github_apps AS app ON app.id = installation.github_app_id").
 		Join("JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = source.id").
-		Join("JOIN container_registries AS registry ON registry.id = buildpack.container_registry_id AND registry.archived_at IS NULL").
+		Join("JOIN registry_resources AS registry ON registry.resource_id = buildpack.registry_resource_id").
+		Join("JOIN resources AS registry_resource ON registry_resource.id = registry.resource_id AND registry_resource.archived_at IS NULL").
+		Join("JOIN resource_endpoints AS registry_endpoint ON registry_endpoint.resource_id = registry.resource_id AND registry_endpoint.role = 'primary' AND registry_endpoint.archived_at IS NULL").
+		Join("JOIN resource_credentials AS registry_credential ON registry_credential.resource_id = registry.resource_id AND registry_credential.archived_at IS NULL").
 		Where("installation.external_id = ?", installationExternalID).Where("repository.external_id = ?", repositoryExternalID).
 		Where("source.archived_at IS NULL").Where("environment.archived_at IS NULL").
 		Where(`EXISTS (

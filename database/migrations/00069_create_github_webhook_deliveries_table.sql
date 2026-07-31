@@ -13,12 +13,9 @@ CREATE TABLE github_webhook_deliveries (
     payload JSONB NOT NULL,
     received_at TIMESTAMPTZ NOT NULL,
     processed_at TIMESTAMPTZ,
-    status TEXT NOT NULL CHECK (status IN ('received', 'processing', 'processed', 'ignored', 'failed')),
+    status TEXT NOT NULL,
     error TEXT
 );
-
-CREATE INDEX github_webhook_deliveries_provider_lookup
-    ON github_webhook_deliveries (installation_external_id, repository_external_id, received_at DESC);
 -- +goose StatementEnd
 
 -- +goose Down

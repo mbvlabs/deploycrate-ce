@@ -322,15 +322,38 @@ func (a application) FindSystemState(
 }
 
 type MetricRollupIdentities struct {
-	Server       string `bun:"server"`
-	Application  string `bun:"application"`
-	Environment  string `bun:"environment"`
-	Release      string `bun:"release"`
-	Deployment   string `bun:"deployment"`
-	Target       string `bun:"target"`
-	Instance     string `bun:"instance"`
-	Resource     string `bun:"resource"`
-	Installation string `bun:"installation"`
+	Server              string `bun:"server"`
+	Application         string `bun:"application"`
+	Environment         string `bun:"environment"`
+	Release             string `bun:"release"`
+	Deployment          string `bun:"deployment"`
+	Target              string `bun:"target"`
+	Instance            string `bun:"instance"`
+	Resource            string `bun:"resource"`
+	Installation        string `bun:"installation"`
+	DatabaseCluster     string `bun:"database_cluster"`
+	DatabaseClusterNode string `bun:"database_cluster_node"`
+}
+
+func (a application) FindMetricDatabaseInstallationIdentities(
+	ctx context.Context,
+	db storage.Executor,
+	installationID uuid.UUID,
+) (MetricRollupIdentities, error) {
+	var identities MetricRollupIdentities
+	err := db.NewSelect().
+		TableExpr("database_node_installations AS installation").
+		ColumnExpr("installation.server_id::text AS server").
+		ColumnExpr("installation.id::text AS installation").
+		ColumnExpr("cluster.id::text AS database_cluster").
+		ColumnExpr("node.id::text AS database_cluster_node").
+		Join("JOIN database_cluster_nodes AS node ON node.id = installation.database_cluster_node_id AND node.archived_at IS NULL").
+		Join("JOIN database_clusters AS cluster ON cluster.id = node.database_cluster_id AND cluster.archived_at IS NULL").
+		Where("installation.id = ?", installationID).
+		Where("installation.archived_at IS NULL").
+		Limit(1).
+		Scan(ctx, &identities)
+	return identities, err
 }
 
 func (a application) FindMetricRollupIdentities(

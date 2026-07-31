@@ -13,14 +13,14 @@ import (
 	"deploycrate-ce/clients/objectstorage"
 )
 
-type DatabaseRestore struct {
+type DatabaseRestoreEngine struct {
 	artifact  *DatabaseArtifact
 	database  *DatabaseBackup
 	resources *ResourceManagement
 }
 
-func NewDatabaseRestore(artifact *DatabaseArtifact, database *DatabaseBackup, resources *ResourceManagement) *DatabaseRestore {
-	return &DatabaseRestore{artifact: artifact, database: database, resources: resources}
+func NewDatabaseRestoreEngine(artifact *DatabaseArtifact, database *DatabaseBackup, resources *ResourceManagement) *DatabaseRestoreEngine {
+	return &DatabaseRestoreEngine{artifact: artifact, database: database, resources: resources}
 }
 
 type DatabaseRestoreResult struct {
@@ -28,7 +28,7 @@ type DatabaseRestoreResult struct {
 	RolledBack bool
 }
 
-func (service *DatabaseRestore) Run(
+func (service *DatabaseRestoreEngine) Run(
 	ctx context.Context,
 	scope BackupScope,
 	target PostgreSQLBackupTarget,
@@ -104,7 +104,7 @@ func (service *DatabaseRestore) Run(
 	return DatabaseRestoreResult{CutoverAt: &cutoverAt}, nil
 }
 
-func (service *DatabaseRestore) resumeCutover(ctx context.Context, target PostgreSQLBackupTarget, stagingName, rollbackName string) (bool, DatabaseRestoreResult, error) {
+func (service *DatabaseRestoreEngine) resumeCutover(ctx context.Context, target PostgreSQLBackupTarget, stagingName, rollbackName string) (bool, DatabaseRestoreResult, error) {
 	rollbackExists, err := service.databaseExists(ctx, target, rollbackName)
 	if err != nil || !rollbackExists {
 		return false, DatabaseRestoreResult{}, err
@@ -130,7 +130,7 @@ func (service *DatabaseRestore) resumeCutover(ctx context.Context, target Postgr
 	return true, DatabaseRestoreResult{CutoverAt: &cutoverAt}, nil
 }
 
-func (service *DatabaseRestore) rollback(ctx context.Context, target PostgreSQLBackupTarget, stagingName, rollbackName string, cutoverAt time.Time, operationErr error) (DatabaseRestoreResult, error) {
+func (service *DatabaseRestoreEngine) rollback(ctx context.Context, target PostgreSQLBackupTarget, stagingName, rollbackName string, cutoverAt time.Time, operationErr error) (DatabaseRestoreResult, error) {
 	rollbackContext := context.WithoutCancel(ctx)
 	if exists, _ := service.databaseExists(rollbackContext, target, target.DatabaseName); exists {
 		_ = service.setConnections(rollbackContext, target, target.DatabaseName, false)
@@ -150,7 +150,7 @@ func (service *DatabaseRestore) rollback(ctx context.Context, target PostgreSQLB
 	return DatabaseRestoreResult{CutoverAt: &cutoverAt, RolledBack: true}, operationErr
 }
 
-func (service *DatabaseRestore) restoreDump(ctx context.Context, target PostgreSQLBackupTarget, databaseName, dumpPath string) error {
+func (service *DatabaseRestoreEngine) restoreDump(ctx context.Context, target PostgreSQLBackupTarget, databaseName, dumpPath string) error {
 	dump, err := os.Open(dumpPath)
 	if err != nil {
 		return err
@@ -160,7 +160,7 @@ func (service *DatabaseRestore) restoreDump(ctx context.Context, target PostgreS
 		"--username", target.Username, "--dbname", databaseName, "--exit-on-error", "--no-password")
 }
 
-func (service *DatabaseRestore) verifyDatabase(ctx context.Context, target PostgreSQLBackupTarget, databaseName string) error {
+func (service *DatabaseRestoreEngine) verifyDatabase(ctx context.Context, target PostgreSQLBackupTarget, databaseName string) error {
 	var output bytes.Buffer
 	if err := service.database.runContainerPostgres(ctx, target, nil, &output, "psql",
 		"--username", target.Username, "--dbname", databaseName, "--no-password", "--tuples-only", "--no-align", "--command", "SELECT 1"); err != nil {
@@ -172,7 +172,7 @@ func (service *DatabaseRestore) verifyDatabase(ctx context.Context, target Postg
 	return nil
 }
 
-func (service *DatabaseRestore) databaseExists(ctx context.Context, target PostgreSQLBackupTarget, databaseName string) (bool, error) {
+func (service *DatabaseRestoreEngine) databaseExists(ctx context.Context, target PostgreSQLBackupTarget, databaseName string) (bool, error) {
 	var output bytes.Buffer
 	query := "SELECT 1 FROM pg_database WHERE datname = " + postgresLiteral(databaseName)
 	if err := service.database.runContainerPostgres(ctx, target, nil, &output, "psql",
@@ -182,15 +182,15 @@ func (service *DatabaseRestore) databaseExists(ctx context.Context, target Postg
 	return strings.TrimSpace(output.String()) == "1", nil
 }
 
-func (service *DatabaseRestore) dropDatabase(ctx context.Context, target PostgreSQLBackupTarget, databaseName string) error {
+func (service *DatabaseRestoreEngine) dropDatabase(ctx context.Context, target PostgreSQLBackupTarget, databaseName string) error {
 	return service.sql(ctx, target, "postgres", "DROP DATABASE IF EXISTS "+postgresIdentifier(databaseName)+" WITH (FORCE)")
 }
 
-func (service *DatabaseRestore) renameDatabase(ctx context.Context, target PostgreSQLBackupTarget, from, to string) error {
+func (service *DatabaseRestoreEngine) renameDatabase(ctx context.Context, target PostgreSQLBackupTarget, from, to string) error {
 	return service.sql(ctx, target, "postgres", "ALTER DATABASE "+postgresIdentifier(from)+" RENAME TO "+postgresIdentifier(to))
 }
 
-func (service *DatabaseRestore) setConnections(ctx context.Context, target PostgreSQLBackupTarget, databaseName string, allowed bool) error {
+func (service *DatabaseRestoreEngine) setConnections(ctx context.Context, target PostgreSQLBackupTarget, databaseName string, allowed bool) error {
 	value := "false"
 	if allowed {
 		value = "true"
@@ -198,11 +198,11 @@ func (service *DatabaseRestore) setConnections(ctx context.Context, target Postg
 	return service.sql(ctx, target, "postgres", "ALTER DATABASE "+postgresIdentifier(databaseName)+" ALLOW_CONNECTIONS "+value)
 }
 
-func (service *DatabaseRestore) terminateConnections(ctx context.Context, target PostgreSQLBackupTarget, databaseName string) error {
+func (service *DatabaseRestoreEngine) terminateConnections(ctx context.Context, target PostgreSQLBackupTarget, databaseName string) error {
 	return service.sql(ctx, target, "postgres", "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = "+postgresLiteral(databaseName)+" AND pid <> pg_backend_pid()")
 }
 
-func (service *DatabaseRestore) sql(ctx context.Context, target PostgreSQLBackupTarget, databaseName, statement string) error {
+func (service *DatabaseRestoreEngine) sql(ctx context.Context, target PostgreSQLBackupTarget, databaseName, statement string) error {
 	return service.database.runContainerPostgres(ctx, target, nil, nil, "psql",
 		"--username", target.Username, "--dbname", databaseName, "--no-password", "--set", "ON_ERROR_STOP=1", "--command", statement)
 }

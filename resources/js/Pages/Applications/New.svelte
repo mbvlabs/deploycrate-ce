@@ -17,7 +17,7 @@
   const registries = $derived(options.registries ?? [])
   let step = $state(1)
   let buildFrontendAssets = $state(false)
-  const form = useForm(() => ({ applicationName: '', applicationSlug: '', environmentName: 'Production', environmentSlug: 'production', environmentKind: 'production', githubInstallationId: installations[0]?.id ?? '', githubRepositoryId: '', reference: '', autoBuild: true, contextPath: '.', builderReference: '', buildpackSettings: { schema_version: 2, frontend: null as FrontendSettings | null }, containerRegistryId: registries[0]?.id ?? '', imageRepository: '' }))
+	const form = useForm(() => ({ applicationName: '', applicationSlug: '', environmentName: 'Production', environmentSlug: 'production', environmentKind: 'production', githubInstallationId: installations[0]?.id ?? '', githubRepositoryId: '', reference: '', autoBuild: true, contextPath: '.', builderReference: '', buildpackSettings: { schema_version: 2, frontend: null as FrontendSettings | null }, registryResourceId: registries[0]?.id ?? '', imageRepository: '' }))
   const repositories = $derived(repositoryOptions.filter((repository) => repository.githubInstallationId === $form.githubInstallationId))
   function submit(event: SubmitEvent) {
     event.preventDefault()
@@ -31,7 +31,7 @@
   <div class="space-y-8">
     <header><p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">{environmentIntent ? 'Environments' : 'Applications'} · Step {step} of 4</p><h1 class="mt-3 text-3xl font-semibold">{environmentIntent ? 'Create a deployable Environment' : 'Configure a build-ready application'}</h1>{#if environmentIntent}<p class="mt-2 max-w-2xl text-sm text-muted-foreground">The Environment is created with its owning Application, GitHub source, Buildpacks configuration, and image destination.</p>{/if}</header>
     {#if installations.length === 0 || registries.length === 0}
-      <Card.Root><Card.Header><Card.Title>Setup prerequisites required</Card.Title><Card.Description>Connect GitHub and add a registry under Connections → Container Registries before creating an Environment.</Card.Description></Card.Header></Card.Root>
+      <Card.Root><Card.Header><Card.Title>Setup prerequisites required</Card.Title><Card.Description>Connect GitHub and add a Registry Resource under Connections before creating an Environment.</Card.Description></Card.Header></Card.Root>
     {:else}
       <form onsubmit={submit}>
         <Card.Root>
@@ -61,7 +61,7 @@
               </label>
               {#if $form.errors.settings}<p class="text-xs text-destructive sm:col-span-2">{$form.errors.settings}</p>{/if}
             {:else}
-              <FormField label="Container registry"><select bind:value={$form.containerRegistryId} class="h-9 w-full border border-input bg-background px-3 text-sm">{#each registries as registry}<option value={registry.id}>{registry.name} · {registry.endpoint}</option>{/each}</select></FormField>
+				<FormField label="Registry Resource"><select bind:value={$form.registryResourceId} class="h-9 w-full border border-input bg-background px-3 text-sm">{#each registries as registry}<option value={registry.id}>{registry.name} · {registry.endpoint}</option>{/each}</select></FormField>
               <FormField label="Image repository"><Input bind:value={$form.imageRepository} placeholder="team/application" required /></FormField>
             {/if}
           </Card.Content>

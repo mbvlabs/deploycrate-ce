@@ -6,9 +6,6 @@ CREATE TABLE github_environment_sources (
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
-
-CREATE INDEX github_environment_sources_repository
-    ON github_environment_sources (github_repository_id);
 -- +goose StatementEnd
 
 -- +goose Down

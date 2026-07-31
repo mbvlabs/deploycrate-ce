@@ -20,6 +20,21 @@ func ensureActiveUnique(
 	field string,
 	message string,
 ) error {
+	return ensureUnique(
+		ctx, db, lockKey,
+		query.Where("archived_at IS NULL").Where("id <> ?", entityID),
+		field, message,
+	)
+}
+
+func ensureUnique(
+	ctx context.Context,
+	db storage.Executor,
+	lockKey string,
+	query *bun.SelectQuery,
+	field string,
+	message string,
+) error {
 	switch db.(type) {
 	case bun.Tx, *bun.Tx:
 	default:
@@ -28,7 +43,7 @@ func ensureActiveUnique(
 	if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", lockKey); err != nil {
 		return err
 	}
-	count, err := query.Where("archived_at IS NULL").Where("id <> ?", entityID).Count(ctx)
+	count, err := query.Count(ctx)
 	if err != nil {
 		return err
 	}

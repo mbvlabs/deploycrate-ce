@@ -27,37 +27,43 @@ type BackupCredentialPayload struct {
 	AgeIdentity     string `json:"age_identity"`
 }
 
+const databaseClusterCredentialPurpose = "database-cluster-credential/v1"
+
 type BackupScope struct {
-	Backup                  models.BackupEntity
-	PolicyRetention         json.RawMessage
-	PolicyVerification      json.RawMessage
-	PolicySettings          json.RawMessage
-	DestinationProvider     string
-	DestinationEndpoint     string
-	DestinationRegion       string
-	DestinationBucket       string
-	DestinationPrefix       string
-	DestinationPathStyle    bool
-	DestinationArchived     bool
-	CredentialProvider      string
-	CredentialPayload       []byte
-	DestinationCredentialID uuid.UUID
-	CredentialArchived      bool
-	CredentialVerified      bool
-	InstallationResourceID  *uuid.UUID
-	InstallationContainer   string
-	InstallationServerID    *uuid.UUID
-	InstallationServerIPv4  string
-	InstallationArchived    bool
-	ResourceKind            string
-	ResourceCategory        string
-	ResourceManagementMode  string
-	ResourceSystemManaged   bool
-	ResourceArchived        bool
-	DatabaseName            string
-	AdministratorUsername   string
-	AdministratorPayload    []byte
-	AdministratorCount      int
+	Backup                     models.BackupEntity
+	PolicyRetention            json.RawMessage
+	PolicyVerification         json.RawMessage
+	PolicySettings             json.RawMessage
+	DestinationProvider        string
+	DestinationEndpoint        string
+	DestinationRegion          string
+	DestinationBucket          string
+	DestinationPrefix          string
+	DestinationPathStyle       bool
+	DestinationArchived        bool
+	CredentialProvider         string
+	CredentialPayload          []byte
+	DestinationCredentialID    uuid.UUID
+	CredentialArchived         bool
+	CredentialVerified         bool
+	DatabaseClusterID          *uuid.UUID
+	DatabaseClusterNodeID      *uuid.UUID
+	DatabaseNodeInstallationID *uuid.UUID
+	InstallationMethod         string
+	InstallationContainer      string
+	InstallationServerID       *uuid.UUID
+	InstallationServerIPv4     string
+	InstallationArchived       bool
+	DatabaseEngine             string
+	ClusterManagementMode      string
+	ResourceSystemManaged      bool
+	DatabaseArchived           bool
+	ClusterArchived            bool
+	ResourceID                 *uuid.UUID
+	DatabaseName               string
+	AdministratorUsername      string
+	AdministratorPayload       []byte
+	AdministratorCount         int
 }
 
 func (scope BackupScope) ObjectStorageConfig() objectstorage.Config {
@@ -154,7 +160,7 @@ func (service *BackupExecutor) Execute(ctx context.Context, backupID uuid.UUID) 
 			defer cancel()
 			_ = models.Backup.MarkFailed(persistCtx, service.db.Executor(), backupID, returnErr)
 			_ = markBackupLifecycleFailed(persistCtx, service.db.Executor(), scope.Backup, returnErr)
-			_ = failResourceRestoreSafetyBackup(persistCtx, service.db, backupID, returnErr)
+			_ = failDatabaseRestoreSafetyBackup(persistCtx, service.db, backupID, returnErr)
 		}
 	}()
 	if err := markBackupExecutionStarted(ctx, service.db.Executor(), scope.Backup); err != nil {
@@ -241,8 +247,8 @@ func backupTargetID(backup models.BackupEntity) string {
 	if backup.ServerID != nil {
 		return backup.ServerID.String()
 	}
-	if backup.ResourceID != nil {
-		return backup.ResourceID.String()
+	if backup.DatabaseID != nil {
+		return backup.DatabaseID.String()
 	}
 	return ""
 }
@@ -258,7 +264,7 @@ func (service *BackupExecutor) recordPreflightFailure(
 		operationErr,
 		models.Backup.MarkFailed(persistCtx, service.db.Executor(), backup.ID, operationErr),
 		markBackupLifecycleFailed(persistCtx, service.db.Executor(), backup, operationErr),
-		failResourceRestoreSafetyBackup(persistCtx, service.db, backup.ID, operationErr),
+		failDatabaseRestoreSafetyBackup(persistCtx, service.db, backup.ID, operationErr),
 	)
 }
 
@@ -286,12 +292,12 @@ func validateBackupScope(scope BackupScope) error {
 		}
 		return nil
 	}
-	if scope.Backup.ResourceID == nil || scope.Backup.ResourceInstallationID == nil ||
-		scope.InstallationResourceID == nil || scope.InstallationServerID == nil ||
-		*scope.InstallationResourceID != *scope.Backup.ResourceID ||
-		scope.InstallationArchived || scope.ResourceArchived ||
-		scope.ResourceKind != "postgresql" || scope.ResourceCategory != "database" ||
-		(scope.ResourceManagementMode != "managed" && !scope.ResourceSystemManaged) ||
+	if scope.Backup.DatabaseID == nil || scope.Backup.DatabaseClusterID == nil ||
+		scope.DatabaseClusterID == nil || *scope.DatabaseClusterID != *scope.Backup.DatabaseClusterID ||
+		scope.InstallationServerID == nil || scope.Backup.DatabaseNodeInstallationID == nil ||
+		scope.DatabaseNodeInstallationID == nil || *scope.DatabaseNodeInstallationID != *scope.Backup.DatabaseNodeInstallationID ||
+		scope.InstallationArchived || scope.DatabaseArchived || scope.ClusterArchived ||
+		scope.DatabaseEngine != "postgresql" || scope.ClusterManagementMode != "managed" || scope.InstallationMethod != "docker" ||
 		strings.TrimSpace(scope.DatabaseName) == "" || strings.TrimSpace(scope.InstallationContainer) == "" ||
 		scope.AdministratorCount != 1 || strings.TrimSpace(scope.AdministratorUsername) == "" ||
 		len(scope.AdministratorPayload) < 2 {
@@ -315,10 +321,10 @@ func (service *BackupExecutor) postgreSQLTarget(scope BackupScope) (PostgreSQLBa
 	plaintext, err := secretcrypto.DecryptForPurpose(
 		scope.AdministratorPayload,
 		service.config.App.SessionEncryptionKey,
-		resourceCredentialPurpose,
+		databaseClusterCredentialPurpose,
 	)
 	if err != nil {
-		return PostgreSQLBackupTarget{}, errors.New("decrypt Resource administrator credential")
+		return PostgreSQLBackupTarget{}, errors.New("decrypt Database Cluster administrator credential")
 	}
 	defer clear(plaintext)
 	var payload struct {
@@ -330,11 +336,64 @@ func (service *BackupExecutor) postgreSQLTarget(scope BackupScope) (PostgreSQLBa
 		return PostgreSQLBackupTarget{}, errors.New("Resource administrator credential is incomplete")
 	}
 	return PostgreSQLBackupTarget{
-		ResourceID: *scope.Backup.ResourceID, InstallationID: *scope.Backup.ResourceInstallationID,
-		ContainerName: scope.InstallationContainer, DatabaseName: scope.DatabaseName,
+		ResourceID: valueOrNil(scope.ResourceID), DatabaseID: *scope.Backup.DatabaseID,
+		ClusterID: *scope.Backup.DatabaseClusterID, NodeID: *scope.Backup.DatabaseClusterNodeID,
+		InstallationID: *scope.Backup.DatabaseNodeInstallationID,
+		ContainerName:  scope.InstallationContainer, DatabaseName: scope.DatabaseName,
 		Username: scope.AdministratorUsername, Password: payload.Values["password"],
 		ExcludeRiverTableData: scope.ResourceSystemManaged,
 	}, nil
+}
+
+func (service *BackupExecutor) postgreSQLTargetForDatabase(ctx context.Context, databaseID uuid.UUID) (PostgreSQLBackupTarget, error) {
+	var target struct {
+		DatabaseID           uuid.UUID  `bun:"database_id"`
+		ClusterID            uuid.UUID  `bun:"cluster_id"`
+		NodeID               uuid.UUID  `bun:"node_id"`
+		InstallationID       uuid.UUID  `bun:"installation_id"`
+		ResourceID           *uuid.UUID `bun:"resource_id"`
+		DatabaseName         string     `bun:"database_name"`
+		ContainerName        string     `bun:"container_name"`
+		Username             string     `bun:"username"`
+		AdministratorPayload []byte     `bun:"administrator_payload"`
+		SystemManaged        bool       `bun:"system_managed"`
+	}
+	err := service.db.Executor().NewSelect().TableExpr("databases AS database").
+		ColumnExpr("database.id AS database_id, database.name AS database_name, cluster.id AS cluster_id").
+		ColumnExpr("node.id AS node_id, installation.id AS installation_id, docker_installation.container_name").
+		ColumnExpr("backing.resource_id, COALESCE(resource.system_managed, FALSE) AS system_managed").
+		ColumnExpr("administrator.username, administrator.enc_payload AS administrator_payload").
+		Join("JOIN database_clusters AS cluster ON cluster.id = database.database_cluster_id AND cluster.engine = 'postgresql' AND cluster.management_mode = 'managed' AND cluster.archived_at IS NULL").
+		Join("JOIN database_cluster_nodes AS node ON node.database_cluster_id = cluster.id AND node.role = 'primary' AND node.archived_at IS NULL").
+		Join("JOIN database_node_installations AS installation ON installation.database_cluster_node_id = node.id AND installation.installation_method = 'docker' AND installation.archived_at IS NULL").
+		Join("JOIN docker_database_node_installations AS docker_installation ON docker_installation.database_node_installation_id = installation.id").
+		Join("JOIN database_cluster_credentials AS administrator ON administrator.database_cluster_id = cluster.id AND administrator.role = 'administrator' AND administrator.archived_at IS NULL").
+		Join("LEFT JOIN database_resources AS backing ON backing.database_id = database.id").
+		Join("LEFT JOIN resources AS resource ON resource.id = backing.resource_id AND resource.archived_at IS NULL").
+		Where("database.id = ?", databaseID).Where("database.archived_at IS NULL").Scan(ctx, &target)
+	if err != nil {
+		return PostgreSQLBackupTarget{}, err
+	}
+	plaintext, err := secretcrypto.DecryptForPurpose(target.AdministratorPayload, service.config.App.SessionEncryptionKey, databaseClusterCredentialPurpose)
+	if err != nil {
+		return PostgreSQLBackupTarget{}, errors.New("decrypt Database Cluster administrator credential")
+	}
+	defer clear(plaintext)
+	var payload struct {
+		SchemaVersion int               `json:"schema_version"`
+		Values        map[string]string `json:"values"`
+	}
+	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 || strings.TrimSpace(payload.Values["password"]) == "" {
+		return PostgreSQLBackupTarget{}, errors.New("Database Cluster administrator credential is incomplete")
+	}
+	return PostgreSQLBackupTarget{ResourceID: valueOrNil(target.ResourceID), DatabaseID: target.DatabaseID, ClusterID: target.ClusterID, NodeID: target.NodeID, InstallationID: target.InstallationID, ContainerName: target.ContainerName, DatabaseName: target.DatabaseName, Username: target.Username, Password: payload.Values["password"], ExcludeRiverTableData: target.SystemManaged}, nil
+}
+
+func valueOrNil(value *uuid.UUID) uuid.UUID {
+	if value == nil {
+		return uuid.Nil
+	}
+	return *value
 }
 
 func markBackupExecutionStarted(
@@ -388,12 +447,13 @@ func (service *BackupExecutor) loadScope(ctx context.Context, backupID uuid.UUID
 		CredentialProvider:  row.CredentialProvider, CredentialPayload: row.CredentialPayload,
 		DestinationCredentialID: row.DestinationCredentialID,
 		CredentialArchived:      row.CredentialArchived, CredentialVerified: row.CredentialVerified,
-		InstallationResourceID: row.InstallationResourceID,
-		InstallationContainer:  row.InstallationContainer, InstallationServerID: row.InstallationServerID,
+		DatabaseClusterID: row.DatabaseClusterID, DatabaseClusterNodeID: row.DatabaseClusterNodeID,
+		DatabaseNodeInstallationID: row.DatabaseNodeInstallationID, InstallationMethod: row.InstallationMethod,
+		InstallationContainer: row.InstallationContainer, InstallationServerID: row.InstallationServerID,
 		InstallationServerIPv4: row.InstallationServerIPv4, InstallationArchived: row.InstallationArchived,
-		ResourceKind: row.ResourceKind, ResourceCategory: row.ResourceCategory,
-		ResourceManagementMode: row.ResourceManagementMode, ResourceSystemManaged: row.ResourceSystemManaged,
-		ResourceArchived: row.ResourceArchived, DatabaseName: row.DatabaseName,
+		DatabaseEngine: row.DatabaseEngine, ClusterManagementMode: row.ClusterManagementMode,
+		ResourceSystemManaged: row.ResourceSystemManaged, DatabaseArchived: row.DatabaseArchived,
+		ClusterArchived: row.ClusterArchived, ResourceID: row.ResourceID, DatabaseName: row.DatabaseName,
 		AdministratorUsername: row.AdministratorUsername, AdministratorPayload: row.AdministratorPayload,
 		AdministratorCount: row.AdministratorCount,
 	}, nil

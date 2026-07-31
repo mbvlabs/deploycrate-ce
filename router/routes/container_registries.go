@@ -2,8 +2,8 @@ package routes
 
 import "deploycrate-ce/internal/routing"
 
-const ContainerRegistriesPrefix = "/connections/registries"
+const RegistryResourcesPrefix = "/connections/registries"
 
-var ContainerRegistries = routing.NewSimpleRoute("", "container-registries.index", ContainerRegistriesPrefix)
-var ContainerRegistryCreate = routing.NewSimpleRoute("", "container-registries.create", ContainerRegistriesPrefix)
-var ContainerRegistryDestroy = routing.NewRouteWithUUIDID("/:id", "container-registries.destroy", ContainerRegistriesPrefix)
+var RegistryResources = routing.NewSimpleRoute("", "registry-resources.index", RegistryResourcesPrefix)
+var RegistryResourceCreate = routing.NewSimpleRoute("", "registry-resources.create", RegistryResourcesPrefix)
+var RegistryResourceDestroy = routing.NewRouteWithUUIDID("/:id", "registry-resources.destroy", RegistryResourcesPrefix)

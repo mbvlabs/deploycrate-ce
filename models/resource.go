@@ -19,9 +19,8 @@ type ResourceEntity struct {
 	CreatedAt      time.Time                  `bun:"created_at"`
 	UpdatedAt      time.Time                  `bun:"updated_at"`
 	Name           string                     `bun:"name"`
-	Category       string                     `bun:"category"`
+	Slug           string                     `bun:"slug"`
 	Kind           string                     `bun:"kind"`
-	DatabaseName   string                     `bun:"database_name"`
 	ManagementMode ResourceManagementModeEnum `bun:"management_mode"`
 	SharingScope   ResourceSharingScopeEnum   `bun:"sharing_scope"`
 	SystemManaged  bool                       `bun:"system_managed"`
@@ -30,21 +29,18 @@ type ResourceEntity struct {
 
 func (e *ResourceEntity) Validate() error {
 	e.Name = strings.TrimSpace(e.Name)
-	e.Category = strings.ToLower(strings.TrimSpace(e.Category))
+	e.Slug = strings.ToLower(strings.TrimSpace(e.Slug))
 	e.Kind = strings.ToLower(strings.TrimSpace(e.Kind))
-	e.DatabaseName = strings.TrimSpace(e.DatabaseName)
 	e.ManagementMode = ResourceManagementModeEnum(strings.ToLower(strings.TrimSpace(e.ManagementMode.String())))
 	e.SharingScope = ResourceSharingScopeEnum(strings.ToLower(strings.TrimSpace(e.SharingScope.String())))
 	builder := validation.NewBuilder()
 	builder.Required("name", e.Name)
-	if !ResourceCategoryKindSupported(e.Category, e.Kind) {
-		builder.Add("kind", "unsupported", "category and kind must match a supported resource kind")
+	builder.Required("slug", e.Slug)
+	if !validSlug(e.Slug) {
+		builder.Add("slug", "format", "slug must contain lowercase letters, numbers, and single hyphens")
 	}
-	if e.Kind == "postgresql" {
-		builder.Required("databaseName", e.DatabaseName)
-		if len([]byte(e.DatabaseName)) > 63 || strings.ContainsRune(e.DatabaseName, '\x00') {
-			builder.Add("databaseName", "format", "PostgreSQL database name must be at most 63 bytes and cannot contain null bytes")
-		}
+	if _, ok := FindResourceKind(e.Kind); !ok {
+		builder.Add("kind", "unsupported", "resource kind is not supported")
 	}
 	if !e.ManagementMode.IsValid() {
 		builder.Add("managementMode", "unsupported", "management mode must be managed or external")
@@ -73,9 +69,8 @@ func (r resource) Find(
 
 type CreateResourceData struct {
 	Name           string
-	Category       string
+	Slug           string
 	Kind           string
-	DatabaseName   string
 	ManagementMode ResourceManagementModeEnum
 	SharingScope   ResourceSharingScopeEnum
 	SystemManaged  bool
@@ -92,9 +87,8 @@ func (r resource) Create(
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 		Name:           data.Name,
-		Category:       data.Category,
+		Slug:           data.Slug,
 		Kind:           data.Kind,
-		DatabaseName:   data.DatabaseName,
 		ManagementMode: data.ManagementMode,
 		SharingScope:   data.SharingScope,
 		ArchivedAt:     data.ArchivedAt,
@@ -105,6 +99,9 @@ func (r resource) Create(
 		return ResourceEntity{}, errors.Join(ErrDomainValidation, err)
 	}
 	if err := r.ensureActiveNameAvailable(ctx, db, entity.Name, nil); err != nil {
+		return ResourceEntity{}, err
+	}
+	if err := r.ensureActiveSlugAvailable(ctx, db, entity.Slug, nil); err != nil {
 		return ResourceEntity{}, err
 	}
 
@@ -119,9 +116,8 @@ type UpdateResourceData struct {
 	ID             uuid.UUID
 	UpdatedAt      time.Time
 	Name           string
-	Category       string
+	Slug           string
 	Kind           string
-	DatabaseName   string
 	ManagementMode ResourceManagementModeEnum
 	SharingScope   ResourceSharingScopeEnum
 	SystemManaged  bool
@@ -137,9 +133,8 @@ func (r resource) Update(
 		ID:             data.ID,
 		UpdatedAt:      time.Now(),
 		Name:           data.Name,
-		Category:       data.Category,
+		Slug:           data.Slug,
 		Kind:           data.Kind,
-		DatabaseName:   data.DatabaseName,
 		ManagementMode: data.ManagementMode,
 		SharingScope:   data.SharingScope,
 		ArchivedAt:     data.ArchivedAt,
@@ -152,14 +147,16 @@ func (r resource) Update(
 	if err := r.ensureActiveNameAvailable(ctx, db, entity.Name, &entity.ID); err != nil {
 		return ResourceEntity{}, err
 	}
+	if err := r.ensureActiveSlugAvailable(ctx, db, entity.Slug, &entity.ID); err != nil {
+		return ResourceEntity{}, err
+	}
 
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
 		Column("name").
-		Column("category").
+		Column("slug").
 		Column("kind").
-		Column("database_name").
 		Column("management_mode").
 		Column("sharing_scope").
 		Column("system_managed").
@@ -254,9 +251,8 @@ func (r resource) Upsert(
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 		Name:           data.Name,
-		Category:       data.Category,
+		Slug:           data.Slug,
 		Kind:           data.Kind,
-		DatabaseName:   data.DatabaseName,
 		ManagementMode: data.ManagementMode,
 		SharingScope:   data.SharingScope,
 		ArchivedAt:     data.ArchivedAt,
@@ -269,14 +265,16 @@ func (r resource) Upsert(
 	if err := r.ensureActiveNameAvailable(ctx, db, entity.Name, &entity.ID); err != nil {
 		return ResourceEntity{}, err
 	}
+	if err := r.ensureActiveSlugAvailable(ctx, db, entity.Slug, &entity.ID); err != nil {
+		return ResourceEntity{}, err
+	}
 
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
 		Set("name = excluded.name").
-		Set("category = excluded.category").
+		Set("slug = excluded.slug").
 		Set("kind = excluded.kind").
-		Set("database_name = excluded.database_name").
 		Set("management_mode = excluded.management_mode").
 		Set("sharing_scope = excluded.sharing_scope").
 		Set("system_managed = excluded.system_managed").
@@ -287,6 +285,27 @@ func (r resource) Upsert(
 	}
 
 	return entity, nil
+}
+
+func (r resource) ensureActiveSlugAvailable(ctx context.Context, db storage.Executor, slug string, exceptID *uuid.UUID) error {
+	normalizedSlug := strings.ToLower(strings.TrimSpace(slug))
+	if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "resource-slug:"+normalizedSlug); err != nil {
+		return err
+	}
+	query := db.NewSelect().Model((*ResourceEntity)(nil)).
+		Where("lower(slug) = ?", normalizedSlug).
+		Where("archived_at IS NULL")
+	if exceptID != nil {
+		query = query.Where("id <> ?", *exceptID)
+	}
+	count, err := query.Count(ctx)
+	if err != nil {
+		return err
+	}
+	if count > 0 {
+		return errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "slug", Code: "taken", Message: "an active Resource already uses this slug"}})
+	}
+	return nil
 }
 
 func (r resource) ensureActiveNameAvailable(ctx context.Context, db storage.Executor, name string, exceptID *uuid.UUID) error {

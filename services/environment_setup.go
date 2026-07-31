@@ -317,10 +317,13 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 	}
 	err = service.db.Executor().NewSelect().TableExpr("applications AS application").
 		ColumnExpr("application.name AS application_name, environment_source.repository, environment_source.reference, buildpack.context_path").
-		ColumnExpr("registry.name AS registry_name, registry.endpoint AS registry_endpoint").
+		ColumnExpr("registry_resource.name AS registry_name").
+		ColumnExpr("CASE WHEN registry_endpoint.port IN (80, 443) THEN registry_endpoint.address ELSE registry_endpoint.address || ':' || registry_endpoint.port::text END AS registry_endpoint").
 		Join("JOIN environment_sources AS environment_source ON environment_source.environment_id = ? AND environment_source.archived_at IS NULL", environmentID).
 		Join("JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = environment_source.id").
-		Join("JOIN container_registries AS registry ON registry.id = buildpack.container_registry_id").
+		Join("JOIN registry_resources AS registry ON registry.resource_id = buildpack.registry_resource_id").
+		Join("JOIN resources AS registry_resource ON registry_resource.id = registry.resource_id").
+		Join("JOIN resource_endpoints AS registry_endpoint ON registry_endpoint.resource_id = registry.resource_id AND registry_endpoint.role = 'primary' AND registry_endpoint.archived_at IS NULL").
 		Where("application.id = ?", applicationID).Limit(1).Scan(ctx, &source)
 	if err != nil {
 		return EnvironmentOverview{}, err
@@ -661,11 +664,13 @@ func (service *EnvironmentSetup) DeploymentEvents(
 func (service *EnvironmentSetup) Options(ctx context.Context) (EnvironmentSetupOptions, error) {
 	options := make([]EnvironmentSetupResourceOption, 0)
 	err := service.db.Executor().NewSelect().TableExpr("resources AS resource").
-		ColumnExpr("resource.id, resource.name, resource.kind, resource.database_name, endpoint.id AS endpoint_id").
+		ColumnExpr("resource.id, resource.name, resource.kind, database.name AS database_name, endpoint.id AS endpoint_id").
 		ColumnExpr("endpoint.address || ':' || endpoint.port::text AS endpoint").
 		ColumnExpr("credential.id AS credential_id, COALESCE(credential.name, '') AS credential").
+		Join("JOIN database_resources AS backing ON backing.resource_id = resource.id").
+		Join("JOIN databases AS database ON database.id = backing.database_id AND database.archived_at IS NULL").
 		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = resource.id AND endpoint.archived_at IS NULL").
-		Join("LEFT JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.resource_installation_id IS NULL AND credential.archived_at IS NULL").
+		Join("LEFT JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.archived_at IS NULL").
 		Where("resource.archived_at IS NULL").Where("resource.kind = 'postgresql'").
 		OrderExpr("resource.name, endpoint.role, credential.name").Scan(ctx, &options)
 	return EnvironmentSetupOptions{Resources: options}, err
@@ -686,6 +691,7 @@ type environmentSetupSource struct {
 	BuildpackSettings     json.RawMessage `bun:"buildpack_settings"`
 	ImageRepository       string          `bun:"image_repository"`
 	RegistryID            uuid.UUID       `bun:"registry_id"`
+	RegistryCredentialID  uuid.UUID       `bun:"registry_credential_id"`
 	RegistryEndpoint      string          `bun:"registry_endpoint"`
 }
 
@@ -877,8 +883,9 @@ func (service *EnvironmentSetup) Complete(
 		SchemaVersion: 1, SourceEventID: event.ID, EnvironmentStateRevisionID: revision.ID,
 		Repository: source.Repository, Reference: source.Reference, SourceRevision: revisionSHA,
 		ContextPath: source.ContextPath, BuilderReference: nullableStringPointer(source.BuilderReference),
-		ImageRepository: source.ImageRepository, ContainerRegistryID: source.RegistryID,
-		RegistryEndpoint: source.RegistryEndpoint, Settings: source.BuildpackSettings,
+		ImageRepository: source.ImageRepository, RegistryResourceID: source.RegistryID,
+		RegistryCredentialID: source.RegistryCredentialID,
+		RegistryEndpoint:     source.RegistryEndpoint, Settings: source.BuildpackSettings,
 		BPGOTargets: input.BPGOTargets,
 	})
 	if err != nil {
@@ -955,8 +962,9 @@ func (service *EnvironmentSetup) QueueManualDeploy(
 		SchemaVersion: 1, SourceEventID: event.ID, EnvironmentStateRevisionID: stateRevision.ID,
 		Repository: source.Repository, Reference: source.Reference, SourceRevision: revisionSHA,
 		ContextPath: source.ContextPath, BuilderReference: nullableStringPointer(source.BuilderReference),
-		ImageRepository: source.ImageRepository, ContainerRegistryID: source.RegistryID,
-		RegistryEndpoint: source.RegistryEndpoint, Settings: source.BuildpackSettings,
+		ImageRepository: source.ImageRepository, RegistryResourceID: source.RegistryID,
+		RegistryCredentialID: source.RegistryCredentialID,
+		RegistryEndpoint:     source.RegistryEndpoint, Settings: source.BuildpackSettings,
 		BPGOTargets: state.Runtime.BPGOTargets,
 	})
 	if err != nil {
@@ -1659,13 +1667,17 @@ func (service *EnvironmentSetup) loadSource(ctx context.Context, applicationID, 
 		ColumnExpr("source.id AS environment_source_id, source.reference, source.repository").
 		ColumnExpr("repository.id AS repository_id, installation.id AS installation_id").
 		ColumnExpr("buildpack.context_path, buildpack.builder_reference, buildpack.settings AS buildpack_settings, buildpack.image_repository").
-		ColumnExpr("registry.id AS registry_id, registry.endpoint AS registry_endpoint").
+		ColumnExpr("registry_resource.id AS registry_id, registry_credential.id AS registry_credential_id").
+		ColumnExpr("CASE WHEN registry_endpoint.port IN (80, 443) THEN registry_endpoint.address ELSE registry_endpoint.address || ':' || registry_endpoint.port::text END AS registry_endpoint").
 		Join("JOIN environment_sources AS source ON source.environment_id = environment.id AND source.archived_at IS NULL").
 		Join("JOIN github_environment_sources AS binding ON binding.environment_source_id = source.id").
 		Join("JOIN github_repositories AS repository ON repository.id = binding.github_repository_id").
 		Join("JOIN github_installations AS installation ON installation.id = repository.github_installation_id").
 		Join("JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = source.id").
-		Join("JOIN container_registries AS registry ON registry.id = buildpack.container_registry_id AND registry.archived_at IS NULL").
+		Join("JOIN registry_resources AS registry ON registry.resource_id = buildpack.registry_resource_id").
+		Join("JOIN resources AS registry_resource ON registry_resource.id = registry.resource_id AND registry_resource.archived_at IS NULL").
+		Join("JOIN resource_endpoints AS registry_endpoint ON registry_endpoint.resource_id = registry.resource_id AND registry_endpoint.role = 'primary' AND registry_endpoint.archived_at IS NULL").
+		Join("JOIN resource_credentials AS registry_credential ON registry_credential.resource_id = registry.resource_id AND registry_credential.archived_at IS NULL").
 		Where("environment.id = ?", environmentID).Where("environment.application_id = ?", applicationID).Limit(1).Scan(ctx, &source)
 	if err != nil {
 		return source, models.GitHubRepositoryEntity{}, models.GitHubInstallationEntity{}, err
@@ -1721,7 +1733,18 @@ func (service *EnvironmentSetup) prepareResources(ctx context.Context, environme
 		if err != nil || resource.ArchivedAt.Valid || resource.Kind != "postgresql" {
 			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected PostgreSQL Resource is unavailable"))
 		}
-		input.Database = resource.DatabaseName
+		allowed, err := models.ResourceSelectableByEnvironment(ctx, service.db.Executor(), resource.ID, environmentID)
+		if err != nil {
+			return nil, err
+		}
+		if !allowed {
+			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected PostgreSQL Resource is not granted to this Environment"))
+		}
+		database, err := models.DatabaseResource.FindByResource(ctx, service.db.Executor(), resource.ID)
+		if err != nil {
+			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected PostgreSQL Resource has no active Database backing"))
+		}
+		input.Database = database.DatabaseName
 		endpoint, err := models.ResourceEndpoint.Find(ctx, service.db.Executor(), input.EndpointID)
 		if err != nil || endpoint.ArchivedAt.Valid || endpoint.ResourceID != resource.ID || (endpoint.PrivateNetworkID != nil && *endpoint.PrivateNetworkID != networkID) {
 			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected Resource endpoint is unavailable from the Environment target"))
@@ -1730,7 +1753,7 @@ func (service *EnvironmentSetup) prepareResources(ctx context.Context, environme
 			return nil, errors.Join(models.ErrDomainValidation, errors.New("PostgreSQL application credential is required"))
 		}
 		credential, err := models.ResourceCredential.Find(ctx, service.db.Executor(), *input.CredentialID)
-		if err != nil || credential.ArchivedAt.Valid || credential.ResourceID != resource.ID || credential.ResourceInstallationID != nil {
+		if err != nil || credential.ArchivedAt.Valid || credential.ResourceID != resource.ID {
 			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected Resource credential is unavailable"))
 		}
 		values, err := service.resources.credentialSecretValues(credential)

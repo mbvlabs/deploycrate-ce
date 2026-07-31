@@ -139,7 +139,9 @@ func bootstrapSetupControlPlane(ctx context.Context, input setup.BootstrapInput)
 		},
 		DatabaseExternal: input.DatabaseExternal,
 		DatabaseHost:     input.DatabaseHost, DatabasePort: input.DatabasePort,
-		DatabaseName: input.DatabaseName, DatabaseSSLMode: input.DatabaseSSLMode,
+		DatabaseName: input.DatabaseName, DatabaseUser: input.DatabaseUser,
+		DatabasePassword: input.DatabasePassword, DatabaseSSLMode: input.DatabaseSSLMode,
+		DatabaseInstallationID: input.DatabaseInstallationID,
 		Backup: services.BootstrapBackupInput{
 			Enabled: input.Backup.Enabled, InstanceID: input.Backup.InstanceID,
 			Provider: input.Backup.Provider, Endpoint: input.Backup.Endpoint,

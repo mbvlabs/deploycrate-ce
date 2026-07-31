@@ -28,7 +28,7 @@ type ApplicationSetupData struct {
 	ContextPath          string
 	BuilderReference     string
 	BuildpackSettings    json.RawMessage
-	ContainerRegistryID  uuid.UUID
+	RegistryResourceID   uuid.UUID
 	ImageRepository      string
 }
 
@@ -39,9 +39,15 @@ type ApplicationSetupResult struct {
 }
 
 type ApplicationSetupOptions struct {
-	Installations []GitHubInstallationSummary      `json:"installations"`
-	Repositories  []models.GitHubRepositoryEntity  `json:"repositories"`
-	Registries    []models.ContainerRegistryEntity `json:"registries"`
+	Installations []GitHubInstallationSummary     `json:"installations"`
+	Repositories  []models.GitHubRepositoryEntity `json:"repositories"`
+	Registries    []RegistryResourceOption        `json:"registries"`
+}
+
+type RegistryResourceOption struct {
+	ID       uuid.UUID `json:"id" bun:"id"`
+	Name     string    `json:"name" bun:"name"`
+	Endpoint string    `json:"endpoint" bun:"endpoint"`
 }
 
 type ApplicationListItem struct {
@@ -112,9 +118,8 @@ func (service *ApplicationSetup) Create(ctx context.Context, data ApplicationSet
 		return ApplicationSetupResult{}, err
 	}
 	_ = installation
-	registry, err := models.ContainerRegistry.Find(ctx, service.db.Executor(), data.ContainerRegistryID)
-	if err != nil || registry.ArchivedAt.Valid {
-		return ApplicationSetupResult{}, errors.Join(models.ErrDomainValidation, errors.New("container registry is unavailable"))
+	if err := validateRegistrySelection(ctx, service.db.Executor(), data.RegistryResourceID); err != nil {
+		return ApplicationSetupResult{}, err
 	}
 
 	tx, err := service.db.BeginTx(ctx, nil)
@@ -142,7 +147,7 @@ func (service *ApplicationSetup) Create(ctx context.Context, data ApplicationSet
 		return ApplicationSetupResult{}, err
 	}
 	sourceSettings := json.RawMessage(`{"schema_version":1}`)
-	source, err := models.EnvironmentSource.Create(ctx, tx, models.CreateEnvironmentSourceData{Kind: "git", Provider: "github", Repository: repository.FullName, Reference: data.Reference, Settings: sourceSettings, AutoBuild: data.AutoBuild, EnvironmentID: environment.ID, ContainerRegistryID: &registry.ID})
+	source, err := models.EnvironmentSource.Create(ctx, tx, models.CreateEnvironmentSourceData{Kind: "git", Provider: "github", Repository: repository.FullName, Reference: data.Reference, Settings: sourceSettings, AutoBuild: data.AutoBuild, EnvironmentID: environment.ID})
 	if err != nil {
 		return ApplicationSetupResult{}, err
 	}
@@ -150,7 +155,7 @@ func (service *ApplicationSetup) Create(ctx context.Context, data ApplicationSet
 		return ApplicationSetupResult{}, err
 	}
 	builderReference := sql.NullString{String: strings.TrimSpace(data.BuilderReference), Valid: strings.TrimSpace(data.BuilderReference) != ""}
-	if _, err := models.BuildpackConfiguration.Create(ctx, tx, models.CreateBuildpackConfigurationData{ContextPath: data.ContextPath, BuilderReference: builderReference, ImageRepository: data.ImageRepository, Settings: data.BuildpackSettings, EnvironmentSourceID: source.ID, ContainerRegistryID: registry.ID}); err != nil {
+	if _, err := models.BuildpackConfiguration.Create(ctx, tx, models.CreateBuildpackConfigurationData{ContextPath: data.ContextPath, BuilderReference: builderReference, ImageRepository: data.ImageRepository, Settings: data.BuildpackSettings, EnvironmentSourceID: source.ID, RegistryResourceID: data.RegistryResourceID}); err != nil {
 		return ApplicationSetupResult{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -167,7 +172,7 @@ func (service *ApplicationSetup) Options(ctx context.Context) (ApplicationSetupO
 	}
 	app, err := models.GitHubApp.ActiveByInstance(ctx, service.db.Executor(), instanceID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ApplicationSetupOptions{Installations: []GitHubInstallationSummary{}, Repositories: []models.GitHubRepositoryEntity{}, Registries: []models.ContainerRegistryEntity{}}, nil
+		return ApplicationSetupOptions{Installations: []GitHubInstallationSummary{}, Repositories: []models.GitHubRepositoryEntity{}, Registries: []RegistryResourceOption{}}, nil
 	}
 	if err != nil {
 		return ApplicationSetupOptions{}, err
@@ -189,8 +194,8 @@ func (service *ApplicationSetup) Options(ctx context.Context) (ApplicationSetupO
 		summaries = append(summaries, GitHubInstallationSummary{GitHubInstallationEntity: installation, RepositoryCount: len(installationRepositories)})
 		repositories = append(repositories, installationRepositories...)
 	}
-	registries := make([]models.ContainerRegistryEntity, 0)
-	if err := service.db.Executor().NewSelect().Model(&registries).Where("archived_at IS NULL").OrderExpr("name ASC").Scan(ctx); err != nil {
+	registries := make([]RegistryResourceOption, 0)
+	if err := service.db.Executor().NewSelect().TableExpr("registry_resources AS registry").ColumnExpr("resource.id, resource.name").ColumnExpr("CASE WHEN endpoint.port IN (80, 443) THEN endpoint.address ELSE endpoint.address || ':' || endpoint.port::text END AS endpoint").Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.archived_at IS NULL").Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = resource.id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL").Where("EXISTS (SELECT 1 FROM resource_credentials credential WHERE credential.resource_id = resource.id AND credential.archived_at IS NULL)").OrderExpr("resource.name ASC").Scan(ctx, &registries); err != nil {
 		return ApplicationSetupOptions{}, err
 	}
 	return ApplicationSetupOptions{Installations: summaries, Repositories: repositories, Registries: registries}, nil
@@ -243,14 +248,14 @@ func (service *ApplicationSetup) details(
 		ColumnExpr("repository.id AS repository_id").ColumnExpr("repository.full_name AS repository_full_name").ColumnExpr("repository.removed_at AS repository_removed_at").
 		ColumnExpr("installation.id AS installation_id").ColumnExpr("installation.account_login AS installation_account").ColumnExpr("installation.suspended_at AS installation_suspended_at").
 		ColumnExpr("buildpack.context_path").ColumnExpr("buildpack.builder_reference").ColumnExpr("buildpack.settings AS buildpack_settings").ColumnExpr("buildpack.image_repository").
-		ColumnExpr("registry.id AS registry_id").ColumnExpr("registry.name AS registry_name").
+		ColumnExpr("registry_resource.id AS registry_id").ColumnExpr("registry_resource.name AS registry_name").
 		ColumnExpr("(SELECT event.source_revision FROM source_events AS event WHERE event.environment_source_id = source.id ORDER BY event.received_at DESC LIMIT 1) AS latest_revision").
 		ColumnExpr("(SELECT delivery.status FROM github_webhook_deliveries AS delivery WHERE delivery.repository_external_id = repository.external_id ORDER BY delivery.received_at DESC LIMIT 1) AS latest_delivery_status").
 		ColumnExpr("(SELECT build.status FROM builds AS build WHERE build.environment_source_id = source.id ORDER BY build.created_at DESC LIMIT 1) AS latest_build_status").
 		Join("JOIN environments AS environment ON environment.application_id = application.id AND environment.archived_at IS NULL").
 		Join("JOIN environment_sources AS source ON source.environment_id = environment.id AND source.archived_at IS NULL").
 		Join("JOIN github_environment_sources AS binding ON binding.environment_source_id = source.id").Join("JOIN github_repositories AS repository ON repository.id = binding.github_repository_id").Join("JOIN github_installations AS installation ON installation.id = repository.github_installation_id").
-		Join("JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = source.id").Join("JOIN container_registries AS registry ON registry.id = buildpack.container_registry_id").
+		Join("JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = source.id").Join("JOIN registry_resources AS registry ON registry.resource_id = buildpack.registry_resource_id").Join("JOIN resources AS registry_resource ON registry_resource.id = registry.resource_id").
 		Where("application.id = ?", applicationID).Where("application.archived_at IS NULL").Where("application.slug <> ?", models.SystemApplicationSlug)
 	if environmentID != nil {
 		query = query.Where("environment.id = ?", *environmentID)
@@ -319,9 +324,8 @@ func (service *ApplicationSetup) updateSource(
 	if err != nil {
 		return err
 	}
-	registry, err := models.ContainerRegistry.Find(ctx, service.db.Executor(), data.ContainerRegistryID)
-	if err != nil || registry.ArchivedAt.Valid {
-		return errors.Join(models.ErrDomainValidation, errors.New("container registry is unavailable"))
+	if err := validateRegistrySelection(ctx, service.db.Executor(), data.RegistryResourceID); err != nil {
+		return err
 	}
 	if len(data.BuildpackSettings) == 0 {
 		data.BuildpackSettings = models.DefaultBuildpackSettings()
@@ -335,8 +339,7 @@ func (service *ApplicationSetup) updateSource(
 	if err != nil {
 		return err
 	}
-	registryID := registry.ID
-	if _, err := models.EnvironmentSource.Update(ctx, tx, models.UpdateEnvironmentSourceData{ID: source.ID, ArchivedAt: source.ArchivedAt, Kind: "git", Provider: "github", Repository: repository.FullName, Reference: normalizeGitReference(data.Reference), Settings: source.Settings, AutoBuild: data.AutoBuild, EnvironmentID: source.EnvironmentID, ContainerRegistryID: &registryID}); err != nil {
+	if _, err := models.EnvironmentSource.Update(ctx, tx, models.UpdateEnvironmentSourceData{ID: source.ID, ArchivedAt: source.ArchivedAt, Kind: "git", Provider: "github", Repository: repository.FullName, Reference: normalizeGitReference(data.Reference), Settings: source.Settings, AutoBuild: data.AutoBuild, EnvironmentID: source.EnvironmentID}); err != nil {
 		return err
 	}
 	if _, err := tx.NewUpdate().TableExpr("github_environment_sources").Set("github_repository_id = ?", repository.ID).Set("updated_at = ?", time.Now().UTC()).Where("environment_source_id = ?", source.ID).Exec(ctx); err != nil {
@@ -346,11 +349,29 @@ func (service *ApplicationSetup) updateSource(
 	if err := tx.NewSelect().Model(&buildpack).Where("environment_source_id = ?", source.ID).Scan(ctx); err != nil {
 		return err
 	}
-	_, err = models.BuildpackConfiguration.Update(ctx, tx, models.UpdateBuildpackConfigurationData{ID: buildpack.ID, ContextPath: data.ContextPath, BuilderReference: sql.NullString{String: strings.TrimSpace(data.BuilderReference), Valid: strings.TrimSpace(data.BuilderReference) != ""}, ImageRepository: strings.TrimSpace(data.ImageRepository), Settings: data.BuildpackSettings, EnvironmentSourceID: source.ID, ContainerRegistryID: registry.ID})
+	_, err = models.BuildpackConfiguration.Update(ctx, tx, models.UpdateBuildpackConfigurationData{ID: buildpack.ID, ContextPath: data.ContextPath, BuilderReference: sql.NullString{String: strings.TrimSpace(data.BuilderReference), Valid: strings.TrimSpace(data.BuilderReference) != ""}, ImageRepository: strings.TrimSpace(data.ImageRepository), Settings: data.BuildpackSettings, EnvironmentSourceID: source.ID, RegistryResourceID: data.RegistryResourceID})
 	if err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func validateRegistrySelection(ctx context.Context, db storage.Executor, resourceID uuid.UUID) error {
+	var selection struct {
+		Kind            string `bun:"kind"`
+		EndpointCount   int    `bun:"endpoint_count"`
+		CredentialCount int    `bun:"credential_count"`
+	}
+	err := db.NewSelect().TableExpr("registry_resources AS registry").
+		ColumnExpr("resource.kind").
+		ColumnExpr("(SELECT count(*) FROM resource_endpoints endpoint WHERE endpoint.resource_id = resource.id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL) AS endpoint_count").
+		ColumnExpr("(SELECT count(*) FROM resource_credentials credential WHERE credential.resource_id = resource.id AND credential.archived_at IS NULL) AS credential_count").
+		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.archived_at IS NULL").
+		Where("registry.resource_id = ?", resourceID).Scan(ctx, &selection)
+	if err != nil || selection.Kind != "registry" || selection.EndpointCount != 1 || selection.CredentialCount != 1 {
+		return errors.Join(models.ErrDomainValidation, errors.New("Registry Resource is unavailable or does not have one active endpoint and access credential"))
+	}
+	return nil
 }
 
 func (service *ApplicationSetup) Archive(ctx context.Context, applicationID uuid.UUID) error {

@@ -28,9 +28,9 @@ var resourceKindCatalog = []ResourceKindDefinition{
 	{Kind: "mysql", Label: "MySQL", Category: "database", Protocols: []string{"mysql", "tcp"}, EndpointRoles: []string{"primary", "replica"}, TLSModes: resourceTLSModes(), CredentialFields: databaseCredentialFields(), HealthCheckKinds: []string{"tcp", "mysql"}, DefaultPort: 3306, DefaultProtocol: "mysql", DefaultTLSMode: "prefer"},
 	{Kind: "redis", Label: "Redis", Category: "cache", Protocols: []string{"redis", "tcp"}, EndpointRoles: []string{"primary", "replica"}, TLSModes: resourceTLSModes(), CredentialFields: []ResourceCredentialField{{Name: "password", Label: "Password", Required: false, Secret: true}}, HealthCheckKinds: []string{"tcp", "redis"}, DefaultPort: 6379, DefaultProtocol: "redis", DefaultTLSMode: "disable"},
 	{Kind: "clickhouse", Label: "ClickHouse", Category: "database", Protocols: []string{"clickhouse", "http", "https", "tcp"}, EndpointRoles: []string{"primary", "replica", "wireguard"}, TLSModes: resourceTLSModes(), CredentialFields: databaseCredentialFields(), HealthCheckKinds: []string{"tcp", "http", "clickhouse"}, DefaultPort: 8123, DefaultProtocol: "http", DefaultTLSMode: "disable"},
-	{Kind: "registry", Label: "OCI Registry", Category: "service", Protocols: []string{"http", "https"}, EndpointRoles: []string{"primary"}, TLSModes: resourceTLSModes(), CredentialFields: []ResourceCredentialField{{Name: "password", Label: "Password", Required: true, Secret: true}}, HealthCheckKinds: []string{"http", "tcp"}, DefaultPort: 5000, DefaultProtocol: "http", DefaultTLSMode: "disable"},
-	{Kind: "http", Label: "HTTP", Category: "service", Protocols: []string{"http", "https"}, EndpointRoles: []string{"primary", "replica"}, TLSModes: resourceTLSModes(), CredentialFields: []ResourceCredentialField{{Name: "token", Label: "Token", Required: false, Secret: true}}, HealthCheckKinds: []string{"http", "tcp"}, DefaultPort: 80, DefaultProtocol: "http", DefaultTLSMode: "disable"},
-	{Kind: "tcp", Label: "Generic TCP", Category: "service", Protocols: []string{"tcp"}, EndpointRoles: []string{"primary", "replica"}, TLSModes: resourceTLSModes(), CredentialFields: []ResourceCredentialField{}, HealthCheckKinds: []string{"tcp"}, DefaultPort: 1, DefaultProtocol: "tcp", DefaultTLSMode: "disable"},
+	{Kind: "registry", Label: "OCI Registry", Category: "artifact", Protocols: []string{"http", "https"}, EndpointRoles: []string{"primary"}, TLSModes: resourceTLSModes(), CredentialFields: []ResourceCredentialField{{Name: "password", Label: "Password", Required: true, Secret: true}}, HealthCheckKinds: []string{"http", "tcp"}, DefaultPort: 5000, DefaultProtocol: "http", DefaultTLSMode: "disable"},
+	{Kind: "http", Label: "HTTP", Category: "endpoint", Protocols: []string{"http", "https"}, EndpointRoles: []string{"primary", "replica"}, TLSModes: resourceTLSModes(), CredentialFields: []ResourceCredentialField{{Name: "token", Label: "Token", Required: false, Secret: true}}, HealthCheckKinds: []string{"http", "tcp"}, DefaultPort: 80, DefaultProtocol: "http", DefaultTLSMode: "disable"},
+	{Kind: "tcp", Label: "Generic TCP", Category: "endpoint", Protocols: []string{"tcp"}, EndpointRoles: []string{"primary", "replica"}, TLSModes: resourceTLSModes(), CredentialFields: []ResourceCredentialField{}, HealthCheckKinds: []string{"tcp"}, DefaultPort: 1, DefaultProtocol: "tcp", DefaultTLSMode: "disable"},
 }
 
 func resourceTLSModes() []string {
@@ -61,6 +61,14 @@ func FindResourceKind(kind string) (ResourceKindDefinition, bool) {
 func ResourceCategoryKindSupported(category, kind string) bool {
 	definition, ok := FindResourceKind(kind)
 	return ok && definition.Category == category
+}
+
+func ResourceCategory(kind string) string {
+	definition, ok := FindResourceKind(kind)
+	if !ok {
+		return ""
+	}
+	return definition.Category
 }
 
 func (definition ResourceKindDefinition) SupportsProtocol(protocol string) bool {

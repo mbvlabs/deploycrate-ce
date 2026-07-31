@@ -6,7 +6,7 @@ CREATE TABLE github_app_setup_attempts (
     updated_at TIMESTAMPTZ NOT NULL,
     instance_id UUID NOT NULL,
     user_id UUID NOT NULL REFERENCES users (id) ON DELETE RESTRICT,
-    purpose TEXT NOT NULL CHECK (purpose IN ('manifest_registration', 'installation')),
+    purpose TEXT NOT NULL,
     state_prefix TEXT NOT NULL,
     state_digest BYTEA NOT NULL,
     owner_type TEXT,
@@ -15,10 +15,6 @@ CREATE TABLE github_app_setup_attempts (
     completed_at TIMESTAMPTZ,
     error TEXT
 );
-
-CREATE INDEX github_app_setup_attempts_active
-    ON github_app_setup_attempts (instance_id, purpose, expires_at)
-    WHERE completed_at IS NULL;
 -- +goose StatementEnd
 
 -- +goose Down

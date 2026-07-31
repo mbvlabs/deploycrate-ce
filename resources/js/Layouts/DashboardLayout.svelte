@@ -131,8 +131,8 @@
         <Sidebar.GroupContent>
           <Sidebar.Menu>
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.containerRegistries())} tooltipContent="Container Registries">
-                {#snippet child({ props })}<Link {...props} href={routes.containerRegistries()}><KeyRoundIcon /><span>Container Registries</span></Link>{/snippet}
+				<Sidebar.MenuButton isActive={$page.url.startsWith(routes.registryResources())} tooltipContent="Registry Resources">
+				{#snippet child({ props })}<Link {...props} href={routes.registryResources()}><KeyRoundIcon /><span>Registry Resources</span></Link>{/snippet}
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>
@@ -180,11 +180,11 @@
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.systemJobs())} tooltipContent="Jobs">
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.systemTasks())} tooltipContent="System Tasks">
                 {#snippet child({ props })}
-                  <Link {...props} href={routes.systemJobs()}>
+                  <Link {...props} href={routes.systemTasks()}>
                     <ListTodoIcon />
-                    <span>Jobs</span>
+                    <span>System Tasks</span>
                   </Link>
                 {/snippet}
               </Sidebar.MenuButton>

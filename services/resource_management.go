@@ -44,9 +44,8 @@ func NewResourceManagement(db storage.Pool, cfg config.Config, secrets *Environm
 
 type ResourceInput struct {
 	Name           string
-	Category       string
+	Slug           string
 	Kind           string
-	DatabaseName   string
 	ManagementMode models.ResourceManagementModeEnum
 	SharingScope   models.ResourceSharingScopeEnum
 }
@@ -82,11 +81,10 @@ type ResourceEndpointInput struct {
 }
 
 type ResourceCredentialInput struct {
-	Name                   string
-	Username               string
-	Metadata               json.RawMessage
-	SecretValues           map[string]string
-	ResourceInstallationID *uuid.UUID
+	Name         string
+	Username     string
+	Metadata     json.RawMessage
+	SecretValues map[string]string
 }
 
 type ResourceInstallationInput struct {
@@ -123,7 +121,7 @@ type ResourceHealthCheckInput struct {
 	FailureThreshold       int32
 	SuccessThreshold       int32
 	Enabled                bool
-	ResourceInstallationID uuid.UUID
+	ResourceInstallationID *uuid.UUID
 	ResourceEndpointID     *uuid.UUID
 	ResourceCredentialID   *uuid.UUID
 }
@@ -144,7 +142,7 @@ func defaultResourceHealthCheckInput(
 	input := &ResourceHealthCheckInput{
 		Name: name, Kind: resource.Kind, Configuration: json.RawMessage(`{}`),
 		IntervalSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 3, SuccessThreshold: 1,
-		Enabled: true, ResourceInstallationID: installation.ID, ResourceEndpointID: &endpoint.ID,
+		Enabled: true, ResourceInstallationID: &installation.ID, ResourceEndpointID: &endpoint.ID,
 	}
 	if credential != nil {
 		input.ResourceCredentialID = &credential.ID
@@ -156,34 +154,44 @@ func (service *ResourceManagement) List(ctx context.Context, filters models.Reso
 	items := make([]models.ResourceListItem, 0)
 	query := service.db.Executor().NewSelect().
 		TableExpr("resources AS resource").
-		ColumnExpr("resource.id, resource.name, resource.category, resource.kind, resource.database_name, resource.management_mode, resource.sharing_scope").
+		ColumnExpr("resource.id, resource.name, resource.slug, resource.kind, resource.management_mode, resource.sharing_scope").
+		ColumnExpr("CASE WHEN resource.kind IN ('postgresql', 'mysql', 'clickhouse') THEN 'database' WHEN resource.kind = 'registry' THEN 'artifact' ELSE 'endpoint' END AS category").
+		ColumnExpr("COALESCE(database.name, '') AS database_name").
+		Join("LEFT JOIN database_resources AS database_backing ON database_backing.resource_id = resource.id").
+		Join("LEFT JOIN databases AS database ON database.id = database_backing.database_id AND database.archived_at IS NULL").
 		ColumnExpr("(SELECT count(*) FROM environment_resources AS connection WHERE connection.resource_id = resource.id AND connection.archived_at IS NULL) AS connection_count").
-		ColumnExpr("(SELECT count(*) FROM resource_installations AS installation WHERE installation.resource_id = resource.id AND installation.archived_at IS NULL) AS installation_count").
+		ColumnExpr(`CASE WHEN resource.sharing_scope = 'environment' THEN
+			(SELECT count(*) FROM resource_environment_grants AS access_grant WHERE access_grant.resource_id = resource.id AND access_grant.archived_at IS NULL)
+			WHEN resource.sharing_scope = 'application' THEN
+			(SELECT count(*) FROM resource_application_grants AS access_grant WHERE access_grant.resource_id = resource.id AND access_grant.archived_at IS NULL)
+			ELSE 0 END AS grant_count`).
+		ColumnExpr(`(SELECT count(*) FROM resource_installations AS installation WHERE installation.resource_id = resource.id AND installation.archived_at IS NULL) +
+			(SELECT count(*) FROM database_node_installations AS installation
+			 JOIN database_cluster_nodes AS node ON node.id = installation.database_cluster_node_id AND node.archived_at IS NULL
+			 JOIN databases AS installed_database ON installed_database.database_cluster_id = node.database_cluster_id AND installed_database.archived_at IS NULL
+			 JOIN database_resources AS installed_backing ON installed_backing.database_id = installed_database.id
+			 WHERE installed_backing.resource_id = resource.id AND installation.archived_at IS NULL) AS installation_count`).
 		ColumnExpr("(SELECT count(*) FROM resource_endpoints AS endpoint WHERE endpoint.resource_id = resource.id AND endpoint.archived_at IS NULL) AS endpoint_count").
 		ColumnExpr(`CASE
 			WHEN EXISTS (
 				SELECT 1 FROM resource_health_checks AS health_check
-				JOIN resource_installations AS installation ON installation.id = health_check.resource_installation_id AND installation.archived_at IS NULL
 				JOIN resource_health_check_statuses AS status ON status.health_check_id = health_check.id
-				WHERE installation.resource_id = resource.id AND health_check.archived_at IS NULL AND health_check.enabled = TRUE
+				WHERE health_check.resource_id = resource.id AND health_check.archived_at IS NULL AND health_check.enabled = TRUE
 					AND status.expires_at > CURRENT_TIMESTAMP AND status.state = 'unhealthy'
 			) THEN 'unhealthy'
 			WHEN EXISTS (
 				SELECT 1 FROM resource_health_checks AS health_check
-				JOIN resource_installations AS installation ON installation.id = health_check.resource_installation_id AND installation.archived_at IS NULL
 				JOIN resource_health_check_statuses AS status ON status.health_check_id = health_check.id
-				WHERE installation.resource_id = resource.id AND health_check.archived_at IS NULL AND health_check.enabled = TRUE
+				WHERE health_check.resource_id = resource.id AND health_check.archived_at IS NULL AND health_check.enabled = TRUE
 					AND status.expires_at > CURRENT_TIMESTAMP AND status.state = 'degraded'
 			) THEN 'degraded'
 			WHEN EXISTS (
 				SELECT 1 FROM resource_health_checks AS health_check
-				JOIN resource_installations AS installation ON installation.id = health_check.resource_installation_id AND installation.archived_at IS NULL
-				WHERE installation.resource_id = resource.id AND health_check.archived_at IS NULL AND health_check.enabled = TRUE
+				WHERE health_check.resource_id = resource.id AND health_check.archived_at IS NULL AND health_check.enabled = TRUE
 			) AND NOT EXISTS (
 				SELECT 1 FROM resource_health_checks AS health_check
-				JOIN resource_installations AS installation ON installation.id = health_check.resource_installation_id AND installation.archived_at IS NULL
 				LEFT JOIN resource_health_check_statuses AS status ON status.health_check_id = health_check.id
-				WHERE installation.resource_id = resource.id AND health_check.archived_at IS NULL AND health_check.enabled = TRUE
+				WHERE health_check.resource_id = resource.id AND health_check.archived_at IS NULL AND health_check.enabled = TRUE
 					AND (status.health_check_id IS NULL OR status.expires_at <= CURRENT_TIMESTAMP OR status.state <> 'healthy')
 			) THEN 'healthy'
 			ELSE 'unknown'
@@ -198,7 +206,7 @@ func (service *ResourceManagement) List(ctx context.Context, filters models.Reso
 		query = query.Where("resource.kind = ?", filters.Kind)
 	}
 	if filters.Category != "" {
-		query = query.Where("resource.category = ?", filters.Category)
+		query = query.Where("CASE WHEN resource.kind IN ('postgresql', 'mysql', 'clickhouse') THEN 'database' WHEN resource.kind = 'registry' THEN 'artifact' ELSE 'endpoint' END = ?", filters.Category)
 	}
 	if filters.ManagementMode != "" {
 		query = query.Where("resource.management_mode = ?", filters.ManagementMode)
@@ -210,8 +218,14 @@ func (service *ResourceManagement) List(ctx context.Context, filters models.Reso
 }
 
 func (service *ResourceManagement) Options(ctx context.Context) (models.ResourceFormOptions, error) {
+	kinds := make([]models.ResourceKindDefinition, 0)
+	for _, definition := range models.ResourceKindCatalog() {
+		if definition.Kind != models.DatabaseEngineMySQL && definition.Kind != "registry" {
+			kinds = append(kinds, definition)
+		}
+	}
 	options := models.ResourceFormOptions{
-		Kinds:               models.ResourceKindCatalog(),
+		Kinds:               kinds,
 		Environments:        make([]models.ResourceEnvironmentOption, 0),
 		Servers:             make([]models.ResourceServerOption, 0),
 		PrivateNetworks:     make([]models.ResourceNetworkOption, 0),
@@ -220,7 +234,7 @@ func (service *ResourceManagement) Options(ctx context.Context) (models.Resource
 	queries := []func() error{
 		func() error {
 			return service.db.Executor().NewSelect().TableExpr("environments AS environment").
-				ColumnExpr("environment.id, environment.name, environment.kind, application.name AS application_name").
+				ColumnExpr("environment.id, environment.name, environment.kind, application.id AS application_id, application.name AS application_name").
 				Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
 				Where("environment.archived_at IS NULL").Where("application.slug <> ?", models.SystemApplicationSlug).
 				OrderExpr("application.name, environment.name").Scan(ctx, &options.Environments)
@@ -284,11 +298,29 @@ func (service *ResourceManagement) Details(ctx context.Context, resourceID uuid.
 	}
 	detail := models.ResourceDetails{
 		Resource: resource, Connections: make([]models.ResourceConnectionDetail, 0),
+		EnvironmentGrants: make([]models.ResourceEnvironmentGrantDetail, 0), ApplicationGrants: make([]models.ResourceApplicationGrantDetail, 0),
 		Endpoints: make([]models.ResourceEndpointEntity, 0), Credentials: make([]models.ResourceCredentialEntity, 0),
 		Installations: make([]models.ResourceInstallationDetail, 0), Volumes: make([]models.ResourceVolumeDetail, 0),
 		Mounts: make([]models.ResourceMountDetail, 0), HealthChecks: make([]models.ResourceHealthCheckDetail, 0),
 	}
 	queries := []func() error{
+		func() error {
+			return service.db.Executor().NewSelect().TableExpr("resource_environment_grants AS access_grant").
+				ColumnExpr("access_grant.*").
+				ColumnExpr("environment.name AS environment_name, environment.kind AS environment_kind").
+				ColumnExpr("application.id AS application_id, application.name AS application_name").
+				Join("JOIN environments AS environment ON environment.id = access_grant.environment_id AND environment.archived_at IS NULL").
+				Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
+				Where("access_grant.resource_id = ?", resourceID).Where("access_grant.archived_at IS NULL").
+				OrderExpr("application.name, environment.name").Scan(ctx, &detail.EnvironmentGrants)
+		},
+		func() error {
+			return service.db.Executor().NewSelect().TableExpr("resource_application_grants AS access_grant").
+				ColumnExpr("access_grant.*, application.name AS application_name").
+				Join("JOIN applications AS application ON application.id = access_grant.application_id AND application.archived_at IS NULL").
+				Where("access_grant.resource_id = ?", resourceID).Where("access_grant.archived_at IS NULL").
+				OrderExpr("application.name").Scan(ctx, &detail.ApplicationGrants)
+		},
 		func() error {
 			return service.db.Executor().NewSelect().TableExpr("environment_resources AS connection").
 				ColumnExpr("connection.*").
@@ -332,15 +364,26 @@ func (service *ResourceManagement) Details(ctx context.Context, resourceID uuid.
 				ColumnExpr("CASE WHEN status.expires_at > CURRENT_TIMESTAMP THEN status.state ELSE 'unknown' END AS state").
 				ColumnExpr("CASE WHEN status.health_check_id IS NOT NULL AND status.expires_at <= CURRENT_TIMESTAMP THEN 'Health status is stale.' ELSE COALESCE(status.message, '') END AS message").
 				ColumnExpr("status.latency_ms, COALESCE(status.consecutive_successes, 0) AS consecutive_successes, COALESCE(status.consecutive_failures, 0) AS consecutive_failures, status.observed_at, status.expires_at").
-				Join("JOIN resource_installations AS installation ON installation.id = health_check.resource_installation_id").
 				Join("LEFT JOIN resource_health_check_statuses AS status ON status.health_check_id = health_check.id").
-				Where("installation.resource_id = ?", resourceID).Where("health_check.archived_at IS NULL").OrderExpr("health_check.name").Scan(ctx, &detail.HealthChecks)
+				Where("health_check.resource_id = ?", resourceID).Where("health_check.archived_at IS NULL").OrderExpr("health_check.name").Scan(ctx, &detail.HealthChecks)
 		},
 	}
 	for _, query := range queries {
 		if err := query(); err != nil {
 			return models.ResourceDetails{}, err
 		}
+	}
+	var backing models.ResourceDatabaseBackingDetail
+	err = service.db.Executor().NewSelect().TableExpr("database_resources AS backing").
+		ColumnExpr("database.id AS database_id, database.name AS database_name, cluster.id AS cluster_id, cluster.name AS cluster_name, cluster.sharing_mode").
+		Join("JOIN databases AS database ON database.id = backing.database_id AND database.archived_at IS NULL").
+		Join("JOIN database_clusters AS cluster ON cluster.id = database.database_cluster_id AND cluster.archived_at IS NULL").
+		Where("backing.resource_id = ?", resourceID).Scan(ctx, &backing)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return models.ResourceDetails{}, err
+	}
+	if err == nil {
+		detail.DatabaseBacking = &backing
 	}
 	for index := range detail.Installations {
 		service.observeInstallation(ctx, &detail.Installations[index])
@@ -349,6 +392,9 @@ func (service *ResourceManagement) Details(ctx context.Context, resourceID uuid.
 }
 
 func (service *ResourceManagement) CreateResource(ctx context.Context, input CreateResourceInput) (models.ResourceEntity, error) {
+	if input.Resource.Kind == models.DatabaseEnginePostgreSQL || input.Resource.Kind == models.DatabaseEngineMySQL {
+		return models.ResourceEntity{}, domainError("kind", "databaseCluster", "database Resources are created through a Database Cluster")
+	}
 	if input.Resource.ManagementMode == models.ResourceManagementExternal && input.Endpoint == nil {
 		return models.ResourceEntity{}, domainError("endpoint", "required", "external Resources require a primary endpoint")
 	}
@@ -364,17 +410,13 @@ func (service *ResourceManagement) CreateResource(ctx context.Context, input Cre
 	if input.Resource.ManagementMode == models.ResourceManagementExternal && (input.Endpoint.Role != "primary" || input.Endpoint.PrivateNetworkID != nil || input.Endpoint.ResourceInstallationID != nil) {
 		return models.ResourceEntity{}, domainError("endpoint", "primary", "external Resources require a primary origin endpoint")
 	}
-	if input.Resource.ManagementMode == models.ResourceManagementManaged && input.Resource.Kind == "postgresql" && input.Credential == nil {
-		return models.ResourceEntity{}, domainError("credential", "required", "managed PostgreSQL Resources require a Resource administrator credential")
-	}
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return models.ResourceEntity{}, err
 	}
 	defer tx.Rollback()
 	resource, err := models.Resource.Create(ctx, tx, models.CreateResourceData{
-		Name: input.Resource.Name, Category: input.Resource.Category, Kind: input.Resource.Kind,
-		DatabaseName:   input.Resource.DatabaseName,
+		Name: input.Resource.Name, Slug: input.Resource.Slug, Kind: input.Resource.Kind,
 		ManagementMode: input.Resource.ManagementMode, SharingScope: input.Resource.SharingScope,
 		SystemManaged: false,
 	})
@@ -427,10 +469,6 @@ func (service *ResourceManagement) CreateResource(ctx context.Context, input Cre
 	var credential *models.ResourceCredentialEntity
 	if input.Credential != nil {
 		credentialInput := *input.Credential
-		if installation != nil && resource.Kind == "postgresql" {
-			credentialInput.ResourceInstallationID = &installation.ID
-			credentialInput.Name = "Resource administrator"
-		}
 		created, createErr := service.createCredential(ctx, tx, resource, credentialInput)
 		if createErr != nil {
 			return models.ResourceEntity{}, prefixResourceValidation(createErr, "credential")
@@ -446,7 +484,7 @@ func (service *ResourceManagement) CreateResource(ctx context.Context, input Cre
 			return models.ResourceEntity{}, domainError("healthCheck", "topology", "an initial health check requires an installation")
 		}
 		candidate := *healthInput
-		candidate.ResourceInstallationID = installation.ID
+		candidate.ResourceInstallationID = &installation.ID
 		if endpoint != nil {
 			candidate.ResourceEndpointID = &endpoint.ID
 		}
@@ -479,9 +517,23 @@ func (service *ResourceManagement) UpdateResource(ctx context.Context, resourceI
 	if err := service.validateResourceTransition(ctx, tx, resource, input); err != nil {
 		return models.ResourceEntity{}, err
 	}
+	if currentScope := resource.SharingScope; currentScope != input.SharingScope {
+		now := time.Now().UTC()
+		if input.SharingScope != models.ResourceSharingEnvironment {
+			if _, err := tx.NewUpdate().TableExpr("resource_environment_grants").Set("archived_at = ?", now).Set("updated_at = ?", now).
+				Where("resource_id = ?", resource.ID).Where("archived_at IS NULL").Exec(ctx); err != nil {
+				return models.ResourceEntity{}, err
+			}
+		}
+		if input.SharingScope != models.ResourceSharingApplication {
+			if _, err := tx.NewUpdate().TableExpr("resource_application_grants").Set("archived_at = ?", now).Set("updated_at = ?", now).
+				Where("resource_id = ?", resource.ID).Where("archived_at IS NULL").Exec(ctx); err != nil {
+				return models.ResourceEntity{}, err
+			}
+		}
+	}
 	updated, err := models.Resource.Update(ctx, tx, models.UpdateResourceData{
-		ID: resource.ID, Name: input.Name, Category: input.Category, Kind: input.Kind,
-		DatabaseName:   input.DatabaseName,
+		ID: resource.ID, Name: input.Name, Slug: input.Slug, Kind: input.Kind,
 		ManagementMode: input.ManagementMode, SharingScope: input.SharingScope,
 		SystemManaged: resource.SystemManaged, ArchivedAt: resource.ArchivedAt,
 	})
@@ -513,25 +565,13 @@ func (service *ResourceManagement) ArchiveResource(ctx context.Context, resource
 	if bindings > 0 {
 		return domainError("resource", "dependency", "archive active Environment bindings before archiving this Resource")
 	}
-	backupPolicies, err := tx.NewSelect().TableExpr("backup_policies").
-		Where("resource_id = ?", resourceID).
-		Where("target_type = 'resource'").
-		Where("archived_at IS NULL").
-		Where("activated_at IS NOT NULL").
-		Count(ctx)
-	if err != nil {
-		return err
-	}
-	if backupPolicies > 0 {
-		return domainError("resource", "backup_policy", "pause or archive the active backup policy before archiving this Resource")
-	}
-	privateAccess, err := tx.NewSelect().TableExpr("resource_endpoints").Where("resource_id = ?", resourceID).
-		Where("private_network_id IS NOT NULL").Where("archived_at IS NULL").Count(ctx)
+	privateAccess, err := tx.NewSelect().TableExpr("wireguard_device_resource_grants").Where("resource_id = ?", resourceID).
+		Where("revoked_at IS NULL").Count(ctx)
 	if err != nil {
 		return err
 	}
 	if privateAccess > 0 {
-		return domainError("resource", "private_access", "remove this Resource from its private network before archiving it")
+		return domainError("resource", "private_access", "revoke active WireGuard device grants before archiving this Resource")
 	}
 	now := time.Now().UTC()
 	statements := []struct {
@@ -539,7 +579,7 @@ func (service *ResourceManagement) ArchiveResource(ctx context.Context, resource
 		where string
 	}{
 		{"resource_volume_mounts", "resource_installation_id IN (SELECT id FROM resource_installations WHERE resource_id = ?)"},
-		{"resource_health_checks", "resource_installation_id IN (SELECT id FROM resource_installations WHERE resource_id = ?)"},
+		{"resource_health_checks", "resource_id = ?"},
 		{"resource_endpoints", "resource_id = ?"},
 		{"resource_credentials", "resource_id = ?"},
 		{"resource_installations", "resource_id = ?"},
@@ -575,9 +615,6 @@ func (service *ResourceManagement) loadResource(ctx context.Context, db storage.
 }
 
 func (service *ResourceManagement) validateResourceTransition(ctx context.Context, db storage.Executor, current models.ResourceEntity, input ResourceInput) error {
-	if current.Kind == "postgresql" && current.DatabaseName != strings.TrimSpace(input.DatabaseName) {
-		return domainError("databaseName", "immutable", "Resource database cannot be changed after creation")
-	}
 	if current.ManagementMode != input.ManagementMode {
 		return domainError("managementMode", "immutable", "Resource management mode cannot be changed after creation")
 	}
@@ -593,17 +630,24 @@ func (service *ResourceManagement) validateResourceTransition(ctx context.Contex
 			return domainError("kind", "topology", "archive active endpoints, credentials, and health checks before changing Resource kind")
 		}
 	}
-	if current.ManagementMode != input.ManagementMode && input.ManagementMode == models.ResourceManagementExternal {
-		managedTopology, err := db.NewSelect().TableExpr("resources AS resource").Where("resource.id = ?", current.ID).
-			Where(`EXISTS (SELECT 1 FROM resource_installations WHERE resource_id = resource.id AND archived_at IS NULL)
-				OR EXISTS (SELECT 1 FROM resource_volumes WHERE resource_id = resource.id AND archived_at IS NULL)
-				OR EXISTS (SELECT 1 FROM resource_endpoints WHERE resource_id = resource.id AND resource_installation_id IS NOT NULL AND archived_at IS NULL)
-				OR EXISTS (SELECT 1 FROM resource_credentials WHERE resource_id = resource.id AND resource_installation_id IS NOT NULL AND archived_at IS NULL)`).Count(ctx)
+	if current.SharingScope != input.SharingScope {
+		ineligibleConnections, err := db.NewSelect().TableExpr("environment_resources AS connection").
+			Join("JOIN environments AS environment ON environment.id = connection.environment_id AND environment.archived_at IS NULL").
+			Where("connection.resource_id = ?", current.ID).Where("connection.archived_at IS NULL").
+			Where(`NOT (CASE
+				WHEN ? = 'global' THEN TRUE
+				WHEN ? = 'environment' THEN EXISTS (
+					SELECT 1 FROM resource_environment_grants access_grant
+					WHERE access_grant.resource_id = connection.resource_id AND access_grant.environment_id = connection.environment_id AND access_grant.archived_at IS NULL)
+				WHEN ? = 'application' THEN EXISTS (
+					SELECT 1 FROM resource_application_grants access_grant
+					WHERE access_grant.resource_id = connection.resource_id AND access_grant.application_id = environment.application_id AND access_grant.archived_at IS NULL)
+				ELSE FALSE END)`, input.SharingScope, input.SharingScope, input.SharingScope).Count(ctx)
 		if err != nil {
 			return err
 		}
-		if managedTopology > 0 {
-			return domainError("managementMode", "topology", "archive managed placement topology before changing this Resource to external")
+		if ineligibleConnections != 0 {
+			return domainError("sharingScope", "connection", "disconnect or migrate Resource Connections that are not eligible under the new sharing scope")
 		}
 	}
 	if input.ManagementMode == models.ResourceManagementExternal {
@@ -730,10 +774,7 @@ func (service *ResourceManagement) DisconnectEnvironment(ctx context.Context, re
 		return err
 	}
 	dependencies, err := tx.NewSelect().TableExpr("environment_resources AS connection").Where("connection.id = ?", connectionID).
-		Where(`EXISTS (SELECT 1 FROM network_access_rules WHERE environment_resource_id = connection.id AND archived_at IS NULL)
-			OR EXISTS (SELECT 1 FROM backup_policies WHERE environment_resource_id = connection.id AND archived_at IS NULL)
-			OR EXISTS (SELECT 1 FROM backups WHERE environment_resource_id = connection.id)
-			OR EXISTS (SELECT 1 FROM resource_restores WHERE source_environment_resource_id = connection.id OR target_environment_resource_id = connection.id)`).Count(ctx)
+		Where(`EXISTS (SELECT 1 FROM network_access_rules WHERE environment_resource_id = connection.id AND archived_at IS NULL)`).Count(ctx)
 	if err != nil {
 		return err
 	}
@@ -747,6 +788,13 @@ func (service *ResourceManagement) DisconnectEnvironment(ctx context.Context, re
 }
 
 func (service *ResourceManagement) validateConnectionTopology(ctx context.Context, db storage.Executor, resourceID uuid.UUID, input ResourceConnectionInput) error {
+	allowed, err := models.ResourceSelectableByEnvironment(ctx, db, resourceID, input.EnvironmentID)
+	if err != nil {
+		return err
+	}
+	if !allowed {
+		return domainError("environmentId", "grant", "Resource is not granted to this Environment")
+	}
 	environments, err := db.NewSelect().TableExpr("environments AS environment").
 		Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
 		Where("environment.id = ?", input.EnvironmentID).Where("environment.archived_at IS NULL").Count(ctx)
@@ -770,7 +818,7 @@ func (service *ResourceManagement) validateConnectionTopology(ctx context.Contex
 	}
 	if input.ResourceCredentialID != nil {
 		credentials, err := db.NewSelect().TableExpr("resource_credentials").Where("id = ?", *input.ResourceCredentialID).
-			Where("resource_id = ?", resourceID).Where("resource_installation_id IS NULL").Where("archived_at IS NULL").Count(ctx)
+			Where("resource_id = ?", resourceID).Where("archived_at IS NULL").Count(ctx)
 		if err != nil {
 			return err
 		}
@@ -912,7 +960,7 @@ func (service *ResourceManagement) createManagedPrimaryEndpoint(ctx context.Cont
 	return models.ResourceEndpoint.Create(ctx, db, models.CreateResourceEndpointData{
 		Name: "Primary service", Role: "primary", Address: "127.0.0.1", Port: mapping.HostPort,
 		Protocol: definition.DefaultProtocol, TlsMode: definition.DefaultTLSMode,
-		Settings:   json.RawMessage(fmt.Sprintf(`{"database":%q}`, resource.DatabaseName)),
+		Settings:   json.RawMessage(`{}`),
 		ResourceID: resource.ID, ResourceInstallationID: &installationID,
 	})
 }
@@ -965,7 +1013,7 @@ func (service *ResourceManagement) syncManagedEndpoints(ctx context.Context, db 
 		if _, err := models.ResourceEndpoint.Update(ctx, db, models.UpdateResourceEndpointData{
 			ID: endpoint.ID, Name: endpoint.Name, Role: "primary", Address: address,
 			Port: mapping.HostPort, Protocol: definition.DefaultProtocol, TlsMode: endpoint.TlsMode,
-			Settings: json.RawMessage(fmt.Sprintf(`{"database":%q}`, resource.DatabaseName)), ArchivedAt: endpoint.ArchivedAt, ResourceID: resource.ID,
+			Settings: endpoint.Settings, ArchivedAt: endpoint.ArchivedAt, ResourceID: resource.ID,
 			ResourceInstallationID: &installation.ID, PrivateNetworkID: endpoint.PrivateNetworkID,
 		}); err != nil {
 			return err
@@ -1048,11 +1096,11 @@ func (service *ResourceManagement) credentialSecretValues(credential models.Reso
 }
 
 func (service *ResourceManagement) reconcilePostgreSQLCredential(ctx context.Context, db storage.Executor, resource models.ResourceEntity, credential models.ResourceCredentialEntity, administrator *models.ResourceCredentialEntity) error {
-	database := ""
-	if credential.ResourceInstallationID == nil {
-		database = resource.DatabaseName
+	backing, err := models.DatabaseResource.FindByResource(ctx, db, resource.ID)
+	if err != nil {
+		return fmt.Errorf("load PostgreSQL Database backing: %w", err)
 	}
-	return service.reconcilePostgreSQLCredentialInDatabase(ctx, db, resource, credential, administrator, database)
+	return service.reconcilePostgreSQLCredentialInDatabase(ctx, db, resource, credential, administrator, backing.DatabaseName)
 }
 
 func (service *ResourceManagement) reconcilePostgreSQLDatabaseCredentials(ctx context.Context, resourceID, installationID uuid.UUID, database string) error {
@@ -1063,40 +1111,28 @@ func (service *ResourceManagement) reconcilePostgreSQLDatabaseCredentials(ctx co
 	if resource.ArchivedAt.Valid || resource.Kind != "postgresql" || resource.ManagementMode != models.ResourceManagementManaged {
 		return errors.New("PostgreSQL credential reconciliation requires an active managed Resource")
 	}
-	installations, err := service.db.Executor().NewSelect().TableExpr("resource_installations").
-		Where("id = ?", installationID).
-		Where("resource_id = ?", resourceID).
-		Where("archived_at IS NULL").
-		Count(ctx)
-	if err != nil {
+	var installationCount int
+	if err := service.db.Executor().NewSelect().TableExpr("database_node_installations AS installation").
+		ColumnExpr("count(*)").
+		Join("JOIN database_cluster_nodes AS node ON node.id = installation.database_cluster_node_id AND node.archived_at IS NULL").
+		Join("JOIN databases AS database ON database.database_cluster_id = node.database_cluster_id AND database.archived_at IS NULL").
+		Join("JOIN database_resources AS backing ON backing.database_id = database.id AND backing.resource_id = ?", resourceID).
+		Where("installation.id = ?", installationID).Where("installation.archived_at IS NULL").Scan(ctx, &installationCount); err != nil {
 		return err
 	}
-	if installations != 1 {
-		return errors.New("PostgreSQL credential reconciliation requires the active target installation")
-	}
-	administrators := make([]models.ResourceCredentialEntity, 0, 2)
-	if err := service.db.Executor().NewSelect().Model(&administrators).
-		Where("resource_id = ?", resourceID).
-		Where("resource_installation_id = ?", installationID).
-		Where("archived_at IS NULL").
-		Limit(2).
-		Scan(ctx); err != nil {
-		return err
-	}
-	if len(administrators) != 1 {
-		return errors.New("PostgreSQL credential reconciliation requires exactly one Resource administrator credential")
+	if installationCount != 1 {
+		return errors.New("PostgreSQL credential reconciliation requires the active Database Node Installation")
 	}
 	credentials := make([]models.ResourceCredentialEntity, 0)
 	if err := service.db.Executor().NewSelect().Model(&credentials).
 		Where("resource_id = ?", resourceID).
-		Where("resource_installation_id IS NULL").
 		Where("archived_at IS NULL").
 		OrderExpr("created_at").
 		Scan(ctx); err != nil {
 		return err
 	}
 	for _, credential := range credentials {
-		if err := service.reconcilePostgreSQLCredentialInDatabase(ctx, service.db.Executor(), resource, credential, &administrators[0], database); err != nil {
+		if err := service.reconcilePostgreSQLCredentialInDatabase(ctx, service.db.Executor(), resource, credential, nil, database); err != nil {
 			return err
 		}
 	}
@@ -1104,45 +1140,39 @@ func (service *ResourceManagement) reconcilePostgreSQLDatabaseCredentials(ctx co
 }
 
 func (service *ResourceManagement) reconcilePostgreSQLCredentialInDatabase(ctx context.Context, db storage.Executor, resource models.ResourceEntity, credential models.ResourceCredentialEntity, administrator *models.ResourceCredentialEntity, database string) error {
-	var installationID uuid.UUID
-	if credential.ResourceInstallationID != nil {
-		installationID = *credential.ResourceInstallationID
-	} else {
-		installations := make([]uuid.UUID, 0, 2)
-		if err := db.NewSelect().TableExpr("resource_installations").ColumnExpr("id").Where("resource_id = ?", resource.ID).Where("archived_at IS NULL").Limit(2).Scan(ctx, &installations); err != nil {
-			return err
-		}
-		if len(installations) != 1 {
-			return errors.New("PostgreSQL role reconciliation requires exactly one active Resource installation")
-		}
-		installationID = installations[0]
+	_ = administrator
+	var topology struct {
+		ClusterID             uuid.UUID `bun:"cluster_id"`
+		AdministratorUsername string    `bun:"administrator_username"`
+		AdministratorPayload  []byte    `bun:"administrator_payload"`
+		Address               string    `bun:"address"`
+		Port                  int32     `bun:"port"`
 	}
-
-	if administrator == nil {
-		administrators := make([]models.ResourceCredentialEntity, 0, 2)
-		if err := db.NewSelect().Model(&administrators).
-			Where("resource_id = ?", resource.ID).
-			Where("resource_installation_id = ?", installationID).
-			Where("archived_at IS NULL").
-			Limit(2).
-			Scan(ctx); err != nil {
-			return err
-		}
-		if len(administrators) != 1 {
-			return errors.New("PostgreSQL role reconciliation requires exactly one Resource administrator credential")
-		}
-		administrator = &administrators[0]
-	}
-	if !administrator.Username.Valid {
-		return errors.New("Resource administrator credential has no PostgreSQL username")
-	}
-	administratorValues, err := service.credentialSecretValues(*administrator)
+	err := db.NewSelect().TableExpr("database_resources AS backing").
+		ColumnExpr("cluster.id AS cluster_id, administrator.username AS administrator_username, administrator.enc_payload AS administrator_payload").
+		ColumnExpr("endpoint.address, endpoint.port").
+		Join("JOIN databases AS database ON database.id = backing.database_id AND database.archived_at IS NULL").
+		Join("JOIN database_clusters AS cluster ON cluster.id = database.database_cluster_id AND cluster.archived_at IS NULL").
+		Join("JOIN database_cluster_credentials AS administrator ON administrator.database_cluster_id = cluster.id AND administrator.role = 'administrator' AND administrator.archived_at IS NULL").
+		Join("JOIN database_cluster_endpoints AS endpoint ON endpoint.database_cluster_id = cluster.id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL").
+		Where("backing.resource_id = ?", resource.ID).Scan(ctx, &topology)
 	if err != nil {
-		return fmt.Errorf("load Resource administrator credential: %w", err)
+		return fmt.Errorf("load Database Cluster administrator and primary endpoint: %w", err)
 	}
-	administratorPassword := administratorValues["password"]
+	administratorPlaintext, err := secretcrypto.DecryptForPurpose(topology.AdministratorPayload, service.config.App.SessionEncryptionKey, databaseClusterCredentialPurpose)
+	if err != nil {
+		return fmt.Errorf("decrypt Database Cluster administrator credential: %w", err)
+	}
+	var administratorPayload struct {
+		SchemaVersion int               `json:"schema_version"`
+		Values        map[string]string `json:"values"`
+	}
+	if json.Unmarshal(administratorPlaintext, &administratorPayload) != nil || administratorPayload.SchemaVersion != 1 {
+		return errors.New("Database Cluster administrator credential is invalid")
+	}
+	administratorPassword := administratorPayload.Values["password"]
 	if administratorPassword == "" {
-		return errors.New("Resource administrator credential has no PostgreSQL password")
+		return errors.New("Database Cluster administrator credential has no PostgreSQL password")
 	}
 	targetValues, err := service.credentialSecretValues(credential)
 	if err != nil {
@@ -1152,26 +1182,9 @@ func (service *ResourceManagement) reconcilePostgreSQLCredentialInDatabase(ctx c
 		return errors.New("PostgreSQL login credential requires a username and password")
 	}
 
-	var origin struct {
-		Address string `bun:"address"`
-		Port    int32  `bun:"port"`
-	}
-	err = db.NewSelect().TableExpr("resource_endpoints").ColumnExpr("address, port").
-		Where("resource_id = ?", resource.ID).
-		Where("resource_installation_id = ?", installationID).
-		Where("role = 'primary'").
-		Where("private_network_id IS NULL").
-		Where("archived_at IS NULL").
-		Scan(ctx, &origin)
-	if errors.Is(err, sql.ErrNoRows) {
-		return errors.New("PostgreSQL Resource has no primary runtime origin")
-	}
-	if err != nil {
-		return err
-	}
 	if err := service.postgres.ReconcileLoginRole(ctx, postgresqlclient.Connection{
-		Host: origin.Address, Port: origin.Port,
-		Username: administrator.Username.String, Password: administratorPassword,
+		Host: topology.Address, Port: topology.Port,
+		Username: topology.AdministratorUsername, Password: administratorPassword,
 	}, database, credential.Username.String, targetValues["password"]); err != nil {
 		return fmt.Errorf("reconcile PostgreSQL login role %q: %w", credential.Username.String, err)
 	}
@@ -1411,7 +1424,7 @@ func (service *ResourceManagement) CreateCredential(ctx context.Context, resourc
 	if err != nil {
 		return models.ResourceCredentialEntity{}, err
 	}
-	if resource.ManagementMode == models.ResourceManagementManaged && resource.Kind == "postgresql" && credential.ResourceInstallationID == nil {
+	if resource.ManagementMode == models.ResourceManagementManaged && resource.Kind == "postgresql" {
 		if err := service.reconcilePostgreSQLCredential(ctx, tx, resource, credential, nil); err != nil {
 			return models.ResourceCredentialEntity{}, err
 		}
@@ -1430,27 +1443,6 @@ func (service *ResourceManagement) createCredential(ctx context.Context, db stor
 	if resource.Kind == "postgresql" && strings.TrimSpace(input.Username) == "" {
 		return models.ResourceCredentialEntity{}, domainError("username", "required", "PostgreSQL credentials require a username")
 	}
-	if input.ResourceInstallationID != nil {
-		if resource.ManagementMode != models.ResourceManagementManaged || resource.Kind != "postgresql" {
-			return models.ResourceCredentialEntity{}, domainError("resourceInstallationId", "administrator", "installation-specific credentials are reserved for managed PostgreSQL Resource administrators")
-		}
-		count, err := db.NewSelect().TableExpr("resource_installations").Where("id = ?", *input.ResourceInstallationID).
-			Where("resource_id = ?", resource.ID).Where("archived_at IS NULL").Count(ctx)
-		if err != nil {
-			return models.ResourceCredentialEntity{}, err
-		}
-		if err := requireChild(count, "resourceInstallationId", "installation must be active and belong to this Resource"); err != nil {
-			return models.ResourceCredentialEntity{}, err
-		}
-		administrators, err := db.NewSelect().TableExpr("resource_credentials").Where("resource_id = ?", resource.ID).
-			Where("resource_installation_id = ?", *input.ResourceInstallationID).Where("archived_at IS NULL").Count(ctx)
-		if err != nil {
-			return models.ResourceCredentialEntity{}, err
-		}
-		if administrators != 0 {
-			return models.ResourceCredentialEntity{}, domainError("resourceInstallationId", "administrator", "PostgreSQL installation already has a Resource administrator credential")
-		}
-	}
 	if resource.Kind == "postgresql" {
 		usernames, err := db.NewSelect().TableExpr("resource_credentials").Where("resource_id = ?", resource.ID).
 			Where("username = ?", strings.TrimSpace(input.Username)).Where("archived_at IS NULL").Count(ctx)
@@ -1467,7 +1459,7 @@ func (service *ResourceManagement) createCredential(ctx context.Context, db stor
 	}
 	created, err := models.ResourceCredential.Create(ctx, db, models.CreateResourceCredentialData{
 		Name: input.Name, Username: nullableString(input.Username), Metadata: normalizedJSON(input.Metadata),
-		EncPayload: encrypted, Digest: digest, ResourceID: resource.ID, ResourceInstallationID: input.ResourceInstallationID,
+		EncPayload: encrypted, Digest: digest, ResourceID: resource.ID,
 	})
 	return created, mapResourceConflict(err)
 }
@@ -1501,9 +1493,6 @@ func (service *ResourceManagement) updateCredential(ctx context.Context, resourc
 	if resource.Kind == "postgresql" && strings.TrimSpace(input.Username) == "" {
 		return models.ResourceCredentialEntity{}, domainError("username", "required", "PostgreSQL credentials require a username")
 	}
-	if current.ResourceInstallationID != nil && strings.TrimSpace(input.Username) != current.Username.String {
-		return models.ResourceCredentialEntity{}, domainError("username", "immutable", "Resource administrator username cannot be changed after PostgreSQL initialization")
-	}
 	if resource.Kind == "postgresql" {
 		usernames, countErr := tx.NewSelect().TableExpr("resource_credentials").Where("resource_id = ?", resourceID).
 			Where("username = ?", strings.TrimSpace(input.Username)).Where("id <> ?", current.ID).Where("archived_at IS NULL").Count(ctx)
@@ -1525,29 +1514,25 @@ func (service *ResourceManagement) updateCredential(ctx context.Context, resourc
 	candidate := models.ResourceCredentialEntity{
 		ID: current.ID, Name: input.Name, Username: nullableString(input.Username),
 		Metadata: normalizedJSON(input.Metadata), EncPayload: encrypted, Digest: digest,
-		ArchivedAt: current.ArchivedAt, ResourceID: resourceID, ResourceInstallationID: current.ResourceInstallationID,
+		ArchivedAt: current.ArchivedAt, ResourceID: resourceID,
 	}
 	if err := candidate.Validate(); err != nil {
 		return models.ResourceCredentialEntity{}, errors.Join(models.ErrDomainValidation, err)
 	}
 	if resource.ManagementMode == models.ResourceManagementManaged && resource.Kind == "postgresql" {
-		var administrator *models.ResourceCredentialEntity
-		if current.ResourceInstallationID != nil {
-			administrator = &current
-		}
-		if err := service.reconcilePostgreSQLCredential(ctx, tx, resource, candidate, administrator); err != nil {
+		if err := service.reconcilePostgreSQLCredential(ctx, tx, resource, candidate, nil); err != nil {
 			return models.ResourceCredentialEntity{}, err
 		}
 	}
 	updated, err := models.ResourceCredential.Update(ctx, tx, models.UpdateResourceCredentialData{
 		ID: current.ID, Name: input.Name, Username: nullableString(input.Username),
 		Metadata: normalizedJSON(input.Metadata), EncPayload: encrypted, Digest: digest,
-		ArchivedAt: current.ArchivedAt, ResourceID: resourceID, ResourceInstallationID: current.ResourceInstallationID,
+		ArchivedAt: current.ArchivedAt, ResourceID: resourceID,
 	})
 	if err != nil {
 		return models.ResourceCredentialEntity{}, mapResourceConflict(err)
 	}
-	if rotate && resource.Kind == "postgresql" && current.ResourceInstallationID == nil {
+	if rotate && resource.Kind == "postgresql" {
 		if err := service.rotateEnvironmentResourceProjections(ctx, tx, updated); err != nil {
 			return models.ResourceCredentialEntity{}, err
 		}
@@ -1613,9 +1598,6 @@ func (service *ResourceManagement) ArchiveCredential(ctx context.Context, resour
 	}
 	if err != nil {
 		return err
-	}
-	if credential.ResourceInstallationID != nil {
-		return domainError("credential", "administrator", "Resource administrator credential cannot be archived while its PostgreSQL installation is active")
 	}
 	dependencies, err := tx.NewSelect().TableExpr("resource_credentials AS credential").Where("credential.id = ?", credentialID).
 		Where("EXISTS (SELECT 1 FROM environment_resources WHERE resource_credential_id = credential.id AND archived_at IS NULL) OR EXISTS (SELECT 1 FROM resource_health_checks WHERE resource_credential_id = credential.id AND archived_at IS NULL)").Count(ctx)
@@ -1861,10 +1843,7 @@ func (service *ResourceManagement) RunInstallation(ctx context.Context, resource
 
 	environment := make(map[string]string)
 	if resource.Kind == "postgresql" {
-		environment, err = service.postgreSQLContainerEnvironment(ctx, resourceID, installationID)
-		if err != nil {
-			return err
-		}
+		return errors.New("PostgreSQL runtime lifecycle is managed through its Database Cluster")
 	}
 	imageReference := installation.ImageReference
 	if installation.ImageDigest.Valid && !strings.Contains(imageReference, "@") {
@@ -2036,40 +2015,6 @@ func (service *ResourceManagement) DeployResource(ctx context.Context, resourceI
 	return nil
 }
 
-func (service *ResourceManagement) postgreSQLContainerEnvironment(ctx context.Context, resourceID, installationID uuid.UUID) (map[string]string, error) {
-	resource, err := models.Resource.Find(ctx, service.db.Executor(), resourceID)
-	if err != nil {
-		return nil, err
-	}
-	credentials := make([]models.ResourceCredentialEntity, 0)
-	if err := service.db.Executor().NewSelect().Model(&credentials).
-		Where("resource_id = ?", resourceID).
-		Where("archived_at IS NULL").
-		Where("resource_installation_id = ?", installationID).
-		OrderExpr("created_at").
-		Scan(ctx); err != nil {
-		return nil, err
-	}
-	if len(credentials) != 1 {
-		return nil, errors.New("PostgreSQL installation requires exactly one Resource administrator credential")
-	}
-	values, err := service.credentialSecretValues(credentials[0])
-	if err != nil {
-		return nil, fmt.Errorf("load PostgreSQL Resource administrator credential: %w", err)
-	}
-	password := values["password"]
-	if password == "" {
-		return nil, errors.New("PostgreSQL Resource administrator credential does not contain a password")
-	}
-	environment := map[string]string{"POSTGRES_DB": resource.DatabaseName, "POSTGRES_PASSWORD": password}
-	if credentials[0].Username.Valid {
-		environment["POSTGRES_USER"] = credentials[0].Username.String
-	} else {
-		return nil, errors.New("PostgreSQL Resource administrator credential does not contain a username")
-	}
-	return environment, nil
-}
-
 func (service *ResourceManagement) validatePlacement(ctx context.Context, db storage.Executor, serverID uuid.UUID) error {
 	count, err := db.NewSelect().TableExpr("servers").Where("id = ?", serverID).Where("archived_at IS NULL").Count(ctx)
 	if err != nil {
@@ -2124,7 +2069,6 @@ func (service *ResourceManagement) ArchiveInstallation(ctx context.Context, reso
 	}
 	dependencies, err := tx.NewSelect().TableExpr("resource_installations AS installation").Where("installation.id = ?", installationID).
 		Where(`EXISTS (SELECT 1 FROM resource_endpoints WHERE resource_installation_id = installation.id AND archived_at IS NULL)
-			OR EXISTS (SELECT 1 FROM resource_credentials WHERE resource_installation_id = installation.id AND archived_at IS NULL)
 			OR EXISTS (SELECT 1 FROM resource_volume_mounts WHERE resource_installation_id = installation.id AND archived_at IS NULL)
 			OR EXISTS (SELECT 1 FROM resource_health_checks WHERE resource_installation_id = installation.id AND archived_at IS NULL)`).Count(ctx)
 	if err != nil {
@@ -2152,22 +2096,14 @@ func (service *ResourceManagement) installationHasActiveBackupPolicy(
 	db storage.Executor,
 	installationID uuid.UUID,
 ) (bool, error) {
-	count, err := db.NewSelect().TableExpr("backup_policies").
-		Where("resource_installation_id = ?", installationID).
-		Where("target_type = 'resource'").
-		Where("archived_at IS NULL").
-		Where("activated_at IS NOT NULL").
-		Count(ctx)
-	return count > 0, err
+	return false, nil
 }
 
 func (service *ResourceManagement) requireNoActiveRestore(ctx context.Context, db storage.Executor, resourceID uuid.UUID, installationID *uuid.UUID) error {
-	query := db.NewSelect().TableExpr("resource_restores").
-		Where("resource_id = ?", resourceID).
-		Where("status IN (?, ?, ?)", models.ResourceRestoreStatusPending, models.ResourceRestoreStatusSafetyBackup, models.ResourceRestoreStatusRestoring)
-	if installationID != nil {
-		query = query.Where("target_installation_id = ?", *installationID)
-	}
+	query := db.NewSelect().TableExpr("database_restores AS restore").
+		Join("JOIN database_resources AS backing ON backing.database_id = restore.database_id").
+		Where("backing.resource_id = ?", resourceID).
+		Where("restore.status IN (?, ?, ?)", models.DatabaseRestoreStatusPending, models.DatabaseRestoreStatusSafetyBackup, models.DatabaseRestoreStatusRestoring)
 	count, err := query.Count(ctx)
 	if err != nil {
 		return err
@@ -2478,14 +2414,18 @@ func (service *ResourceManagement) CreateHealthCheck(ctx context.Context, resour
 }
 
 func (service *ResourceManagement) createHealthCheck(ctx context.Context, db storage.Executor, resource models.ResourceEntity, input ResourceHealthCheckInput) (models.ResourceHealthCheckEntity, error) {
-	if resource.ManagementMode != models.ResourceManagementManaged {
+	databaseBacked, err := service.isDatabaseBackedResource(ctx, db, resource.ID)
+	if err != nil {
+		return models.ResourceHealthCheckEntity{}, err
+	}
+	if !databaseBacked && resource.ManagementMode != models.ResourceManagementManaged {
 		return models.ResourceHealthCheckEntity{}, domainError("managementMode", "mode", "health checks are allowed only for managed Resources")
 	}
 	entity := models.ResourceHealthCheckEntity{
 		Name: input.Name, Kind: input.Kind, Configuration: normalizedJSON(input.Configuration),
 		IntervalSeconds: input.IntervalSeconds, TimeoutSeconds: input.TimeoutSeconds,
 		FailureThreshold: input.FailureThreshold, SuccessThreshold: input.SuccessThreshold, Enabled: input.Enabled,
-		ResourceInstallationID: input.ResourceInstallationID, ResourceEndpointID: input.ResourceEndpointID,
+		ResourceID: resource.ID, ResourceInstallationID: input.ResourceInstallationID, ResourceEndpointID: input.ResourceEndpointID,
 		ResourceCredentialID: input.ResourceCredentialID,
 	}
 	if err := entity.ValidateForKind(resource.Kind); err != nil {
@@ -2498,6 +2438,7 @@ func (service *ResourceManagement) createHealthCheck(ctx context.Context, db sto
 		Name: entity.Name, Kind: entity.Kind, Configuration: entity.Configuration,
 		IntervalSeconds: entity.IntervalSeconds, TimeoutSeconds: entity.TimeoutSeconds,
 		FailureThreshold: entity.FailureThreshold, SuccessThreshold: entity.SuccessThreshold, Enabled: entity.Enabled,
+		ResourceID:             entity.ResourceID,
 		ResourceInstallationID: entity.ResourceInstallationID, ResourceEndpointID: entity.ResourceEndpointID,
 		ResourceCredentialID: entity.ResourceCredentialID,
 	})
@@ -2505,16 +2446,35 @@ func (service *ResourceManagement) createHealthCheck(ctx context.Context, db sto
 }
 
 func (service *ResourceManagement) validateHealthTopology(ctx context.Context, db storage.Executor, resourceID uuid.UUID, input ResourceHealthCheckInput) error {
-	installations, err := db.NewSelect().TableExpr("resource_installations").Where("id = ?", input.ResourceInstallationID).Where("resource_id = ?", resourceID).Where("archived_at IS NULL").Count(ctx)
+	databaseBacked, err := service.isDatabaseBackedResource(ctx, db, resourceID)
 	if err != nil {
 		return err
 	}
-	if err := requireChild(installations, "resourceInstallationId", "installation must be active and belong to this Resource"); err != nil {
-		return err
+	if databaseBacked {
+		if input.ResourceInstallationID != nil {
+			return domainError("resourceInstallationId", "forbidden", "database Resource access checks do not use generic Resource Installations")
+		}
+		if input.ResourceEndpointID == nil || input.ResourceCredentialID == nil {
+			return domainError("healthCheck", "incomplete", "database Resource access checks require an endpoint and credential")
+		}
+	} else {
+		if input.ResourceInstallationID == nil {
+			return domainError("resourceInstallationId", "required", "generic managed Resource health checks require an installation")
+		}
+		installations, err := db.NewSelect().TableExpr("resource_installations").Where("id = ?", *input.ResourceInstallationID).Where("resource_id = ?", resourceID).Where("archived_at IS NULL").Count(ctx)
+		if err != nil {
+			return err
+		}
+		if err := requireChild(installations, "resourceInstallationId", "installation must be active and belong to this Resource"); err != nil {
+			return err
+		}
 	}
 	if input.ResourceEndpointID != nil {
-		endpoints, countErr := db.NewSelect().TableExpr("resource_endpoints").Where("id = ?", *input.ResourceEndpointID).Where("resource_id = ?", resourceID).Where("archived_at IS NULL").
-			Where("resource_installation_id IS NULL OR resource_installation_id = ?", input.ResourceInstallationID).Count(ctx)
+		query := db.NewSelect().TableExpr("resource_endpoints").Where("id = ?", *input.ResourceEndpointID).Where("resource_id = ?", resourceID).Where("archived_at IS NULL")
+		if input.ResourceInstallationID != nil {
+			query = query.Where("resource_installation_id IS NULL OR resource_installation_id = ?", *input.ResourceInstallationID)
+		}
+		endpoints, countErr := query.Count(ctx)
 		if countErr != nil {
 			return countErr
 		}
@@ -2523,8 +2483,7 @@ func (service *ResourceManagement) validateHealthTopology(ctx context.Context, d
 		}
 	}
 	if input.ResourceCredentialID != nil {
-		credentials, countErr := db.NewSelect().TableExpr("resource_credentials").Where("id = ?", *input.ResourceCredentialID).Where("resource_id = ?", resourceID).Where("archived_at IS NULL").
-			Where("resource_installation_id IS NULL OR resource_installation_id = ?", input.ResourceInstallationID).Count(ctx)
+		credentials, countErr := db.NewSelect().TableExpr("resource_credentials").Where("id = ?", *input.ResourceCredentialID).Where("resource_id = ?", resourceID).Where("archived_at IS NULL").Count(ctx)
 		if countErr != nil {
 			return countErr
 		}
@@ -2533,6 +2492,13 @@ func (service *ResourceManagement) validateHealthTopology(ctx context.Context, d
 		}
 	}
 	return nil
+}
+
+func (service *ResourceManagement) isDatabaseBackedResource(ctx context.Context, db storage.Executor, resourceID uuid.UUID) (bool, error) {
+	count, err := db.NewSelect().TableExpr("database_resources AS backing").
+		Join("JOIN databases AS database ON database.id = backing.database_id AND database.archived_at IS NULL").
+		Where("backing.resource_id = ?", resourceID).Count(ctx)
+	return count == 1, err
 }
 
 func (service *ResourceManagement) UpdateHealthCheck(ctx context.Context, resourceID, healthCheckID uuid.UUID, input ResourceHealthCheckInput) (models.ResourceHealthCheckEntity, error) {
@@ -2545,12 +2511,16 @@ func (service *ResourceManagement) UpdateHealthCheck(ctx context.Context, resour
 	if err != nil {
 		return models.ResourceHealthCheckEntity{}, err
 	}
-	if resource.ManagementMode != models.ResourceManagementManaged {
+	databaseBacked, err := service.isDatabaseBackedResource(ctx, tx, resource.ID)
+	if err != nil {
+		return models.ResourceHealthCheckEntity{}, err
+	}
+	if !databaseBacked && resource.ManagementMode != models.ResourceManagementManaged {
 		return models.ResourceHealthCheckEntity{}, domainError("managementMode", "mode", "health checks are allowed only for managed Resources")
 	}
 	var current models.ResourceHealthCheckEntity
-	err = tx.NewSelect().Model(&current).Join("JOIN resource_installations AS installation ON installation.id = resource_health_checks.resource_installation_id").
-		Where("resource_health_checks.id = ?", healthCheckID).Where("installation.resource_id = ?", resourceID).
+	err = tx.NewSelect().Model(&current).
+		Where("resource_health_checks.id = ?", healthCheckID).Where("resource_health_checks.resource_id = ?", resourceID).
 		Where("resource_health_checks.archived_at IS NULL").For("UPDATE OF resource_health_checks").Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.ResourceHealthCheckEntity{}, models.ErrNotFound
@@ -2562,7 +2532,7 @@ func (service *ResourceManagement) UpdateHealthCheck(ctx context.Context, resour
 		ID: current.ID, Name: input.Name, Kind: input.Kind, Configuration: normalizedJSON(input.Configuration),
 		IntervalSeconds: input.IntervalSeconds, TimeoutSeconds: input.TimeoutSeconds,
 		FailureThreshold: input.FailureThreshold, SuccessThreshold: input.SuccessThreshold, Enabled: input.Enabled,
-		ArchivedAt: current.ArchivedAt, ResourceInstallationID: input.ResourceInstallationID,
+		ArchivedAt: current.ArchivedAt, ResourceID: resource.ID, ResourceInstallationID: input.ResourceInstallationID,
 		ResourceEndpointID: input.ResourceEndpointID, ResourceCredentialID: input.ResourceCredentialID,
 	}
 	if err := entity.ValidateForKind(resource.Kind); err != nil {
@@ -2575,7 +2545,7 @@ func (service *ResourceManagement) UpdateHealthCheck(ctx context.Context, resour
 		ID: current.ID, Name: entity.Name, Kind: entity.Kind, Configuration: entity.Configuration,
 		IntervalSeconds: entity.IntervalSeconds, TimeoutSeconds: entity.TimeoutSeconds,
 		FailureThreshold: entity.FailureThreshold, SuccessThreshold: entity.SuccessThreshold, Enabled: entity.Enabled,
-		ArchivedAt: current.ArchivedAt, ResourceInstallationID: entity.ResourceInstallationID,
+		ArchivedAt: current.ArchivedAt, ResourceID: entity.ResourceID, ResourceInstallationID: entity.ResourceInstallationID,
 		ResourceEndpointID: entity.ResourceEndpointID, ResourceCredentialID: entity.ResourceCredentialID,
 	})
 	if err != nil {
@@ -2597,8 +2567,8 @@ func (service *ResourceManagement) ArchiveHealthCheck(ctx context.Context, resou
 		return err
 	}
 	var check models.ResourceHealthCheckEntity
-	err = tx.NewSelect().Model(&check).Join("JOIN resource_installations AS installation ON installation.id = resource_health_checks.resource_installation_id").
-		Where("resource_health_checks.id = ?", healthCheckID).Where("installation.resource_id = ?", resourceID).
+	err = tx.NewSelect().Model(&check).
+		Where("resource_health_checks.id = ?", healthCheckID).Where("resource_health_checks.resource_id = ?", resourceID).
 		Where("resource_health_checks.archived_at IS NULL").For("UPDATE OF resource_health_checks").Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.ErrNotFound

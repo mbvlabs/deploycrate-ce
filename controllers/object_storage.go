@@ -13,10 +13,10 @@ import (
 )
 
 type ObjectStorage struct {
-	backups *services.ResourceBackups
+	backups *services.DatabaseBackups
 }
 
-func NewObjectStorage(backups *services.ResourceBackups) ObjectStorage {
+func NewObjectStorage(backups *services.DatabaseBackups) ObjectStorage {
 	return ObjectStorage{backups: backups}
 }
 

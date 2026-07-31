@@ -522,8 +522,10 @@ func parseBuildSnapshot(build models.BuildEntity) (buildSnapshot, error) {
 		missingField = "source_revision"
 	case strings.TrimSpace(snapshot.ImageRepository) == "":
 		missingField = "image_repository"
-	case snapshot.ContainerRegistryID == uuid.Nil:
-		missingField = "container_registry_id"
+	case snapshot.RegistryResourceID == uuid.Nil:
+		missingField = "registry_resource_id"
+	case snapshot.RegistryCredentialID == uuid.Nil:
+		missingField = "registry_credential_id"
 	case strings.TrimSpace(snapshot.RegistryEndpoint) == "":
 		missingField = "registry_endpoint"
 	}
@@ -560,52 +562,41 @@ func (service *BuildExecution) loadGitHubSource(ctx context.Context, build model
 }
 
 func (service *BuildExecution) registryCredentials(ctx context.Context, snapshot buildSnapshot) (registryclient.Credentials, error) {
-	return service.RegistryCredentials(ctx, snapshot.ContainerRegistryID, snapshot.RegistryEndpoint)
+	return service.RegistryCredentials(ctx, snapshot.RegistryResourceID, snapshot.RegistryCredentialID, snapshot.RegistryEndpoint)
 }
 
-func (service *BuildExecution) RegistryCredentials(ctx context.Context, registryID uuid.UUID, expectedEndpoint string) (registryclient.Credentials, error) {
-	registry, err := models.ContainerRegistry.Find(ctx, service.db.Executor(), registryID)
-	if err != nil {
-		return registryclient.Credentials{}, err
+func (service *BuildExecution) RegistryCredentials(ctx context.Context, registryID, credentialID uuid.UUID, expectedEndpoint string) (registryclient.Credentials, error) {
+	var registry struct {
+		Provider, Endpoint             string
+		EndpointCount, CredentialCount int
 	}
-	if registry.ArchivedAt.Valid || registry.Provider != "distribution" || registry.Endpoint != expectedEndpoint {
-		return registryclient.Credentials{}, errors.New("Build registry snapshot no longer matches an active registry")
+	err := service.db.Executor().NewSelect().TableExpr("registry_resources AS registry").
+		ColumnExpr("registry.provider").
+		ColumnExpr("CASE WHEN endpoint.port IN (80, 443) THEN endpoint.address ELSE endpoint.address || ':' || endpoint.port::text END AS endpoint").
+		ColumnExpr("(SELECT count(*) FROM resource_endpoints candidate WHERE candidate.resource_id = registry.resource_id AND candidate.archived_at IS NULL) AS endpoint_count").
+		ColumnExpr("(SELECT count(*) FROM resource_credentials candidate WHERE candidate.resource_id = registry.resource_id AND candidate.archived_at IS NULL) AS credential_count").
+		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.archived_at IS NULL").
+		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = registry.resource_id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL").
+		Where("registry.resource_id = ?", registryID).Scan(ctx, &registry)
+	if err != nil || registry.Provider != "distribution" || registry.Endpoint != expectedEndpoint || registry.EndpointCount != 1 || registry.CredentialCount != 1 {
+		return registryclient.Credentials{}, errors.New("Build Registry snapshot no longer matches an active Registry Resource")
 	}
-	credential, err := models.Credential.Find(ctx, service.db.Executor(), registry.CredentialID)
-	if err != nil || credential.ArchivedAt.Valid || credential.Provider != "container_registry" {
-		return registryclient.Credentials{}, errors.New("registry credential is unavailable")
-	}
-	var identity struct {
-		CredentialKind string `json:"credential_kind"`
-		Username       string `json:"username"`
-	}
-	if json.Unmarshal(credential.Metadata, &identity) != nil {
-		return registryclient.Credentials{}, errors.New("registry credential metadata is invalid")
-	}
-	if identity.CredentialKind == "external_registry" {
-		if strings.TrimSpace(identity.Username) == "" {
-			return registryclient.Credentials{}, errors.New("external registry credential metadata is invalid")
-		}
-	} else {
-		_, metadata, loadErr := loadManagedRegistryCredential(ctx, service.db.Executor(), registry)
-		if loadErr != nil {
-			return registryclient.Credentials{}, loadErr
-		}
-		identity.Username = metadata.Username
+	credential, err := models.ResourceCredential.Find(ctx, service.db.Executor(), credentialID)
+	if err != nil || credential.ArchivedAt.Valid || credential.ResourceID != registryID || !credential.Username.Valid {
+		return registryclient.Credentials{}, errors.New("Registry Resource credential is unavailable")
 	}
 	plaintext, err := secretcrypto.DecryptForPurpose(credential.EncPayload, service.config.App.SessionEncryptionKey, registryCredentialPurpose)
 	if err != nil {
 		return registryclient.Credentials{}, errors.New("registry credential cannot be decrypted")
 	}
 	var payload struct {
-		SchemaVersion int    `json:"schema_version"`
-		Username      string `json:"username"`
-		Password      string `json:"password"`
+		SchemaVersion int               `json:"schema_version"`
+		Values        map[string]string `json:"values"`
 	}
-	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 || payload.Username == "" || payload.Password == "" || payload.Username != identity.Username {
-		return registryclient.Credentials{}, errors.New("registry credential payload is invalid")
+	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 || payload.Values["password"] == "" {
+		return registryclient.Credentials{}, errors.New("Registry Resource credential payload is invalid")
 	}
-	return registryclient.Credentials{Endpoint: registry.Endpoint, Username: payload.Username, Password: payload.Password}, nil
+	return registryclient.Credentials{Endpoint: registry.Endpoint, Username: credential.Username.String, Password: payload.Values["password"]}, nil
 }
 
 func extractGitHubArchive(ctx context.Context, archivePath, destination string) error {

@@ -139,6 +139,13 @@ func (u user) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return UserEntity{}, errors.Join(ErrDomainValidation, err)
 	}
+	count, err := db.NewSelect().Model((*UserEntity)(nil)).Where("lower(email) = ?", strings.ToLower(entity.Email)).Count(ctx)
+	if err != nil {
+		return UserEntity{}, err
+	}
+	if count != 0 {
+		return UserEntity{}, errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "email", Code: "taken", Message: "an account already uses this email address"}})
+	}
 
 	_, err = db.NewInsert().Model(&entity).Exec(ctx)
 	if err != nil {

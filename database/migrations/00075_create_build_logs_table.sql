@@ -9,13 +9,11 @@ CREATE TABLE build_logs (
     updated_at TIMESTAMPTZ NOT NULL,
 
     sequence BIGINT NOT NULL,
-    stream TEXT NOT NULL CHECK (stream IN ('system', 'pack')),
-    message TEXT NOT NULL CHECK (octet_length(message) BETWEEN 1 AND 65536),
+    stream TEXT NOT NULL,
+    message TEXT NOT NULL,
     occurred_at TIMESTAMPTZ NOT NULL,
 
-    build_id UUID NOT NULL REFERENCES builds (id) ON DELETE CASCADE,
-
-    UNIQUE (build_id, sequence)
+    build_id UUID NOT NULL REFERENCES builds (id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

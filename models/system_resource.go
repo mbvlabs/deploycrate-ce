@@ -24,11 +24,13 @@ type SystemResourceIndexItem struct {
 }
 
 type SystemTelemetryContainer struct {
-	ResourceID     string `bun:"resource_id"`
-	ResourceName   string `bun:"resource_name"`
-	ResourceKind   string `bun:"resource_kind"`
-	InstallationID string `bun:"installation_id"`
-	ContainerName  string `bun:"container_name"`
+	ResourceID            string `bun:"resource_id"`
+	ResourceName          string `bun:"resource_name"`
+	ResourceKind          string `bun:"resource_kind"`
+	InstallationID        string `bun:"installation_id"`
+	ContainerName         string `bun:"container_name"`
+	DatabaseClusterID     string `bun:"database_cluster_id"`
+	DatabaseClusterNodeID string `bun:"database_cluster_node_id"`
 }
 
 func (application) FindSystemTelemetryContainers(
@@ -37,19 +39,24 @@ func (application) FindSystemTelemetryContainers(
 	serverID uuid.UUID,
 ) ([]SystemTelemetryContainer, error) {
 	containers := make([]SystemTelemetryContainer, 0)
-	err := db.NewSelect().
-		TableExpr("resources AS resource").
-		ColumnExpr("resource.id::text AS resource_id").
-		ColumnExpr("resource.name AS resource_name").
-		ColumnExpr("resource.kind AS resource_kind").
-		ColumnExpr("installation.id::text AS installation_id").
-		ColumnExpr("installation.container_name AS container_name").
-		Join("JOIN resource_installations AS installation ON installation.resource_id = resource.id AND installation.archived_at IS NULL").
-		Where("resource.system_managed = TRUE").
-		Where("resource.archived_at IS NULL").
-		Where("installation.server_id = ?", serverID).
-		OrderExpr("resource.name, installation.created_at").
-		Scan(ctx, &containers)
+	err := db.NewRaw(`
+		SELECT resource.id::text AS resource_id, resource.name AS resource_name,
+			resource.kind AS resource_kind, installation.id::text AS installation_id,
+			installation.container_name AS container_name, '' AS database_cluster_id,
+			'' AS database_cluster_node_id
+		FROM resources AS resource
+		JOIN resource_installations AS installation ON installation.resource_id = resource.id AND installation.archived_at IS NULL
+		WHERE resource.system_managed = TRUE AND resource.archived_at IS NULL AND installation.server_id = ?
+		UNION ALL
+		SELECT '' AS resource_id, cluster.name AS resource_name, cluster.engine AS resource_kind,
+			installation.id::text AS installation_id, docker.container_name,
+			cluster.id::text AS database_cluster_id, node.id::text AS database_cluster_node_id
+		FROM database_node_installations AS installation
+		JOIN docker_database_node_installations AS docker ON docker.database_node_installation_id = installation.id
+		JOIN database_cluster_nodes AS node ON node.id = installation.database_cluster_node_id AND node.archived_at IS NULL
+		JOIN database_clusters AS cluster ON cluster.id = node.database_cluster_id AND cluster.archived_at IS NULL
+		WHERE installation.server_id = ? AND installation.archived_at IS NULL
+		ORDER BY resource_name, installation_id`, serverID, serverID).Scan(ctx, &containers)
 	return containers, err
 }
 
@@ -60,14 +67,24 @@ func (application) FindSystemResourceIndex(ctx context.Context, db storage.Execu
 		Distinct().
 		ColumnExpr("resource.id::text AS id").
 		ColumnExpr("resource.name AS name").
-		ColumnExpr("resource.category AS category").
+		ColumnExpr("CASE WHEN resource.kind IN ('postgresql', 'mysql', 'clickhouse') THEN 'database' WHEN resource.kind = 'registry' THEN 'artifact' ELSE 'endpoint' END AS category").
 		ColumnExpr("resource.kind AS kind").
 		ColumnExpr("resource.sharing_scope AS sharing_scope").
 		ColumnExpr("COALESCE(origin.address, '') AS origin_address").
 		ColumnExpr("COALESCE(origin.port, 0) AS origin_port").
-		ColumnExpr("COALESCE(installation_status.health, 'unknown') AS health").
+		ColumnExpr("COALESCE(installation_status.health, database_runtime.health, 'unknown') AS health").
 		Join("LEFT JOIN LATERAL (SELECT address, port, resource_installation_id FROM resource_endpoints WHERE resource_id = resource.id AND role = 'primary' AND archived_at IS NULL ORDER BY created_at LIMIT 1) AS origin ON TRUE").
 		Join("LEFT JOIN resource_installation_statuses AS installation_status ON installation_status.resource_installation_id = origin.resource_installation_id").
+		Join(`LEFT JOIN LATERAL (
+			SELECT installation.health
+			FROM database_resources AS backing
+			JOIN databases AS database ON database.id = backing.database_id AND database.archived_at IS NULL
+			JOIN database_cluster_nodes AS node ON node.database_cluster_id = database.database_cluster_id AND node.archived_at IS NULL
+			JOIN database_node_installations AS installation ON installation.database_cluster_node_id = node.id AND installation.archived_at IS NULL
+			WHERE backing.resource_id = resource.id
+			ORDER BY node.role = 'primary' DESC, installation.created_at
+			LIMIT 1
+		) AS database_runtime ON TRUE`).
 		Where("resource.system_managed = TRUE").
 		Where("resource.archived_at IS NULL").
 		OrderExpr("resource.name").
@@ -236,7 +253,8 @@ type SystemResourceDetail struct {
 func (application) FindSystemResourceDetail(ctx context.Context, db storage.Executor, resourceID, currentUserID uuid.UUID) (SystemResourceDetail, error) {
 	var detail SystemResourceDetail
 	err := db.NewSelect().TableExpr("resources AS resource").
-		ColumnExpr("resource.id::text AS id, resource.created_at, resource.updated_at, resource.name, resource.category, resource.kind, resource.sharing_scope").
+		ColumnExpr("resource.id::text AS id, resource.created_at, resource.updated_at, resource.name, resource.kind, resource.sharing_scope").
+		ColumnExpr("CASE WHEN resource.kind IN ('postgresql', 'mysql', 'clickhouse') THEN 'database' WHEN resource.kind = 'registry' THEN 'artifact' ELSE 'endpoint' END AS category").
 		Where("resource.id = ?", resourceID).
 		Where("resource.archived_at IS NULL").
 		Where("resource.system_managed = TRUE").
@@ -264,7 +282,7 @@ func (application) FindSystemResourceDetail(ctx context.Context, db storage.Exec
 			return db.NewSelect().TableExpr("resource_endpoints AS endpoint").ColumnExpr("endpoint.id::text AS id, endpoint.created_at, endpoint.updated_at, endpoint.name, endpoint.role, endpoint.address, endpoint.port, endpoint.protocol, endpoint.tls_mode, endpoint.settings, COALESCE(endpoint.resource_installation_id::text, '') AS installation_id, COALESCE(endpoint.private_network_id::text, '') AS private_network_id").Where("endpoint.resource_id = ?", resourceID).Where("endpoint.archived_at IS NULL").OrderExpr("endpoint.role, endpoint.created_at").Scan(ctx, &detail.Endpoints)
 		},
 		func() error {
-			return db.NewSelect().TableExpr("resource_credentials AS credential").ColumnExpr("credential.id::text AS id, credential.name, COALESCE(credential.username, '') AS username, credential.metadata, octet_length(credential.enc_payload) > 0 AS has_encrypted_payload, COALESCE(credential.resource_installation_id::text, '') AS installation_id").Where("credential.resource_id = ?", resourceID).Where("credential.archived_at IS NULL").OrderExpr("credential.created_at").Scan(ctx, &detail.Credentials)
+			return db.NewSelect().TableExpr("resource_credentials AS credential").ColumnExpr("credential.id::text AS id, credential.name, COALESCE(credential.username, '') AS username, credential.metadata, octet_length(credential.enc_payload) > 0 AS has_encrypted_payload, '' AS installation_id").Where("credential.resource_id = ?", resourceID).Where("credential.archived_at IS NULL").OrderExpr("credential.created_at").Scan(ctx, &detail.Credentials)
 		},
 		func() error {
 			return db.NewSelect().TableExpr("resource_installations AS installation").ColumnExpr("installation.id::text AS id, installation.created_at, installation.updated_at, installation.image_reference, COALESCE(installation.image_digest, '') AS image_digest, installation.container_name, installation.restart_policy, installation.configuration, server.id::text AS server_id, server.name AS server_name, server.address AS server_address, COALESCE(status.state, '') AS state, COALESCE(status.service_state, '') AS service_state, COALESCE(status.health, '') AS health, COALESCE(status.health_reason, '') AS health_reason, status.observed_at AS observed_at").Join("JOIN servers AS server ON server.id = installation.server_id AND server.archived_at IS NULL").Join("LEFT JOIN resource_installation_statuses AS status ON status.resource_installation_id = installation.id").Where("installation.resource_id = ?", resourceID).Where("installation.archived_at IS NULL").OrderExpr("installation.created_at").Scan(ctx, &detail.Installations)
@@ -273,7 +291,7 @@ func (application) FindSystemResourceDetail(ctx context.Context, db storage.Exec
 			return db.NewSelect().TableExpr("resource_volumes AS volume").ColumnExpr("volume.id::text AS id, volume.name, volume.driver, volume.configuration, server.id::text AS server_id, server.name AS server_name").Join("JOIN servers AS server ON server.id = volume.server_id").Where("volume.resource_id = ?", resourceID).Where("volume.archived_at IS NULL").OrderExpr("volume.created_at").Scan(ctx, &detail.Volumes)
 		},
 		func() error {
-			return db.NewSelect().TableExpr("resource_health_checks AS health_check").ColumnExpr("health_check.id::text AS id, health_check.name, health_check.kind, health_check.configuration, health_check.interval_seconds, health_check.timeout_seconds, health_check.failure_threshold, health_check.success_threshold, health_check.enabled, COALESCE(status.state, '') AS state, COALESCE(status.message, '') AS message, status.observed_at AS observed_at").Join("JOIN resource_installations AS installation ON installation.id = health_check.resource_installation_id").Join("LEFT JOIN resource_health_check_statuses AS status ON status.health_check_id = health_check.id").Where("installation.resource_id = ?", resourceID).Where("health_check.archived_at IS NULL").OrderExpr("health_check.created_at").Scan(ctx, &detail.HealthChecks)
+			return db.NewSelect().TableExpr("resource_health_checks AS health_check").ColumnExpr("health_check.id::text AS id, health_check.name, health_check.kind, health_check.configuration, health_check.interval_seconds, health_check.timeout_seconds, health_check.failure_threshold, health_check.success_threshold, health_check.enabled, COALESCE(status.state, '') AS state, COALESCE(status.message, '') AS message, status.observed_at AS observed_at").Join("LEFT JOIN resource_health_check_statuses AS status ON status.health_check_id = health_check.id").Where("health_check.resource_id = ?", resourceID).Where("health_check.archived_at IS NULL").OrderExpr("health_check.created_at").Scan(ctx, &detail.HealthChecks)
 		},
 		func() error {
 			return db.NewSelect().TableExpr("wireguard_device_resource_grants AS resource_grant").ColumnExpr("device.id::text AS device_id, device.name AS device_name, owner.email AS owner_email, device.private_address::text AS private_address, resource_grant.id::text AS grant_id, resource_grant.granted_at, COALESCE(application.state, 'pending') AS application_state, COALESCE(application.error, '') AS application_error, status.latest_handshake_at, status.observed_at").Join("JOIN wireguard_devices AS device ON device.id = resource_grant.wireguard_device_id AND device.revoked_at IS NULL").Join("JOIN users AS owner ON owner.id = device.owner_user_id").Join("LEFT JOIN wireguard_device_resource_grant_applications AS application ON application.wireguard_device_resource_grant_id = resource_grant.id").Join("LEFT JOIN wireguard_device_statuses AS status ON status.wireguard_device_id = device.id").Where("resource_grant.resource_id = ?", resourceID).Where("resource_grant.revoked_at IS NULL").OrderExpr("device.name").Scan(ctx, &detail.DeviceGrants)
@@ -290,6 +308,42 @@ func (application) FindSystemResourceDetail(ctx context.Context, db storage.Exec
 			return SystemResourceDetail{}, err
 		}
 	}
+	databaseInstallations := make([]SystemResourceInstallation, 0)
+	if err := db.NewSelect().TableExpr("database_resources AS backing").
+		ColumnExpr("installation.id::text AS id, installation.created_at, installation.updated_at").
+		ColumnExpr("COALESCE(docker.image_reference, native.package_name, '') AS image_reference").
+		ColumnExpr("COALESCE(docker.image_digest, '') AS image_digest").
+		ColumnExpr("COALESCE(docker.container_name, native.service_name, '') AS container_name").
+		ColumnExpr("COALESCE(docker.restart_policy, '') AS restart_policy").
+		ColumnExpr("COALESCE(docker.configuration, native.settings, '{}'::jsonb) AS configuration").
+		ColumnExpr("server.id::text AS server_id, server.name AS server_name, server.address AS server_address").
+		ColumnExpr("installation.observed_state AS state, installation.service_state, installation.health, COALESCE(installation.reason, '') AS health_reason, installation.observed_at").
+		Join("JOIN databases AS database ON database.id = backing.database_id AND database.archived_at IS NULL").
+		Join("JOIN database_cluster_nodes AS node ON node.database_cluster_id = database.database_cluster_id AND node.archived_at IS NULL").
+		Join("JOIN database_node_installations AS installation ON installation.database_cluster_node_id = node.id AND installation.archived_at IS NULL").
+		Join("JOIN servers AS server ON server.id = installation.server_id AND server.archived_at IS NULL").
+		Join("LEFT JOIN docker_database_node_installations AS docker ON docker.database_node_installation_id = installation.id").
+		Join("LEFT JOIN native_database_node_installations AS native ON native.database_node_installation_id = installation.id").
+		Where("backing.resource_id = ?", resourceID).
+		OrderExpr("node.role = 'primary' DESC, installation.created_at").
+		Scan(ctx, &databaseInstallations); err != nil {
+		return SystemResourceDetail{}, err
+	}
+	detail.Installations = append(detail.Installations, databaseInstallations...)
+	databaseVolumes := make([]SystemResourceVolume, 0)
+	if err := db.NewSelect().TableExpr("database_resources AS backing").
+		ColumnExpr("storage.id::text AS id, storage.name, storage.driver, storage.configuration").
+		ColumnExpr("server.id::text AS server_id, server.name AS server_name").
+		Join("JOIN databases AS database ON database.id = backing.database_id AND database.archived_at IS NULL").
+		Join("JOIN database_cluster_nodes AS node ON node.database_cluster_id = database.database_cluster_id AND node.archived_at IS NULL").
+		Join("JOIN database_node_storage AS storage ON storage.database_cluster_node_id = node.id AND storage.archived_at IS NULL").
+		Join("JOIN servers AS server ON server.id = storage.server_id AND server.archived_at IS NULL").
+		Where("backing.resource_id = ?", resourceID).
+		OrderExpr("storage.created_at").
+		Scan(ctx, &databaseVolumes); err != nil {
+		return SystemResourceDetail{}, err
+	}
+	detail.Volumes = append(detail.Volumes, databaseVolumes...)
 	for index := range detail.Volumes {
 		detail.Volumes[index].Mounts = make([]SystemResourceVolumeMount, 0)
 		if err := db.NewSelect().TableExpr("resource_volume_mounts AS mount").ColumnExpr("mount.id::text AS id, mount.mount_path, mount.read_only, mount.resource_installation_id::text AS installation_id").Where("mount.resource_volume_id::text = ?", detail.Volumes[index].ID).Where("mount.archived_at IS NULL").OrderExpr("mount.created_at").Scan(ctx, &detail.Volumes[index].Mounts); err != nil {
@@ -317,20 +371,40 @@ type ResourceAccessTarget struct {
 
 func (application) FindResourceAccessTarget(ctx context.Context, db storage.Executor, resourceID uuid.UUID) (ResourceAccessTarget, error) {
 	var target ResourceAccessTarget
-	err := db.NewSelect().TableExpr("resources AS resource").
-		ColumnExpr("resource.id AS resource_id, resource.name AS resource_name, resource.kind AS resource_kind").
-		ColumnExpr("origin.address AS origin_address, origin.port AS origin_port").
-		ColumnExpr("wireguard.id AS wireguard_endpoint_id, wireguard.address AS wireguard_address, wireguard.port AS wireguard_port, wireguard.protocol AS protocol").
-		ColumnExpr("installation.server_id AS server_id, wireguard.private_network_id AS private_network_id, peer.public_key AS server_public_key, peer.endpoint AS server_endpoint").
-		Join("JOIN resource_endpoints AS wireguard ON wireguard.resource_id = resource.id AND wireguard.private_network_id IS NOT NULL AND wireguard.archived_at IS NULL AND wireguard.address NOT IN ('127.0.0.1', '::1', 'localhost')").
-		Join("JOIN resource_endpoints AS origin ON origin.resource_id = resource.id AND origin.role = 'primary' AND (wireguard.role = origin.role OR wireguard.role = 'wireguard') AND origin.resource_installation_id = wireguard.resource_installation_id AND origin.archived_at IS NULL AND origin.address IN ('127.0.0.1', '::1', 'localhost') AND origin.port = wireguard.port AND origin.protocol = wireguard.protocol AND origin.tls_mode = wireguard.tls_mode AND origin.id <> wireguard.id").
-		Join("JOIN resource_installations AS installation ON installation.id = wireguard.resource_installation_id AND installation.resource_id = resource.id AND installation.archived_at IS NULL").
-		Join("JOIN wireguard_peers AS peer ON peer.server_id = installation.server_id AND peer.retired_at IS NULL").
-		Where("resource.id = ?", resourceID).
-		Where("resource.archived_at IS NULL").
-		Where("resource.management_mode = 'managed'").
-		Limit(1).
-		Scan(ctx, &target)
+	err := db.NewRaw(`
+		SELECT resource.id AS resource_id, resource.name AS resource_name, resource.kind AS resource_kind,
+			origin.address AS origin_address, origin.port AS origin_port,
+			wireguard.id AS wireguard_endpoint_id, wireguard.address AS wireguard_address,
+			wireguard.port AS wireguard_port, wireguard.protocol AS protocol,
+			installation.server_id, wireguard.private_network_id,
+			peer.public_key AS server_public_key, peer.endpoint AS server_endpoint
+		FROM resources AS resource
+		JOIN resource_endpoints AS wireguard ON wireguard.resource_id = resource.id AND wireguard.private_network_id IS NOT NULL AND wireguard.archived_at IS NULL AND wireguard.address NOT IN ('127.0.0.1', '::1', 'localhost')
+		JOIN resource_endpoints AS origin ON origin.resource_id = resource.id AND origin.role = 'primary' AND (wireguard.role = origin.role OR wireguard.role = 'wireguard') AND origin.resource_installation_id = wireguard.resource_installation_id AND origin.archived_at IS NULL AND origin.address IN ('127.0.0.1', '::1', 'localhost') AND origin.port = wireguard.port AND origin.protocol = wireguard.protocol AND origin.tls_mode = wireguard.tls_mode AND origin.id <> wireguard.id
+		JOIN resource_installations AS installation ON installation.id = wireguard.resource_installation_id AND installation.resource_id = resource.id AND installation.archived_at IS NULL
+		JOIN wireguard_peers AS peer ON peer.server_id = installation.server_id AND peer.retired_at IS NULL
+		WHERE resource.id = ? AND resource.archived_at IS NULL AND resource.management_mode = 'managed'
+		UNION ALL
+		SELECT resource.id AS resource_id, resource.name AS resource_name, resource.kind AS resource_kind,
+			origin.address AS origin_address, origin.port AS origin_port,
+			wireguard.id AS wireguard_endpoint_id, wireguard.address AS wireguard_address,
+			wireguard.port AS wireguard_port, wireguard.protocol AS protocol,
+			installation.server_id, wireguard.private_network_id,
+			peer.public_key AS server_public_key, peer.endpoint AS server_endpoint
+		FROM resources AS resource
+		JOIN database_resources AS backing ON backing.resource_id = resource.id
+		JOIN databases AS database ON database.id = backing.database_id AND database.archived_at IS NULL
+		JOIN resource_endpoints AS origin ON origin.resource_id = resource.id AND origin.role = 'primary' AND origin.archived_at IS NULL AND origin.address IN ('127.0.0.1', '::1', 'localhost')
+		JOIN database_resource_endpoints AS origin_link ON origin_link.resource_endpoint_id = origin.id
+		JOIN resource_endpoints AS wireguard ON wireguard.resource_id = resource.id AND wireguard.private_network_id IS NOT NULL AND wireguard.archived_at IS NULL AND wireguard.address NOT IN ('127.0.0.1', '::1', 'localhost') AND wireguard.port = origin.port AND wireguard.protocol = origin.protocol AND wireguard.tls_mode = origin.tls_mode
+		JOIN database_resource_endpoints AS wireguard_link ON wireguard_link.resource_endpoint_id = wireguard.id
+		JOIN database_cluster_endpoints AS cluster_origin ON cluster_origin.id = origin_link.database_cluster_endpoint_id AND cluster_origin.database_cluster_id = database.database_cluster_id
+		JOIN database_cluster_endpoints AS cluster_wireguard ON cluster_wireguard.id = wireguard_link.database_cluster_endpoint_id AND cluster_wireguard.database_cluster_id = database.database_cluster_id AND cluster_wireguard.private_network_id = wireguard.private_network_id
+		JOIN database_cluster_nodes AS node ON node.database_cluster_id = database.database_cluster_id AND node.role = 'primary' AND node.archived_at IS NULL
+		JOIN database_node_installations AS installation ON installation.database_cluster_node_id = node.id AND installation.archived_at IS NULL
+		JOIN wireguard_peers AS peer ON peer.server_id = installation.server_id AND peer.retired_at IS NULL
+		WHERE resource.id = ? AND resource.archived_at IS NULL AND resource.management_mode = 'managed'
+		LIMIT 1`, resourceID, resourceID).Scan(ctx, &target)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ResourceAccessTarget{}, ErrNotFound
 	}

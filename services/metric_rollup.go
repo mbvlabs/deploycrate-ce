@@ -162,6 +162,8 @@ type AttributedTelemetryRow struct {
 	Instance                 string                     `json:"instance"`
 	Resource                 string                     `json:"resource"`
 	Installation             string                     `json:"installation"`
+	DatabaseCluster          string                     `json:"databaseCluster"`
+	DatabaseClusterNode      string                     `json:"databaseClusterNode"`
 	Available                bool                       `json:"available"`
 	ObservedAt               time.Time                  `json:"observedAt"`
 	CPUCores                 float64                    `json:"cpuCores"`
@@ -258,8 +260,9 @@ func (service MetricRollupService) Collect(ctx context.Context) (resultErr error
 						Environment: identities.Environment, Release: identities.Release,
 						Deployment: identities.Deployment, Target: identities.Target,
 						Instance: identities.Instance, Resource: identities.Resource,
-						Installation: identities.Installation,
-						RuntimeID:    runtimeIDFromCgroup(sample.Labels["id"]), ObservationID: uuid.NewString(),
+						Installation: identities.Installation, DatabaseCluster: identities.DatabaseCluster,
+						DatabaseClusterNode: identities.DatabaseClusterNode,
+						RuntimeID:           runtimeIDFromCgroup(sample.Labels["id"]), ObservationID: uuid.NewString(),
 					}
 					values[key] = rollup
 				}
@@ -341,6 +344,9 @@ func (resolver *metricIdentityResolver) resolve(scope string, labels map[string]
 				return models.MetricRollupIdentities{}, errRejectedMetricIdentity
 			}
 			identity, err = models.Application.FindMetricResourceIdentities(resolver.ctx, resolver.db, installationID)
+			if errors.Is(err, sql.ErrNoRows) {
+				identity, err = models.Application.FindMetricDatabaseInstallationIdentities(resolver.ctx, resolver.db, installationID)
+			}
 			if err == nil && identity.Installation != installationID.String() {
 				return models.MetricRollupIdentities{}, errRejectedMetricIdentity
 			}
@@ -387,6 +393,7 @@ func rollupIdentity(scope string, identity models.MetricRollupIdentities, labels
 		scope, labels["component"], identity.Server, identity.Application, identity.Environment,
 		identity.Release, identity.Deployment, identity.Target, identity.Instance,
 		identity.Resource, identity.Installation, runtimeIDFromCgroup(labels["id"]),
+		identity.DatabaseCluster, identity.DatabaseClusterNode,
 	}, "\x00")
 }
 
@@ -537,6 +544,7 @@ func mergeSystemContainerInventory(
 			result = append(result, AttributedTelemetryRow{
 				Scope: "container", Component: container.ResourceKind,
 				Resource: container.ResourceID, Installation: container.InstallationID,
+				DatabaseCluster: container.DatabaseClusterID, DatabaseClusterNode: container.DatabaseClusterNodeID,
 				ResourceName: container.ResourceName, ContainerName: container.ContainerName,
 				History: []AttributedTelemetryPoint{},
 			})
@@ -548,6 +556,8 @@ func mergeSystemContainerInventory(
 		result[match].Installation = container.InstallationID
 		result[match].ResourceName = container.ResourceName
 		result[match].ContainerName = container.ContainerName
+		result[match].DatabaseCluster = container.DatabaseClusterID
+		result[match].DatabaseClusterNode = container.DatabaseClusterNodeID
 	}
 	slices.SortFunc(result, func(a, b AttributedTelemetryRow) int {
 		return strings.Compare(a.ResourceName+a.Component+a.ContainerName, b.ResourceName+b.Component+b.ContainerName)
@@ -610,7 +620,8 @@ func attributedTelemetryRows(current, history []clickhouseclient.AttributedMetri
 				Scope: value.Scope, Component: value.Component, Application: value.Application,
 				Environment: value.Environment, Release: value.Release, Deployment: value.Deployment,
 				Target: value.Target, Instance: value.Instance, Resource: value.Resource,
-				Installation: value.Installation, History: []AttributedTelemetryPoint{},
+				Installation: value.Installation, DatabaseCluster: value.DatabaseCluster,
+				DatabaseClusterNode: value.DatabaseClusterNode, History: []AttributedTelemetryPoint{},
 			}
 			rows[key] = row
 		}
@@ -648,7 +659,7 @@ func attributedTelemetryRows(current, history []clickhouseclient.AttributedMetri
 }
 
 func attributedIdentity(value clickhouseclient.AttributedMetricValue) string {
-	return strings.Join([]string{value.Scope, value.Component, value.Application, value.Environment, value.Release, value.Deployment, value.Target, value.Instance, value.Resource, value.Installation}, "\x00")
+	return strings.Join([]string{value.Scope, value.Component, value.Application, value.Environment, value.Release, value.Deployment, value.Target, value.Instance, value.Resource, value.Installation, value.DatabaseCluster, value.DatabaseClusterNode}, "\x00")
 }
 
 func applyAttributedMetric(row *AttributedTelemetryRow, metric string, value float64) {

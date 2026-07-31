@@ -18,7 +18,8 @@ type buildSnapshot struct {
 	ContextPath                string          `json:"context_path"`
 	BuilderReference           *string         `json:"builder_reference"`
 	ImageRepository            string          `json:"image_repository"`
-	ContainerRegistryID        uuid.UUID       `json:"container_registry_id"`
+	RegistryResourceID         uuid.UUID       `json:"registry_resource_id"`
+	RegistryCredentialID       uuid.UUID       `json:"registry_credential_id"`
 	RegistryEndpoint           string          `json:"registry_endpoint"`
 	Settings                   json.RawMessage `json:"settings"`
 	BPGOTargets                string          `json:"bp_go_targets"`

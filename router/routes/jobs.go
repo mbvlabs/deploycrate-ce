@@ -2,21 +2,21 @@ package routes
 
 import "deploycrate-ce/internal/routing"
 
-const SystemJobsPrefix = "/system/jobs"
+const SystemTasksPrefix = "/system/tasks"
 
-var SystemJobs = routing.NewSimpleRoute(
+var SystemTasks = routing.NewSimpleRoute(
 	"",
-	"system.jobs",
-	SystemJobsPrefix,
+	"system.tasks",
+	SystemTasksPrefix,
 )
 
-var SystemJob = routing.NewRouteWithBigSerialID(
+var SystemTask = routing.NewRouteWithBigSerialID(
 	"/:id",
-	"system.job",
-	SystemJobsPrefix,
+	"system.task",
+	SystemTasksPrefix,
 )
 
-var SystemJobRun = routing.NewRouteWithBigSerialID("/:id/run", "system.job.run", SystemJobsPrefix)
-var SystemJobRetry = routing.NewRouteWithBigSerialID("/:id/retry", "system.job.retry", SystemJobsPrefix)
-var SystemJobCancel = routing.NewRouteWithBigSerialID("/:id/cancel", "system.job.cancel", SystemJobsPrefix)
-var SystemJobDestroy = routing.NewRouteWithBigSerialID("/:id", "system.job.destroy", SystemJobsPrefix)
+var SystemTaskRun = routing.NewRouteWithBigSerialID("/:id/run", "system.task.run", SystemTasksPrefix)
+var SystemTaskRetry = routing.NewRouteWithBigSerialID("/:id/retry", "system.task.retry", SystemTasksPrefix)
+var SystemTaskCancel = routing.NewRouteWithBigSerialID("/:id/cancel", "system.task.cancel", SystemTasksPrefix)
+var SystemTaskDestroy = routing.NewRouteWithBigSerialID("/:id", "system.task.destroy", SystemTasksPrefix)

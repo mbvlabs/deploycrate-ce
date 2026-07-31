@@ -123,8 +123,8 @@ func (service *BackupVerifier) Verify(ctx context.Context, backupID uuid.UUID) e
 	if err := models.Change.MarkCompleted(ctx, tx, scope.Backup.ChangeID, now); err != nil {
 		return fmt.Errorf("complete backup change: %w", err)
 	}
-	if err := advanceResourceRestoreAfterSafetyBackup(ctx, tx, service.queue, backupID); err != nil {
-		return fmt.Errorf("advance Resource restore after safety backup: %w", err)
+	if err := advanceDatabaseRestoreAfterSafetyBackup(ctx, tx, service.queue, backupID); err != nil {
+		return fmt.Errorf("advance Database restore after safety backup: %w", err)
 	}
 	if _, err := service.queue.InsertTx(
 		ctx,
@@ -171,7 +171,7 @@ func (service *BackupVerifier) recordVerificationFailure(
 		scope.Backup,
 		verificationErr,
 	)
-	restoreErr := failResourceRestoreSafetyBackup(persistCtx, service.db, scope.Backup.ID, verificationErr)
+	restoreErr := failDatabaseRestoreSafetyBackup(persistCtx, service.db, scope.Backup.ID, verificationErr)
 	slog.ErrorContext(
 		ctx,
 		"backup verification failed",

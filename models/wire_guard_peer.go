@@ -120,6 +120,17 @@ func (wgp wireGuardPeer) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return WireGuardPeerEntity{}, errors.Join(ErrDomainValidation, err)
 	}
+	if err := ensureUnique(ctx, db, "wireguard-peer-public-key:"+entity.PublicKey, db.NewSelect().Model((*WireGuardPeerEntity)(nil)).Where("public_key = ?", entity.PublicKey), "publicKey", "a WireGuard peer already uses this public key"); err != nil {
+		return WireGuardPeerEntity{}, err
+	}
+	if err := ensureUnique(ctx, db, "wireguard-peer-private-address:"+entity.PrivateAddress, db.NewSelect().Model((*WireGuardPeerEntity)(nil)).Where("private_address = ?", entity.PrivateAddress), "privateAddress", "a WireGuard peer already uses this private address"); err != nil {
+		return WireGuardPeerEntity{}, err
+	}
+	if !entity.RetiredAt.Valid {
+		if err := ensureUnique(ctx, db, "wireguard-peer-server:"+entity.ServerID.String(), db.NewSelect().Model((*WireGuardPeerEntity)(nil)).Where("server_id = ?", entity.ServerID).Where("retired_at IS NULL"), "serverId", "the Server already has an active WireGuard peer"); err != nil {
+			return WireGuardPeerEntity{}, err
+		}
+	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
 		return WireGuardPeerEntity{}, err

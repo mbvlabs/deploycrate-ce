@@ -1,0 +1,273 @@
+package services
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
+	"deploycrate-ce/clients/objectstorage"
+	"deploycrate-ce/internal/secretcrypto"
+	"deploycrate-ce/internal/storage"
+	"deploycrate-ce/models"
+	"deploycrate-ce/queue/jobs"
+
+	"github.com/google/uuid"
+	"github.com/uptrace/bun"
+)
+
+type DatabaseRestoreWorkflow struct {
+	db        storage.Pool
+	queue     storage.InsertQueue
+	scheduler *BackupScheduler
+	executor  *BackupExecutor
+	engine    *DatabaseRestoreEngine
+}
+
+func NewDatabaseRestoreWorkflow(db storage.Pool, queue storage.InsertQueue, scheduler *BackupScheduler, executor *BackupExecutor, engine *DatabaseRestoreEngine) *DatabaseRestoreWorkflow {
+	return &DatabaseRestoreWorkflow{db: db, queue: queue, scheduler: scheduler, executor: executor, engine: engine}
+}
+
+type DatabaseRestoreInput struct {
+	BackupID     uuid.UUID
+	Confirmation string
+	ActorID      uuid.UUID
+}
+
+func (service *DatabaseRestoreWorkflow) RequestForResource(ctx context.Context, resourceID uuid.UUID, input DatabaseRestoreInput) (models.DatabaseRestoreEntity, error) {
+	resource, err := models.Resource.Find(ctx, service.db.Executor(), resourceID)
+	if err != nil {
+		return models.DatabaseRestoreEntity{}, err
+	}
+	if strings.TrimSpace(input.Confirmation) != resource.Name {
+		return models.DatabaseRestoreEntity{}, domainError("confirmation", "mismatch", "Enter the Resource name exactly to confirm the restore")
+	}
+	if resource.SystemManaged {
+		return models.DatabaseRestoreEntity{}, domainError("backupId", "system_managed", "The running control-plane Database cannot be restored from the application")
+	}
+	backing, err := models.DatabaseResource.FindByResource(ctx, service.db.Executor(), resourceID)
+	if err != nil {
+		return models.DatabaseRestoreEntity{}, err
+	}
+	return service.Request(ctx, backing.DatabaseID, input)
+}
+
+func (service *DatabaseRestoreWorkflow) Request(ctx context.Context, databaseID uuid.UUID, input DatabaseRestoreInput) (models.DatabaseRestoreEntity, error) {
+	backup, err := models.Backup.Find(ctx, service.db.Executor(), input.BackupID)
+	if err != nil {
+		return models.DatabaseRestoreEntity{}, err
+	}
+	if backup.Status != models.BackupStatusVerified || backup.DatabaseID == nil || *backup.DatabaseID != databaseID {
+		return models.DatabaseRestoreEntity{}, domainError("backupId", "ineligible", "Choose a verified backup from this Database")
+	}
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return models.DatabaseRestoreEntity{}, err
+	}
+	defer tx.Rollback()
+	policy, err := activeDatabaseBackupPolicy(ctx, tx, databaseID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return models.DatabaseRestoreEntity{}, domainError("backupId", "safety_backup_unavailable", "An active backup policy is required to create the mandatory safety backup")
+		}
+		return models.DatabaseRestoreEntity{}, err
+	}
+	sequence, err := models.Change.NextSequence(ctx, tx, policy.EnvironmentID)
+	if err != nil {
+		return models.DatabaseRestoreEntity{}, err
+	}
+	now := time.Now().UTC()
+	change, err := models.Change.Create(ctx, tx, models.CreateChangeData{Sequence: sequence, Kind: "database_restore", TriggerType: "manual", ActorType: "user", ActorID: &input.ActorID, CorrelationID: uuid.New(), CorrectionContext: json.RawMessage(`{}`), Summary: "Restore Database from verified backup", Status: "pending", RequestedAt: now, CommittedAt: sql.NullTime{Time: now, Valid: true}, EnvironmentID: policy.EnvironmentID})
+	if err != nil {
+		return models.DatabaseRestoreEntity{}, err
+	}
+	task, err := models.ChangeTask.Create(ctx, tx, models.CreateChangeTaskData{Kind: "database_restore", SubjectType: "database", SubjectID: databaseID, IdempotencyKey: "database-restore:" + databaseID.String() + ":" + input.BackupID.String(), Input: json.RawMessage(`{}`), Status: "pending", AvailableAt: now, ChangeID: change.ID, ServerID: policy.ExecutionServerID})
+	if err != nil {
+		return models.DatabaseRestoreEntity{}, err
+	}
+	restore, err := models.DatabaseRestore.Create(ctx, tx, models.CreateDatabaseRestoreData{Status: models.DatabaseRestoreStatusPending, RequestedAt: now, ChangeID: change.ID, ChangeTaskID: task.ID, BackupID: input.BackupID, DatabaseID: databaseID})
+	if err != nil {
+		return models.DatabaseRestoreEntity{}, mapRestoreConflict(err)
+	}
+	if _, err := service.queue.InsertTx(ctx, tx.Tx, jobs.DatabaseRestorePrepareArgs{DatabaseRestoreID: restore.ID}, nil); err != nil {
+		return models.DatabaseRestoreEntity{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return models.DatabaseRestoreEntity{}, err
+	}
+	return restore, nil
+}
+
+func (service *DatabaseRestoreWorkflow) Prepare(ctx context.Context, restoreID uuid.UUID) error {
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	restore, err := models.DatabaseRestore.FindForUpdate(ctx, tx, restoreID)
+	if err != nil {
+		return err
+	}
+	if restore.Status != models.DatabaseRestoreStatusPending {
+		return nil
+	}
+	policy, err := activeDatabaseBackupPolicy(ctx, tx, restore.DatabaseID)
+	if err != nil {
+		operationErr := fmt.Errorf("load safety backup policy: %w", err)
+		return errors.Join(operationErr, service.failTx(ctx, tx, restore, operationErr, false, nil))
+	}
+	backupID, err := service.scheduler.enqueue(ctx, tx, policy, time.Now().UTC(), "pre_restore")
+	if err != nil {
+		operationErr := fmt.Errorf("create safety backup: %w", err)
+		return errors.Join(operationErr, service.failTx(ctx, tx, restore, operationErr, false, nil))
+	}
+	if err := models.DatabaseRestore.MarkSafetyBackup(ctx, tx, restore.ID, backupID, time.Now().UTC()); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (service *DatabaseRestoreWorkflow) Apply(ctx context.Context, restoreID uuid.UUID) error {
+	restore, err := models.DatabaseRestore.Find(ctx, service.db.Executor(), restoreID)
+	if err != nil {
+		return err
+	}
+	if restore.Status == models.DatabaseRestoreStatusCompleted || restore.Status == models.DatabaseRestoreStatusRolledBack || restore.Status == models.DatabaseRestoreStatusFailed {
+		return nil
+	}
+	if restore.Status != models.DatabaseRestoreStatusRestoring {
+		return fmt.Errorf("Database restore %s is not ready to apply", restoreID)
+	}
+	if err := models.Change.MarkRunning(ctx, service.db.Executor(), restore.ChangeID, time.Now().UTC()); err != nil {
+		return err
+	}
+	if err := models.ChangeTask.MarkRunning(ctx, service.db.Executor(), restore.ChangeTaskID, time.Now().UTC()); err != nil {
+		return err
+	}
+	scope, err := service.executor.loadScope(ctx, restore.BackupID)
+	if err != nil {
+		return service.fail(ctx, restore, err, DatabaseRestoreResult{})
+	}
+	if scope.Backup.Status != models.BackupStatusVerified || scope.Backup.DatabaseID == nil || *scope.Backup.DatabaseID != restore.DatabaseID {
+		return service.fail(ctx, restore, errors.New("restore source is no longer a verified backup for the Database"), DatabaseRestoreResult{})
+	}
+	target, err := service.executor.postgreSQLTargetForDatabase(ctx, restore.DatabaseID)
+	if err != nil {
+		return service.fail(ctx, restore, err, DatabaseRestoreResult{})
+	}
+	credential, err := service.backupCredential(scope)
+	if err != nil {
+		return service.fail(ctx, restore, err, DatabaseRestoreResult{})
+	}
+	store, err := objectstorage.New(ctx, scope.ObjectStorageConfig(), objectstorage.Credentials{AccessKeyID: credential.AccessKeyID, SecretAccessKey: credential.SecretAccessKey})
+	if err != nil {
+		return service.fail(ctx, restore, err, DatabaseRestoreResult{})
+	}
+	result, err := service.engine.Run(ctx, scope, target, credential, store, restore.ID.String())
+	if err != nil {
+		return service.fail(ctx, restore, err, result)
+	}
+	if result.CutoverAt == nil {
+		return service.fail(ctx, restore, errors.New("Database restore completed without a cutover timestamp"), result)
+	}
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC()
+	if err := models.DatabaseRestore.MarkCompleted(ctx, tx, restore.ID, *result.CutoverAt, now); err != nil {
+		return err
+	}
+	if err := models.ChangeTask.MarkCompleted(ctx, tx, restore.ChangeTaskID, now); err != nil {
+		return err
+	}
+	if err := models.Change.MarkCompleted(ctx, tx, restore.ChangeID, now); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	slog.InfoContext(ctx, "Database restore completed", "database_restore_id", restore.ID, "database_id", restore.DatabaseID, "backup_id", restore.BackupID)
+	return nil
+}
+
+func (service *DatabaseRestoreWorkflow) backupCredential(scope BackupScope) (BackupCredentialPayload, error) {
+	plaintext, err := secretcrypto.Decrypt(scope.CredentialPayload, service.executor.config.App.SessionEncryptionKey)
+	if err != nil {
+		return BackupCredentialPayload{}, errors.New("decrypt backup credential for restore")
+	}
+	defer clear(plaintext)
+	var credential BackupCredentialPayload
+	if json.Unmarshal(plaintext, &credential) != nil || credential.AccessKeyID == "" || credential.SecretAccessKey == "" || credential.AgeIdentity == "" {
+		return BackupCredentialPayload{}, errors.New("backup credential is incomplete for restore")
+	}
+	return credential, nil
+}
+func (service *DatabaseRestoreWorkflow) fail(ctx context.Context, restore models.DatabaseRestoreEntity, operationErr error, result DatabaseRestoreResult) error {
+	persistContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	tx, err := service.db.BeginTx(persistContext, nil)
+	if err != nil {
+		return errors.Join(operationErr, err)
+	}
+	defer tx.Rollback()
+	if err := service.failTx(persistContext, tx, restore, operationErr, result.RolledBack, result.CutoverAt); err != nil {
+		return errors.Join(operationErr, err)
+	}
+	return operationErr
+}
+func (service *DatabaseRestoreWorkflow) failTx(ctx context.Context, tx bun.Tx, restore models.DatabaseRestoreEntity, operationErr error, rolledBack bool, cutoverAt *time.Time) error {
+	now := time.Now().UTC()
+	if err := models.DatabaseRestore.MarkFailed(ctx, tx, restore.ID, operationErr, rolledBack, cutoverAt, now); err != nil {
+		return err
+	}
+	if err := models.ChangeTask.MarkFailed(ctx, tx, restore.ChangeTaskID, now); err != nil {
+		return err
+	}
+	if err := models.Change.MarkFailed(ctx, tx, restore.ChangeID, operationErr, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func activeDatabaseBackupPolicy(ctx context.Context, db storage.Executor, databaseID uuid.UUID) (models.ScheduledBackupPolicy, error) {
+	var policyID uuid.UUID
+	if err := db.NewSelect().TableExpr("backup_policies AS policy").ColumnExpr("policy.id").Where("policy.target_type = 'database'").Where("policy.database_id = ?", databaseID).Where("policy.archived_at IS NULL AND policy.activated_at IS NOT NULL").Limit(1).Scan(ctx, &policyID); err != nil {
+		return models.ScheduledBackupPolicy{}, err
+	}
+	return models.BackupPolicy.FindScheduled(ctx, db, policyID)
+}
+func advanceDatabaseRestoreAfterSafetyBackup(ctx context.Context, tx bun.Tx, queue storage.InsertQueue, backupID uuid.UUID) error {
+	restoreID, err := models.DatabaseRestore.MarkRestoringBySafetyBackup(ctx, tx, backupID, time.Now().UTC())
+	if err != nil || restoreID == nil {
+		return err
+	}
+	_, err = queue.InsertTx(ctx, tx.Tx, jobs.DatabaseRestoreApplyArgs{DatabaseRestoreID: *restoreID}, nil)
+	return err
+}
+func failDatabaseRestoreSafetyBackup(ctx context.Context, db storage.Pool, backupID uuid.UUID, operationErr error) error {
+	var restore models.DatabaseRestoreEntity
+	if err := db.Executor().NewSelect().Model(&restore).Where("database_restore.safety_backup_id = ?", backupID).Where("database_restore.status = ?", models.DatabaseRestoreStatusSafetyBackup).Scan(ctx); errors.Is(err, sql.ErrNoRows) {
+		return nil
+	} else if err != nil {
+		return err
+	}
+	service := DatabaseRestoreWorkflow{db: db}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	return service.failTx(ctx, tx, restore, fmt.Errorf("safety backup failed: %w", operationErr), false, nil)
+}
+func mapRestoreConflict(err error) error {
+	if err != nil && strings.Contains(err.Error(), "database_restores_active_database_unique") {
+		return domainError("backupId", "restore_active", "A restore is already active for this Database")
+	}
+	return err
+}

@@ -37,7 +37,8 @@
   const privateNetwork = $derived(privateEndpoint ? options.privateNetworks.find((item) => item.id === privateEndpoint.privateNetworkId) : undefined)
   const administratorCredentials = $derived(resource.credentials.filter((item: any) => Boolean(item.resourceInstallationId)))
   const applicationCredentials = $derived(resource.credentials.filter((item: any) => !item.resourceInstallationId))
-  const managedPostgreSQL = $derived(resource.managementMode === 'managed' && resource.kind === 'postgresql')
+	const databaseBacked = $derived(Boolean(resource.databaseBacking))
+	const managedPostgreSQL = $derived(resource.managementMode === 'managed' && resource.kind === 'postgresql' && !databaseBacked)
   const containerRunning = $derived(resource.installations.some((item: any) => item.serviceState === 'running'))
   const canAddApplicationUser = $derived(!managedPostgreSQL || containerRunning)
   const lastSuccessfulBackup = $derived(backups.history.find((item) => item.status === 'verified'))
@@ -45,6 +46,12 @@
   const selectClass = 'h-9 w-full border border-input bg-background px-3 text-sm aria-invalid:border-destructive'
   const textareaClass = 'min-h-24 w-full border border-input bg-background px-3 py-2 font-mono text-xs'
   const overallStatus = $derived.by(() => {
+		if (databaseBacked) {
+			if (resource.healthChecks.some((item: any) => item.enabled && item.state === 'unhealthy')) return { label: 'Unhealthy', tone: 'bad', detail: 'The published Database access check reached its failure threshold.' }
+			if (resource.healthChecks.some((item: any) => item.enabled && item.state === 'degraded')) return { label: 'Degraded', tone: 'warn', detail: 'The published Database access check is failing below its threshold.' }
+			if (resource.healthChecks.some((item: any) => item.enabled && item.state === 'healthy')) return { label: 'Available', tone: 'good', detail: 'The published endpoint and application credential can access the Database.' }
+			return { label: 'Access unknown', tone: 'neutral', detail: 'No fresh Database access observation is available.' }
+		}
     if (resource.managementMode === 'external') return { label: 'External', tone: 'neutral', detail: 'Lifecycle is managed outside DeployCrate.' }
     if (resource.installations.length === 0) return { label: 'Not deployed', tone: 'neutral', detail: 'No runtime installation is configured.' }
     if (resource.healthChecks.some((item: any) => item.enabled && item.state === 'unhealthy')) return { label: 'Unhealthy', tone: 'bad', detail: 'A Resource health check reached its failure threshold.' }
@@ -107,7 +114,7 @@
   }
   function initialVolume() { return { name: '', driver: 'local', configurationText: '{}', serverId: options.servers[0]?.id ?? '' } }
   function initialMount() { return { mountPath: '/data', readOnly: false, resourceVolumeId: resource.volumes[0]?.id ?? '', resourceInstallationId: resource.installations[0]?.id ?? '' } }
-  function initialHealth() { return { name: 'Readiness', kind: resource.kind === 'postgresql' || resource.kind === 'clickhouse' ? resource.kind : definition?.healthCheckKinds?.[0] ?? 'tcp', configurationText: '{}', intervalSeconds: 30, timeoutSeconds: 5, failureThreshold: 3, successThreshold: 1, enabled: true, resourceInstallationId: resource.installations[0]?.id ?? '', resourceEndpointId: primaryEndpoint?.id ?? '', resourceCredentialId: administratorCredentials[0]?.id ?? '' } }
+	function initialHealth() { return { name: 'Readiness', kind: resource.kind === 'postgresql' || resource.kind === 'clickhouse' ? resource.kind : definition?.healthCheckKinds?.[0] ?? 'tcp', configurationText: '{}', intervalSeconds: 30, timeoutSeconds: 5, failureThreshold: 3, successThreshold: 1, enabled: true, resourceInstallationId: resource.installations[0]?.id ?? '', resourceEndpointId: primaryEndpoint?.id ?? '', resourceCredentialId: (databaseBacked ? applicationCredentials[0] : administratorCredentials[0])?.id ?? '' } }
   function initialBackupPolicy() {
     return {
       schedule: backups.policy?.schedule ?? '0 2 * * *',
@@ -263,7 +270,7 @@
         <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">{resource.kind} · {resource.category}</p>
         <h1 class="mt-3 text-3xl font-semibold">{resource.name}</h1>
         <p class="mt-2 text-sm capitalize text-muted-foreground">{resource.managementMode} · {resource.sharingScope} sharing</p>
-        {#if resource.kind === 'postgresql'}<p class="mt-1 font-mono text-xs text-muted-foreground">Database {resource.databaseName}</p>{/if}
+		{#if resource.databaseBacking}<p class="mt-1 text-xs text-muted-foreground">{resource.databaseBacking.mode === 'dedicated' ? 'Dedicated' : 'Cluster / Server'} · Database <span class="font-mono">{resource.databaseBacking.databaseName}</span> · {resource.databaseBacking.clusterName}</p>{/if}
       </div>
       <div class="flex gap-2">
         <Button variant="outline" onclick={() => router.reload({ only: ['resource'] })}>Refresh status</Button>
@@ -281,7 +288,7 @@
             <span class:!border-success={overallStatus.tone === 'good'} class:!text-success={overallStatus.tone === 'good'} class:!border-destructive={overallStatus.tone === 'bad'} class:!text-destructive={overallStatus.tone === 'bad'} class="border border-border px-2 py-1 text-xs font-medium">{overallStatus.label}</span>
             {#if resource.installations.length > 0}<span class="border border-border bg-muted/30 px-2 py-1 text-xs">Docker</span>{/if}
           </div>
-          <h2 class="mt-5 text-xl font-semibold">Container status</h2>
+		  <h2 class="mt-5 text-xl font-semibold">{databaseBacked ? 'Access status' : 'Container status'}</h2>
           <p class="mt-2 max-w-2xl text-sm text-muted-foreground">{overallStatus.detail}</p>
         </div>
         <div class="grid grid-cols-2 gap-5 border-t border-border bg-muted/20 p-6 text-sm lg:grid-cols-1 lg:border-l lg:border-t-0">
@@ -540,7 +547,7 @@
 
   <Dialog.Root bind:open={healthDialogOpen}>
     <Dialog.Content class="sm:max-w-2xl">
-    <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createHealth() }}><div><h2 class="text-lg font-semibold">Add health check</h2><p class="mt-1 text-sm text-muted-foreground">Define how DeployCrate should evaluate this Resource.</p></div><div class="grid gap-4 sm:grid-cols-2"><FormField label="Name"><Input bind:value={health.name} required /></FormField><FormField label="Kind"><select bind:value={health.kind} class={selectClass}>{#each definition.healthCheckKinds as value}<option value={value}>{value}</option>{/each}</select></FormField><FormField label="Installation"><select bind:value={health.resourceInstallationId} class={selectClass}>{#each resource.installations as value}<option value={value.id}>{value.containerName}</option>{/each}</select></FormField><FormField label="Endpoint"><select bind:value={health.resourceEndpointId} class={selectClass}><option value="">None</option>{#each resource.endpoints as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Credential"><select bind:value={health.resourceCredentialId} class={selectClass}><option value="">None</option>{#each resource.credentials as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Interval seconds"><Input type="number" bind:value={health.intervalSeconds} min="1" /></FormField><FormField label="Timeout seconds"><Input type="number" bind:value={health.timeoutSeconds} min="1" /></FormField><FormField label="Failure threshold"><Input type="number" bind:value={health.failureThreshold} min="1" /></FormField><FormField label="Success threshold"><Input type="number" bind:value={health.successThreshold} min="1" /></FormField><label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={health.enabled} /> Enabled</label><label class="grid gap-1 text-xs sm:col-span-2">Configuration JSON<textarea class={textareaClass} bind:value={health.configurationText}></textarea></label></div><div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (healthDialogOpen = false)}>Cancel</Button><Button type="submit">Create health check</Button></div></form>
+    <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createHealth() }}><div><h2 class="text-lg font-semibold">Add health check</h2><p class="mt-1 text-sm text-muted-foreground">Define how DeployCrate should evaluate this Resource.</p></div><div class="grid gap-4 sm:grid-cols-2"><FormField label="Name"><Input bind:value={health.name} required /></FormField><FormField label="Kind"><select bind:value={health.kind} class={selectClass}>{#each definition.healthCheckKinds as value}<option value={value}>{value}</option>{/each}</select></FormField>{#if resource.installations.length > 0}<FormField label="Installation"><select bind:value={health.resourceInstallationId} class={selectClass}>{#each resource.installations as value}<option value={value.id}>{value.containerName}</option>{/each}</select></FormField>{/if}<FormField label="Endpoint"><select bind:value={health.resourceEndpointId} class={selectClass}><option value="">None</option>{#each resource.endpoints as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Credential"><select bind:value={health.resourceCredentialId} class={selectClass}><option value="">None</option>{#each resource.credentials as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Interval seconds"><Input type="number" bind:value={health.intervalSeconds} min="1" /></FormField><FormField label="Timeout seconds"><Input type="number" bind:value={health.timeoutSeconds} min="1" /></FormField><FormField label="Failure threshold"><Input type="number" bind:value={health.failureThreshold} min="1" /></FormField><FormField label="Success threshold"><Input type="number" bind:value={health.successThreshold} min="1" /></FormField><label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={health.enabled} /> Enabled</label><label class="grid gap-1 text-xs sm:col-span-2">Configuration JSON<textarea class={textareaClass} bind:value={health.configurationText}></textarea></label></div><div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (healthDialogOpen = false)}>Cancel</Button><Button type="submit">Create health check</Button></div></form>
     </Dialog.Content>
   </Dialog.Root>
 </DashboardLayout>

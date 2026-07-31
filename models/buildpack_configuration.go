@@ -25,7 +25,7 @@ type BuildpackConfigurationEntity struct {
 	ImageRepository     string          `bun:"image_repository"`
 	Settings            json.RawMessage `bun:"settings,type:jsonb"`
 	EnvironmentSourceID uuid.UUID       `bun:"environment_source_id,type:uuid"`
-	ContainerRegistryID uuid.UUID       `bun:"container_registry_id,type:uuid"`
+	RegistryResourceID  uuid.UUID       `bun:"registry_resource_id,type:uuid"`
 }
 
 func (e *BuildpackConfigurationEntity) Validate() error {
@@ -39,8 +39,8 @@ func (e *BuildpackConfigurationEntity) Validate() error {
 	if strings.TrimSpace(e.ImageRepository) == "" {
 		builder.Add("image_repository", "required", "image repository is required")
 	}
-	if e.EnvironmentSourceID == uuid.Nil || e.ContainerRegistryID == uuid.Nil {
-		builder.Add("environment_source_id", "required", "source and container registry are required")
+	if e.EnvironmentSourceID == uuid.Nil || e.RegistryResourceID == uuid.Nil {
+		builder.Add("environment_source_id", "required", "source and Registry Resource are required")
 	}
 	if len(e.Settings) == 0 || !json.Valid(e.Settings) {
 		builder.Add("settings", "invalid", "Buildpacks settings must be valid JSON")
@@ -92,7 +92,7 @@ type CreateBuildpackConfigurationData struct {
 	ImageRepository     string
 	Settings            json.RawMessage
 	EnvironmentSourceID uuid.UUID
-	ContainerRegistryID uuid.UUID
+	RegistryResourceID  uuid.UUID
 }
 
 func (bc buildpackConfiguration) Create(
@@ -108,7 +108,7 @@ func (bc buildpackConfiguration) Create(
 		ImageRepository:     data.ImageRepository,
 		Settings:            data.Settings,
 		EnvironmentSourceID: data.EnvironmentSourceID,
-		ContainerRegistryID: data.ContainerRegistryID,
+		RegistryResourceID:  data.RegistryResourceID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -130,7 +130,7 @@ type UpdateBuildpackConfigurationData struct {
 	ImageRepository     string
 	Settings            json.RawMessage
 	EnvironmentSourceID uuid.UUID
-	ContainerRegistryID uuid.UUID
+	RegistryResourceID  uuid.UUID
 }
 
 func (bc buildpackConfiguration) Update(
@@ -146,7 +146,7 @@ func (bc buildpackConfiguration) Update(
 		ImageRepository:     data.ImageRepository,
 		Settings:            data.Settings,
 		EnvironmentSourceID: data.EnvironmentSourceID,
-		ContainerRegistryID: data.ContainerRegistryID,
+		RegistryResourceID:  data.RegistryResourceID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -161,7 +161,7 @@ func (bc buildpackConfiguration) Update(
 		Column("image_repository").
 		Column("settings").
 		Column("environment_source_id").
-		Column("container_registry_id").
+		Column("registry_resource_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -258,7 +258,7 @@ func (bc buildpackConfiguration) Upsert(
 		ImageRepository:     data.ImageRepository,
 		Settings:            data.Settings,
 		EnvironmentSourceID: data.EnvironmentSourceID,
-		ContainerRegistryID: data.ContainerRegistryID,
+		RegistryResourceID:  data.RegistryResourceID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -273,7 +273,7 @@ func (bc buildpackConfiguration) Upsert(
 		Set("image_repository = excluded.image_repository").
 		Set("settings = excluded.settings").
 		Set("environment_source_id = excluded.environment_source_id").
-		Set("container_registry_id = excluded.container_registry_id").
+		Set("registry_resource_id = excluded.registry_resource_id").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return BuildpackConfigurationEntity{}, err

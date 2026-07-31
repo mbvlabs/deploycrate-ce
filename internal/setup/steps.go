@@ -272,13 +272,13 @@ func sshCASetupStep() Step {
 
 func databaseStep(validateDatabase func(context.Context, string) error) Step {
 	return setupStep{
-		id: "database-observability-v1", description: "Configure local or external PostgreSQL",
+		id: "database-resource-ownership-v2", description: "Configure local or external PostgreSQL",
 		apply: func(ctx context.Context, cfg Config, runtime Runtime, report Reporter) error {
 			if runtime.DryRun {
 				report(
 					Event{
 						Kind:   EventLog,
-						StepID: "database-observability-v1",
+						StepID: "database-resource-ownership-v2",
 						Line:   "dry run: database setup skipped",
 					},
 				)
@@ -289,10 +289,11 @@ func databaseStep(validateDatabase func(context.Context, string) error) Step {
 				if err != nil {
 					return err
 				}
-				return runtime.Shell.Run(ctx, "database-observability-v1", script, map[string]string{
-					"DB_NAME":     cfg.Database.Name,
-					"DB_USER":     cfg.Database.User,
-					"DB_PASSWORD": cfg.Secrets.DatabasePassword,
+				return runtime.Shell.Run(ctx, "database-resource-ownership-v2", script, map[string]string{
+					"DB_NAME":            cfg.Database.Name,
+					"DB_USER":            cfg.Database.User,
+					"DB_PASSWORD":        cfg.Secrets.DatabasePassword,
+					"DB_INSTALLATION_ID": cfg.DatabaseInstallationID().String(),
 				}, report)
 			}
 			if validateDatabase == nil {
@@ -400,12 +401,15 @@ func controlPlaneBootstrapStep(
 					ResticVersion:         ResticVersion,
 					WireGuardToolsVersion: wireGuardToolsVersion,
 				},
-				DatabaseExternal: cfg.Database.External,
-				DatabaseHost:     cfg.Database.Host,
-				DatabasePort:     cfg.Database.Port,
-				DatabaseName:     cfg.Database.Name,
-				DatabaseSSLMode:  cfg.Database.SSLMode,
-				Backup:           backupInput,
+				DatabaseExternal:       cfg.Database.External,
+				DatabaseHost:           cfg.Database.Host,
+				DatabasePort:           cfg.Database.Port,
+				DatabaseName:           cfg.Database.Name,
+				DatabaseUser:           cfg.Database.User,
+				DatabasePassword:       cfg.Secrets.DatabasePassword,
+				DatabaseSSLMode:        cfg.Database.SSLMode,
+				DatabaseInstallationID: cfg.DatabaseInstallationID(),
+				Backup:                 backupInput,
 				WireGuard: BootstrapWireGuardInput{
 					Interface:           WireGuardInterface,
 					NetworkCIDR:         WireGuardNetworkCIDR,
