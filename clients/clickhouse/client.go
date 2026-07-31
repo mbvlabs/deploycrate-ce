@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -70,6 +71,26 @@ type AttributedMetricValue struct {
 	Value        float64
 	ObservedAt   time.Time
 	BucketStart  time.Time
+}
+
+type LogCursor struct {
+	Timestamp time.Time
+	Epoch     string
+	Ordinal   uint64
+}
+
+type EnvironmentLog struct {
+	Cursor     LogCursor
+	Message    string
+	Stream     string
+	Container  string
+	Deployment string
+	Instance   string
+	Release    string
+}
+
+type EnvironmentLogPage struct {
+	Logs []EnvironmentLog
 }
 
 type Client struct {
@@ -395,6 +416,95 @@ func (client Client) queryAttributedMetrics(
 		})
 	}
 	return result, nil
+}
+
+func (client Client) EnvironmentLogs(
+	ctx context.Context,
+	environment string,
+	after *LogCursor,
+	limit uint64,
+) (EnvironmentLogPage, error) {
+	const initialQuery = "SELECT toString(toUnixTimestamp64Nano(Timestamp)) AS timestamp_nanoseconds, Body AS message, LogAttributes['log.iostream'] AS stream, LogAttributes['container.name'] AS container, LogAttributes['deploycrate.deployment.id'] AS deployment, LogAttributes['deploycrate.instance.id'] AS instance, LogAttributes['deploycrate.release.id'] AS release, LogAttributes['deploycrate.log.epoch'] AS epoch, LogAttributes['deploycrate.log.ordinal'] AS ordinal FROM otel_logs WHERE LogAttributes['deploycrate.environment.id'] = {environment:String} ORDER BY Timestamp DESC, epoch DESC, toUInt64OrZero(LogAttributes['deploycrate.log.ordinal']) DESC LIMIT {limit:UInt64} FORMAT JSONEachRow"
+	const incrementalQuery = "SELECT toString(toUnixTimestamp64Nano(Timestamp)) AS timestamp_nanoseconds, Body AS message, LogAttributes['log.iostream'] AS stream, LogAttributes['container.name'] AS container, LogAttributes['deploycrate.deployment.id'] AS deployment, LogAttributes['deploycrate.instance.id'] AS instance, LogAttributes['deploycrate.release.id'] AS release, LogAttributes['deploycrate.log.epoch'] AS epoch, LogAttributes['deploycrate.log.ordinal'] AS ordinal FROM otel_logs WHERE LogAttributes['deploycrate.environment.id'] = {environment:String} AND (Timestamp, LogAttributes['deploycrate.log.epoch'], toUInt64OrZero(LogAttributes['deploycrate.log.ordinal'])) > (fromUnixTimestamp64Nano({after_nanoseconds:Int64}), {after_epoch:String}, {after_ordinal:UInt64}) ORDER BY Timestamp, epoch, toUInt64OrZero(LogAttributes['deploycrate.log.ordinal']) LIMIT {limit:UInt64} FORMAT JSONEachRow"
+
+	endpoint, err := url.Parse(client.baseURL)
+	if err != nil {
+		return EnvironmentLogPage{}, fmt.Errorf("build ClickHouse URL: %w", err)
+	}
+	query := endpoint.Query()
+	query.Set("database", client.database)
+	query.Set("param_environment", environment)
+	query.Set("param_limit", strconv.FormatUint(limit, 10))
+	queryText := initialQuery
+	if after != nil {
+		queryText = incrementalQuery
+		query.Set("param_after_nanoseconds", strconv.FormatInt(after.Timestamp.UnixNano(), 10))
+		query.Set("param_after_epoch", after.Epoch)
+		query.Set("param_after_ordinal", strconv.FormatUint(after.Ordinal, 10))
+	}
+	query.Set("query", queryText)
+	endpoint.RawQuery = query.Encode()
+
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), nil)
+	if err != nil {
+		return EnvironmentLogPage{}, fmt.Errorf("build ClickHouse Environment log request: %w", err)
+	}
+	request.SetBasicAuth(client.user, client.password)
+	response, err := client.client.Do(request)
+	if err != nil {
+		return EnvironmentLogPage{}, fmt.Errorf("query ClickHouse Environment logs: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		message, _ := io.ReadAll(io.LimitReader(response.Body, 800))
+		return EnvironmentLogPage{}, fmt.Errorf(
+			"query ClickHouse Environment logs: unexpected status %s: %s",
+			response.Status,
+			string(message),
+		)
+	}
+
+	logs := make([]EnvironmentLog, 0, limit)
+	decoder := json.NewDecoder(response.Body)
+	for {
+		var row struct {
+			TimestampNanoseconds string `json:"timestamp_nanoseconds"`
+			Message              string `json:"message"`
+			Stream               string `json:"stream"`
+			Container            string `json:"container"`
+			Deployment           string `json:"deployment"`
+			Instance             string `json:"instance"`
+			Release              string `json:"release"`
+			Epoch                string `json:"epoch"`
+			Ordinal              string `json:"ordinal"`
+		}
+		if err := decoder.Decode(&row); errors.Is(err, io.EOF) {
+			break
+		} else if err != nil {
+			return EnvironmentLogPage{}, fmt.Errorf("decode ClickHouse Environment log: %w", err)
+		}
+		timestampNanoseconds, err := strconv.ParseInt(row.TimestampNanoseconds, 10, 64)
+		if err != nil {
+			return EnvironmentLogPage{}, fmt.Errorf("decode ClickHouse Environment log timestamp: %w", err)
+		}
+		ordinal, err := strconv.ParseUint(row.Ordinal, 10, 64)
+		if err != nil {
+			return EnvironmentLogPage{}, fmt.Errorf("decode ClickHouse Environment log ordinal: %w", err)
+		}
+		logs = append(logs, EnvironmentLog{
+			Cursor: LogCursor{
+				Timestamp: time.Unix(0, timestampNanoseconds).UTC(),
+				Epoch:     row.Epoch,
+				Ordinal:   ordinal,
+			},
+			Message: row.Message, Stream: row.Stream, Container: row.Container,
+			Deployment: row.Deployment, Instance: row.Instance, Release: row.Release,
+		})
+	}
+	if after == nil {
+		slices.Reverse(logs)
+	}
+	return EnvironmentLogPage{Logs: logs}, nil
 }
 
 func (client Client) ExportMetricRollups(

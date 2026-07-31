@@ -156,7 +156,7 @@ func DefaultSteps(operations Operations) []Step {
 			},
 		),
 		scriptSetupStep(
-			"otel-collector-"+OpenTelemetryCollectorVersion,
+			"otel-collector-"+OpenTelemetryCollectorVersion+"-workload-attribution-v1",
 			"Install durable service and workload log collection",
 			"otel-collector.sh",
 			func(cfg Config) map[string]string {

@@ -22,6 +22,8 @@
   type Deployment = { id: string; status: string; currentStep: string; error: string; releaseId: string; createdAt: string; active: boolean }
   type DeploymentEvent = { id: string; sequence: number; eventType: string; status: string; step: string; message: string; error: string; occurredAt: string }
   type DeploymentEventSnapshot = { deployment: Deployment; events: DeploymentEvent[]; nextSequence: number; hasMore: boolean }
+  type EnvironmentLog = { id: string; message: string; stream: string; container: string; deployment: string; instance: string; release: string; occurredAt: string }
+  type EnvironmentLogSnapshot = { logs: EnvironmentLog[]; nextCursor: string; hasMore: boolean }
   type Instance = { id: string; state: string; slot: string; ports: Record<string, number>; releaseId: string; observedAt: string }
   type TelemetryPoint = { observedAt: string; cpuCores: number; memoryBytes: number; diskReadBytesPerSecond: number; diskWriteBytesPerSecond: number; networkReceiveBytesPerSecond: number; networkTransmitBytesPerSecond: number; cpuAvailable: boolean; memoryAvailable: boolean; diskReadAvailable: boolean; diskWriteAvailable: boolean; networkReceiveAvailable: boolean; networkTransmitAvailable: boolean }
   type TelemetryRow = {
@@ -65,6 +67,13 @@
   let deploymentEventCursors = $state<Record<string, number>>({})
   let expandedDeploymentId = $state('')
   let deploymentEventConnectionError = $state('')
+  let environmentLogs = $state<EnvironmentLog[]>([])
+  let environmentLogCursor = $state('')
+  let environmentLogsLoaded = $state(false)
+  let environmentLogConnectionError = $state('')
+  let environmentLogsPaused = $state(false)
+  let followingEnvironmentLogs = $state(true)
+  let environmentLogViewport: HTMLDivElement
   let activeReleaseDeployment = $state('')
   let activeBuildAction = $state('')
   let buildActionDialogOpen = $state(false)
@@ -252,6 +261,71 @@
     }
   }
 
+  async function loadEnvironmentLogs(signal?: AbortSignal) {
+    const endpoint = new URL(
+      routes.environmentLogs(environment.applicationId, environment.environment.id),
+      window.location.origin,
+    )
+    if (environmentLogCursor) endpoint.searchParams.set('after', environmentLogCursor)
+    const response = await window.fetch(endpoint, {
+      cache: 'no-store',
+      credentials: 'same-origin',
+      headers: { Accept: 'application/json' },
+      signal,
+    })
+    if (!response.ok) throw new Error(`Environment logs returned ${response.status}`)
+    const snapshot = (await response.json()) as EnvironmentLogSnapshot
+    if (snapshot.logs.length > 0) {
+      environmentLogs = [...environmentLogs, ...snapshot.logs].slice(-2000)
+    }
+    environmentLogCursor = snapshot.nextCursor
+    environmentLogsLoaded = true
+    environmentLogConnectionError = ''
+    return snapshot
+  }
+
+  function updateEnvironmentLogFollow() {
+    followingEnvironmentLogs = environmentLogViewport.scrollHeight
+      - environmentLogViewport.scrollTop
+      - environmentLogViewport.clientHeight < 48
+  }
+
+  $effect(() => {
+    environmentLogs.length
+    if (!followingEnvironmentLogs) return
+    const frame = window.requestAnimationFrame(() => {
+      environmentLogViewport?.scrollTo({ top: environmentLogViewport.scrollHeight })
+    })
+    return () => window.cancelAnimationFrame(frame)
+  })
+
+  $effect(() => {
+    if (environmentLogsPaused) return
+    const abortController = new AbortController()
+    let timer: number | undefined
+    let retryDelay = 2000
+
+    async function poll() {
+      try {
+        const snapshot = await loadEnvironmentLogs(abortController.signal)
+        if (abortController.signal.aborted) return
+        retryDelay = 2000
+        timer = window.setTimeout(poll, snapshot.hasMore ? 0 : retryDelay)
+      } catch {
+        if (abortController.signal.aborted) return
+        environmentLogConnectionError = 'Reconnecting to the workload log stream...'
+        retryDelay = Math.min(retryDelay * 2, 10000)
+        timer = window.setTimeout(poll, retryDelay)
+      }
+    }
+
+    timer = window.setTimeout(poll, 0)
+    return () => {
+      abortController.abort()
+      if (timer !== undefined) window.clearTimeout(timer)
+    }
+  })
+
   $effect(() => {
     const buildId = activeBuildId
     if (!buildId) return
@@ -395,6 +469,34 @@
         </div>
       {/if}
     </section>
+
+    <Card.Root>
+      <Card.Header>
+        <Card.Action><Button size="sm" variant="outline" onclick={() => (environmentLogsPaused = !environmentLogsPaused)}>{environmentLogsPaused ? 'Resume' : 'Pause'}</Button></Card.Action>
+        <Card.Title>Workload logs</Card.Title>
+        <Card.Description>Live stdout and stderr from this Environment's containers. ClickHouse retains logs for seven days.</Card.Description>
+      </Card.Header>
+      <Card.Content>
+        {#if environmentLogConnectionError}<p class="mb-3 text-xs text-warning">{environmentLogConnectionError}</p>{/if}
+        <div
+          bind:this={environmentLogViewport}
+          onscroll={updateEnvironmentLogFollow}
+          class="max-h-[32rem] min-h-48 overflow-auto border border-border bg-black/35 p-3 font-mono text-[11px] leading-relaxed"
+        >
+          {#each environmentLogs as log (log.id)}
+            <div class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 py-1" class:text-destructive={log.stream === 'stderr'}>
+              <span class="select-none whitespace-nowrap text-muted-foreground">{stamp(log.occurredAt)}</span>
+              <div class="min-w-0">
+                <p class="select-none text-[10px] text-muted-foreground">{log.stream} · {log.container || 'container'} · deployment {short(log.deployment)} · instance {short(log.instance)}</p>
+                <pre class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
+              </div>
+            </div>
+          {:else}
+            <p class="text-muted-foreground">{environmentLogsLoaded ? 'No workload logs have been collected yet.' : 'Loading workload logs...'}</p>
+          {/each}
+        </div>
+      </Card.Content>
+    </Card.Root>
 
     <Card.Root><Card.Header><Card.Title>Resources</Card.Title><Card.Description>Explicit connections available to this Environment.</Card.Description></Card.Header><Card.Content class="space-y-2">{#each environment.resources as resource}<div class="grid gap-1 border border-border p-3 sm:grid-cols-3"><span class="font-mono text-sm">{resource.alias}</span><span>{resource.name}</span><span class="text-muted-foreground">{resource.kind}</span></div>{:else}<p class="text-sm text-muted-foreground">No Resources selected.</p>{/each}</Card.Content></Card.Root>
 

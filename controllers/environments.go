@@ -26,6 +26,7 @@ type Environments struct {
 	secrets      *services.EnvironmentSecrets
 	applications *services.ApplicationSetup
 	metric       services.MetricRollupService
+	logs         *services.EnvironmentLogs
 }
 
 func NewEnvironments(
@@ -33,8 +34,9 @@ func NewEnvironments(
 	secrets *services.EnvironmentSecrets,
 	applications *services.ApplicationSetup,
 	metric services.MetricRollupService,
+	logs *services.EnvironmentLogs,
 ) Environments {
-	return Environments{setup: setup, secrets: secrets, applications: applications, metric: metric}
+	return Environments{setup: setup, secrets: secrets, applications: applications, metric: metric, logs: logs}
 }
 
 func (controller Environments) RegisterRoutes(router *router.Router) error {
@@ -49,6 +51,7 @@ func (controller Environments) RegisterRoutes(router *router.Router) error {
 	}{
 		{http.MethodGet, routes.Environments, controller.Index},
 		{http.MethodGet, routes.EnvironmentShow, controller.Show},
+		{http.MethodGet, routes.EnvironmentLogs, controller.Logs},
 		{http.MethodGet, routes.EnvironmentEdit, controller.Edit},
 		{http.MethodPatch, routes.EnvironmentUpdate, controller.Update},
 		{http.MethodDelete, routes.EnvironmentDestroy, controller.Destroy},
@@ -74,6 +77,36 @@ func (controller Environments) RegisterRoutes(router *router.Router) error {
 		registered = append(registered, err)
 	}
 	return errors.Join(registered...)
+}
+
+func (controller Environments) Logs(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	if err != nil {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Environment not found"})
+	}
+	snapshot, err := controller.logs.Snapshot(
+		etx.Request().Context(),
+		params.ApplicationID,
+		params.EnvironmentID,
+		etx.QueryParam("after"),
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Environment not found"})
+	}
+	if errors.Is(err, services.ErrInvalidEnvironmentLogCursor) {
+		return etx.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	if err != nil {
+		slog.ErrorContext(
+			etx.Request().Context(),
+			"failed to load Environment logs",
+			"environment_id", params.EnvironmentID,
+			"error", err,
+		)
+		return etx.JSON(http.StatusInternalServerError, map[string]string{"error": "Environment logs could not be loaded"})
+	}
+	etx.Response().Header().Set("Cache-Control", "no-store")
+	return etx.JSON(http.StatusOK, snapshot)
 }
 
 func (controller Environments) DeploymentEvents(etx *echo.Context) error {

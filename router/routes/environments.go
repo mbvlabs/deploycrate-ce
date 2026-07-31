@@ -50,6 +50,7 @@ type EnvironmentBuildActionParams struct {
 }
 
 var EnvironmentShow = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID", "applications.environments.show", ApplicationsPrefix)
+var EnvironmentLogs = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/logs", "applications.environments.logs", ApplicationsPrefix)
 var EnvironmentEdit = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/edit", "applications.environments.edit", ApplicationsPrefix)
 var EnvironmentUpdate = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID", "applications.environments.update", ApplicationsPrefix)
 var EnvironmentDestroy = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID", "applications.environments.destroy", ApplicationsPrefix)

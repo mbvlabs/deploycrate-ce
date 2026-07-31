@@ -91,6 +91,21 @@ processors:
     check_interval: 1s
     limit_mib: 256
     spike_limit_mib: 64
+  transform/workload_logs:
+    error_mode: ignore
+    log_statements:
+      - set(log.attributes["deploycrate.application.id"], log.body["COM_DEPLOYCRATE_APPLICATION"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["deploycrate.environment.id"], log.body["COM_DEPLOYCRATE_ENVIRONMENT"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["deploycrate.deployment.id"], log.body["COM_DEPLOYCRATE_DEPLOYMENT"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["deploycrate.instance.id"], log.body["COM_DEPLOYCRATE_INSTANCE"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["deploycrate.release.id"], log.body["COM_DEPLOYCRATE_RELEASE"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["deploycrate.log.epoch"], log.body["CONTAINER_LOG_EPOCH"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["deploycrate.log.ordinal"], log.body["CONTAINER_LOG_ORDINAL"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["container.id"], log.body["CONTAINER_ID_FULL"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["container.name"], log.body["CONTAINER_NAME"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["log.iostream"], "stderr") where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil and log.body["PRIORITY"] == "3"
+      - set(log.attributes["log.iostream"], "stdout") where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil and log.body["PRIORITY"] != "3"
+      - set(log.body, log.body["MESSAGE"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil and log.body["MESSAGE"] != nil
   resource/host:
     attributes:
       - key: service.namespace
@@ -145,7 +160,7 @@ service:
   pipelines:
     logs:
       receivers: [journald, otlp]
-      processors: [memory_limiter, resource/host, batch]
+      processors: [memory_limiter, transform/workload_logs, resource/host, batch]
       exporters: [clickhouse]
 EOF
 chown root:otelcol-contrib /etc/otelcol-contrib/config.yaml

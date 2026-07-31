@@ -29,6 +29,7 @@ export const routes = {
   environmentDeploymentsCreate: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/deployments`,
   environmentDestroy: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}`,
   environmentEdit: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/edit`,
+  environmentLogs: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/logs`,
   environmentNew: () => '/environments/new',
   environmentReleaseDeploymentsCreate: (applicationID: string, environmentID: string, releaseID: string) => `/applications/${applicationID}/environments/${environmentID}/releases/${releaseID}/deployments`,
   environmentSecretDestroy: (applicationID: string, environmentID: string, secretID: string) => `/applications/${applicationID}/environments/${environmentID}/secrets/${secretID}`,

@@ -37,6 +37,7 @@ var Module = fx.Module(
 		NewApplicationSetup,
 		NewContainerRegistries,
 		NewEnvironmentSecrets,
+		NewEnvironmentLogs,
 		NewEnvironmentSetup,
 		NewBuildExecution,
 		NewDeploymentExecution,
