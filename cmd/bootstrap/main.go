@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -12,6 +14,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"deploycrate-ce/internal/nodeinstall"
 	"deploycrate-ce/internal/resourceaccess"
 	"deploycrate-ce/internal/setup"
 	setupui "deploycrate-ce/internal/setup/ui"
@@ -43,6 +46,8 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		return logs(args[1:], stdout)
 	case "ssh-ca":
 		return sshCA(args[1:], stdout)
+	case "node":
+		return node(ctx, args[1:], stdout)
 	case "version", "--version", "-v":
 		fmt.Fprintln(stdout, version)
 		return nil
@@ -56,6 +61,38 @@ func run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 		printHelp(stderr)
 		return errors.New("unknown command")
 	}
+}
+
+func node(ctx context.Context, args []string, stdout io.Writer) error {
+	if len(args) == 0 || args[0] != "install" {
+		return errors.New("usage: bootstrap node install --manifest-stdin")
+	}
+	flags := flag.NewFlagSet("node install", flag.ContinueOnError)
+	manifestStdin := flags.Bool("manifest-stdin", false, "read the enrollment manifest from stdin")
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if !*manifestStdin || flags.NArg() != 0 {
+		return errors.New("usage: bootstrap node install --manifest-stdin")
+	}
+	manifestJSON, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
+	if err != nil {
+		return fmt.Errorf("read node installation manifest: %w", err)
+	}
+	manifest, err := nodeinstall.DecodeManifest(manifestJSON)
+	if err != nil {
+		return err
+	}
+	result, err := nodeinstall.Install(ctx, manifest)
+	if err != nil {
+		return err
+	}
+	encoded, err := json.Marshal(result)
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "DEPLOYCRATE_NODE_RESULT=%s\n", base64.RawStdEncoding.EncodeToString(encoded))
+	return nil
 }
 
 func sshCA(args []string, stdout io.Writer) error {
@@ -217,6 +254,7 @@ Usage:
   bootstrap install [--dry-run]
   bootstrap resume [--dry-run]
   bootstrap ssh-ca recover --bundle PATH --passphrase-file PATH
+  bootstrap node install --manifest-stdin
   bootstrap logs
   bootstrap version`)
 }

@@ -65,6 +65,9 @@ install -m 0755 "${work_dir}/bootstrap" /usr/local/bin/bootstrap
 install -m 0755 "${work_dir}/deploycrate-ce" /usr/local/bin/deploycrate-ce
 
 printf 'DeployCrate CE bootstrap installed at /usr/local/bin/bootstrap\n'
+if [ "${DEPLOYCRATE_INSTALL_ONLY:-0}" = "1" ]; then
+  exit 0
+fi
 if [ -r /dev/tty ] && [ -w /dev/tty ]; then
   exec /usr/local/bin/bootstrap install </dev/tty >/dev/tty 2>/dev/tty
 fi

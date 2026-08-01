@@ -2,8 +2,10 @@ package resourceaccess
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
 	"os"
 	"os/exec"
@@ -167,9 +169,98 @@ func RunHostCommand(arguments []string) error {
 			return errors.New("usage: host-resource-access native-database-(start|stop|restart) INSTALLATION_ID SERVICE_NAME")
 		}
 		return controlNativeDatabase(strings.TrimPrefix(arguments[0], "native-database-"), arguments[1], arguments[2])
+	case "node-telemetry-target":
+		if len(arguments) != 3 {
+			return errors.New("usage: host-resource-access node-telemetry-target SERVER_ID PRIVATE_ADDRESS")
+		}
+		serverID, err := uuid.Parse(arguments[1])
+		if err != nil {
+			return errors.New("Server ID must be a UUID")
+		}
+		if err := validateDeviceAddress(arguments[2]); err != nil {
+			return err
+		}
+		return configureNodeTelemetryTarget(serverID, arguments[2])
 	default:
 		return fmt.Errorf("unknown host resource access operation %q", arguments[0])
 	}
+}
+
+func configureNodeTelemetryTarget(serverID uuid.UUID, address string) error {
+	collectorPath := "/etc/otelcol-contrib/config.yaml"
+	collectorConfig, err := os.ReadFile(collectorPath)
+	if err != nil {
+		return fmt.Errorf("read OpenTelemetry Collector configuration: %w", err)
+	}
+	updatedCollector, err := addNodeOTLPReceiver(string(collectorConfig))
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(collectorPath, []byte(updatedCollector), 0o640); err != nil {
+		return fmt.Errorf("write OpenTelemetry Collector configuration: %w", err)
+	}
+	if err := run("/usr/sbin/ufw", "allow", "in", "on", interfaceName, "to", wireGuardServer, "port", "4318", "proto", "tcp"); err != nil {
+		return err
+	}
+
+	targetDirectory := "/etc/prometheus/deploycrate-nodes"
+	if err := os.MkdirAll(targetDirectory, 0o755); err != nil {
+		return fmt.Errorf("create Prometheus node target directory: %w", err)
+	}
+	if err := os.Chmod(targetDirectory, 0o755); err != nil {
+		return fmt.Errorf("set Prometheus node target directory permissions: %w", err)
+	}
+	targets := []map[string]any{
+		{"targets": []string{net.JoinHostPort(address, "9100")}, "labels": map[string]string{"server_id": serverID.String(), "server": serverID.String(), "component": "node-exporter"}},
+		{"targets": []string{net.JoinHostPort(address, "9101")}, "labels": map[string]string{"server_id": serverID.String(), "server": serverID.String(), "component": "cadvisor"}},
+	}
+	encodedTargets, err := json.MarshalIndent(targets, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(targetDirectory, serverID.String()+".json"), encodedTargets, 0o644); err != nil {
+		return fmt.Errorf("write Prometheus node targets: %w", err)
+	}
+	prometheusPath := "/etc/prometheus/prometheus.yml"
+	prometheusConfig, err := os.ReadFile(prometheusPath)
+	if err != nil {
+		return fmt.Errorf("read Prometheus configuration: %w", err)
+	}
+	if !strings.Contains(string(prometheusConfig), "job_name: deploycrate-nodes") {
+		prometheusConfig = append(prometheusConfig, []byte("\n  - job_name: deploycrate-nodes\n    file_sd_configs:\n      - files: ['/etc/prometheus/deploycrate-nodes/*.json']\n")...)
+		if err := os.WriteFile(prometheusPath, prometheusConfig, 0o640); err != nil {
+			return fmt.Errorf("write Prometheus configuration: %w", err)
+		}
+	}
+	if err := run("/usr/local/bin/otelcol-contrib", "validate", "--config="+collectorPath); err != nil {
+		return err
+	}
+	if err := run("/usr/local/bin/promtool", "check", "config", prometheusPath); err != nil {
+		return err
+	}
+	if err := run("/usr/bin/systemctl", "restart", "otelcol-contrib.service"); err != nil {
+		return err
+	}
+	return run("/usr/bin/systemctl", "reload-or-restart", "prometheus.service")
+}
+
+func addNodeOTLPReceiver(configuration string) (string, error) {
+	if strings.Contains(configuration, "  otlp/nodes:\n") {
+		return configuration, nil
+	}
+	legacyLocal := "  otlp:\n    protocols:\n      http:\n        endpoint: 127.0.0.1:4318"
+	legacyWireGuard := "  otlp:\n    protocols:\n      http:\n        endpoint: 10.99.0.1:4318"
+	receivers := "  otlp/local:\n    protocols:\n      http:\n        endpoint: 127.0.0.1:4318\n  otlp/nodes:\n    protocols:\n      http:\n        endpoint: 10.99.0.1:4318"
+	updated := strings.Replace(configuration, legacyLocal, receivers, 1)
+	if updated == configuration {
+		updated = strings.Replace(configuration, legacyWireGuard, receivers, 1)
+	}
+	if updated == configuration {
+		return "", errors.New("OpenTelemetry Collector OTLP receiver was not found")
+	}
+	updated = strings.ReplaceAll(updated, "receivers: [journald, otlp]", "receivers: [journald, otlp/local, otlp/nodes]")
+	updated = strings.ReplaceAll(updated, "receivers: [otlp]", "receivers: [otlp/local, otlp/nodes]")
+	return updated, nil
 }
 
 func validatePublicKey(value string) error {

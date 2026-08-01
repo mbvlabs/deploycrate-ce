@@ -19,6 +19,7 @@ var Module = fx.Module(
 		func() CaddyClient { return caddyclients.New("") },
 		NewCaddyRouteService,
 		NewSSHCAService,
+		NewNodeEnrollment,
 		NewMetricRollupService,
 		NewClickHouseBackup,
 		NewServerBackup,

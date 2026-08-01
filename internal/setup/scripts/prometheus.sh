@@ -20,6 +20,7 @@ if ! id prometheus >/dev/null 2>&1; then
   useradd --system --no-create-home --home-dir /var/lib/prometheus --shell /usr/sbin/nologin prometheus
 fi
 install -d -o root -g prometheus -m 0750 /etc/prometheus
+install -d -o root -g prometheus -m 0750 /etc/prometheus/deploycrate-nodes
 install -d -o prometheus -g prometheus -m 0750 /var/lib/prometheus
 
 installed_version=""
@@ -49,6 +50,9 @@ global:
   evaluation_interval: 15s
 
 scrape_configs:
+  - job_name: deploycrate-nodes
+    file_sd_configs:
+      - files: ['/etc/prometheus/deploycrate-nodes/*.json']
   - job_name: prometheus
     static_configs:
       - targets: ['127.0.0.1:9090']

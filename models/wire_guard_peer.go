@@ -87,6 +87,19 @@ func (wgp wireGuardPeer) Find(
 	return entity, nil
 }
 
+func (wgp wireGuardPeer) FindActiveForServer(
+	ctx context.Context,
+	db storage.Executor,
+	serverID uuid.UUID,
+) (WireGuardPeerEntity, error) {
+	var entity WireGuardPeerEntity
+	if err := db.NewSelect().Model(&entity).Where("server_id = ?", serverID).
+		Where("retired_at IS NULL").Scan(ctx); err != nil {
+		return WireGuardPeerEntity{}, err
+	}
+	return entity, nil
+}
+
 type CreateWireGuardPeerData struct {
 	PublicKey      string
 	EncPrivateKey  []byte

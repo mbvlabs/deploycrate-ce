@@ -110,12 +110,6 @@ func (wireGuardDevice) FindActive(ctx context.Context, db storage.Executor, id u
 	return entity, err
 }
 
-func (wireGuardDevice) AllocatedAddresses(ctx context.Context, db storage.Executor) ([]string, error) {
-	addresses := make([]string, 0)
-	err := db.NewSelect().TableExpr("wireguard_devices").ColumnExpr("host(private_address)").OrderExpr("private_address").Scan(ctx, &addresses)
-	return addresses, err
-}
-
 func (wireGuardDevice) ActiveForResource(ctx context.Context, db storage.Executor, resourceID uuid.UUID) ([]WireGuardDeviceEntity, error) {
 	entities := make([]WireGuardDeviceEntity, 0)
 	err := db.NewSelect().Model(&entities).

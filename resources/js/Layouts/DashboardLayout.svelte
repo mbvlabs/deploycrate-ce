@@ -102,9 +102,8 @@
         <Sidebar.GroupContent>
           <Sidebar.Menu>
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton disabled tooltipContent="Servers">
-                <ServerIcon />
-                <span>Servers</span>
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.nodes())} tooltipContent="Nodes">
+                {#snippet child({ props })}<Link {...props} href={routes.nodes()}><ServerIcon /><span>Nodes</span></Link>{/snippet}
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>

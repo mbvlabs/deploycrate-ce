@@ -9,6 +9,7 @@ type (
 	server                       struct{}
 	serverSSHCredential          struct{}
 	serverStatus                 struct{}
+	nodeEnrollment               struct{}
 	wireGuardPeer                struct{}
 	wireGuardPeerStatus          struct{}
 	wireGuardDevice              struct{}
@@ -88,6 +89,7 @@ var (
 	Server                       server
 	ServerSSHCredential          serverSSHCredential
 	ServerStatus                 serverStatus
+	NodeEnrollment               nodeEnrollment
 	WireGuardPeer                wireGuardPeer
 	WireGuardPeerStatus          wireGuardPeerStatus
 	WireGuardDevice              wireGuardDevice

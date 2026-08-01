@@ -1,6 +1,7 @@
 package services
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -11,10 +12,13 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"deploycrate-ce/internal/storage"
 )
 
 const WireGuardMeshCIDR = "10.99.0.0/16"
 const WireGuardPrivateAddress = "10.99.0.1"
+const wireGuardAddressAllocationLock = "deploycrate-wireguard-address-allocation"
 
 type WireGuardDesiredPeer struct {
 	PublicKey           string
@@ -100,4 +104,16 @@ func NextWireGuardPrivateAddress(existing []string) (string, error) {
 		}
 	}
 	return "", errors.New("WireGuard address pool is exhausted")
+}
+
+func AllocateWireGuardPrivateAddress(ctx context.Context, db storage.Executor) (string, error) {
+	if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", wireGuardAddressAllocationLock); err != nil {
+		return "", fmt.Errorf("lock WireGuard address allocation: %w", err)
+	}
+	allocated := make([]string, 0)
+	if err := db.NewSelect().TableExpr("wireguard_address_reservations").
+		Column("private_address").OrderExpr("private_address").Scan(ctx, &allocated); err != nil {
+		return "", fmt.Errorf("load WireGuard address reservations: %w", err)
+	}
+	return NextWireGuardPrivateAddress(allocated)
 }

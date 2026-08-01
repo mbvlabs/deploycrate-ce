@@ -81,10 +81,14 @@ receivers:
       initial_interval: 1s
       max_interval: 30s
       max_elapsed_time: 0
-  otlp:
+  otlp/local:
     protocols:
       http:
         endpoint: 127.0.0.1:4318
+  otlp/nodes:
+    protocols:
+      http:
+        endpoint: 10.99.0.1:4318
 
 processors:
   memory_limiter:
@@ -174,15 +178,15 @@ service:
                 without_units: true
   pipelines:
     logs:
-      receivers: [journald, otlp]
+      receivers: [journald, otlp/local, otlp/nodes]
       processors: [memory_limiter, transform/workload_logs, resource/host]
       exporters: [clickhouse]
     traces:
-      receivers: [otlp]
+      receivers: [otlp/local, otlp/nodes]
       processors: [memory_limiter, resource/host]
       exporters: [clickhouse]
     metrics:
-      receivers: [otlp]
+      receivers: [otlp/local, otlp/nodes]
       processors: [memory_limiter, resource/host]
       exporters: [clickhouse]
 EOF
@@ -230,6 +234,7 @@ WantedBy=multi-user.target
 EOF
 
 ufw delete allow 4318/tcp >/dev/null 2>&1 || true
+ufw allow in on wg0 to 10.99.0.1 port 4318 proto tcp
 ufw delete allow 8888/tcp >/dev/null 2>&1 || true
 ufw delete allow 13133/tcp >/dev/null 2>&1 || true
 /usr/local/bin/otelcol-contrib validate --config=/etc/otelcol-contrib/config.yaml

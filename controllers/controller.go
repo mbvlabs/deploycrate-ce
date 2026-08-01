@@ -29,6 +29,7 @@ var constructors = fx.Provide(
 	NewDatabaseClusters,
 	NewJobs,
 	NewCaddyRoutes,
+	NewNodes,
 )
 
 var Module = fx.Module(
@@ -83,6 +84,9 @@ var Module = fx.Module(
 		return c.RegisterRoutes(r)
 	}),
 	fx.Invoke(func(r *router.Router, c CaddyRoutes) error {
+		return c.RegisterRoutes(r)
+	}),
+	fx.Invoke(func(r *router.Router, c Nodes) error {
 		return c.RegisterRoutes(r)
 	}),
 )

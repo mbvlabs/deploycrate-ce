@@ -89,6 +89,7 @@ The `bootstrap` CLI exists only for installation, resume, installer logs, and of
 | `bootstrap version` | Prints the CLI version. `bootstrap --version` and `bootstrap -v` are aliases. |
 | `bootstrap help` | Prints command usage. Running without arguments, `bootstrap --help`, and `bootstrap -h` do the same. |
 | `sudo bootstrap ssh-ca recover --bundle PATH --passphrase-file PATH` | Decrypts and validates a version 1 recovery bundle, checks both fingerprints against the public keys already trusted by SSH, and atomically restores the protected CA directory. |
+| `sudo bootstrap node install --manifest-stdin` | Installs the worker-node profile from a control-plane enrollment manifest. This is normally invoked over SSH by the Add Node workflow. |
 
 The application System Overview runs live checks for services, listeners, WireGuard state, node-exporter, Caddy metrics, the OpenTelemetry Collector, Prometheus targets, ClickHouse metrics and storage, disk headroom, and agreement between the active systemd slot and PostgreSQL. These checks execute as the `deploycrate` service account and use its non-interactive sudo access where host privileges are required.
 
@@ -128,9 +129,9 @@ Also record `du -sb /var/lib/prometheus` at the beginning and end of the same ob
 
 Application logs keep their structured attributes and OpenTelemetry trace context. Caddy access logs include DeployCrate route and domain attributes. Docker supplies container name, image, and approved DeployCrate identity labels to journald, so workload and managed Resource logs remain attributable after collection. Journald remains the local fallback for host and container logs, while the collector queue preserves unsent ClickHouse batches across restarts.
 
-### Upcoming Managed Node Enrollment
+### Managed Node Enrollment
 
-Managed node installation is planned but intentionally deferred. DeployCrate CE will not create or provision virtual machines through cloud-provider APIs. The user will provision and own each server with the provider of their choice, then register that existing server through a future Add Node interface or `deploycrate node install` command.
+DeployCrate CE does not create or provision virtual machines through cloud-provider APIs. The user provisions and owns each server with the provider of their choice, then registers that existing Debian 13 server through the Nodes screen.
 
 The user will provide the server address, SSH port, root username, private key, and optional key passphrase. DeployCrate will use that access to configure the existing server, not to provision its infrastructure. The setup will verify and pin the SSH host key, create separate `admin` and `deploycrate` accounts, install the required host dependencies, join the server to the WireGuard network, and establish permanent control-plane access to `admin` through an installation SSH user certificate authority. The `deploycrate` service identity will remain local and non-login.
 
@@ -154,9 +155,7 @@ Automated host setup
 Ongoing deployments and maintenance as admin through SSH over WireGuard
 ```
 
-The control plane now has the signing and WireGuard state foundations that enrollment will consume. It issues source-restricted, short-lived SSH certificates only for the `admin` principal and renders deterministic full-mesh peer state with 25-second keepalive where NAT requires it. Add Node UI, remote setup, and peer propagation remain deferred.
-
-See [bootstrap_networking_plan.md](bootstrap_networking_plan.md) for the work that can proceed before managed node enrollment is implemented.
+The control plane confirms and pins the initial SSH host key, queues the enrollment, downloads the existing `bootstrap` CLI on the remote server, and runs `bootstrap node install --manifest-stdin`. Each node declares one or more workload capabilities: application runtime, Builds, managed Resources, Database Nodes, and OCI repositories. Telemetry is mandatory. Every node receives the minimal Docker and WireGuard execution baseline, while Build nodes additionally receive the checksum-verified Buildpacks CLI. The node exposes metrics only over WireGuard and forwards logs to the control-plane OpenTelemetry Collector. After CA-authenticated access succeeds, the control plane disables root SSH and deletes the temporary private key and passphrase.
 
 ### Installed Host Layout
 

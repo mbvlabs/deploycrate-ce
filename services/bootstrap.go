@@ -283,6 +283,7 @@ func bootstrapServerCapabilities(
 	input BootstrapCapabilitiesInput,
 ) (json.RawMessage, error) {
 	capabilities, err := json.Marshal(map[string]any{
+		"build": true, "runtime": true, "resource": true, "database": true, "repository": true, "telemetry": true,
 		"container_engine": map[string]string{
 			"name":    "docker",
 			"version": input.DockerEngineVersion,

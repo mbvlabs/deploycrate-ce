@@ -358,14 +358,7 @@ func (service *ResourcePrivateAccess) Enroll(ctx context.Context, resourceID uui
 		if strings.TrimSpace(data.Name) == "" {
 			return ResourcePrivateAccessResult{}, errors.Join(models.ErrDomainValidation, errors.New("device name is required"))
 		}
-		if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext('deploycrate-wireguard-device-address'))"); err != nil {
-			return ResourcePrivateAccessResult{}, fmt.Errorf("lock WireGuard address allocation: %w", err)
-		}
-		allocated, err := models.WireGuardDevice.AllocatedAddresses(ctx, tx)
-		if err != nil {
-			return ResourcePrivateAccessResult{}, err
-		}
-		address, err := NextWireGuardPrivateAddress(allocated)
+		address, err := AllocateWireGuardPrivateAddress(ctx, tx)
 		if err != nil {
 			return ResourcePrivateAccessResult{}, err
 		}

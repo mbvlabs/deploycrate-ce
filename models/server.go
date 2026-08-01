@@ -36,6 +36,10 @@ type ServerEntity struct {
 }
 
 func (e *ServerEntity) Validate() error {
+	if e.Kind == "worker" {
+		_, err := ParseServerCapabilities(e.Capabilities)
+		return err
+	}
 	return nil
 }
 
