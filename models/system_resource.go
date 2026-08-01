@@ -48,13 +48,17 @@ func (application) FindSystemTelemetryContainers(
 		JOIN resource_installations AS installation ON installation.resource_id = resource.id AND installation.archived_at IS NULL
 		WHERE resource.system_managed = TRUE AND resource.archived_at IS NULL AND installation.server_id = ?
 		UNION ALL
-		SELECT '' AS resource_id, cluster.name AS resource_name, cluster.engine AS resource_kind,
+		SELECT DISTINCT resource.id::text AS resource_id, resource.name AS resource_name,
+			resource.kind AS resource_kind,
 			installation.id::text AS installation_id, docker.container_name,
 			cluster.id::text AS database_cluster_id, node.id::text AS database_cluster_node_id
 		FROM database_node_installations AS installation
 		JOIN docker_database_node_installations AS docker ON docker.database_node_installation_id = installation.id
 		JOIN database_cluster_nodes AS node ON node.id = installation.database_cluster_node_id AND node.archived_at IS NULL
 		JOIN database_clusters AS cluster ON cluster.id = node.database_cluster_id AND cluster.archived_at IS NULL
+		JOIN databases AS database ON database.database_cluster_id = cluster.id AND database.archived_at IS NULL
+		JOIN database_resources AS backing ON backing.database_id = database.id
+		JOIN resources AS resource ON resource.id = backing.resource_id AND resource.system_managed = TRUE AND resource.archived_at IS NULL
 		WHERE installation.server_id = ? AND installation.archived_at IS NULL
 		ORDER BY resource_name, installation_id`, serverID, serverID).Scan(ctx, &containers)
 	return containers, err

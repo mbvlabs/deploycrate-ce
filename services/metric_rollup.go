@@ -526,16 +526,16 @@ func mergeSystemContainerInventory(
 	rows []AttributedTelemetryRow,
 	inventory []models.SystemTelemetryContainer,
 ) []AttributedTelemetryRow {
-	result := slices.Clone(rows)
-	matched := make([]bool, len(result))
+	result := make([]AttributedTelemetryRow, 0, len(inventory))
+	matched := make([]bool, len(rows))
 	for _, container := range inventory {
 		match := -1
-		for index := range result {
+		for index := range rows {
 			if matched[index] {
 				continue
 			}
-			if result[index].Installation == container.InstallationID ||
-				(result[index].Installation == "" && result[index].Resource == "" && result[index].Component == container.ResourceKind) {
+			if rows[index].Installation == container.InstallationID ||
+				(rows[index].Installation == "" && rows[index].Resource == "" && rows[index].Component == container.ResourceKind) {
 				match = index
 				break
 			}
@@ -548,16 +548,17 @@ func mergeSystemContainerInventory(
 				ResourceName: container.ResourceName, ContainerName: container.ContainerName,
 				History: []AttributedTelemetryPoint{},
 			})
-			matched = append(matched, true)
 			continue
 		}
 		matched[match] = true
-		result[match].Resource = container.ResourceID
-		result[match].Installation = container.InstallationID
-		result[match].ResourceName = container.ResourceName
-		result[match].ContainerName = container.ContainerName
-		result[match].DatabaseCluster = container.DatabaseClusterID
-		result[match].DatabaseClusterNode = container.DatabaseClusterNodeID
+		row := rows[match]
+		row.Resource = container.ResourceID
+		row.Installation = container.InstallationID
+		row.ResourceName = container.ResourceName
+		row.ContainerName = container.ContainerName
+		row.DatabaseCluster = container.DatabaseClusterID
+		row.DatabaseClusterNode = container.DatabaseClusterNodeID
+		result = append(result, row)
 	}
 	slices.SortFunc(result, func(a, b AttributedTelemetryRow) int {
 		return strings.Compare(a.ResourceName+a.Component+a.ContainerName, b.ResourceName+b.Component+b.ContainerName)
