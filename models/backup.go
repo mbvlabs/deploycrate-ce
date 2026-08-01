@@ -256,7 +256,7 @@ func (backup) FindExecutionScope(
 		Join("LEFT JOIN database_node_installations AS installation ON installation.id = backup.database_node_installation_id AND installation.database_cluster_node_id = node.id").
 		Join("LEFT JOIN docker_database_node_installations AS docker_installation ON docker_installation.database_node_installation_id = installation.id").
 		Join("LEFT JOIN servers AS server ON server.id = installation.server_id AND server.archived_at IS NULL").
-		Join("LEFT JOIN database_resources AS database_backing ON database_backing.database_id = database.id").
+		Join("LEFT JOIN database_resources AS database_backing ON database_backing.database_cluster_id = database.database_cluster_id").
 		Join("LEFT JOIN resources AS resource ON resource.id = database_backing.resource_id").
 		Join("LEFT JOIN LATERAL (SELECT cluster_credential.username, cluster_credential.enc_payload FROM database_cluster_credentials AS cluster_credential WHERE cluster_credential.database_cluster_id = cluster.id AND cluster_credential.role = 'administrator' AND cluster_credential.archived_at IS NULL ORDER BY cluster_credential.created_at LIMIT 1) AS administrator ON TRUE").
 		Where("backup.id = ?", id).

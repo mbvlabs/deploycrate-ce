@@ -38,7 +38,7 @@ type DatabaseRestoreInput struct {
 	ActorID      uuid.UUID
 }
 
-func (service *DatabaseRestoreWorkflow) RequestForResource(ctx context.Context, resourceID uuid.UUID, input DatabaseRestoreInput) (models.DatabaseRestoreEntity, error) {
+func (service *DatabaseRestoreWorkflow) RequestForResource(ctx context.Context, resourceID, databaseID uuid.UUID, input DatabaseRestoreInput) (models.DatabaseRestoreEntity, error) {
 	resource, err := models.Resource.Find(ctx, service.db.Executor(), resourceID)
 	if err != nil {
 		return models.DatabaseRestoreEntity{}, err
@@ -49,11 +49,23 @@ func (service *DatabaseRestoreWorkflow) RequestForResource(ctx context.Context, 
 	if resource.SystemManaged {
 		return models.DatabaseRestoreEntity{}, domainError("backupId", "system_managed", "The running control-plane Database cannot be restored from the application")
 	}
-	backing, err := models.DatabaseResource.FindByResource(ctx, service.db.Executor(), resourceID)
+	backup, err := models.Backup.Find(ctx, service.db.Executor(), input.BackupID)
 	if err != nil {
 		return models.DatabaseRestoreEntity{}, err
 	}
-	return service.Request(ctx, backing.DatabaseID, input)
+	if backup.DatabaseID == nil {
+		return models.DatabaseRestoreEntity{}, domainError("backupId", "ineligible", "Choose a Database backup from this Resource")
+	}
+	allowed, err := service.db.Executor().NewSelect().TableExpr("databases AS database").
+		Join("JOIN database_resources AS backing ON backing.database_cluster_id = database.database_cluster_id").
+		Where("database.id = ?", databaseID).Where("backing.resource_id = ?", resourceID).Where("database.archived_at IS NULL").Exists(ctx)
+	if err != nil {
+		return models.DatabaseRestoreEntity{}, err
+	}
+	if !allowed || *backup.DatabaseID != databaseID {
+		return models.DatabaseRestoreEntity{}, models.ErrNotFound
+	}
+	return service.Request(ctx, databaseID, input)
 }
 
 func (service *DatabaseRestoreWorkflow) Request(ctx context.Context, databaseID uuid.UUID, input DatabaseRestoreInput) (models.DatabaseRestoreEntity, error) {

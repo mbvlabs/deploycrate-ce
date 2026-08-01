@@ -19,8 +19,6 @@ const (
 	DatabaseEngineMySQL      = "mysql"
 	DatabaseInstallDocker    = "docker"
 	DatabaseInstallNative    = "native"
-	DatabaseSharingDedicated = "dedicated"
-	DatabaseSharingShared    = "shared"
 )
 
 type DatabaseClusterEntity struct {
@@ -32,7 +30,6 @@ type DatabaseClusterEntity struct {
 	Slug                      string          `bun:"slug"`
 	Engine                    string          `bun:"engine"`
 	EngineVersion             string          `bun:"engine_version"`
-	SharingMode               string          `bun:"sharing_mode"`
 	ManagementMode            string          `bun:"management_mode"`
 	DesiredInstallationMethod sql.NullString  `bun:"desired_installation_method"`
 	Topology                  json.RawMessage `bun:"topology,type:jsonb"`
@@ -45,7 +42,6 @@ func (entity *DatabaseClusterEntity) Validate() error {
 	entity.Slug = strings.ToLower(strings.TrimSpace(entity.Slug))
 	entity.Engine = strings.ToLower(strings.TrimSpace(entity.Engine))
 	entity.EngineVersion = strings.TrimSpace(entity.EngineVersion)
-	entity.SharingMode = strings.ToLower(strings.TrimSpace(entity.SharingMode))
 	entity.ManagementMode = strings.ToLower(strings.TrimSpace(entity.ManagementMode))
 	if entity.DesiredInstallationMethod.Valid {
 		entity.DesiredInstallationMethod.String = strings.ToLower(strings.TrimSpace(entity.DesiredInstallationMethod.String))
@@ -62,9 +58,6 @@ func (entity *DatabaseClusterEntity) Validate() error {
 	}
 	if entity.Engine != DatabaseEnginePostgreSQL && entity.Engine != DatabaseEngineMySQL {
 		builder.Add("engine", "unsupported", "database engine must be postgresql or mysql")
-	}
-	if entity.SharingMode != DatabaseSharingDedicated && entity.SharingMode != DatabaseSharingShared {
-		builder.Add("sharingMode", "unsupported", "database sharing mode must be dedicated or shared")
 	}
 	if entity.ManagementMode == ResourceManagementManaged.String() {
 		if !entity.DesiredInstallationMethod.Valid ||
@@ -92,7 +85,6 @@ type CreateDatabaseClusterData struct {
 	Slug                      string
 	Engine                    string
 	EngineVersion             string
-	SharingMode               string
 	ManagementMode            string
 	DesiredInstallationMethod sql.NullString
 	Topology                  json.RawMessage
@@ -104,7 +96,7 @@ func (databaseCluster) Create(ctx context.Context, db storage.Executor, data Cre
 	now := time.Now().UTC()
 	entity := DatabaseClusterEntity{
 		ID: uuid.New(), CreatedAt: now, UpdatedAt: now, Name: data.Name, Slug: data.Slug,
-		Engine: data.Engine, EngineVersion: data.EngineVersion, SharingMode: data.SharingMode, ManagementMode: data.ManagementMode,
+		Engine: data.Engine, EngineVersion: data.EngineVersion, ManagementMode: data.ManagementMode,
 		DesiredInstallationMethod: data.DesiredInstallationMethod, Topology: data.Topology,
 		MaintenancePolicy: data.MaintenancePolicy, ArchivedAt: data.ArchivedAt,
 	}
@@ -150,7 +142,7 @@ func (databaseCluster) Update(ctx context.Context, db storage.Executor, entity D
 	if err := ensureActiveUnique(ctx, db, "database-cluster-slug:"+entity.Slug, entity.ID, db.NewSelect().Model((*DatabaseClusterEntity)(nil)).Where("lower(slug) = ?", entity.Slug), "slug", "an active Database Cluster already uses this slug"); err != nil {
 		return DatabaseClusterEntity{}, err
 	}
-	if err := db.NewUpdate().Model(&entity).Column("updated_at", "name", "slug", "engine", "engine_version", "sharing_mode", "management_mode", "desired_installation_method", "topology", "maintenance_policy", "archived_at").WherePK().Returning("*").Scan(ctx); err != nil {
+	if err := db.NewUpdate().Model(&entity).Column("updated_at", "name", "slug", "engine", "engine_version", "management_mode", "desired_installation_method", "topology", "maintenance_policy", "archived_at").WherePK().Returning("*").Scan(ctx); err != nil {
 		return DatabaseClusterEntity{}, err
 	}
 	return entity, nil

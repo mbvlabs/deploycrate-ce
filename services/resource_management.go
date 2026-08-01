@@ -156,9 +156,8 @@ func (service *ResourceManagement) List(ctx context.Context, filters models.Reso
 		TableExpr("resources AS resource").
 		ColumnExpr("resource.id, resource.name, resource.slug, resource.kind, resource.management_mode, resource.sharing_scope").
 		ColumnExpr("CASE WHEN resource.kind IN ('postgresql', 'mysql', 'clickhouse') THEN 'database' WHEN resource.kind = 'registry' THEN 'artifact' ELSE 'endpoint' END AS category").
-		ColumnExpr("COALESCE(database.name, '') AS database_name").
+		ColumnExpr("(SELECT count(*) FROM databases AS database WHERE database.database_cluster_id = database_backing.database_cluster_id AND database.archived_at IS NULL) AS database_count").
 		Join("LEFT JOIN database_resources AS database_backing ON database_backing.resource_id = resource.id").
-		Join("LEFT JOIN databases AS database ON database.id = database_backing.database_id AND database.archived_at IS NULL").
 		ColumnExpr("(SELECT count(*) FROM environment_resources AS connection WHERE connection.resource_id = resource.id AND connection.archived_at IS NULL) AS connection_count").
 		ColumnExpr(`CASE WHEN resource.sharing_scope = 'environment' THEN
 			(SELECT count(*) FROM resource_environment_grants AS access_grant WHERE access_grant.resource_id = resource.id AND access_grant.archived_at IS NULL)
@@ -168,8 +167,7 @@ func (service *ResourceManagement) List(ctx context.Context, filters models.Reso
 		ColumnExpr(`(SELECT count(*) FROM resource_installations AS installation WHERE installation.resource_id = resource.id AND installation.archived_at IS NULL) +
 			(SELECT count(*) FROM database_node_installations AS installation
 			 JOIN database_cluster_nodes AS node ON node.id = installation.database_cluster_node_id AND node.archived_at IS NULL
-			 JOIN databases AS installed_database ON installed_database.database_cluster_id = node.database_cluster_id AND installed_database.archived_at IS NULL
-			 JOIN database_resources AS installed_backing ON installed_backing.database_id = installed_database.id
+			 JOIN database_resources AS installed_backing ON installed_backing.database_cluster_id = node.database_cluster_id
 			 WHERE installed_backing.resource_id = resource.id AND installation.archived_at IS NULL) AS installation_count`).
 		ColumnExpr("(SELECT count(*) FROM resource_endpoints AS endpoint WHERE endpoint.resource_id = resource.id AND endpoint.archived_at IS NULL) AS endpoint_count").
 		ColumnExpr(`CASE
@@ -326,7 +324,7 @@ func (service *ResourceManagement) Details(ctx context.Context, resourceID uuid.
 				ColumnExpr("connection.*").
 				ColumnExpr("environment.name AS environment_name, environment.kind AS environment_kind, environment.archived_at IS NOT NULL AS environment_archived").
 				ColumnExpr("application.name AS application_name, application.slug AS application_slug, application.archived_at IS NOT NULL AS application_archived").
-				ColumnExpr("endpoint.name AS endpoint_name, COALESCE(credential.name, '') AS credential_name").
+				ColumnExpr("endpoint.name AS endpoint_name, endpoint.settings AS endpoint_settings, COALESCE(credential.name, '') AS credential_name").
 				Join("JOIN environments AS environment ON environment.id = connection.environment_id").
 				Join("JOIN applications AS application ON application.id = environment.application_id").
 				Join("JOIN resource_endpoints AS endpoint ON endpoint.id = connection.resource_endpoint_id AND endpoint.archived_at IS NULL").
@@ -375,15 +373,20 @@ func (service *ResourceManagement) Details(ctx context.Context, resourceID uuid.
 	}
 	var backing models.ResourceDatabaseBackingDetail
 	err = service.db.Executor().NewSelect().TableExpr("database_resources AS backing").
-		ColumnExpr("database.id AS database_id, database.name AS database_name, cluster.id AS cluster_id, cluster.name AS cluster_name, cluster.sharing_mode").
-		Join("JOIN databases AS database ON database.id = backing.database_id AND database.archived_at IS NULL").
-		Join("JOIN database_clusters AS cluster ON cluster.id = database.database_cluster_id AND cluster.archived_at IS NULL").
+		ColumnExpr("cluster.id AS cluster_id, cluster.engine").
+		Join("JOIN database_clusters AS cluster ON cluster.id = backing.database_cluster_id AND cluster.archived_at IS NULL").
 		Where("backing.resource_id = ?", resourceID).Scan(ctx, &backing)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return models.ResourceDetails{}, err
 	}
 	if err == nil {
 		detail.DatabaseBacking = &backing
+		detail.Databases = make([]models.ResourceDatabaseDetail, 0)
+		if err := service.db.Executor().NewSelect().TableExpr("databases AS database").
+			ColumnExpr("database.id, database.name, database.desired_state, database.observed_state").
+			Where("database.database_cluster_id = ?", backing.ClusterID).Where("database.archived_at IS NULL").OrderExpr("database.name").Scan(ctx, &detail.Databases); err != nil {
+			return models.ResourceDetails{}, err
+		}
 	}
 	for index := range detail.Installations {
 		service.observeInstallation(ctx, &detail.Installations[index])
@@ -1095,12 +1098,27 @@ func (service *ResourceManagement) credentialSecretValues(credential models.Reso
 	return payload.Values, nil
 }
 
-func (service *ResourceManagement) reconcilePostgreSQLCredential(ctx context.Context, db storage.Executor, resource models.ResourceEntity, credential models.ResourceCredentialEntity, administrator *models.ResourceCredentialEntity) error {
+func (service *ResourceManagement) reconcilePostgreSQLCredential(ctx context.Context, db storage.Executor, resource models.ResourceEntity, credential models.ResourceCredentialEntity, previous *models.ResourceCredentialEntity) error {
 	backing, err := models.DatabaseResource.FindByResource(ctx, db, resource.ID)
 	if err != nil {
 		return fmt.Errorf("load PostgreSQL Database backing: %w", err)
 	}
-	return service.reconcilePostgreSQLCredentialInDatabase(ctx, db, resource, credential, administrator, backing.DatabaseName)
+	databases := make([]models.DatabaseEntity, 0)
+	if err := db.NewSelect().Model(&databases).Where("database_cluster_id = ?", backing.DatabaseClusterID).Where("archived_at IS NULL").OrderExpr("name").Scan(ctx); err != nil {
+		return err
+	}
+	databaseNames := make([]string, 0, len(databases))
+	for _, database := range databases {
+		databaseNames = append(databaseNames, database.Name)
+	}
+	reconciliation, err := service.preparePostgreSQLCredentialReconciliation(ctx, db, resource, credential, previous)
+	if err != nil {
+		return err
+	}
+	if err := service.postgres.ReconcileLoginRoleAcrossDatabases(ctx, reconciliation.Connection, databaseNames, reconciliation.Username, reconciliation.Password, reconciliation.PreviousPassword); err != nil {
+		return fmt.Errorf("reconcile PostgreSQL login role %q across Resource Databases: %w", reconciliation.Username, err)
+	}
+	return nil
 }
 
 func (service *ResourceManagement) reconcilePostgreSQLDatabaseCredentials(ctx context.Context, resourceID, installationID uuid.UUID, database string) error {
@@ -1115,8 +1133,7 @@ func (service *ResourceManagement) reconcilePostgreSQLDatabaseCredentials(ctx co
 	if err := service.db.Executor().NewSelect().TableExpr("database_node_installations AS installation").
 		ColumnExpr("count(*)").
 		Join("JOIN database_cluster_nodes AS node ON node.id = installation.database_cluster_node_id AND node.archived_at IS NULL").
-		Join("JOIN databases AS database ON database.database_cluster_id = node.database_cluster_id AND database.archived_at IS NULL").
-		Join("JOIN database_resources AS backing ON backing.database_id = database.id AND backing.resource_id = ?", resourceID).
+		Join("JOIN database_resources AS backing ON backing.database_cluster_id = node.database_cluster_id AND backing.resource_id = ?", resourceID).
 		Where("installation.id = ?", installationID).Where("installation.archived_at IS NULL").Scan(ctx, &installationCount); err != nil {
 		return err
 	}
@@ -1132,15 +1149,32 @@ func (service *ResourceManagement) reconcilePostgreSQLDatabaseCredentials(ctx co
 		return err
 	}
 	for _, credential := range credentials {
-		if err := service.reconcilePostgreSQLCredentialInDatabase(ctx, service.db.Executor(), resource, credential, nil, database); err != nil {
+		if err := service.reconcilePostgreSQLCredentialInDatabase(ctx, service.db.Executor(), resource, credential, database); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (service *ResourceManagement) reconcilePostgreSQLCredentialInDatabase(ctx context.Context, db storage.Executor, resource models.ResourceEntity, credential models.ResourceCredentialEntity, administrator *models.ResourceCredentialEntity, database string) error {
-	_ = administrator
+func (service *ResourceManagement) reconcilePostgreSQLCredentialInDatabase(ctx context.Context, db storage.Executor, resource models.ResourceEntity, credential models.ResourceCredentialEntity, database string) error {
+	reconciliation, err := service.preparePostgreSQLCredentialReconciliation(ctx, db, resource, credential, &credential)
+	if err != nil {
+		return err
+	}
+	if err := service.postgres.GrantLoginRoleDatabase(ctx, reconciliation.Connection, database, reconciliation.Username); err != nil {
+		return fmt.Errorf("grant PostgreSQL database %q access to role %q: %w", database, reconciliation.Username, err)
+	}
+	return nil
+}
+
+type postgreSQLCredentialReconciliation struct {
+	Connection       postgresqlclient.Connection
+	Username         string
+	Password         string
+	PreviousPassword string
+}
+
+func (service *ResourceManagement) preparePostgreSQLCredentialReconciliation(ctx context.Context, db storage.Executor, resource models.ResourceEntity, credential models.ResourceCredentialEntity, previous *models.ResourceCredentialEntity) (postgreSQLCredentialReconciliation, error) {
 	var topology struct {
 		ClusterID             uuid.UUID `bun:"cluster_id"`
 		AdministratorUsername string    `bun:"administrator_username"`
@@ -1151,44 +1185,53 @@ func (service *ResourceManagement) reconcilePostgreSQLCredentialInDatabase(ctx c
 	err := db.NewSelect().TableExpr("database_resources AS backing").
 		ColumnExpr("cluster.id AS cluster_id, administrator.username AS administrator_username, administrator.enc_payload AS administrator_payload").
 		ColumnExpr("endpoint.address, endpoint.port").
-		Join("JOIN databases AS database ON database.id = backing.database_id AND database.archived_at IS NULL").
-		Join("JOIN database_clusters AS cluster ON cluster.id = database.database_cluster_id AND cluster.archived_at IS NULL").
+		Join("JOIN database_clusters AS cluster ON cluster.id = backing.database_cluster_id AND cluster.archived_at IS NULL").
 		Join("JOIN database_cluster_credentials AS administrator ON administrator.database_cluster_id = cluster.id AND administrator.role = 'administrator' AND administrator.archived_at IS NULL").
 		Join("JOIN database_cluster_endpoints AS endpoint ON endpoint.database_cluster_id = cluster.id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL").
 		Where("backing.resource_id = ?", resource.ID).Scan(ctx, &topology)
 	if err != nil {
-		return fmt.Errorf("load Database Cluster administrator and primary endpoint: %w", err)
+		return postgreSQLCredentialReconciliation{}, fmt.Errorf("load Database Cluster administrator and primary endpoint: %w", err)
 	}
 	administratorPlaintext, err := secretcrypto.DecryptForPurpose(topology.AdministratorPayload, service.config.App.SessionEncryptionKey, databaseClusterCredentialPurpose)
 	if err != nil {
-		return fmt.Errorf("decrypt Database Cluster administrator credential: %w", err)
+		return postgreSQLCredentialReconciliation{}, fmt.Errorf("decrypt Database Cluster administrator credential: %w", err)
 	}
 	var administratorPayload struct {
 		SchemaVersion int               `json:"schema_version"`
 		Values        map[string]string `json:"values"`
 	}
 	if json.Unmarshal(administratorPlaintext, &administratorPayload) != nil || administratorPayload.SchemaVersion != 1 {
-		return errors.New("Database Cluster administrator credential is invalid")
+		return postgreSQLCredentialReconciliation{}, errors.New("Database Cluster administrator credential is invalid")
 	}
 	administratorPassword := administratorPayload.Values["password"]
 	if administratorPassword == "" {
-		return errors.New("Database Cluster administrator credential has no PostgreSQL password")
+		return postgreSQLCredentialReconciliation{}, errors.New("Database Cluster administrator credential has no PostgreSQL password")
 	}
 	targetValues, err := service.credentialSecretValues(credential)
 	if err != nil {
-		return fmt.Errorf("load PostgreSQL login credential: %w", err)
+		return postgreSQLCredentialReconciliation{}, fmt.Errorf("load PostgreSQL login credential: %w", err)
 	}
 	if !credential.Username.Valid || targetValues["password"] == "" {
-		return errors.New("PostgreSQL login credential requires a username and password")
+		return postgreSQLCredentialReconciliation{}, errors.New("PostgreSQL login credential requires a username and password")
 	}
-
-	if err := service.postgres.ReconcileLoginRole(ctx, postgresqlclient.Connection{
-		Host: topology.Address, Port: topology.Port,
-		Username: topology.AdministratorUsername, Password: administratorPassword,
-	}, database, credential.Username.String, targetValues["password"]); err != nil {
-		return fmt.Errorf("reconcile PostgreSQL login role %q: %w", credential.Username.String, err)
+	if strings.EqualFold(strings.TrimSpace(credential.Username.String), strings.TrimSpace(topology.AdministratorUsername)) {
+		return postgreSQLCredentialReconciliation{}, domainError("username", "administrator", "Application username must be different from the Database Cluster administrator")
 	}
-	return nil
+	previousPassword := ""
+	if previous != nil && previous.Username.Valid && strings.EqualFold(strings.TrimSpace(previous.Username.String), strings.TrimSpace(credential.Username.String)) {
+		previousValues, err := service.credentialSecretValues(*previous)
+		if err != nil {
+			return postgreSQLCredentialReconciliation{}, fmt.Errorf("load previous PostgreSQL login credential: %w", err)
+		}
+		previousPassword = previousValues["password"]
+	}
+	return postgreSQLCredentialReconciliation{
+		Connection: postgresqlclient.Connection{
+			Host: topology.Address, Port: topology.Port,
+			Username: topology.AdministratorUsername, Password: administratorPassword,
+		},
+		Username: strings.TrimSpace(credential.Username.String), Password: targetValues["password"], PreviousPassword: previousPassword,
+	}, nil
 }
 
 func (service *ResourceManagement) CreateEndpoint(ctx context.Context, resourceID uuid.UUID, input ResourceEndpointInput) (models.ResourceEndpointEntity, error) {
@@ -1519,10 +1562,18 @@ func (service *ResourceManagement) updateCredential(ctx context.Context, resourc
 	if err := candidate.Validate(); err != nil {
 		return models.ResourceCredentialEntity{}, errors.Join(models.ErrDomainValidation, err)
 	}
+	reconciledPostgreSQL := false
 	if resource.ManagementMode == models.ResourceManagementManaged && resource.Kind == "postgresql" {
-		if err := service.reconcilePostgreSQLCredential(ctx, tx, resource, candidate, nil); err != nil {
+		if err := service.reconcilePostgreSQLCredential(ctx, tx, resource, candidate, &current); err != nil {
 			return models.ResourceCredentialEntity{}, err
 		}
+		reconciledPostgreSQL = true
+	}
+	compensatePostgreSQL := func(db storage.Executor) error {
+		if !reconciledPostgreSQL || !current.Username.Valid || !candidate.Username.Valid || !strings.EqualFold(strings.TrimSpace(current.Username.String), strings.TrimSpace(candidate.Username.String)) {
+			return nil
+		}
+		return service.reconcilePostgreSQLCredential(context.WithoutCancel(ctx), db, resource, current, &candidate)
 	}
 	updated, err := models.ResourceCredential.Update(ctx, tx, models.UpdateResourceCredentialData{
 		ID: current.ID, Name: input.Name, Username: nullableString(input.Username),
@@ -1530,15 +1581,15 @@ func (service *ResourceManagement) updateCredential(ctx context.Context, resourc
 		ArchivedAt: current.ArchivedAt, ResourceID: resourceID,
 	})
 	if err != nil {
-		return models.ResourceCredentialEntity{}, mapResourceConflict(err)
+		return models.ResourceCredentialEntity{}, errors.Join(mapResourceConflict(err), compensatePostgreSQL(service.db.Executor()))
 	}
 	if rotate && resource.Kind == "postgresql" {
 		if err := service.rotateEnvironmentResourceProjections(ctx, tx, updated); err != nil {
-			return models.ResourceCredentialEntity{}, err
+			return models.ResourceCredentialEntity{}, errors.Join(err, compensatePostgreSQL(service.db.Executor()))
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return models.ResourceCredentialEntity{}, mapResourceConflict(err)
+		return models.ResourceCredentialEntity{}, errors.Join(mapResourceConflict(err), compensatePostgreSQL(service.db.Executor()))
 	}
 	return updated, nil
 }
@@ -1561,13 +1612,13 @@ func (service *ResourceManagement) rotateEnvironmentResourceProjections(ctx cont
 		if err != nil || endpoint.ArchivedAt.Valid || endpoint.ResourceID != connection.ResourceID {
 			return errors.New("Environment Resource endpoint is unavailable during credential rotation")
 		}
-		var configuration struct {
+		var endpointSettings struct {
 			Database string `json:"database"`
 		}
-		if json.Unmarshal(connection.Configuration, &configuration) != nil || strings.TrimSpace(configuration.Database) == "" {
-			return errors.New("Environment Resource database projection is invalid")
+		if json.Unmarshal(endpoint.Settings, &endpointSettings) != nil || strings.TrimSpace(endpointSettings.Database) == "" {
+			return errors.New("Environment Resource endpoint Database configuration is invalid")
 		}
-		uri := &url.URL{Scheme: "postgresql", Host: fmt.Sprintf("%s:%d", endpoint.Address, endpoint.Port), Path: "/" + configuration.Database, User: url.UserPassword(credential.Username.String, password)}
+		uri := &url.URL{Scheme: "postgresql", Host: fmt.Sprintf("%s:%d", endpoint.Address, endpoint.Port), Path: "/" + endpointSettings.Database, User: url.UserPassword(credential.Username.String, password)}
 		query := uri.Query()
 		query.Set("sslmode", endpoint.TlsMode)
 		uri.RawQuery = query.Encode()
@@ -2101,7 +2152,8 @@ func (service *ResourceManagement) installationHasActiveBackupPolicy(
 
 func (service *ResourceManagement) requireNoActiveRestore(ctx context.Context, db storage.Executor, resourceID uuid.UUID, installationID *uuid.UUID) error {
 	query := db.NewSelect().TableExpr("database_restores AS restore").
-		Join("JOIN database_resources AS backing ON backing.database_id = restore.database_id").
+		Join("JOIN databases AS database ON database.id = restore.database_id").
+		Join("JOIN database_resources AS backing ON backing.database_cluster_id = database.database_cluster_id").
 		Where("backing.resource_id = ?", resourceID).
 		Where("restore.status IN (?, ?, ?)", models.DatabaseRestoreStatusPending, models.DatabaseRestoreStatusSafetyBackup, models.DatabaseRestoreStatusRestoring)
 	count, err := query.Count(ctx)
@@ -2496,7 +2548,7 @@ func (service *ResourceManagement) validateHealthTopology(ctx context.Context, d
 
 func (service *ResourceManagement) isDatabaseBackedResource(ctx context.Context, db storage.Executor, resourceID uuid.UUID) (bool, error) {
 	count, err := db.NewSelect().TableExpr("database_resources AS backing").
-		Join("JOIN databases AS database ON database.id = backing.database_id AND database.archived_at IS NULL").
+		Join("JOIN database_clusters AS cluster ON cluster.id = backing.database_cluster_id AND cluster.archived_at IS NULL").
 		Where("backing.resource_id = ?", resourceID).Count(ctx)
 	return count == 1, err
 }

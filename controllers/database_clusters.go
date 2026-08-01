@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strings"
 
 	"deploycrate-ce/internal/inertia"
 	"deploycrate-ce/internal/validation"
@@ -61,7 +60,7 @@ func (controller DatabaseClusters) renderNew(etx *echo.Context, options ...inert
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 	return inertia.Page(etx, "Resources/DatabaseNew", inertia.Props{
-		"auth": authProps(etx), "options": clusterOptions,
+		"auth": authProps(etx), "options": clusterOptions, "flash": resourceFlashProps(etx),
 	}, options...)
 }
 
@@ -70,7 +69,6 @@ type databaseClusterPayload struct {
 	Slug                      string                                  `json:"slug"`
 	Engine                    string                                  `json:"engine"`
 	EngineVersion             string                                  `json:"engineVersion"`
-	SharingMode               string                                  `json:"sharingMode"`
 	DesiredInstallationMethod string                                  `json:"desiredInstallationMethod"`
 	AdministratorUsername     string                                  `json:"administratorUsername"`
 	AdministratorPassword     string                                  `json:"administratorPassword"`
@@ -80,18 +78,19 @@ type databaseClusterPayload struct {
 }
 
 type databaseResourcePayload struct {
-	Name         string `json:"name"`
-	Encoding     string `json:"encoding"`
-	Collation    string `json:"collation"`
-	ResourceName string `json:"resourceName"`
-	ResourceSlug string `json:"resourceSlug"`
-	SharingScope string `json:"sharingScope"`
+	Name                string `json:"name"`
+	Encoding            string `json:"encoding"`
+	Collation           string `json:"collation"`
+	ApplicationUsername string `json:"applicationUsername"`
+	ApplicationPassword string `json:"applicationPassword"`
+	ResourceName        string `json:"resourceName"`
+	ResourceSlug        string `json:"resourceSlug"`
+	SharingScope        string `json:"sharingScope"`
 }
 
 func (controller DatabaseClusters) Create(etx *echo.Context) error {
 	var payload databaseClusterPayload
 	err := etx.Bind(&payload)
-	sharingMode := strings.ToLower(strings.TrimSpace(payload.SharingMode))
 	var resource models.ResourceEntity
 	if err == nil && payload.Database == nil {
 		err = domainPayloadError("database", "Database Resource details are required")
@@ -99,12 +98,13 @@ func (controller DatabaseClusters) Create(etx *echo.Context) error {
 	if err == nil {
 		_, resource, err = controller.service.CreateResource(etx.Request().Context(), services.CreateDatabaseClusterInput{
 			Name: payload.Name, Slug: payload.Slug, Engine: payload.Engine, EngineVersion: payload.EngineVersion,
-			SharingMode: sharingMode, DesiredInstallationMethod: payload.DesiredInstallationMethod,
-			Topology: json.RawMessage(`{"primary_count":1,"replica_count":0}`), MaintenancePolicy: json.RawMessage(`{}`),
+			DesiredInstallationMethod: payload.DesiredInstallationMethod,
+			Topology:                  json.RawMessage(`{"primary_count":1,"replica_count":0}`), MaintenancePolicy: json.RawMessage(`{}`),
 			AdministratorUsername: payload.AdministratorUsername, AdministratorPassword: payload.AdministratorPassword,
 			Endpoint: payload.Endpoint, Placement: payload.Placement,
 		}, services.PublishDatabaseInput{
 			Name: payload.Database.Name, Encoding: payload.Database.Encoding, Collation: payload.Database.Collation,
+			ApplicationUsername: payload.Database.ApplicationUsername, ApplicationPassword: payload.Database.ApplicationPassword,
 			Settings: json.RawMessage(`{}`), ResourceName: payload.Database.ResourceName,
 			ResourceSlug: payload.Database.ResourceSlug,
 			SharingScope: models.ResourceSharingScopeEnum(payload.Database.SharingScope),

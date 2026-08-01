@@ -70,7 +70,6 @@ type CreateDatabaseClusterInput struct {
 	Slug                      string
 	Engine                    string
 	EngineVersion             string
-	SharingMode               string
 	DesiredInstallationMethod string
 	Topology                  json.RawMessage
 	MaintenancePolicy         json.RawMessage
@@ -85,6 +84,8 @@ type PublishDatabaseInput struct {
 	Encoding            string
 	Collation           string
 	Settings            json.RawMessage
+	ApplicationUsername string
+	ApplicationPassword string
 	ResourceName        string
 	ResourceSlug        string
 	SharingScope        models.ResourceSharingScopeEnum
@@ -99,7 +100,6 @@ type DatabaseClusterListItem struct {
 	Slug               string    `bun:"slug" json:"slug"`
 	Engine             string    `bun:"engine" json:"engine"`
 	EngineVersion      string    `bun:"engine_version" json:"engineVersion"`
-	SharingMode        string    `bun:"sharing_mode" json:"sharingMode"`
 	InstallationMethod string    `bun:"installation_method" json:"installationMethod"`
 	NodeCount          int       `bun:"node_count" json:"nodeCount"`
 	DatabaseCount      int       `bun:"database_count" json:"databaseCount"`
@@ -178,7 +178,7 @@ type DatabaseClusterDetail struct {
 func (service *DatabaseClusters) List(ctx context.Context) ([]DatabaseClusterListItem, error) {
 	items := make([]DatabaseClusterListItem, 0)
 	err := service.db.Executor().NewSelect().TableExpr("database_clusters AS cluster").
-		ColumnExpr("cluster.id, cluster.name, cluster.slug, cluster.engine, cluster.engine_version, cluster.sharing_mode").
+		ColumnExpr("cluster.id, cluster.name, cluster.slug, cluster.engine, cluster.engine_version").
 		ColumnExpr("COALESCE(cluster.desired_installation_method, '') AS installation_method").
 		ColumnExpr("(SELECT count(*) FROM database_cluster_nodes node WHERE node.database_cluster_id = cluster.id AND node.archived_at IS NULL) AS node_count").
 		ColumnExpr("(SELECT count(*) FROM databases database WHERE database.database_cluster_id = cluster.id AND database.archived_at IS NULL) AS database_count").
@@ -214,7 +214,7 @@ func (service *DatabaseClusters) Detail(ctx context.Context, clusterID uuid.UUID
 		func() error {
 			return service.db.Executor().NewSelect().TableExpr("databases AS database").
 				ColumnExpr("database.id, database.name, database.desired_state, database.observed_state, backing.resource_id, COALESCE(resource.name, '') AS resource_name").
-				Join("LEFT JOIN database_resources AS backing ON backing.database_id = database.id").
+				Join("LEFT JOIN database_resources AS backing ON backing.database_cluster_id = database.database_cluster_id").
 				Join("LEFT JOIN resources AS resource ON resource.id = backing.resource_id").
 				Where("database.database_cluster_id = ?", clusterID).Where("database.archived_at IS NULL").OrderExpr("database.name").Scan(ctx, &detail.Databases)
 		},
@@ -229,7 +229,6 @@ func (service *DatabaseClusters) Detail(ctx context.Context, clusterID uuid.UUID
 
 func (service *DatabaseClusters) Create(ctx context.Context, input CreateDatabaseClusterInput) (models.DatabaseClusterEntity, error) {
 	input.Engine = strings.ToLower(strings.TrimSpace(input.Engine))
-	input.SharingMode = strings.ToLower(strings.TrimSpace(input.SharingMode))
 	input.DesiredInstallationMethod = strings.ToLower(strings.TrimSpace(input.DesiredInstallationMethod))
 	if input.Engine != models.DatabaseEnginePostgreSQL {
 		return models.DatabaseClusterEntity{}, domainError("engine", "unsupported", "Database Clusters currently support PostgreSQL only")
@@ -252,7 +251,7 @@ func (service *DatabaseClusters) Create(ctx context.Context, input CreateDatabas
 	defer tx.Rollback()
 	cluster, err := models.DatabaseCluster.Create(ctx, tx, models.CreateDatabaseClusterData{
 		Name: input.Name, Slug: input.Slug, Engine: input.Engine, EngineVersion: input.EngineVersion,
-		SharingMode: input.SharingMode, ManagementMode: models.ResourceManagementManaged.String(), DesiredInstallationMethod: desiredMethod,
+		ManagementMode: models.ResourceManagementManaged.String(), DesiredInstallationMethod: desiredMethod,
 		Topology: normalizedJSON(input.Topology), MaintenancePolicy: normalizedJSON(input.MaintenancePolicy),
 	})
 	if err != nil {
@@ -291,7 +290,7 @@ func (service *DatabaseClusters) Create(ctx context.Context, input CreateDatabas
 			return models.DatabaseClusterEntity{}, err
 		}
 	}
-	installationID, err := service.createNodeTopology(ctx, tx, cluster, *input.Placement)
+	installationID, err := service.createNodeTopology(ctx, tx, cluster, input.Endpoint.Port, *input.Placement)
 	if err != nil {
 		return models.DatabaseClusterEntity{}, err
 	}
@@ -300,16 +299,10 @@ func (service *DatabaseClusters) Create(ctx context.Context, input CreateDatabas
 	}
 	if err := service.ProvisionInstallation(ctx, installationID); err != nil {
 		_ = service.recordInstallationFailure(context.WithoutCancel(ctx), installationID, err)
-		return cluster, fmt.Errorf("provision Database Node Installation: %w", err)
+		cleanupErr := service.ArchiveCluster(context.WithoutCancel(ctx), cluster.ID)
+		return cluster, errors.Join(fmt.Errorf("provision Database Node Installation: %w", err), cleanupErr)
 	}
 	return cluster, nil
-}
-
-func (service *DatabaseClusters) CreateDedicated(ctx context.Context, clusterInput CreateDatabaseClusterInput, databaseInput PublishDatabaseInput) (models.DatabaseClusterEntity, models.ResourceEntity, error) {
-	if strings.ToLower(strings.TrimSpace(clusterInput.SharingMode)) != models.DatabaseSharingDedicated {
-		return models.DatabaseClusterEntity{}, models.ResourceEntity{}, domainError("sharingMode", "dedicated", "dedicated Database creation requires dedicated sharing mode")
-	}
-	return service.CreateResource(ctx, clusterInput, databaseInput)
 }
 
 func (service *DatabaseClusters) CreateResource(ctx context.Context, clusterInput CreateDatabaseClusterInput, databaseInput PublishDatabaseInput) (models.DatabaseClusterEntity, models.ResourceEntity, error) {
@@ -333,7 +326,7 @@ func (service *DatabaseClusters) CreateResource(ctx context.Context, clusterInpu
 	return cluster, models.ResourceEntity{}, errors.Join(err, cleanupErr)
 }
 
-func (service *DatabaseClusters) createNodeTopology(ctx context.Context, db storage.Executor, cluster models.DatabaseClusterEntity, placement DatabaseClusterPlacementInput) (uuid.UUID, error) {
+func (service *DatabaseClusters) createNodeTopology(ctx context.Context, db storage.Executor, cluster models.DatabaseClusterEntity, hostPort int32, placement DatabaseClusterPlacementInput) (uuid.UUID, error) {
 	if err := service.requireLocalDatabaseServer(ctx, db, placement.ServerID); err != nil {
 		return uuid.Nil, err
 	}
@@ -364,7 +357,7 @@ func (service *DatabaseClusters) createNodeTopology(ctx context.Context, db stor
 			DatabaseNodeInstallationID: installation.ID, ImageReference: placement.ImageReference,
 			ImageDigest: nullableString(placement.ImageDigest), ContainerName: placement.ContainerName,
 			RestartPolicy: placement.RestartPolicy,
-			PortMappings:  json.RawMessage(fmt.Sprintf(`[{"hostPort":%d,"containerPort":%d,"protocol":"tcp"}]`, defaultDatabasePort(cluster.Engine), defaultDatabasePort(cluster.Engine))),
+			PortMappings:  json.RawMessage(fmt.Sprintf(`[{"hostPort":%d,"containerPort":%d,"protocol":"tcp"}]`, hostPort, defaultDatabasePort(cluster.Engine))),
 			Configuration: json.RawMessage(`{"mount_path":"/var/lib/database"}`),
 		})
 	} else {
@@ -383,6 +376,13 @@ func (service *DatabaseClusters) ProvisionInstallation(ctx context.Context, inst
 		return err
 	}
 	if err := service.runInstallationRuntime(ctx, databaseRuntime{InstallationID: installationID, Topology: topology}); err != nil {
+		return err
+	}
+	connection, err := service.postgreSQLAdministratorConnection(ctx, topology.ClusterID)
+	if err != nil {
+		return err
+	}
+	if err := service.postgres.WaitForReady(ctx, connection, time.Minute); err != nil {
 		return err
 	}
 	now := time.Now().UTC()
@@ -487,7 +487,7 @@ func (service *DatabaseClusters) runInstallationRuntime(ctx context.Context, run
 		return service.container.Run(ctx, containerclient.RunSpec{
 			InstallationID: runtime.InstallationID.String(), ContainerName: topology.ContainerName,
 			ImageReference: topology.ImageReference, RestartPolicy: topology.RestartPolicy,
-			PortMappings: []containerclient.PortMapping{{HostPort: topology.Port, ContainerPort: topology.Port, Protocol: "tcp"}},
+			PortMappings: []containerclient.PortMapping{{HostPort: topology.Port, ContainerPort: defaultDatabasePort(topology.Engine), Protocol: "tcp"}},
 			VolumeMounts: []containerclient.VolumeMount{{Name: topology.StorageExternalID, MountPath: topology.DataPath}},
 			Environment:  map[string]string{"POSTGRES_USER": administrator.Username, "POSTGRES_PASSWORD": password, "POSTGRES_DB": "postgres"},
 		})
@@ -567,24 +567,11 @@ func (service *DatabaseClusters) PublishDatabase(ctx context.Context, clusterID 
 	if err != nil {
 		return models.ResourceEntity{}, err
 	}
-	if cluster.SharingMode == models.DatabaseSharingDedicated {
-		activeDatabases, err := tx.NewSelect().TableExpr("databases").Where("database_cluster_id = ?", clusterID).Where("archived_at IS NULL").Count(ctx)
-		if err != nil {
-			return models.ResourceEntity{}, err
-		}
-		if activeDatabases != 0 {
-			return models.ResourceEntity{}, domainError("database", "dedicated", "a dedicated Database runtime can publish only one Resource")
-		}
+	if strings.EqualFold(strings.TrimSpace(input.ApplicationUsername), strings.TrimSpace(connection.Username)) {
+		return models.ResourceEntity{}, domainError("applicationUsername", "administrator", "Application username must be different from the Database Cluster administrator")
 	}
 	var endpoint models.DatabaseClusterEndpointEntity
 	if err := tx.NewSelect().Model(&endpoint).Where("id = ?", input.ClusterEndpointID).Where("database_cluster_id = ?", clusterID).Where("archived_at IS NULL").Scan(ctx); err != nil {
-		return models.ResourceEntity{}, err
-	}
-	database, err := models.Database.Create(ctx, tx, models.CreateDatabaseData{
-		Name: input.Name, Encoding: nullableString(input.Encoding), Collation: nullableString(input.Collation),
-		Settings: normalizedJSON(input.Settings), DesiredState: "provisioned", ObservedState: "provisioned", DatabaseClusterID: cluster.ID,
-	})
-	if err != nil {
 		return models.ResourceEntity{}, err
 	}
 	resource, err := models.Resource.Create(ctx, tx, models.CreateResourceData{
@@ -594,37 +581,28 @@ func (service *DatabaseClusters) PublishDatabase(ctx context.Context, clusterID 
 	if err != nil {
 		return models.ResourceEntity{}, databaseResourceValidation(err)
 	}
-	if _, err := models.DatabaseResource.Create(ctx, tx, resource.ID, database.ID); err != nil {
+	if _, err := models.DatabaseResource.Create(ctx, tx, resource.ID, cluster.ID); err != nil {
 		return models.ResourceEntity{}, err
 	}
-	credentialPayload, err := json.Marshal(map[string]any{
-		"schema_version": 1, "values": map[string]string{"password": connection.Password},
+	database, err := models.Database.Create(ctx, tx, models.CreateDatabaseData{
+		Name: input.Name, Encoding: nullableString(input.Encoding), Collation: nullableString(input.Collation),
+		Settings: normalizedJSON(input.Settings), DesiredState: "provisioned", ObservedState: "provisioned", DatabaseClusterID: cluster.ID,
 	})
 	if err != nil {
 		return models.ResourceEntity{}, err
 	}
-	encryptedCredential, err := secretcrypto.EncryptForPurpose(credentialPayload, service.config.App.SessionEncryptionKey, resourceCredentialPurpose)
-	if err != nil {
-		return models.ResourceEntity{}, err
-	}
-	credentialKey, err := hex.DecodeString(service.config.App.SessionEncryptionKey)
-	if err != nil || len(credentialKey) != 32 {
-		return models.ResourceEntity{}, errors.New("Database Resource credential digest key is invalid")
-	}
-	credentialDigest := hmac.New(sha256.New, credentialKey)
-	_, _ = credentialDigest.Write(credentialPayload)
-	credential, err := models.ResourceCredential.Create(ctx, tx, models.CreateResourceCredentialData{
-		Name: "Database user", Username: sql.NullString{String: connection.Username, Valid: true},
-		Metadata:   json.RawMessage(`{"schema_version":1,"credential_kind":"database_user"}`),
-		EncPayload: encryptedCredential, Digest: credentialDigest.Sum(nil), ResourceID: resource.ID,
+	credential, err := service.resources.createCredential(ctx, tx, resource, ResourceCredentialInput{
+		Name: "Application user", Username: input.ApplicationUsername,
+		Metadata:     json.RawMessage(`{"schema_version":1,"credential_kind":"database_user"}`),
+		SecretValues: map[string]string{"password": input.ApplicationPassword},
 	})
 	if err != nil {
 		return models.ResourceEntity{}, err
 	}
 	published, err := models.ResourceEndpoint.Create(ctx, tx, models.CreateResourceEndpointData{
-		Name: endpoint.Name, Role: "primary", Address: endpoint.Address, Port: endpoint.Port,
+		Name: database.Name + " " + endpoint.Name, Role: "primary", Address: endpoint.Address, Port: endpoint.Port,
 		Protocol: endpoint.Protocol, TlsMode: endpoint.TLSMode,
-		Settings: json.RawMessage(fmt.Sprintf(`{"database":%q,"user":%q}`, database.Name, connection.Username)), ResourceID: resource.ID,
+		Settings: json.RawMessage(fmt.Sprintf(`{"database":%q}`, database.Name)), ResourceID: resource.ID,
 		PrivateNetworkID: endpoint.PrivateNetworkID,
 	})
 	if err != nil {
@@ -654,6 +632,12 @@ func (service *DatabaseClusters) PublishDatabase(ctx context.Context, clusterID 
 	if err != nil {
 		return models.ResourceEntity{}, err
 	}
+	if err := service.resources.reconcilePostgreSQLCredential(ctx, tx, resource, credential, nil); err != nil {
+		if createdInEngine {
+			return models.ResourceEntity{}, errors.Join(err, service.postgres.DropDatabase(context.WithoutCancel(ctx), connection, database.Name))
+		}
+		return models.ResourceEntity{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		if createdInEngine {
 			cleanupErr := service.postgres.DropDatabase(context.WithoutCancel(ctx), connection, input.Name)
@@ -662,6 +646,121 @@ func (service *DatabaseClusters) PublishDatabase(ctx context.Context, clusterID 
 		return models.ResourceEntity{}, err
 	}
 	return resource, nil
+}
+
+func (service *DatabaseClusters) CreateDatabaseForResource(ctx context.Context, resourceID uuid.UUID, input PublishDatabaseInput) (models.DatabaseEntity, error) {
+	backing, err := models.DatabaseResource.FindByResource(ctx, service.db.Executor(), resourceID)
+	if err != nil {
+		return models.DatabaseEntity{}, err
+	}
+	connection, err := service.postgreSQLAdministratorConnection(ctx, backing.DatabaseClusterID)
+	if err != nil {
+		return models.DatabaseEntity{}, err
+	}
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return models.DatabaseEntity{}, err
+	}
+	defer tx.Rollback()
+	resource, err := service.resources.loadResource(ctx, tx, resourceID, true)
+	if err != nil {
+		return models.DatabaseEntity{}, err
+	}
+	if resource.ArchivedAt.Valid || resource.Kind != models.DatabaseEnginePostgreSQL || resource.ManagementMode != models.ResourceManagementManaged {
+		return models.DatabaseEntity{}, models.ErrNotFound
+	}
+	cluster, err := models.DatabaseCluster.FindForUpdate(ctx, tx, backing.DatabaseClusterID)
+	if err != nil {
+		return models.DatabaseEntity{}, err
+	}
+	if cluster.ArchivedAt.Valid || cluster.Engine != resource.Kind {
+		return models.DatabaseEntity{}, models.ErrNotFound
+	}
+	var clusterEndpoint models.DatabaseClusterEndpointEntity
+	if err := tx.NewSelect().Model(&clusterEndpoint).Where("database_cluster_id = ?", cluster.ID).
+		Where("role = 'primary'").Where("archived_at IS NULL").OrderExpr("created_at").Limit(1).Scan(ctx); err != nil {
+		return models.DatabaseEntity{}, err
+	}
+	database, err := models.Database.Create(ctx, tx, models.CreateDatabaseData{
+		Name: input.Name, Encoding: nullableString(input.Encoding), Collation: nullableString(input.Collation),
+		Settings: normalizedJSON(input.Settings), DesiredState: "provisioned", ObservedState: "provisioned", DatabaseClusterID: cluster.ID,
+	})
+	if err != nil {
+		return models.DatabaseEntity{}, err
+	}
+	published, err := models.ResourceEndpoint.Create(ctx, tx, models.CreateResourceEndpointData{
+		Name: database.Name + " " + clusterEndpoint.Name, Role: "primary",
+		Address: clusterEndpoint.Address, Port: clusterEndpoint.Port, Protocol: clusterEndpoint.Protocol, TlsMode: clusterEndpoint.TLSMode,
+		Settings: json.RawMessage(fmt.Sprintf(`{"database":%q}`, database.Name)), ResourceID: resource.ID,
+		PrivateNetworkID: clusterEndpoint.PrivateNetworkID,
+	})
+	if err != nil {
+		return models.DatabaseEntity{}, err
+	}
+	if _, err := models.DatabaseResourceEndpoint.Create(ctx, tx, published.ID, clusterEndpoint.ID); err != nil {
+		return models.DatabaseEntity{}, err
+	}
+	privateClusterEndpoints := make([]models.DatabaseClusterEndpointEntity, 0)
+	if err := tx.NewSelect().Model(&privateClusterEndpoints).Distinct().
+		Join("JOIN database_resource_endpoints AS link ON link.database_cluster_endpoint_id = database_cluster_endpoint.id").
+		Join("JOIN resource_endpoints AS endpoint ON endpoint.id = link.resource_endpoint_id AND endpoint.resource_id = ? AND endpoint.private_network_id IS NOT NULL AND endpoint.archived_at IS NULL", resource.ID).
+		Where("database_cluster_endpoint.database_cluster_id = ?", cluster.ID).
+		Where("database_cluster_endpoint.private_network_id IS NOT NULL").Where("database_cluster_endpoint.archived_at IS NULL").Scan(ctx); err != nil {
+		return models.DatabaseEntity{}, err
+	}
+	for _, privateClusterEndpoint := range privateClusterEndpoints {
+		privatePublished, err := models.ResourceEndpoint.Create(ctx, tx, models.CreateResourceEndpointData{
+			Name: database.Name + " " + privateClusterEndpoint.Name, Role: "wireguard",
+			Address: privateClusterEndpoint.Address, Port: privateClusterEndpoint.Port,
+			Protocol: privateClusterEndpoint.Protocol, TlsMode: privateClusterEndpoint.TLSMode,
+			Settings: json.RawMessage(fmt.Sprintf(`{"database":%q}`, database.Name)), ResourceID: resource.ID,
+			PrivateNetworkID: privateClusterEndpoint.PrivateNetworkID,
+		})
+		if err != nil {
+			return models.DatabaseEntity{}, err
+		}
+		if _, err := models.DatabaseResourceEndpoint.Create(ctx, tx, privatePublished.ID, privateClusterEndpoint.ID); err != nil {
+			return models.DatabaseEntity{}, err
+		}
+	}
+	createdInEngine, err := service.postgres.CreateDatabase(ctx, connection, database.Name)
+	if err != nil {
+		return models.DatabaseEntity{}, err
+	}
+	credentials := make([]models.ResourceCredentialEntity, 0)
+	if err := tx.NewSelect().Model(&credentials).Where("resource_id = ?", resource.ID).Where("archived_at IS NULL").OrderExpr("created_at").Scan(ctx); err != nil {
+		if createdInEngine {
+			return models.DatabaseEntity{}, errors.Join(err, service.postgres.DropDatabase(context.WithoutCancel(ctx), connection, database.Name))
+		}
+		return models.DatabaseEntity{}, err
+	}
+	for _, credential := range credentials {
+		if err := service.resources.reconcilePostgreSQLCredentialInDatabase(ctx, tx, resource, credential, database.Name); err != nil {
+			if createdInEngine {
+				return models.DatabaseEntity{}, errors.Join(err, service.postgres.DropDatabase(context.WithoutCancel(ctx), connection, database.Name))
+			}
+			return models.DatabaseEntity{}, err
+		}
+	}
+	if len(credentials) > 0 {
+		if _, err := models.ResourceHealthCheck.Create(ctx, tx, models.CreateResourceHealthCheckData{
+			Name: database.Name + " readiness", Kind: "postgresql", Configuration: json.RawMessage(`{}`),
+			IntervalSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 3, SuccessThreshold: 1, Enabled: true,
+			ResourceID: resource.ID, ResourceEndpointID: &published.ID, ResourceCredentialID: &credentials[0].ID,
+		}); err != nil {
+			if createdInEngine {
+				return models.DatabaseEntity{}, errors.Join(err, service.postgres.DropDatabase(context.WithoutCancel(ctx), connection, database.Name))
+			}
+			return models.DatabaseEntity{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		if createdInEngine {
+			return models.DatabaseEntity{}, errors.Join(err, service.postgres.DropDatabase(context.WithoutCancel(ctx), connection, database.Name))
+		}
+		return models.DatabaseEntity{}, err
+	}
+	return database, nil
 }
 
 func databaseResourceValidation(err error) error {
@@ -683,10 +782,6 @@ func databaseResourceValidation(err error) error {
 }
 
 func (service *DatabaseClusters) DeprovisionDatabase(ctx context.Context, clusterID, databaseID uuid.UUID) error {
-	return service.deprovisionDatabase(ctx, clusterID, databaseID, false)
-}
-
-func (service *DatabaseClusters) deprovisionDatabase(ctx context.Context, clusterID, databaseID uuid.UUID, allowDedicated bool) error {
 	database, err := models.Database.Find(ctx, service.db.Executor(), databaseID)
 	if err != nil {
 		return err
@@ -696,7 +791,7 @@ func (service *DatabaseClusters) deprovisionDatabase(ctx context.Context, cluste
 	}
 	var blockers int
 	err = service.db.Executor().NewSelect().TableExpr("databases AS database").ColumnExpr("count(*)").
-		Join("LEFT JOIN database_resources AS backing ON backing.database_id = database.id").
+		Join("LEFT JOIN database_resources AS backing ON backing.database_cluster_id = database.database_cluster_id").
 		Where("database.id = ?", databaseID).
 		Where(`EXISTS (SELECT 1 FROM resources resource WHERE resource.id = backing.resource_id AND resource.archived_at IS NULL)
 			OR EXISTS (SELECT 1 FROM environment_resources connection WHERE connection.resource_id = backing.resource_id AND connection.archived_at IS NULL)
@@ -717,9 +812,6 @@ func (service *DatabaseClusters) deprovisionDatabase(ctx context.Context, cluste
 	if cluster.ManagementMode != models.ResourceManagementManaged.String() {
 		return models.ErrNotFound
 	}
-	if cluster.SharingMode == models.DatabaseSharingDedicated && !allowDedicated {
-		return domainError("database", "dedicated", "archive the dedicated Database Resource to retire its Database and runtime together")
-	}
 	connection, err := service.postgreSQLAdministratorConnection(ctx, cluster.ID)
 	if err != nil {
 		return err
@@ -733,22 +825,18 @@ func (service *DatabaseClusters) deprovisionDatabase(ctx context.Context, cluste
 	return err
 }
 
-func (service *DatabaseClusters) ArchiveDedicatedResource(ctx context.Context, resourceID uuid.UUID) (bool, error) {
+func (service *DatabaseClusters) ArchiveDatabaseResource(ctx context.Context, resourceID uuid.UUID) (bool, error) {
 	var target struct {
 		ClusterID        uuid.UUID    `bun:"cluster_id"`
-		DatabaseID       uuid.UUID    `bun:"database_id"`
-		SharingMode      string       `bun:"sharing_mode"`
 		ManagementMode   string       `bun:"management_mode"`
 		ResourceArchived sql.NullTime `bun:"resource_archived"`
-		DatabaseArchived sql.NullTime `bun:"database_archived"`
 		ClusterArchived  sql.NullTime `bun:"cluster_archived"`
 	}
 	err := service.db.Executor().NewSelect().TableExpr("database_resources AS backing").
-		ColumnExpr("cluster.id AS cluster_id, database.id AS database_id, cluster.sharing_mode, cluster.management_mode").
-		ColumnExpr("resource.archived_at AS resource_archived, database.archived_at AS database_archived, cluster.archived_at AS cluster_archived").
+		ColumnExpr("cluster.id AS cluster_id, cluster.management_mode").
+		ColumnExpr("resource.archived_at AS resource_archived, cluster.archived_at AS cluster_archived").
 		Join("JOIN resources AS resource ON resource.id = backing.resource_id").
-		Join("JOIN databases AS database ON database.id = backing.database_id").
-		Join("JOIN database_clusters AS cluster ON cluster.id = database.database_cluster_id").
+		Join("JOIN database_clusters AS cluster ON cluster.id = backing.database_cluster_id").
 		Where("backing.resource_id = ?", resourceID).Scan(ctx, &target)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -756,7 +844,7 @@ func (service *DatabaseClusters) ArchiveDedicatedResource(ctx context.Context, r
 	if err != nil {
 		return false, err
 	}
-	if target.SharingMode != models.DatabaseSharingDedicated || target.ManagementMode != models.ResourceManagementManaged.String() {
+	if target.ManagementMode != models.ResourceManagementManaged.String() {
 		return false, nil
 	}
 	if !target.ResourceArchived.Valid {
@@ -764,13 +852,17 @@ func (service *DatabaseClusters) ArchiveDedicatedResource(ctx context.Context, r
 			return true, err
 		}
 	}
-	if !target.DatabaseArchived.Valid {
+	databases := make([]models.DatabaseEntity, 0)
+	if err := service.db.Executor().NewSelect().Model(&databases).Where("database_cluster_id = ?", target.ClusterID).Where("archived_at IS NULL").OrderExpr("created_at").Scan(ctx); err != nil {
+		return true, err
+	}
+	for _, database := range databases {
 		now := time.Now().UTC()
 		if _, err := service.db.Executor().NewUpdate().TableExpr("backup_policies").Set("activated_at = NULL").Set("archived_at = ?", now).Set("updated_at = ?", now).
-			Where("database_id = ?", target.DatabaseID).Where("archived_at IS NULL").Exec(ctx); err != nil {
+			Where("database_id = ?", database.ID).Where("archived_at IS NULL").Exec(ctx); err != nil {
 			return true, err
 		}
-		if err := service.deprovisionDatabase(ctx, target.ClusterID, target.DatabaseID, true); err != nil {
+		if err := service.DeprovisionDatabase(ctx, target.ClusterID, database.ID); err != nil {
 			return true, err
 		}
 	}

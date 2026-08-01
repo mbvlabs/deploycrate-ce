@@ -128,7 +128,7 @@ func (rhc resourceHealthCheck) DueApplicationChecks(
 		ColumnExpr("resource.id AS resource_id").
 		ColumnExpr("resource.name AS resource_name").
 		ColumnExpr("resource.kind AS resource_kind").
-		ColumnExpr("COALESCE(database.name, '') AS resource_database_name").
+		ColumnExpr("COALESCE(endpoint.settings ->> 'database', '') AS resource_database_name").
 		ColumnExpr("COALESCE(endpoint.address, '') AS endpoint_address").
 		ColumnExpr("COALESCE(endpoint.port, 0) AS endpoint_port").
 		ColumnExpr("COALESCE(endpoint.protocol, '') AS endpoint_protocol").
@@ -143,8 +143,6 @@ func (rhc resourceHealthCheck) DueApplicationChecks(
 		ColumnExpr("status.expires_at AS status_expires_at").
 		Join("JOIN resources AS resource ON resource.id = health_check.resource_id AND resource.archived_at IS NULL").
 		Join("LEFT JOIN resource_installations AS installation ON installation.id = health_check.resource_installation_id AND installation.resource_id = resource.id AND installation.archived_at IS NULL").
-		Join("LEFT JOIN database_resources AS database_backing ON database_backing.resource_id = resource.id").
-		Join("LEFT JOIN databases AS database ON database.id = database_backing.database_id AND database.archived_at IS NULL").
 		Join("LEFT JOIN resource_endpoints AS endpoint ON endpoint.id = health_check.resource_endpoint_id AND endpoint.resource_id = resource.id AND endpoint.archived_at IS NULL").
 		Join("LEFT JOIN resource_credentials AS credential ON credential.id = health_check.resource_credential_id AND credential.resource_id = resource.id AND credential.archived_at IS NULL").
 		Join("LEFT JOIN resource_health_check_statuses AS status ON status.health_check_id = health_check.id").

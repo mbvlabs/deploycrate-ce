@@ -147,7 +147,8 @@ Rules local to one entity belong in `models/`. Rules involving multiple records,
 - Docker installation details own image, digest, container identity, restart policy, optional Registry Resource access, port mappings, and mount targets.
 - Native installation details own package, requested version, system service, configuration path, and validated service settings. Host commands accept validated identifiers and never place plaintext credentials in arguments, output, or persisted settings.
 - A Database belongs to exactly one Cluster. Its active logical name is unique within that Cluster.
-- One logical Database maps to exactly one Resource through `database_resources`. Database and Resource identities survive Node moves and installation-method replacement.
+- A database-backed Resource maps to one Database Cluster through `database_resources` and may publish multiple logical Databases through Resource Endpoints. Resource, Database, and endpoint identities survive Node moves and installation-method replacement.
+- Every database-backed Resource Endpoint identifies its logical Database in non-secret endpoint settings. Environment Resource connections select that endpoint and a Resource credential without storing Database or Cluster identity.
 - Database creation and deprovisioning use the Cluster administrator workflow. Deprovisioning is blocked by an active Resource, Resource Connection, or Database restore.
 - Archiving a Cluster requires all Databases to be archived and all managed Nodes to be retired.
 - Database process telemetry is attributed to Database Cluster, Cluster Node, and Node Installation, never to an arbitrary database Resource.

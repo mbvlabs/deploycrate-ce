@@ -145,7 +145,6 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	cluster, err := models.DatabaseCluster.Create(ctx, exec, models.CreateDatabaseClusterData{
 		Name: "DeployCrate CE PostgreSQL", Slug: "deploycrate-ce-postgresql",
 		Engine: models.DatabaseEnginePostgreSQL, EngineVersion: "17",
-		SharingMode:               models.DatabaseSharingDedicated,
 		ManagementMode:            models.ResourceManagementManaged.String(),
 		DesiredInstallationMethod: sql.NullString{String: models.DatabaseInstallDocker, Valid: true},
 		Topology:                  json.RawMessage(`{"primary_count":1,"replica_count":0}`), MaintenancePolicy: json.RawMessage(`{}`),
@@ -192,7 +191,7 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	if err != nil {
 		return fmt.Errorf("create DeployCrate CE Database Cluster endpoint: %w", err)
 	}
-	database, err := models.Database.Create(ctx, exec, models.CreateDatabaseData{
+	_, err = models.Database.Create(ctx, exec, models.CreateDatabaseData{
 		Name: "deploycrate", Settings: json.RawMessage(`{}`), DesiredState: "provisioned",
 		ObservedState: "provisioned", DatabaseClusterID: cluster.ID,
 	})
@@ -210,7 +209,7 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	if err != nil {
 		return fmt.Errorf("create DeployCrate CE Database Resource: %w", err)
 	}
-	if _, err := models.DatabaseResource.Create(ctx, exec, resource.ID, database.ID); err != nil {
+	if _, err := models.DatabaseResource.Create(ctx, exec, resource.ID, cluster.ID); err != nil {
 		return fmt.Errorf("create DeployCrate CE Database Resource backing: %w", err)
 	}
 	endpoint, err := factories.CreateResourceEndpoint(ctx, exec, resource.ID, nil, &network.ID,

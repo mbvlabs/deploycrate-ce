@@ -535,25 +535,33 @@ func (service *EnvironmentSetup) EditData(
 		ResourceCredentialID *uuid.UUID      `bun:"resource_credential_id"`
 		Alias                string          `bun:"alias"`
 		Configuration        json.RawMessage `bun:"configuration"`
+		EndpointSettings     json.RawMessage `bun:"endpoint_settings"`
 	}
 	rows := make([]resourceRow, 0)
-	if err := service.db.Executor().NewSelect().TableExpr("environment_resources").
-		Column("id", "resource_id", "resource_endpoint_id", "resource_credential_id", "alias", "configuration").
-		Where("environment_id = ?", environmentID).Where("archived_at IS NULL").OrderExpr("alias").Scan(ctx, &rows); err != nil {
+	if err := service.db.Executor().NewSelect().TableExpr("environment_resources AS connection").
+		ColumnExpr("connection.id, connection.resource_id, connection.resource_endpoint_id, connection.resource_credential_id, connection.alias, connection.configuration").
+		ColumnExpr("endpoint.settings AS endpoint_settings").
+		Join("JOIN resource_endpoints AS endpoint ON endpoint.id = connection.resource_endpoint_id AND endpoint.archived_at IS NULL").
+		Where("connection.environment_id = ?", environmentID).Where("connection.archived_at IS NULL").OrderExpr("connection.alias").Scan(ctx, &rows); err != nil {
 		return EnvironmentEditData{}, err
 	}
 	resources := make([]EnvironmentSetupResourceInput, 0, len(rows))
 	for _, row := range rows {
 		var configuration struct {
-			Database             string `json:"database"`
 			CredentialProjection string `json:"credential_projection"`
 		}
 		if json.Unmarshal(row.Configuration, &configuration) != nil {
 			return EnvironmentEditData{}, errors.New("Environment Resource configuration is invalid")
 		}
+		var endpointSettings struct {
+			Database string `json:"database"`
+		}
+		if json.Unmarshal(row.EndpointSettings, &endpointSettings) != nil || strings.TrimSpace(endpointSettings.Database) == "" {
+			return EnvironmentEditData{}, errors.New("Environment Resource endpoint Database configuration is invalid")
+		}
 		resources = append(resources, EnvironmentSetupResourceInput{
 			ResourceID: row.ResourceID, EndpointID: row.ResourceEndpointID,
-			CredentialID: row.ResourceCredentialID, Alias: row.Alias, Database: configuration.Database,
+			CredentialID: row.ResourceCredentialID, Alias: row.Alias, Database: strings.TrimSpace(endpointSettings.Database),
 			CredentialProjection: configuration.CredentialProjection,
 		})
 	}
@@ -664,11 +672,10 @@ func (service *EnvironmentSetup) DeploymentEvents(
 func (service *EnvironmentSetup) Options(ctx context.Context) (EnvironmentSetupOptions, error) {
 	options := make([]EnvironmentSetupResourceOption, 0)
 	err := service.db.Executor().NewSelect().TableExpr("resources AS resource").
-		ColumnExpr("resource.id, resource.name, resource.kind, database.name AS database_name, endpoint.id AS endpoint_id").
+		ColumnExpr("resource.id, resource.name, resource.kind, COALESCE(endpoint.settings ->> 'database', '') AS database_name, endpoint.id AS endpoint_id").
 		ColumnExpr("endpoint.address || ':' || endpoint.port::text AS endpoint").
 		ColumnExpr("credential.id AS credential_id, COALESCE(credential.name, '') AS credential").
 		Join("JOIN database_resources AS backing ON backing.resource_id = resource.id").
-		Join("JOIN databases AS database ON database.id = backing.database_id AND database.archived_at IS NULL").
 		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = resource.id AND endpoint.archived_at IS NULL").
 		Join("LEFT JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.archived_at IS NULL").
 		Where("resource.archived_at IS NULL").Where("resource.kind = 'postgresql'").
@@ -804,7 +811,7 @@ func (service *EnvironmentSetup) Complete(
 	secretEntities := make([]models.EnvironmentSecretEntity, 0, len(preparedUserSecrets)+len(preparedResources))
 	for _, prepared := range preparedResources {
 		configuration, _ := json.Marshal(map[string]any{
-			"schema_version": 1, "database": prepared.input.Database, "credential_source": "managed",
+			"schema_version": 1, "credential_source": "managed",
 			"credential_projection": prepared.input.CredentialProjection,
 		})
 		connection, createErr := models.EnvironmentResource.Create(ctx, tx, models.CreateEnvironmentResourceData{
@@ -1373,7 +1380,7 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	secretDescriptors := append([]models.EnvironmentSecretDescriptor{}, userSecretDescriptors...)
 	for _, prepared := range preparedResources {
 		resourceConfiguration, _ := json.Marshal(map[string]any{
-			"schema_version": 1, "database": prepared.input.Database, "credential_source": "managed",
+			"schema_version": 1, "credential_source": "managed",
 			"credential_projection": prepared.input.CredentialProjection,
 		})
 		connection, createErr := models.EnvironmentResource.Create(ctx, tx, models.CreateEnvironmentResourceData{
@@ -1740,15 +1747,29 @@ func (service *EnvironmentSetup) prepareResources(ctx context.Context, environme
 		if !allowed {
 			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected PostgreSQL Resource is not granted to this Environment"))
 		}
-		database, err := models.DatabaseResource.FindByResource(ctx, service.db.Executor(), resource.ID)
-		if err != nil {
-			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected PostgreSQL Resource has no active Database backing"))
-		}
-		input.Database = database.DatabaseName
 		endpoint, err := models.ResourceEndpoint.Find(ctx, service.db.Executor(), input.EndpointID)
 		if err != nil || endpoint.ArchivedAt.Valid || endpoint.ResourceID != resource.ID || (endpoint.PrivateNetworkID != nil && *endpoint.PrivateNetworkID != networkID) {
 			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected Resource endpoint is unavailable from the Environment target"))
 		}
+		var endpointSettings struct {
+			Database string `json:"database"`
+		}
+		if json.Unmarshal(endpoint.Settings, &endpointSettings) != nil || strings.TrimSpace(endpointSettings.Database) == "" {
+			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected PostgreSQL Resource endpoint has no Database configuration"))
+		}
+		backing, err := models.DatabaseResource.FindByResource(ctx, service.db.Executor(), resource.ID)
+		if err != nil {
+			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected PostgreSQL Resource has no active Database backing"))
+		}
+		databaseCount, err := service.db.Executor().NewSelect().TableExpr("databases").Where("database_cluster_id = ?", backing.DatabaseClusterID).
+			Where("name = ?", strings.TrimSpace(endpointSettings.Database)).Where("archived_at IS NULL").Count(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if databaseCount != 1 {
+			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected PostgreSQL Resource endpoint Database is unavailable"))
+		}
+		input.Database = strings.TrimSpace(endpointSettings.Database)
 		if input.CredentialID == nil {
 			return nil, errors.Join(models.ErrDomainValidation, errors.New("PostgreSQL application credential is required"))
 		}

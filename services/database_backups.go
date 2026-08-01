@@ -31,56 +31,57 @@ type DatabaseBackupPolicyInput struct {
 	BackupDestinationID                          uuid.UUID
 }
 
-func (service *DatabaseBackups) DetailsForResource(ctx context.Context, resourceID uuid.UUID) (models.ResourceBackupDetails, error) {
-	backing, err := models.DatabaseResource.FindByResource(ctx, service.db.Executor(), resourceID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return models.ResourceBackupDetails{
-			Eligibility:  models.ResourceBackupEligibility{Reason: "Backups are available only for published Database Resources."},
-			Destinations: make([]models.BackupDestinationSummary, 0),
-			History:      make([]models.DatabaseBackupHistory, 0),
-			Restores:     make([]models.DatabaseRestoreHistory, 0),
-		}, nil
-	}
-	if err != nil {
-		return models.ResourceBackupDetails{}, err
-	}
-	eligibility, err := service.eligibility(ctx, service.db.Executor(), backing.DatabaseID)
-	if err != nil {
-		return models.ResourceBackupDetails{}, err
-	}
+func (service *DatabaseBackups) DetailsForResource(ctx context.Context, resourceID uuid.UUID) (models.ResourceBackupCatalog, error) {
 	destinations, err := models.BackupDestination.ActiveSummaries(ctx, service.db.Executor())
 	if err != nil {
-		return models.ResourceBackupDetails{}, err
+		return models.ResourceBackupCatalog{}, err
 	}
-	var policy models.BackupPolicyEntity
-	policyErr := service.db.Executor().NewSelect().Model(&policy).Where("database_id = ?", backing.DatabaseID).Where("target_type = 'database'").Where("archived_at IS NULL").Limit(1).Scan(ctx)
-	var policyPointer *models.BackupPolicyEntity
-	if policyErr == nil {
-		policyPointer = &policy
-	} else if !errors.Is(policyErr, sql.ErrNoRows) {
-		return models.ResourceBackupDetails{}, policyErr
+	databases := make([]models.DatabaseEntity, 0)
+	if err := service.db.Executor().NewSelect().Model(&databases).
+		Join("JOIN database_resources AS backing ON backing.database_cluster_id = database.database_cluster_id").
+		Where("backing.resource_id = ?", resourceID).Where("database.archived_at IS NULL").OrderExpr("database.name").Scan(ctx); err != nil {
+		return models.ResourceBackupCatalog{}, err
 	}
-	history, err := models.Backup.RecentForDatabase(ctx, service.db.Executor(), backing.DatabaseID, 10)
-	if err != nil {
-		return models.ResourceBackupDetails{}, err
+	details := make([]models.ResourceBackupDetails, 0, len(databases))
+	for _, database := range databases {
+		eligibility, err := service.eligibility(ctx, service.db.Executor(), database.ID)
+		if err != nil {
+			return models.ResourceBackupCatalog{}, err
+		}
+		var policy models.BackupPolicyEntity
+		policyErr := service.db.Executor().NewSelect().Model(&policy).Where("database_id = ?", database.ID).Where("target_type = 'database'").Where("archived_at IS NULL").Limit(1).Scan(ctx)
+		var policyPointer *models.BackupPolicyEntity
+		if policyErr == nil {
+			policyPointer = &policy
+		} else if !errors.Is(policyErr, sql.ErrNoRows) {
+			return models.ResourceBackupCatalog{}, policyErr
+		}
+		history, err := models.Backup.RecentForDatabase(ctx, service.db.Executor(), database.ID, 10)
+		if err != nil {
+			return models.ResourceBackupCatalog{}, err
+		}
+		restores, err := models.DatabaseRestore.RecentForDatabase(ctx, service.db.Executor(), database.ID, 10)
+		if err != nil {
+			return models.ResourceBackupCatalog{}, err
+		}
+		details = append(details, models.ResourceBackupDetails{
+			DatabaseID: database.ID, DatabaseName: database.Name, Eligibility: eligibility,
+			Policy: policyPointer, History: history, Restores: restores,
+		})
 	}
-	restores, err := models.DatabaseRestore.RecentForDatabase(ctx, service.db.Executor(), backing.DatabaseID, 10)
-	if err != nil {
-		return models.ResourceBackupDetails{}, err
-	}
-	return models.ResourceBackupDetails{Eligibility: eligibility, Policy: policyPointer, Destinations: destinations, History: history, Restores: restores}, nil
+	return models.ResourceBackupCatalog{Destinations: destinations, Databases: details}, nil
 }
 
 func (service *DatabaseBackups) Destinations(ctx context.Context) ([]models.BackupDestinationSummary, error) {
 	return models.BackupDestination.ActiveSummaries(ctx, service.db.Executor())
 }
 
-func (service *DatabaseBackups) CreateForResource(ctx context.Context, resourceID uuid.UUID, input DatabaseBackupPolicyInput) (models.BackupPolicyEntity, error) {
-	backing, err := models.DatabaseResource.FindByResource(ctx, service.db.Executor(), resourceID)
+func (service *DatabaseBackups) CreateForResource(ctx context.Context, resourceID, databaseID uuid.UUID, input DatabaseBackupPolicyInput) (models.BackupPolicyEntity, error) {
+	database, err := service.databaseForResource(ctx, service.db.Executor(), resourceID, databaseID)
 	if err != nil {
 		return models.BackupPolicyEntity{}, err
 	}
-	return service.Create(ctx, backing.DatabaseID, input)
+	return service.Create(ctx, database.ID, input)
 }
 
 func (service *DatabaseBackups) Create(ctx context.Context, databaseID uuid.UUID, input DatabaseBackupPolicyInput) (models.BackupPolicyEntity, error) {
@@ -125,12 +126,12 @@ func (service *DatabaseBackups) Create(ctx context.Context, databaseID uuid.UUID
 	return policy, nil
 }
 
-func (service *DatabaseBackups) UpdateForResource(ctx context.Context, resourceID, policyID uuid.UUID, input DatabaseBackupPolicyInput) (models.BackupPolicyEntity, error) {
-	backing, err := models.DatabaseResource.FindByResource(ctx, service.db.Executor(), resourceID)
+func (service *DatabaseBackups) UpdateForResource(ctx context.Context, resourceID, databaseID, policyID uuid.UUID, input DatabaseBackupPolicyInput) (models.BackupPolicyEntity, error) {
+	databaseID, err := service.policyDatabaseForResource(ctx, resourceID, databaseID, policyID)
 	if err != nil {
 		return models.BackupPolicyEntity{}, err
 	}
-	return service.Update(ctx, backing.DatabaseID, policyID, input)
+	return service.Update(ctx, databaseID, policyID, input)
 }
 
 func (service *DatabaseBackups) Update(ctx context.Context, databaseID, policyID uuid.UUID, input DatabaseBackupPolicyInput) (models.BackupPolicyEntity, error) {
@@ -177,23 +178,46 @@ func (service *DatabaseBackups) Update(ctx context.Context, databaseID, policyID
 	return updated, nil
 }
 
-func (service *DatabaseBackups) SetStateForResource(ctx context.Context, resourceID, policyID uuid.UUID, action string) error {
-	backing, err := models.DatabaseResource.FindByResource(ctx, service.db.Executor(), resourceID)
+func (service *DatabaseBackups) SetStateForResource(ctx context.Context, resourceID, databaseID, policyID uuid.UUID, action string) error {
+	databaseID, err := service.policyDatabaseForResource(ctx, resourceID, databaseID, policyID)
 	if err != nil {
 		return err
 	}
-	return service.setState(ctx, backing.DatabaseID, policyID, action)
+	return service.setState(ctx, databaseID, policyID, action)
 }
-func (service *DatabaseBackups) ManualForResource(ctx context.Context, resourceID, policyID uuid.UUID) (uuid.UUID, error) {
-	backing, err := models.DatabaseResource.FindByResource(ctx, service.db.Executor(), resourceID)
+func (service *DatabaseBackups) ManualForResource(ctx context.Context, resourceID, databaseID, policyID uuid.UUID) (uuid.UUID, error) {
+	databaseID, err := service.policyDatabaseForResource(ctx, resourceID, databaseID, policyID)
 	if err != nil {
 		return uuid.Nil, err
 	}
 	policy, err := models.BackupPolicy.Find(ctx, service.db.Executor(), policyID)
-	if err != nil || policy.DatabaseID == nil || *policy.DatabaseID != backing.DatabaseID || policy.ArchivedAt.Valid {
+	if err != nil || policy.DatabaseID == nil || *policy.DatabaseID != databaseID || policy.ArchivedAt.Valid {
 		return uuid.Nil, models.ErrNotFound
 	}
 	return service.scheduler.Manual(ctx, policyID)
+}
+
+func (service *DatabaseBackups) databaseForResource(ctx context.Context, db storage.Executor, resourceID, databaseID uuid.UUID) (models.DatabaseEntity, error) {
+	var database models.DatabaseEntity
+	err := db.NewSelect().Model(&database).
+		Join("JOIN database_resources AS backing ON backing.database_cluster_id = database.database_cluster_id").
+		Where("database.id = ?", databaseID).Where("backing.resource_id = ?", resourceID).Where("database.archived_at IS NULL").Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.DatabaseEntity{}, models.ErrNotFound
+	}
+	return database, err
+}
+
+func (service *DatabaseBackups) policyDatabaseForResource(ctx context.Context, resourceID, databaseID, policyID uuid.UUID) (uuid.UUID, error) {
+	var scopedDatabaseID uuid.UUID
+	err := service.db.Executor().NewSelect().TableExpr("backup_policies AS policy").ColumnExpr("database.id").
+		Join("JOIN databases AS database ON database.id = policy.database_id AND database.archived_at IS NULL").
+		Join("JOIN database_resources AS backing ON backing.database_cluster_id = database.database_cluster_id AND backing.resource_id = ?", resourceID).
+		Where("database.id = ?", databaseID).Where("policy.id = ?", policyID).Where("policy.archived_at IS NULL").Scan(ctx, &scopedDatabaseID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return uuid.Nil, models.ErrNotFound
+	}
+	return scopedDatabaseID, err
 }
 
 func (service *DatabaseBackups) setState(ctx context.Context, databaseID, policyID uuid.UUID, action string) error {

@@ -795,7 +795,6 @@ func createBootstrapDatabaseResource(
 	cluster, err := models.DatabaseCluster.Create(ctx, exec, models.CreateDatabaseClusterData{
 		Name: "DeployCrate CE PostgreSQL", Slug: "deploycrate-ce-postgresql",
 		Engine: models.DatabaseEnginePostgreSQL, EngineVersion: "17",
-		SharingMode:    models.DatabaseSharingDedicated,
 		ManagementMode: managementMode, DesiredInstallationMethod: desiredMethod,
 		Topology:          json.RawMessage(`{"primary_count":1,"replica_count":0}`),
 		MaintenancePolicy: json.RawMessage(`{}`),
@@ -896,7 +895,7 @@ func createBootstrapDatabaseResource(
 	if err != nil {
 		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap Database Resource: %w", err)
 	}
-	if _, err := models.DatabaseResource.Create(ctx, exec, resource.ID, database.ID); err != nil {
+	if _, err := models.DatabaseResource.Create(ctx, exec, resource.ID, cluster.ID); err != nil {
 		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap Database Resource backing: %w", err)
 	}
 	resourceCredentialPayload, err := secretcrypto.EncryptForPurpose(credentialPayload, input.SessionEncryptionKey, resourceCredentialPurpose)

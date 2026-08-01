@@ -105,35 +105,35 @@ func (database) Update(ctx context.Context, db storage.Executor, entity Database
 }
 
 type DatabaseResourceEntity struct {
-	bun.BaseModel `bun:"table:database_resources,alias:database_resource"`
-	ResourceID    uuid.UUID `bun:"resource_id,pk,type:uuid"`
-	DatabaseID    uuid.UUID `bun:"database_id,type:uuid"`
-	CreatedAt     time.Time `bun:"created_at"`
-	UpdatedAt     time.Time `bun:"updated_at"`
+	bun.BaseModel     `bun:"table:database_resources,alias:database_resource"`
+	ResourceID        uuid.UUID `bun:"resource_id,pk,type:uuid"`
+	DatabaseClusterID uuid.UUID `bun:"database_cluster_id,type:uuid"`
+	CreatedAt         time.Time `bun:"created_at"`
+	UpdatedAt         time.Time `bun:"updated_at"`
 }
 
 func (entity *DatabaseResourceEntity) Validate() error {
 	builder := validation.NewBuilder()
-	if entity.ResourceID == uuid.Nil || entity.DatabaseID == uuid.Nil {
-		builder.Add("backing", "required", "Resource and Database are required")
+	if entity.ResourceID == uuid.Nil || entity.DatabaseClusterID == uuid.Nil {
+		builder.Add("backing", "required", "Resource and Database Cluster are required")
 	}
 	return builder.Err()
 }
 
-func (databaseResource) Create(ctx context.Context, db storage.Executor, resourceID, databaseID uuid.UUID) (DatabaseResourceEntity, error) {
+func (databaseResource) Create(ctx context.Context, db storage.Executor, resourceID, databaseClusterID uuid.UUID) (DatabaseResourceEntity, error) {
 	now := time.Now().UTC()
-	entity := DatabaseResourceEntity{ResourceID: resourceID, DatabaseID: databaseID, CreatedAt: now, UpdatedAt: now}
+	entity := DatabaseResourceEntity{ResourceID: resourceID, DatabaseClusterID: databaseClusterID, CreatedAt: now, UpdatedAt: now}
 	if err := validation.Validate(&entity); err != nil {
 		return DatabaseResourceEntity{}, errors.Join(ErrDomainValidation, err)
 	}
 	var backing struct{ ResourceKind, Engine string }
-	if err := db.NewSelect().TableExpr("resources AS resource").ColumnExpr("resource.kind AS resource_kind, cluster.engine").Join("JOIN databases AS database ON database.id = ? AND database.archived_at IS NULL", entity.DatabaseID).Join("JOIN database_clusters AS cluster ON cluster.id = database.database_cluster_id AND cluster.archived_at IS NULL").Where("resource.id = ?", entity.ResourceID).Where("resource.archived_at IS NULL").Scan(ctx, &backing); err != nil {
+	if err := db.NewSelect().TableExpr("resources AS resource").ColumnExpr("resource.kind AS resource_kind, cluster.engine").Join("JOIN database_clusters AS cluster ON cluster.id = ? AND cluster.archived_at IS NULL", entity.DatabaseClusterID).Where("resource.id = ?", entity.ResourceID).Where("resource.archived_at IS NULL").Scan(ctx, &backing); err != nil {
 		return DatabaseResourceEntity{}, err
 	}
 	if backing.ResourceKind != backing.Engine {
 		return DatabaseResourceEntity{}, errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "resourceId", Code: "kind", Message: "Resource kind must match the Database Cluster engine"}})
 	}
-	if err := ensureUnique(ctx, db, "database-resource:"+entity.DatabaseID.String(), db.NewSelect().Model((*DatabaseResourceEntity)(nil)).Where("database_id = ?", entity.DatabaseID), "databaseId", "the Database is already attached to a Resource"); err != nil {
+	if err := ensureUnique(ctx, db, "database-resource-cluster:"+entity.DatabaseClusterID.String(), db.NewSelect().Model((*DatabaseResourceEntity)(nil)).Where("database_cluster_id = ?", entity.DatabaseClusterID), "databaseClusterId", "the Database Cluster is already attached to a Resource"); err != nil {
 		return DatabaseResourceEntity{}, err
 	}
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
@@ -144,8 +144,6 @@ func (databaseResource) Create(ctx context.Context, db storage.Executor, resourc
 
 type DatabaseResourceDetail struct {
 	ResourceID          uuid.UUID `bun:"resource_id"`
-	DatabaseID          uuid.UUID `bun:"database_id"`
-	DatabaseName        string    `bun:"database_name"`
 	DatabaseClusterID   uuid.UUID `bun:"database_cluster_id"`
 	DatabaseClusterName string    `bun:"database_cluster_name"`
 	Engine              string    `bun:"engine"`
@@ -153,7 +151,7 @@ type DatabaseResourceDetail struct {
 
 func (databaseResource) FindByResource(ctx context.Context, db storage.Executor, resourceID uuid.UUID) (DatabaseResourceDetail, error) {
 	var detail DatabaseResourceDetail
-	if err := db.NewSelect().TableExpr("database_resources AS backing").ColumnExpr("backing.resource_id, backing.database_id, database.name AS database_name").ColumnExpr("cluster.id AS database_cluster_id, cluster.name AS database_cluster_name, cluster.engine").Join("JOIN databases AS database ON database.id = backing.database_id").Join("JOIN database_clusters AS cluster ON cluster.id = database.database_cluster_id").Where("backing.resource_id = ?", resourceID).Scan(ctx, &detail); err != nil {
+	if err := db.NewSelect().TableExpr("database_resources AS backing").ColumnExpr("backing.resource_id, cluster.id AS database_cluster_id, cluster.name AS database_cluster_name, cluster.engine").Join("JOIN database_clusters AS cluster ON cluster.id = backing.database_cluster_id").Where("backing.resource_id = ?", resourceID).Scan(ctx, &detail); err != nil {
 		return DatabaseResourceDetail{}, err
 	}
 	return detail, nil
@@ -172,11 +170,11 @@ func (databaseResourceEndpoint) Create(ctx context.Context, db storage.Executor,
 		return DatabaseResourceEndpointEntity{}, errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "endpoint", Code: "required", Message: "published and Cluster endpoints are required"}})
 	}
 	var coherent bool
-	if err := db.NewSelect().TableExpr("resource_endpoints AS endpoint").ColumnExpr("database.database_cluster_id = cluster_endpoint.database_cluster_id").Join("JOIN database_resources AS backing ON backing.resource_id = endpoint.resource_id").Join("JOIN databases AS database ON database.id = backing.database_id").Join("JOIN database_cluster_endpoints AS cluster_endpoint ON cluster_endpoint.id = ?", clusterEndpointID).Where("endpoint.id = ?", resourceEndpointID).Scan(ctx, &coherent); err != nil {
+	if err := db.NewSelect().TableExpr("resource_endpoints AS endpoint").ColumnExpr("backing.database_cluster_id = cluster_endpoint.database_cluster_id").Join("JOIN database_resources AS backing ON backing.resource_id = endpoint.resource_id").Join("JOIN database_cluster_endpoints AS cluster_endpoint ON cluster_endpoint.id = ?", clusterEndpointID).Where("endpoint.id = ?", resourceEndpointID).Scan(ctx, &coherent); err != nil {
 		return DatabaseResourceEndpointEntity{}, err
 	}
 	if !coherent {
-		return DatabaseResourceEndpointEntity{}, errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "endpoint", Code: "cluster", Message: "published endpoint and Database must belong to the same Cluster"}})
+		return DatabaseResourceEndpointEntity{}, errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "endpoint", Code: "cluster", Message: "published Resource endpoint and operational endpoint must belong to the same Database Cluster"}})
 	}
 	now := time.Now().UTC()
 	entity := DatabaseResourceEndpointEntity{ResourceEndpointID: resourceEndpointID, DatabaseClusterEndpointID: clusterEndpointID, CreatedAt: now, UpdatedAt: now}

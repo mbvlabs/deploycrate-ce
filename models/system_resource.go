@@ -56,8 +56,7 @@ func (application) FindSystemTelemetryContainers(
 		JOIN docker_database_node_installations AS docker ON docker.database_node_installation_id = installation.id
 		JOIN database_cluster_nodes AS node ON node.id = installation.database_cluster_node_id AND node.archived_at IS NULL
 		JOIN database_clusters AS cluster ON cluster.id = node.database_cluster_id AND cluster.archived_at IS NULL
-		JOIN databases AS database ON database.database_cluster_id = cluster.id AND database.archived_at IS NULL
-		JOIN database_resources AS backing ON backing.database_id = database.id
+		JOIN database_resources AS backing ON backing.database_cluster_id = cluster.id
 		JOIN resources AS resource ON resource.id = backing.resource_id AND resource.system_managed = TRUE AND resource.archived_at IS NULL
 		WHERE installation.server_id = ? AND installation.archived_at IS NULL
 		ORDER BY resource_name, installation_id`, serverID, serverID).Scan(ctx, &containers)
@@ -82,8 +81,7 @@ func (application) FindSystemResourceIndex(ctx context.Context, db storage.Execu
 		Join(`LEFT JOIN LATERAL (
 			SELECT installation.health
 			FROM database_resources AS backing
-			JOIN databases AS database ON database.id = backing.database_id AND database.archived_at IS NULL
-			JOIN database_cluster_nodes AS node ON node.database_cluster_id = database.database_cluster_id AND node.archived_at IS NULL
+			JOIN database_cluster_nodes AS node ON node.database_cluster_id = backing.database_cluster_id AND node.archived_at IS NULL
 			JOIN database_node_installations AS installation ON installation.database_cluster_node_id = node.id AND installation.archived_at IS NULL
 			WHERE backing.resource_id = resource.id
 			ORDER BY node.role = 'primary' DESC, installation.created_at
@@ -322,8 +320,7 @@ func (application) FindSystemResourceDetail(ctx context.Context, db storage.Exec
 		ColumnExpr("COALESCE(docker.configuration, native.settings, '{}'::jsonb) AS configuration").
 		ColumnExpr("server.id::text AS server_id, server.name AS server_name, server.address AS server_address").
 		ColumnExpr("installation.observed_state AS state, installation.service_state, installation.health, COALESCE(installation.reason, '') AS health_reason, installation.observed_at").
-		Join("JOIN databases AS database ON database.id = backing.database_id AND database.archived_at IS NULL").
-		Join("JOIN database_cluster_nodes AS node ON node.database_cluster_id = database.database_cluster_id AND node.archived_at IS NULL").
+		Join("JOIN database_cluster_nodes AS node ON node.database_cluster_id = backing.database_cluster_id AND node.archived_at IS NULL").
 		Join("JOIN database_node_installations AS installation ON installation.database_cluster_node_id = node.id AND installation.archived_at IS NULL").
 		Join("JOIN servers AS server ON server.id = installation.server_id AND server.archived_at IS NULL").
 		Join("LEFT JOIN docker_database_node_installations AS docker ON docker.database_node_installation_id = installation.id").
@@ -338,8 +335,7 @@ func (application) FindSystemResourceDetail(ctx context.Context, db storage.Exec
 	if err := db.NewSelect().TableExpr("database_resources AS backing").
 		ColumnExpr("storage.id::text AS id, storage.name, storage.driver, storage.configuration").
 		ColumnExpr("server.id::text AS server_id, server.name AS server_name").
-		Join("JOIN databases AS database ON database.id = backing.database_id AND database.archived_at IS NULL").
-		Join("JOIN database_cluster_nodes AS node ON node.database_cluster_id = database.database_cluster_id AND node.archived_at IS NULL").
+		Join("JOIN database_cluster_nodes AS node ON node.database_cluster_id = backing.database_cluster_id AND node.archived_at IS NULL").
 		Join("JOIN database_node_storage AS storage ON storage.database_cluster_node_id = node.id AND storage.archived_at IS NULL").
 		Join("JOIN servers AS server ON server.id = storage.server_id AND server.archived_at IS NULL").
 		Where("backing.resource_id = ?", resourceID).
@@ -397,14 +393,13 @@ func (application) FindResourceAccessTarget(ctx context.Context, db storage.Exec
 			peer.public_key AS server_public_key, peer.endpoint AS server_endpoint
 		FROM resources AS resource
 		JOIN database_resources AS backing ON backing.resource_id = resource.id
-		JOIN databases AS database ON database.id = backing.database_id AND database.archived_at IS NULL
 		JOIN resource_endpoints AS origin ON origin.resource_id = resource.id AND origin.role = 'primary' AND origin.archived_at IS NULL AND origin.address IN ('127.0.0.1', '::1', 'localhost')
 		JOIN database_resource_endpoints AS origin_link ON origin_link.resource_endpoint_id = origin.id
 		JOIN resource_endpoints AS wireguard ON wireguard.resource_id = resource.id AND wireguard.private_network_id IS NOT NULL AND wireguard.archived_at IS NULL AND wireguard.address NOT IN ('127.0.0.1', '::1', 'localhost') AND wireguard.port = origin.port AND wireguard.protocol = origin.protocol AND wireguard.tls_mode = origin.tls_mode
 		JOIN database_resource_endpoints AS wireguard_link ON wireguard_link.resource_endpoint_id = wireguard.id
-		JOIN database_cluster_endpoints AS cluster_origin ON cluster_origin.id = origin_link.database_cluster_endpoint_id AND cluster_origin.database_cluster_id = database.database_cluster_id
-		JOIN database_cluster_endpoints AS cluster_wireguard ON cluster_wireguard.id = wireguard_link.database_cluster_endpoint_id AND cluster_wireguard.database_cluster_id = database.database_cluster_id AND cluster_wireguard.private_network_id = wireguard.private_network_id
-		JOIN database_cluster_nodes AS node ON node.database_cluster_id = database.database_cluster_id AND node.role = 'primary' AND node.archived_at IS NULL
+		JOIN database_cluster_endpoints AS cluster_origin ON cluster_origin.id = origin_link.database_cluster_endpoint_id AND cluster_origin.database_cluster_id = backing.database_cluster_id
+		JOIN database_cluster_endpoints AS cluster_wireguard ON cluster_wireguard.id = wireguard_link.database_cluster_endpoint_id AND cluster_wireguard.database_cluster_id = backing.database_cluster_id AND cluster_wireguard.private_network_id = wireguard.private_network_id
+		JOIN database_cluster_nodes AS node ON node.database_cluster_id = backing.database_cluster_id AND node.role = 'primary' AND node.archived_at IS NULL
 		JOIN database_node_installations AS installation ON installation.database_cluster_node_id = node.id AND installation.archived_at IS NULL
 		JOIN wireguard_peers AS peer ON peer.server_id = installation.server_id AND peer.retired_at IS NULL
 		WHERE resource.id = ? AND resource.archived_at IS NULL AND resource.management_mode = 'managed'

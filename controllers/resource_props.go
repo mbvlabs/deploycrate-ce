@@ -30,7 +30,7 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 		connections = append(connections, inertia.Props{
 			"id": connection.ID, "createdAt": connection.CreatedAt, "updatedAt": connection.UpdatedAt,
 			"alias": connection.Alias, "configuration": connection.Configuration,
-			"database":      resourceConnectionDatabase(connection.Configuration),
+			"database":      resourceConnectionDatabase(connection.EndpointSettings),
 			"environmentId": connection.EnvironmentID, "environmentName": connection.EnvironmentName,
 			"environmentKind": connection.EnvironmentKind, "environmentArchived": connection.EnvironmentArchived,
 			"applicationName": connection.ApplicationName, "applicationSlug": connection.ApplicationSlug,
@@ -139,25 +139,17 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 			"id": device.ID, "name": device.Name, "privateAddress": device.PrivateAddress,
 		})
 	}
-	databaseName := ""
-	for _, endpoint := range detail.Endpoints {
-		if databaseName = resourceConnectionDatabase(endpoint.Settings); databaseName != "" {
-			break
-		}
-	}
-	var databaseBacking inertia.Props
-	if detail.DatabaseBacking != nil {
-		databaseName = detail.DatabaseBacking.DatabaseName
-		databaseBacking = inertia.Props{
-			"databaseId": detail.DatabaseBacking.DatabaseID, "databaseName": detail.DatabaseBacking.DatabaseName,
-			"clusterId": detail.DatabaseBacking.ClusterID, "clusterName": detail.DatabaseBacking.ClusterName,
-			"mode": detail.DatabaseBacking.SharingMode,
-		}
+	databases := make([]inertia.Props, 0, len(detail.Databases))
+	for _, database := range detail.Databases {
+		databases = append(databases, inertia.Props{
+			"id": database.ID, "name": database.Name,
+			"desiredState": database.DesiredState, "observedState": database.ObservedState,
+		})
 	}
 	return inertia.Props{
 		"id": resource.ID, "createdAt": resource.CreatedAt, "updatedAt": resource.UpdatedAt,
 		"name": resource.Name, "slug": resource.Slug, "category": models.ResourceCategory(resource.Kind), "kind": resource.Kind,
-		"databaseName": databaseName, "databaseBacking": databaseBacking,
+		"databaseBacked": detail.DatabaseBacking != nil, "databases": databases,
 		"managementMode": resource.ManagementMode.String(), "sharingScope": resource.SharingScope.String(),
 		"connectionCount": len(connections), "connections": connections,
 		"environmentGrants": environmentGrants, "applicationGrants": applicationGrants,
@@ -168,15 +160,23 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 	}
 }
 
-func resourceBackupProps(detail models.ResourceBackupDetails) inertia.Props {
-	destinations := make([]inertia.Props, 0, len(detail.Destinations))
-	for _, destination := range detail.Destinations {
+func resourceBackupProps(catalog models.ResourceBackupCatalog) inertia.Props {
+	destinations := make([]inertia.Props, 0, len(catalog.Destinations))
+	for _, destination := range catalog.Destinations {
 		destinations = append(destinations, inertia.Props{
 			"id": destination.ID, "name": destination.Name, "provider": destination.Provider,
 			"endpoint": destination.Endpoint, "region": destination.Region, "bucket": destination.Bucket,
 			"prefix": destination.Prefix, "verifiedAt": destination.VerifiedAt, "lastUsedAt": destination.LastUsedAt,
 		})
 	}
+	databases := make([]inertia.Props, 0, len(catalog.Databases))
+	for _, detail := range catalog.Databases {
+		databases = append(databases, resourceDatabaseBackupProps(detail))
+	}
+	return inertia.Props{"destinations": destinations, "databases": databases}
+}
+
+func resourceDatabaseBackupProps(detail models.ResourceBackupDetails) inertia.Props {
 	activeRestore := false
 	for _, restore := range detail.Restores {
 		if restore.Status == models.DatabaseRestoreStatusPending || restore.Status == models.DatabaseRestoreStatusSafetyBackup || restore.Status == models.DatabaseRestoreStatusRestoring {
@@ -216,11 +216,12 @@ func resourceBackupProps(detail models.ResourceBackupDetails) inertia.Props {
 		}
 	}
 	return inertia.Props{
+		"databaseId": detail.DatabaseID, "databaseName": detail.DatabaseName,
 		"eligibility": inertia.Props{
 			"eligible": detail.Eligibility.Eligible, "reason": detail.Eligibility.Reason,
 			"installationId": detail.Eligibility.InstallationID,
 		},
-		"policy": policy, "destinations": destinations, "history": history,
+		"policy": policy, "history": history,
 		"restores": restores, "activeRestore": activeRestore,
 	}
 }
@@ -240,7 +241,7 @@ func resourceListProps(items []models.ResourceListItem) []inertia.Props {
 	for _, item := range items {
 		props = append(props, inertia.Props{
 			"id": item.ID, "name": item.Name, "category": item.Category, "kind": item.Kind,
-			"databaseName":   item.DatabaseName,
+			"databaseCount":  item.DatabaseCount,
 			"managementMode": item.ManagementMode.String(), "sharingScope": item.SharingScope.String(),
 			"connectionCount": item.ConnectionCount, "grantCount": item.GrantCount, "installationCount": item.InstallationCount,
 			"endpointCount": item.EndpointCount, "health": item.Health,

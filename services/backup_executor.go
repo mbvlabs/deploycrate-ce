@@ -368,7 +368,7 @@ func (service *BackupExecutor) postgreSQLTargetForDatabase(ctx context.Context, 
 		Join("JOIN database_node_installations AS installation ON installation.database_cluster_node_id = node.id AND installation.installation_method = 'docker' AND installation.archived_at IS NULL").
 		Join("JOIN docker_database_node_installations AS docker_installation ON docker_installation.database_node_installation_id = installation.id").
 		Join("JOIN database_cluster_credentials AS administrator ON administrator.database_cluster_id = cluster.id AND administrator.role = 'administrator' AND administrator.archived_at IS NULL").
-		Join("LEFT JOIN database_resources AS backing ON backing.database_id = database.id").
+		Join("LEFT JOIN database_resources AS backing ON backing.database_cluster_id = database.database_cluster_id").
 		Join("LEFT JOIN resources AS resource ON resource.id = backing.resource_id AND resource.archived_at IS NULL").
 		Where("database.id = ?", databaseID).Where("database.archived_at IS NULL").Scan(ctx, &target)
 	if err != nil {

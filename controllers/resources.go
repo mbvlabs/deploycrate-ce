@@ -67,6 +67,7 @@ func (controller Resources) RegisterRoutes(r *router.Router) error {
 		{http.MethodPost, routes.ResourceCredentialCreate, controller.CreateCredential},
 		{http.MethodPatch, routes.ResourceCredentialUpdate, controller.UpdateCredential},
 		{http.MethodDelete, routes.ResourceCredentialDestroy, controller.DestroyCredential},
+		{http.MethodPost, routes.ResourceDatabaseCreateForResource, controller.CreateDatabase},
 		{http.MethodPost, routes.ResourceInstallationCreate, controller.CreateInstallation},
 		{http.MethodPost, routes.ResourceInstallationStart, controller.StartInstallation},
 		{http.MethodPost, routes.ResourceInstallationStop, controller.StopInstallation},
@@ -384,7 +385,7 @@ func (controller Resources) Destroy(etx *echo.Context) error {
 	resourceID, err := uuid.Parse(etx.Param("id"))
 	handled := false
 	if err == nil {
-		handled, err = controller.clusters.ArchiveDedicatedResource(etx.Request().Context(), resourceID)
+		handled, err = controller.clusters.ArchiveDatabaseResource(etx.Request().Context(), resourceID)
 	}
 	if err == nil && !handled {
 		err = controller.service.ArchiveResource(etx.Request().Context(), resourceID)
@@ -563,6 +564,26 @@ func (controller Resources) CreateCredential(etx *echo.Context) error {
 		_, err = controller.service.CreateCredential(etx.Request().Context(), resourceID, input)
 	}
 	return controller.finishChildMutation(etx, resourceID, err, "Credential created")
+}
+
+type resourceDatabasePayload struct {
+	Name      string `json:"name"`
+	Encoding  string `json:"encoding"`
+	Collation string `json:"collation"`
+}
+
+func (controller Resources) CreateDatabase(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	var payload resourceDatabasePayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	if err == nil {
+		_, err = controller.clusters.CreateDatabaseForResource(etx.Request().Context(), resourceID, services.PublishDatabaseInput{
+			Name: payload.Name, Encoding: payload.Encoding, Collation: payload.Collation, Settings: json.RawMessage(`{}`),
+		})
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Database created")
 }
 
 func (controller Resources) UpdateCredential(etx *echo.Context) error {
@@ -910,7 +931,7 @@ func (payload resourceBackupPolicyPayload) serviceInput() (services.DatabaseBack
 }
 
 func (controller Resources) CreateBackupPolicy(etx *echo.Context) error {
-	resourceID, err := uuid.Parse(etx.Param("id"))
+	resourceID, databaseID, err := parseChildIDs(etx, "databaseID")
 	var payload resourceBackupPolicyPayload
 	if err == nil {
 		err = etx.Bind(&payload)
@@ -920,13 +941,13 @@ func (controller Resources) CreateBackupPolicy(etx *echo.Context) error {
 		input, err = payload.serviceInput()
 	}
 	if err == nil {
-		_, err = controller.backups.CreateForResource(etx.Request().Context(), resourceID, input)
+		_, err = controller.backups.CreateForResource(etx.Request().Context(), resourceID, databaseID, input)
 	}
 	return controller.finishChildMutation(etx, resourceID, err, "Backup policy created")
 }
 
 func (controller Resources) UpdateBackupPolicy(etx *echo.Context) error {
-	resourceID, policyID, err := parseChildIDs(etx, "backupPolicyID")
+	resourceID, databaseID, policyID, err := parseResourceDatabasePolicyIDs(etx)
 	var payload resourceBackupPolicyPayload
 	if err == nil {
 		err = etx.Bind(&payload)
@@ -936,39 +957,39 @@ func (controller Resources) UpdateBackupPolicy(etx *echo.Context) error {
 		input, err = payload.serviceInput()
 	}
 	if err == nil {
-		_, err = controller.backups.UpdateForResource(etx.Request().Context(), resourceID, policyID, input)
+		_, err = controller.backups.UpdateForResource(etx.Request().Context(), resourceID, databaseID, policyID, input)
 	}
 	return controller.finishChildMutation(etx, resourceID, err, "Backup policy updated")
 }
 
 func (controller Resources) PauseBackupPolicy(etx *echo.Context) error {
-	resourceID, policyID, err := parseChildIDs(etx, "backupPolicyID")
+	resourceID, databaseID, policyID, err := parseResourceDatabasePolicyIDs(etx)
 	if err == nil {
-		err = controller.backups.SetStateForResource(etx.Request().Context(), resourceID, policyID, "pause")
+		err = controller.backups.SetStateForResource(etx.Request().Context(), resourceID, databaseID, policyID, "pause")
 	}
 	return controller.finishChildMutation(etx, resourceID, err, "Backup policy paused")
 }
 
 func (controller Resources) ResumeBackupPolicy(etx *echo.Context) error {
-	resourceID, policyID, err := parseChildIDs(etx, "backupPolicyID")
+	resourceID, databaseID, policyID, err := parseResourceDatabasePolicyIDs(etx)
 	if err == nil {
-		err = controller.backups.SetStateForResource(etx.Request().Context(), resourceID, policyID, "resume")
+		err = controller.backups.SetStateForResource(etx.Request().Context(), resourceID, databaseID, policyID, "resume")
 	}
 	return controller.finishChildMutation(etx, resourceID, err, "Backup policy resumed")
 }
 
 func (controller Resources) ArchiveBackupPolicy(etx *echo.Context) error {
-	resourceID, policyID, err := parseChildIDs(etx, "backupPolicyID")
+	resourceID, databaseID, policyID, err := parseResourceDatabasePolicyIDs(etx)
 	if err == nil {
-		err = controller.backups.SetStateForResource(etx.Request().Context(), resourceID, policyID, "archive")
+		err = controller.backups.SetStateForResource(etx.Request().Context(), resourceID, databaseID, policyID, "archive")
 	}
 	return controller.finishChildMutation(etx, resourceID, err, "Backup policy archived")
 }
 
 func (controller Resources) RunBackupPolicy(etx *echo.Context) error {
-	resourceID, policyID, err := parseChildIDs(etx, "backupPolicyID")
+	resourceID, databaseID, policyID, err := parseResourceDatabasePolicyIDs(etx)
 	if err == nil {
-		_, err = controller.backups.ManualForResource(etx.Request().Context(), resourceID, policyID)
+		_, err = controller.backups.ManualForResource(etx.Request().Context(), resourceID, databaseID, policyID)
 	}
 	return controller.finishChildMutation(etx, resourceID, err, "Backup requested")
 }
@@ -979,7 +1000,7 @@ type resourceRestorePayload struct {
 }
 
 func (controller Resources) CreateRestore(etx *echo.Context) error {
-	resourceID, err := uuid.Parse(etx.Param("id"))
+	resourceID, databaseID, err := parseChildIDs(etx, "databaseID")
 	var payload resourceRestorePayload
 	if err == nil {
 		err = etx.Bind(&payload)
@@ -992,7 +1013,7 @@ func (controller Resources) CreateRestore(etx *echo.Context) error {
 		}
 	}
 	if err == nil {
-		_, err = controller.restore.RequestForResource(etx.Request().Context(), resourceID, services.DatabaseRestoreInput{
+		_, err = controller.restore.RequestForResource(etx.Request().Context(), resourceID, databaseID, services.DatabaseRestoreInput{
 			BackupID: backupID, Confirmation: payload.Confirmation,
 			ActorID: cookies.ExtractFromCookieApp(etx).UserID,
 		})
@@ -1121,6 +1142,13 @@ func parseChildIDs(etx *echo.Context, childParam string) (uuid.UUID, uuid.UUID, 
 	resourceID, resourceErr := uuid.Parse(etx.Param("id"))
 	childID, childErr := uuid.Parse(etx.Param(childParam))
 	return resourceID, childID, errors.Join(resourceErr, childErr)
+}
+
+func parseResourceDatabasePolicyIDs(etx *echo.Context) (uuid.UUID, uuid.UUID, uuid.UUID, error) {
+	resourceID, resourceErr := uuid.Parse(etx.Param("id"))
+	databaseID, databaseErr := uuid.Parse(etx.Param("databaseID"))
+	policyID, policyErr := uuid.Parse(etx.Param("backupPolicyID"))
+	return resourceID, databaseID, policyID, errors.Join(resourceErr, databaseErr, policyErr)
 }
 
 func bindResourceChild[T any](etx *echo.Context, bind func() (T, error)) (uuid.UUID, T, error) {

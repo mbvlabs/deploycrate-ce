@@ -19,14 +19,16 @@
   type BackupPolicy = { id: string; schedule: string; active: boolean; nextRunAt: string; backupDestinationId: string; keepLast: number; keepDaily: number; keepWeekly: number; keepMonthly: number }
   type BackupHistory = { id: string; status: string; triggerType: string; scheduledAt: string; finishedAt: string | null; verifiedAt: string | null; sizeBytes: number | null; error: string; canRestore: boolean }
   type RestoreHistory = { id: string; status: string; requestedAt: string; startedAt: string | null; finishedAt: string | null; verifiedAt: string | null; cutoverAt: string | null; rolledBackAt: string | null; error: string; backupId: string; backupScheduledAt: string; safetyBackupId: string | null }
-  type Backups = { eligibility: { eligible: boolean; reason: string; installationId: string | null }; policy: BackupPolicy | null; destinations: BackupDestination[]; history: BackupHistory[]; restores: RestoreHistory[]; activeRestore: boolean }
+  type DatabaseBackups = { databaseId: string; databaseName: string; eligibility: { eligible: boolean; reason: string; installationId: string | null }; policy: BackupPolicy | null; history: BackupHistory[]; restores: RestoreHistory[]; activeRestore: boolean }
+  type Backups = { destinations: BackupDestination[]; databases: DatabaseBackups[] }
   type DestructiveAction =
     | { kind: 'remove-container'; installationId: string; title: string; description: string; confirmationLabel: string }
     | { kind: 'disable-private-access'; title: string; description: string; confirmationLabel: string }
     | { kind: 'revoke-device'; deviceId: string; title: string; description: string; confirmationLabel: string }
     | { kind: 'archive-resource'; title: string; description: string; confirmationLabel: string }
-    | { kind: 'archive-backup-policy'; policyId: string; title: string; description: string; confirmationLabel: string }
+    | { kind: 'archive-backup-policy'; databaseId: string; policyId: string; title: string; description: string; confirmationLabel: string }
   let { auth, resource, backups, options, enrollment = null, errors = {} }: { auth: { email: string }; resource: any; backups: Backups; options: Options; enrollment?: Enrollment | null; errors?: Record<string, string> } = $props()
+  let selectedBackupDatabaseId = $state('')
 
   const definition = $derived(options.kinds.find((kind) => kind.kind === resource.kind) ?? options.kinds[0])
   const endpointNetworks = $derived(resource.managementMode === 'managed' && resource.installations.length === 1
@@ -37,12 +39,13 @@
   const privateNetwork = $derived(privateEndpoint ? options.privateNetworks.find((item) => item.id === privateEndpoint.privateNetworkId) : undefined)
   const administratorCredentials = $derived(resource.credentials.filter((item: any) => Boolean(item.resourceInstallationId)))
   const applicationCredentials = $derived(resource.credentials.filter((item: any) => !item.resourceInstallationId))
-	const databaseBacked = $derived(Boolean(resource.databaseBacking))
+	const databaseBacked = $derived(Boolean(resource.databaseBacked))
 	const managedPostgreSQL = $derived(resource.managementMode === 'managed' && resource.kind === 'postgresql' && !databaseBacked)
   const containerRunning = $derived(resource.installations.some((item: any) => item.serviceState === 'running'))
   const canAddApplicationUser = $derived(!managedPostgreSQL || containerRunning)
-  const lastSuccessfulBackup = $derived(backups.history.find((item) => item.status === 'verified'))
-  const activeRestore = $derived(backups.activeRestore)
+  const selectedBackups = $derived(backups.databases.find((item) => item.databaseId === selectedBackupDatabaseId) ?? backups.databases[0])
+  const lastSuccessfulBackup = $derived(selectedBackups?.history.find((item) => item.status === 'verified'))
+  const activeRestore = $derived(Boolean(selectedBackups?.activeRestore))
   const selectClass = 'h-9 w-full border border-input bg-background px-3 text-sm aria-invalid:border-destructive'
   const textareaClass = 'min-h-24 w-full border border-input bg-background px-3 py-2 font-mono text-xs'
   const overallStatus = $derived.by(() => {
@@ -69,6 +72,7 @@
   let endpointDialogOpen = $state(false)
   let privateAccessDialogOpen = $state(false)
   let credentialDialogOpen = $state(false)
+  let databaseDialogOpen = $state(false)
   let volumeDialogOpen = $state(false)
   let mountDialogOpen = $state(false)
   let healthDialogOpen = $state(false)
@@ -81,6 +85,7 @@
   let shownEnrollmentGrantId = $state('')
   let endpoint = $state(initialEndpoint())
   let credential = $state({ name: 'Application user', username: '', secretValues: {} as Record<string, string> })
+  let database = $state({ name: '', encoding: 'UTF8', collation: '' })
   let privateAccessNetworkId = $state('')
   let device = $state({ name: '', deviceId: '' })
   let volume = $state(initialVolume())
@@ -109,21 +114,33 @@
     wireGuardConfigurationDialogOpen = true
   })
 
+  $effect(() => {
+    if (backups.databases.some((item) => item.databaseId === selectedBackupDatabaseId)) return
+    const first = backups.databases[0]
+    selectedBackupDatabaseId = first?.databaseId ?? ''
+    backupPolicy = initialBackupPolicy(first)
+  })
+
   function initialEndpoint() {
     return { name: 'Primary', role: definition?.endpointRoles[0] ?? 'primary', address: '127.0.0.1', port: definition?.defaultPort ?? 1, protocol: definition?.defaultProtocol ?? 'tcp', tlsMode: definition?.defaultTlsMode ?? 'disable', privateNetworkId: '' }
   }
   function initialVolume() { return { name: '', driver: 'local', configurationText: '{}', serverId: options.servers[0]?.id ?? '' } }
   function initialMount() { return { mountPath: '/data', readOnly: false, resourceVolumeId: resource.volumes[0]?.id ?? '', resourceInstallationId: resource.installations[0]?.id ?? '' } }
 	function initialHealth() { return { name: 'Readiness', kind: resource.kind === 'postgresql' || resource.kind === 'clickhouse' ? resource.kind : definition?.healthCheckKinds?.[0] ?? 'tcp', configurationText: '{}', intervalSeconds: 30, timeoutSeconds: 5, failureThreshold: 3, successThreshold: 1, enabled: true, resourceInstallationId: resource.installations[0]?.id ?? '', resourceEndpointId: primaryEndpoint?.id ?? '', resourceCredentialId: (databaseBacked ? applicationCredentials[0] : administratorCredentials[0])?.id ?? '' } }
-  function initialBackupPolicy() {
+  function initialBackupPolicy(detail: DatabaseBackups | undefined = selectedBackups) {
     return {
-      schedule: backups.policy?.schedule ?? '0 2 * * *',
-      backupDestinationId: backups.policy?.backupDestinationId ?? backups.destinations[0]?.id ?? '',
-      keepLast: backups.policy?.keepLast ?? 7,
-      keepDaily: backups.policy?.keepDaily ?? 7,
-      keepWeekly: backups.policy?.keepWeekly ?? 4,
-      keepMonthly: backups.policy?.keepMonthly ?? 6,
+      schedule: detail?.policy?.schedule ?? '0 2 * * *',
+      backupDestinationId: detail?.policy?.backupDestinationId ?? backups.destinations[0]?.id ?? '',
+      keepLast: detail?.policy?.keepLast ?? 7,
+      keepDaily: detail?.policy?.keepDaily ?? 7,
+      keepWeekly: detail?.policy?.keepWeekly ?? 4,
+      keepMonthly: detail?.policy?.keepMonthly ?? 6,
     }
+  }
+
+  function selectBackupDatabase(databaseId: string) {
+    selectedBackupDatabaseId = databaseId
+    backupPolicy = initialBackupPolicy(backups.databases.find((item) => item.databaseId === databaseId))
   }
 
   function json(value: string) {
@@ -133,6 +150,7 @@
 
   function submit(action: () => void) { try { action() } catch {} }
   function openWireGuardConfiguration() { if (enrollment?.clientConfiguration) wireGuardConfigurationDialogOpen = true }
+  function createDatabase() { router.post(routes.resourceDatabaseCreateForResource(resource.id), database, { onSuccess: () => { databaseDialogOpen = false; database = { name: '', encoding: 'UTF8', collation: '' } }, onError: () => (databaseDialogOpen = true) }) }
   function createEndpoint() { router.post(routes.resourceEndpointCreate(resource.id), { ...endpoint, settings: {}, resourceInstallationId: resource.managementMode === 'managed' ? resource.installations[0]?.id ?? '' : '' }, { onSuccess: () => (endpointDialogOpen = false), onError: () => (endpointDialogOpen = true) }) }
   function chooseEndpointNetwork(networkId: string) {
     endpoint.privateNetworkId = networkId
@@ -170,15 +188,16 @@
   function createMount() { router.post(routes.resourceMountCreate(resource.id), mount, { onSuccess: () => (mountDialogOpen = false), onError: () => (mountDialogOpen = true) }) }
   function createHealth() { submit(() => router.post(routes.resourceHealthCheckCreate(resource.id), { ...health, configuration: json(health.configurationText) }, { onSuccess: () => (healthDialogOpen = false), onError: () => (healthDialogOpen = true) })) }
   function saveBackupPolicy() {
-    if (backups.policy) router.patch(routes.resourceBackupPolicyUpdate(resource.id, backups.policy.id), backupPolicy)
-    else router.post(routes.resourceBackupPolicyCreate(resource.id), backupPolicy)
+    if (!selectedBackups) return
+    if (selectedBackups.policy) router.patch(routes.resourceBackupPolicyUpdate(resource.id, selectedBackups.databaseId, selectedBackups.policy.id), backupPolicy)
+    else router.post(routes.resourceBackupPolicyCreate(resource.id, selectedBackups.databaseId), backupPolicy)
   }
-  function pauseBackupPolicy() { if (backups.policy) router.post(routes.resourceBackupPolicyPause(resource.id, backups.policy.id), {}) }
-  function resumeBackupPolicy() { if (backups.policy) router.post(routes.resourceBackupPolicyResume(resource.id, backups.policy.id), {}) }
-  function runBackupPolicy() { if (backups.policy) router.post(routes.resourceBackupPolicyRun(resource.id, backups.policy.id), {}) }
+  function pauseBackupPolicy() { if (selectedBackups?.policy) router.post(routes.resourceBackupPolicyPause(resource.id, selectedBackups.databaseId, selectedBackups.policy.id), {}) }
+  function resumeBackupPolicy() { if (selectedBackups?.policy) router.post(routes.resourceBackupPolicyResume(resource.id, selectedBackups.databaseId, selectedBackups.policy.id), {}) }
+  function runBackupPolicy() { if (selectedBackups?.policy) router.post(routes.resourceBackupPolicyRun(resource.id, selectedBackups.databaseId, selectedBackups.policy.id), {}) }
   function confirmBackupPolicyArchive() {
-    if (!backups.policy) return
-    confirmDestructive({ kind: 'archive-backup-policy', policyId: backups.policy.id, title: 'Archive backup policy?', description: 'Future schedules stop immediately. Existing backup history and artifacts are retained.', confirmationLabel: 'Archive policy' })
+    if (!selectedBackups?.policy) return
+    confirmDestructive({ kind: 'archive-backup-policy', databaseId: selectedBackups.databaseId, policyId: selectedBackups.policy.id, title: 'Archive backup policy?', description: 'Future schedules stop immediately. Existing backup history and artifacts are retained.', confirmationLabel: 'Archive policy' })
   }
 
   function openRestoreDialog(backup: BackupHistory) {
@@ -189,7 +208,8 @@
 
   function submitRestore() {
     if (!restoreBackup || restoreConfirmation !== resource.name) return
-    router.post(routes.resourceRestoreCreate(resource.id), {
+    if (!selectedBackups) return
+    router.post(routes.resourceRestoreCreate(resource.id, selectedBackups.databaseId), {
       backupId: restoreBackup.id,
       confirmation: restoreConfirmation,
     }, {
@@ -244,7 +264,7 @@
     if (action.kind === 'disable-private-access') router.delete(routes.resourcePrivateAccessDestroy(resource.id))
     if (action.kind === 'revoke-device') router.delete(routes.resourcePrivateAccessDeviceDestroy(resource.id, action.deviceId))
     if (action.kind === 'archive-resource') router.delete(routes.resourceDestroy(resource.id))
-    if (action.kind === 'archive-backup-policy') router.delete(routes.resourceBackupPolicyDestroy(resource.id, action.policyId))
+    if (action.kind === 'archive-backup-policy') router.delete(routes.resourceBackupPolicyDestroy(resource.id, action.databaseId, action.policyId))
   }
 
   function observedLabel(value: string | null) {
@@ -270,7 +290,7 @@
         <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">{resource.kind} · {resource.category}</p>
         <h1 class="mt-3 text-3xl font-semibold">{resource.name}</h1>
         <p class="mt-2 text-sm capitalize text-muted-foreground">{resource.managementMode} · {resource.sharingScope} sharing</p>
-		{#if resource.databaseBacking}<p class="mt-1 text-xs text-muted-foreground">{resource.databaseBacking.mode === 'dedicated' ? 'Dedicated' : 'Cluster / Server'} · Database <span class="font-mono">{resource.databaseBacking.databaseName}</span> · {resource.databaseBacking.clusterName}</p>{/if}
+		{#if resource.databaseBacked}<p class="mt-1 text-xs text-muted-foreground">{resource.databases.length} {resource.databases.length === 1 ? 'Database' : 'Databases'}</p>{/if}
       </div>
       <div class="flex gap-2">
         <Button variant="outline" onclick={() => router.reload({ only: ['resource'] })}>Refresh status</Button>
@@ -298,16 +318,44 @@
       </Card.Content>
     </Card.Root>
 
+    {#if databaseBacked}
+      <Card.Root>
+        <Card.Header>
+          <Card.Action><Button size="sm" variant="outline" onclick={() => (databaseDialogOpen = true)}>Add Database</Button></Card.Action>
+          <Card.Title>Databases</Card.Title>
+          <Card.Description>Logical Databases published through this Resource's endpoints.</Card.Description>
+        </Card.Header>
+        <Card.Content class="space-y-3">
+          {#if resource.databases.length === 0}<p class="text-sm text-muted-foreground">No Databases published.</p>{/if}
+          {#each resource.databases as item}
+            <div class="flex items-center justify-between gap-4 border border-border p-3">
+              <div><p class="font-mono text-sm">{item.name}</p><p class="mt-1 text-xs text-muted-foreground">Desired {item.desiredState} · Observed {item.observedState}</p></div>
+              <span class="text-xs text-muted-foreground">{resource.endpoints.filter((endpoint: any) => endpoint.settings?.database === item.name).length} endpoints</span>
+            </div>
+          {/each}
+        </Card.Content>
+      </Card.Root>
+    {/if}
+
     <Card.Root>
       <Card.Header>
-        <Card.Action>{#if backups.policy}<span class="border border-border px-2 py-1 text-xs" class:text-success={backups.policy.active}>{backups.policy.active ? 'Active' : 'Paused'}</span>{/if}</Card.Action>
+        <Card.Action>{#if selectedBackups?.policy}<span class="border border-border px-2 py-1 text-xs" class:text-success={selectedBackups.policy.active}>{selectedBackups.policy.active ? 'Active' : 'Paused'}</span>{/if}</Card.Action>
         <Card.Title>Backups</Card.Title>
-        <Card.Description>Encrypted PostgreSQL logical backups using a verified Object Storage connection.</Card.Description>
+        <Card.Description>Encrypted logical backups of one PostgreSQL Database using a verified Object Storage connection.</Card.Description>
       </Card.Header>
       <Card.Content class="space-y-6">
-        {#if !backups.eligibility.eligible}
-          <p class="border border-border bg-muted/20 p-3 text-sm text-muted-foreground">{backups.eligibility.reason}</p>
-        {:else}
+        {#if backups.databases.length === 0}
+          <p class="border border-border bg-muted/20 p-3 text-sm text-muted-foreground">No active Database is available for backup.</p>
+        {:else if selectedBackups}
+          <FormField label="Database">
+            <select value={selectedBackups.databaseId} onchange={(event) => selectBackupDatabase(event.currentTarget.value)} class={selectClass}>
+              {#each backups.databases as database}<option value={database.databaseId}>{database.databaseName}</option>{/each}
+            </select>
+          </FormField>
+        {/if}
+        {#if selectedBackups && !selectedBackups.eligibility.eligible}
+          <p class="border border-border bg-muted/20 p-3 text-sm text-muted-foreground">{selectedBackups.eligibility.reason}</p>
+        {:else if selectedBackups}
           <form class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" onsubmit={(event) => { event.preventDefault(); saveBackupPolicy() }}>
             <FormField label="Object Storage" error={errors.backupDestinationId}>
               <select bind:value={backupPolicy.backupDestinationId} class={selectClass} required>
@@ -321,17 +369,17 @@
             <FormField label="Keep weekly"><Input type="number" min="0" bind:value={backupPolicy.keepWeekly} /></FormField>
             <FormField label="Keep monthly"><Input type="number" min="0" bind:value={backupPolicy.keepMonthly} /></FormField>
             <div class="flex flex-wrap items-end gap-2 sm:col-span-2">
-              <Button type="submit">{backups.policy ? 'Save policy' : 'Create policy'}</Button>
-              {#if backups.policy}
-                {#if backups.policy.active}<Button type="button" variant="outline" onclick={pauseBackupPolicy}>Pause</Button>{:else}<Button type="button" variant="outline" onclick={resumeBackupPolicy}>Resume</Button>{/if}
-                <Button type="button" variant="outline" disabled={!backups.policy.active} onclick={runBackupPolicy}>Back up now</Button>
+              <Button type="submit">{selectedBackups.policy ? 'Save policy' : 'Create policy'}</Button>
+              {#if selectedBackups.policy}
+                {#if selectedBackups.policy.active}<Button type="button" variant="outline" onclick={pauseBackupPolicy}>Pause</Button>{:else}<Button type="button" variant="outline" onclick={resumeBackupPolicy}>Resume</Button>{/if}
+                <Button type="button" variant="outline" disabled={!selectedBackups.policy.active} onclick={runBackupPolicy}>Back up now</Button>
                 <Button type="button" variant="destructive" onclick={confirmBackupPolicyArchive}>Archive</Button>
               {/if}
             </div>
           </form>
-          {#if backups.policy}
+          {#if selectedBackups.policy}
             <div class="grid gap-4 border-t border-border pt-5 sm:grid-cols-3">
-              <DataField label="Next run" value={backups.policy.active ? observedLabel(backups.policy.nextRunAt) : 'Paused'} />
+              <DataField label="Next run" value={selectedBackups.policy.active ? observedLabel(selectedBackups.policy.nextRunAt) : 'Paused'} />
               <DataField label="Last successful" value={observedLabel(lastSuccessfulBackup?.finishedAt ?? null)} />
               <DataField label="Last verified" value={observedLabel(lastSuccessfulBackup?.verifiedAt ?? null)} />
             </div>
@@ -339,9 +387,9 @@
         {/if}
 
         <section class="space-y-3 border-t border-border pt-5">
-          <div><h3 class="text-sm font-medium">Recent history</h3><p class="mt-1 text-xs text-muted-foreground">The latest Resource backup attempts, including retained outcomes after policy archival.</p></div>
-          {#if backups.history.length === 0}<p class="text-sm text-muted-foreground">No Resource backups have been requested.</p>{/if}
-          {#each backups.history as item (item.id)}
+          <div><h3 class="text-sm font-medium">Recent history</h3><p class="mt-1 text-xs text-muted-foreground">The latest backup attempts for the selected Database, including retained outcomes after policy archival.</p></div>
+          {#if !selectedBackups || selectedBackups.history.length === 0}<p class="text-sm text-muted-foreground">No backups have been requested for this Database.</p>{/if}
+          {#each selectedBackups?.history ?? [] as item (item.id)}
             <div class="grid gap-3 border border-border p-3 text-sm sm:grid-cols-[1fr_auto]">
               <div><div class="flex flex-wrap items-center gap-2"><span class="font-medium capitalize">{item.status.replaceAll('_', ' ')}</span><span class="text-xs uppercase tracking-wider text-muted-foreground">{item.triggerType}</span></div><p class="mt-1 text-xs text-muted-foreground">{observedLabel(item.scheduledAt)} · {bytesLabel(item.sizeBytes)}</p>{#if item.error}<p class="mt-2 text-xs text-destructive">{item.error}</p>{/if}</div>
               <div class="flex items-center gap-3"><span class="font-mono text-xs text-muted-foreground">{item.id.slice(0, 8)}</span>{#if item.canRestore}<Button size="sm" variant="destructive" onclick={() => openRestoreDialog(item)}>Restore</Button>{/if}</div>
@@ -351,8 +399,8 @@
 
         <section class="space-y-3 border-t border-border pt-5">
           <div class="flex flex-wrap items-start justify-between gap-3"><div><h3 class="text-sm font-medium">Restore history</h3><p class="mt-1 text-xs text-muted-foreground">A safety backup is verified before any database is changed.</p></div>{#if activeRestore}<span class="border border-primary/50 px-2 py-1 text-xs text-primary">Restore in progress</span>{/if}</div>
-          {#if backups.restores.length === 0}<p class="text-sm text-muted-foreground">No database restores have been requested.</p>{/if}
-          {#each backups.restores as restore (restore.id)}
+          {#if !selectedBackups || selectedBackups.restores.length === 0}<p class="text-sm text-muted-foreground">No restores have been requested for this Database.</p>{/if}
+          {#each selectedBackups?.restores ?? [] as restore (restore.id)}
             <div class="grid gap-3 border border-border p-3 text-sm sm:grid-cols-[1fr_auto]">
               <div><div class="flex flex-wrap items-center gap-2"><span class="font-medium capitalize">{restore.status.replaceAll('_', ' ')}</span><span class="text-xs text-muted-foreground">Source {observedLabel(restore.backupScheduledAt)}</span></div><p class="mt-1 text-xs text-muted-foreground">Requested {observedLabel(restore.requestedAt)}{restore.safetyBackupId ? ` · Safety backup ${restore.safetyBackupId.slice(0, 8)}` : ''}</p>{#if restore.error}<p class="mt-2 text-xs text-destructive">{restore.error}</p>{/if}</div>
               <span class="font-mono text-xs text-muted-foreground">{restore.id.slice(0, 8)}</span>
@@ -403,12 +451,12 @@
     </Card.Root>
 
     <Card.Root>
-      <Card.Header><Card.Title>Primary service</Card.Title><Card.Description>The Docker origin and its optional private network path.</Card.Description></Card.Header>
+      <Card.Header><Card.Title>{databaseBacked ? 'Primary endpoint' : 'Primary service'}</Card.Title><Card.Description>{databaseBacked ? 'The default published Database access endpoint and its optional private path.' : 'The Docker origin and its optional private network path.'}</Card.Description></Card.Header>
       <Card.Content class="space-y-6">
         {#if primaryEndpoint}
           <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            <DataField label="Runtime origin" value={`${primaryEndpoint.address}:${primaryEndpoint.port}`} />
-            <DataField label="Installation" value={resource.installations.find((item: any) => item.id === primaryEndpoint.resourceInstallationId)?.containerName ?? 'External'} />
+            <DataField label={databaseBacked ? 'Address' : 'Runtime origin'} value={`${primaryEndpoint.address}:${primaryEndpoint.port}`} />
+            <DataField label={databaseBacked ? 'Database' : 'Installation'} value={databaseBacked ? primaryEndpoint.settings?.database ?? 'Unknown' : resource.installations.find((item: any) => item.id === primaryEndpoint.resourceInstallationId)?.containerName ?? 'External'} />
             <DataField label="Protocol" value={primaryEndpoint.protocol} />
             <DataField label="TLS" value={primaryEndpoint.tlsMode} />
           </div>
@@ -443,17 +491,17 @@
     </Card.Root>
 
     <Card.Root>
-      <Card.Header><Card.Action><Button size="sm" variant="outline" disabled={!canAddApplicationUser} onclick={openCredentialDialog}>Add application user</Button></Card.Action><Card.Title>Credentials</Card.Title><Card.Description>{resource.kind === 'postgresql' ? `Administrator access is installation-specific. Application users receive migration access only to ${resource.databaseName}.` : 'Encrypted application credentials for this Resource.'}</Card.Description></Card.Header>
-      <Card.Content class="grid gap-6 lg:grid-cols-2">
+      <Card.Header><Card.Action><Button size="sm" variant="outline" disabled={!canAddApplicationUser} onclick={openCredentialDialog}>Add application user</Button></Card.Action><Card.Title>Credentials</Card.Title><Card.Description>{databaseBacked ? `Cluster administrator access stays internal. Application users are reconciled across all ${resource.databases.length} Databases.` : resource.kind === 'postgresql' ? 'Application users receive access through this Resource.' : 'Encrypted application credentials for this Resource.'}</Card.Description></Card.Header>
+      <Card.Content class={databaseBacked ? 'grid gap-6' : 'grid gap-6 lg:grid-cols-2'}>
         {#if managedPostgreSQL && !containerRunning}<p class="border border-border bg-muted/20 p-3 text-sm text-muted-foreground lg:col-span-2">Start the PostgreSQL container before adding an application user. DeployCrate must connect to the running server to create its LOGIN role.</p>{/if}
-        <section><h3 class="text-sm font-medium">Resource administrator</h3><div class="mt-3 space-y-3">{#if administratorCredentials.length === 0}<p class="text-sm text-muted-foreground">No installation-specific administrator.</p>{/if}{#each administratorCredentials as item}<div class="border border-border p-3"><div class="flex justify-between gap-3"><p class="font-medium">{item.username}</p><span class="text-xs text-muted-foreground">{item.hasEncryptedPayload ? 'Encrypted' : 'Missing secret'}</span></div><p class="mt-2 text-xs text-muted-foreground">Resource administrator</p></div>{/each}</div></section>
+        {#if !databaseBacked}<section><h3 class="text-sm font-medium">Resource administrator</h3><div class="mt-3 space-y-3">{#if administratorCredentials.length === 0}<p class="text-sm text-muted-foreground">No installation-specific administrator.</p>{/if}{#each administratorCredentials as item}<div class="border border-border p-3"><div class="flex justify-between gap-3"><p class="font-medium">{item.username}</p><span class="text-xs text-muted-foreground">{item.hasEncryptedPayload ? 'Encrypted' : 'Missing secret'}</span></div><p class="mt-2 text-xs text-muted-foreground">Resource administrator</p></div>{/each}</div></section>{/if}
         <section><h3 class="text-sm font-medium">Application users</h3><div class="mt-3 space-y-3">{#if applicationCredentials.length === 0}<p class="text-sm text-muted-foreground">No application users.</p>{/if}{#each applicationCredentials as item}<div class="border border-border p-3"><div class="flex justify-between gap-3"><p class="font-medium">{item.username}</p><span class="text-xs text-muted-foreground">{item.hasEncryptedPayload ? 'Encrypted' : 'Missing secret'}</span></div><p class="mt-2 text-xs text-muted-foreground">{item.name}</p></div>{/each}</div></section>
       </Card.Content>
     </Card.Root>
 
-    <div class="grid gap-6 lg:grid-cols-2">
-      <Card.Root><Card.Header><Card.Action>{#if resource.managementMode === 'managed' && (resource.volumes.length === 0 || (resource.volumes.length === 1 && resource.installations.length === 1 && resource.mounts.length === 0))}<div class="flex gap-2">{#if resource.volumes.length === 0}<Button size="sm" variant="outline" onclick={() => (volumeDialogOpen = true)}>Add volume</Button>{/if}{#if resource.volumes.length === 1 && resource.installations.length === 1 && resource.mounts.length === 0}<Button size="sm" variant="outline" onclick={() => (mountDialogOpen = true)}>Add mount</Button>{/if}</div>{/if}</Card.Action><Card.Title>Storage</Card.Title><Card.Description>The primary durable volume and its installation mount.</Card.Description></Card.Header><Card.Content class="space-y-3">{#if resource.volumes.length === 0}<p class="text-sm text-muted-foreground">No primary volume configured.</p>{/if}{#each resource.volumes as item}<div class="border border-border p-3"><p class="font-medium">{item.name}</p><p class="mt-2 text-xs text-muted-foreground">{item.driver} on {item.serverName}</p>{#each resource.mounts.filter((mount: any) => mount.resourceVolumeId === item.id) as mount}<p class="mt-2 font-mono text-xs">{mount.mountPath} → {mount.containerName}{mount.readOnly ? ' (read only)' : ''}</p>{/each}</div>{/each}</Card.Content></Card.Root>
-      <Card.Root><Card.Header><Card.Action><Button size="sm" variant="outline" disabled={resource.installations.length === 0} onclick={() => (healthDialogOpen = true)}>Add check</Button></Card.Action><Card.Title>Health checks</Card.Title><Card.Description>Desired checks and their latest observations.</Card.Description></Card.Header><Card.Content class="space-y-3">{#if resource.healthChecks.length === 0}<p class="text-sm text-muted-foreground">No health checks configured.</p>{/if}{#each resource.healthChecks as item}<div class="border border-border p-3"><div class="flex justify-between gap-3"><p class="font-medium">{item.name}</p><span class:text-success={item.state === 'healthy'} class:text-warning={item.state === 'degraded'} class:text-destructive={item.state === 'unhealthy'} class="text-xs capitalize">{item.state || 'Unknown'}</span></div><p class="mt-2 text-xs text-muted-foreground">{item.kind} · every {item.intervalSeconds}s · {item.enabled ? 'Enabled' : 'Disabled'}</p><p class="mt-1 text-xs text-muted-foreground">Observed {observedLabel(item.observedAt)}{item.latencyMs !== null ? ` · ${item.latencyMs} ms` : ''} · successes {item.consecutiveSuccesses} · failures {item.consecutiveFailures}</p>{#if item.message}<p class="mt-2 text-xs text-muted-foreground">{item.message}</p>{/if}</div>{/each}</Card.Content></Card.Root>
+    <div class={databaseBacked ? 'grid gap-6' : 'grid gap-6 lg:grid-cols-2'}>
+      {#if !databaseBacked}<Card.Root><Card.Header><Card.Action>{#if resource.managementMode === 'managed' && (resource.volumes.length === 0 || (resource.volumes.length === 1 && resource.installations.length === 1 && resource.mounts.length === 0))}<div class="flex gap-2">{#if resource.volumes.length === 0}<Button size="sm" variant="outline" onclick={() => (volumeDialogOpen = true)}>Add volume</Button>{/if}{#if resource.volumes.length === 1 && resource.installations.length === 1 && resource.mounts.length === 0}<Button size="sm" variant="outline" onclick={() => (mountDialogOpen = true)}>Add mount</Button>{/if}</div>{/if}</Card.Action><Card.Title>Storage</Card.Title><Card.Description>The primary durable volume and its installation mount.</Card.Description></Card.Header><Card.Content class="space-y-3">{#if resource.volumes.length === 0}<p class="text-sm text-muted-foreground">No primary volume configured.</p>{/if}{#each resource.volumes as item}<div class="border border-border p-3"><p class="font-medium">{item.name}</p><p class="mt-2 text-xs text-muted-foreground">{item.driver} on {item.serverName}</p>{#each resource.mounts.filter((mount: any) => mount.resourceVolumeId === item.id) as mount}<p class="mt-2 font-mono text-xs">{mount.mountPath} → {mount.containerName}{mount.readOnly ? ' (read only)' : ''}</p>{/each}</div>{/each}</Card.Content></Card.Root>{/if}
+      <Card.Root><Card.Header><Card.Action><Button size="sm" variant="outline" disabled={databaseBacked ? applicationCredentials.length === 0 || resource.endpoints.length === 0 : resource.installations.length === 0} onclick={() => (healthDialogOpen = true)}>Add check</Button></Card.Action><Card.Title>Health checks</Card.Title><Card.Description>Desired checks and their latest observations.</Card.Description></Card.Header><Card.Content class="space-y-3">{#if resource.healthChecks.length === 0}<p class="text-sm text-muted-foreground">No health checks configured.</p>{/if}{#each resource.healthChecks as item}<div class="border border-border p-3"><div class="flex justify-between gap-3"><p class="font-medium">{item.name}</p><span class:text-success={item.state === 'healthy'} class:text-warning={item.state === 'degraded'} class:text-destructive={item.state === 'unhealthy'} class="text-xs capitalize">{item.state || 'Unknown'}</span></div><p class="mt-2 text-xs text-muted-foreground">{item.kind} · every {item.intervalSeconds}s · {item.enabled ? 'Enabled' : 'Disabled'}</p><p class="mt-1 text-xs text-muted-foreground">Observed {observedLabel(item.observedAt)}{item.latencyMs !== null ? ` · ${item.latencyMs} ms` : ''} · successes {item.consecutiveSuccesses} · failures {item.consecutiveFailures}</p>{#if item.message}<p class="mt-2 text-xs text-muted-foreground">{item.message}</p>{/if}</div>{/each}</Card.Content></Card.Root>
     </div>
 
     <Card.Root>
@@ -530,6 +578,20 @@
       <div class="grid gap-4 sm:grid-cols-2"><FormField label="Display name" error={errors.name}><Input bind:value={credential.name} required /></FormField><FormField label="PostgreSQL username" error={errors.username}><Input bind:value={credential.username} required autocomplete="username" /></FormField>{#each definition.credentialFields as field}<FormField label={field.label} error={errors[`secretValues.${field.name}`]}><Input type={field.secret ? 'password' : 'text'} value={credential.secretValues[field.name] ?? ''} oninput={(event) => credential.secretValues[field.name] = event.currentTarget.value} required={field.required} autocomplete="new-password" /></FormField>{/each}</div>
       <div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (credentialDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={!canAddApplicationUser}>Create application user</Button></div>
     </form>
+    </Dialog.Content>
+  </Dialog.Root>
+
+  <Dialog.Root bind:open={databaseDialogOpen}>
+    <Dialog.Content class="sm:max-w-xl">
+      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createDatabase() }}>
+        <div><h2 class="text-lg font-semibold">Add Database</h2><p class="mt-1 text-sm text-muted-foreground">Create another logical Database and publish it through a new Resource Endpoint.</p></div>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="sm:col-span-2"><FormField label="Database name" error={errors.name}><Input bind:value={database.name} required /></FormField></div>
+          <FormField label="Encoding" error={errors.encoding}><Input bind:value={database.encoding} required /></FormField>
+          <FormField label="Collation" error={errors.collation}><Input bind:value={database.collation} placeholder="Default" /></FormField>
+        </div>
+        <div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (databaseDialogOpen = false)}>Cancel</Button><Button type="submit">Create Database</Button></div>
+      </form>
     </Dialog.Content>
   </Dialog.Root>
 

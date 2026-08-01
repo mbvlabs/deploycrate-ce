@@ -12,11 +12,11 @@
   let { auth, options }: { auth: { email: string }; options: Options } = $props()
   const selectClass = 'h-9 w-full border border-input bg-background px-3 text-sm'
   const form = useForm(() => ({
-    name: '', slug: '', engine: 'postgresql', engineVersion: '17', sharingMode: 'dedicated', desiredInstallationMethod: 'docker',
+    name: '', slug: '', engine: 'postgresql', engineVersion: '17', desiredInstallationMethod: 'docker',
     administratorUsername: 'postgres', administratorPassword: '',
-    endpoint: { name: 'Primary', role: 'primary', address: '127.0.0.1', port: 5432, protocol: 'postgresql', tlsMode: 'disable', privateNetworkId: '' },
+    endpoint: { name: 'Primary', role: 'primary', address: '127.0.0.1', port: 5433, protocol: 'postgresql', tlsMode: 'disable', privateNetworkId: '' },
     placement: { serverId: '', nodeName: 'primary', storageName: 'Database data', storageDriver: 'docker', storageId: '', dataPath: '/var/lib/postgresql/data', imageReference: 'postgres:17-alpine', imageDigest: '', containerName: '', restartPolicy: 'unless-stopped', packageName: 'postgresql-17', packageVersion: '', serviceName: 'postgresql', configPath: '/etc/postgresql/17/main/conf.d/deploycrate.conf' },
-    database: { name: '', encoding: 'UTF8', collation: '', resourceName: '', resourceSlug: '', sharingScope: 'environment' },
+    database: { name: '', encoding: 'UTF8', collation: '', applicationUsername: '', applicationPassword: '', resourceName: '', resourceSlug: '', sharingScope: 'environment' },
   }))
 
   function submit(event: SubmitEvent) {
@@ -24,35 +24,42 @@
     const name = $form.name.trim()
     const slug = slugify(name)
     const databaseName = slug.replaceAll('-', '_')
+    const engineVersion = dataEngineVersion($form.desiredInstallationMethod, $form.engineVersion, $form.placement.imageReference)
     $form.transform((data) => ({
       ...data,
       name,
       slug,
       engine: 'postgresql',
-      engineVersion: data.engineVersion,
-      sharingMode: 'dedicated',
-      endpoint: { ...data.endpoint, name: 'Primary', role: 'primary', address: '127.0.0.1', port: 5432, protocol: 'postgresql', privateNetworkId: data.endpoint.privateNetworkId || null },
+      engineVersion,
+      endpoint: { ...data.endpoint, name: 'Primary', role: 'primary', address: '127.0.0.1', protocol: 'postgresql', privateNetworkId: data.endpoint.privateNetworkId || null },
       placement: {
         ...data.placement,
         nodeName: 'primary',
-        storageName: `${name} data`,
-        storageDriver: 'docker',
-        storageId: `${slug}-postgres-data`,
+        storageName: data.desiredInstallationMethod === 'docker' ? (data.placement.storageId.trim() || `${slug}-postgres-data`) : `${name} data`,
+        storageDriver: data.desiredInstallationMethod === 'docker' ? 'docker' : 'filesystem',
+        storageId: data.desiredInstallationMethod === 'docker' ? (data.placement.storageId.trim() || `${slug}-postgres-data`) : '',
         dataPath: '/var/lib/postgresql/data',
         imageDigest: '',
-        containerName: `${slug}-postgres`,
+        containerName: data.placement.containerName.trim() || `${slug}-postgres`,
         restartPolicy: 'unless-stopped',
-        packageName: `postgresql-${data.engineVersion}`,
+        packageName: `postgresql-${engineVersion}`,
         serviceName: 'postgresql',
-        configPath: `/etc/postgresql/${data.engineVersion}/main/conf.d/deploycrate.conf`,
+        configPath: `/etc/postgresql/${engineVersion}/main/conf.d/deploycrate.conf`,
       },
       database: { ...data.database, name: databaseName, encoding: 'UTF8', collation: '', resourceName: name, resourceSlug: slug },
     }))
     $form.post(routes.resourceDatabaseCreate())
   }
 
-  function chooseVersion() {
-    $form.placement.imageReference = `postgres:${$form.engineVersion}-alpine`
+  function dataEngineVersion(method: string, nativeVersion: string, imageReference: string) {
+    if (method !== 'docker') return nativeVersion
+    const reference = imageReference.split('@', 1)[0]
+    const lastSlash = reference.lastIndexOf('/')
+    const tagSeparator = reference.lastIndexOf(':')
+    if (tagSeparator <= lastSlash) return 'latest'
+    const tag = reference.slice(tagSeparator + 1)
+    const majorVersion = tag.match(/^\d+/)?.[0]
+    return majorVersion || tag || 'latest'
   }
 
   function slugify(value: string) {
@@ -71,7 +78,7 @@
     <header>
       <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">New Resource</p>
       <h1 class="mt-3 text-3xl font-semibold">Create PostgreSQL</h1>
-      <p class="mt-2 max-w-xl text-sm text-muted-foreground">Configure a dedicated PostgreSQL database with persistent storage.</p>
+      <p class="mt-2 max-w-xl text-sm text-muted-foreground">Configure a PostgreSQL Resource that can publish multiple Databases through its endpoints.</p>
     </header>
 
     <Card.Root>
@@ -85,13 +92,6 @@
             <Input bind:value={$form.name} placeholder="Production database" required autofocus />
           </FormField>
         </div>
-        <FormField label="PostgreSQL version" error={$form.errors.engineVersion}>
-          <select class={selectClass} bind:value={$form.engineVersion} onchange={chooseVersion} required>
-            <option value="17">17</option>
-            <option value="16">16</option>
-            <option value="15">15</option>
-          </select>
-        </FormField>
         <FormField label="Installation method" error={$form.errors.desiredInstallationMethod}>
           <select class={selectClass} bind:value={$form.desiredInstallationMethod} required>
             <option value="docker">Docker</option>
@@ -106,12 +106,56 @@
             </select>
           </FormField>
         </div>
+        <div class="grid gap-5 sm:col-span-2 sm:grid-cols-2">
+          {#if $form.desiredInstallationMethod === 'native'}
+            <FormField label="PostgreSQL version" error={$form.errors.engineVersion}>
+              <select class={selectClass} bind:value={$form.engineVersion} required>
+                <option value="17">17</option>
+                <option value="16">16</option>
+                <option value="15">15</option>
+              </select>
+            </FormField>
+          {/if}
+          <FormField label={$form.desiredInstallationMethod === 'docker' ? 'Host port' : 'Service port'} error={$form.errors['endpoint.port']}>
+            <Input type="number" min="1" max="65535" bind:value={$form.endpoint.port} required />
+          </FormField>
+          {#if $form.desiredInstallationMethod === 'docker'}
+            <div class="border border-border bg-muted/20 px-3 py-2"><p class="text-[10px] uppercase tracking-wider text-muted-foreground">Container port</p><p class="mt-1 font-mono text-sm">5432/tcp</p></div>
+          {/if}
+        </div>
         <FormField label="Administrator username" error={$form.errors.administratorUsername}>
           <Input bind:value={$form.administratorUsername} autocomplete="username" required />
         </FormField>
         <FormField label="Administrator password" error={$form.errors.administratorPassword}>
           <Input type="password" bind:value={$form.administratorPassword} autocomplete="new-password" required />
         </FormField>
+        <div class="grid gap-5 border-t border-border pt-5 sm:col-span-2 sm:grid-cols-2">
+          <div class="sm:col-span-2">
+            <p class="text-sm font-medium">Application access</p>
+            <p class="mt-1 text-xs text-muted-foreground">This credential is exposed through the Resource. The cluster administrator remains internal.</p>
+          </div>
+          <FormField label="Application username" error={$form.errors['database.applicationUsername'] ?? $form.errors['database.username']}>
+            <Input bind:value={$form.database.applicationUsername} autocomplete="username" required />
+          </FormField>
+          <FormField label="Application password" error={$form.errors['database.applicationPassword'] ?? $form.errors['database.secretValues.password']}>
+            <Input type="password" bind:value={$form.database.applicationPassword} autocomplete="new-password" required />
+          </FormField>
+        </div>
+        {#if $form.desiredInstallationMethod === 'docker'}
+          <div class="grid gap-5 border-t border-border pt-5 sm:col-span-2 sm:grid-cols-2">
+            <div class="sm:col-span-2">
+              <FormField label="Docker image" error={$form.errors['placement.imageReference']}>
+                <Input bind:value={$form.placement.imageReference} required />
+              </FormField>
+            </div>
+            <FormField label="Container name" error={$form.errors['placement.containerName']}>
+              <Input bind:value={$form.placement.containerName} placeholder={`${slugify($form.name) || 'database'}-postgres`} />
+            </FormField>
+            <FormField label="Volume name" error={$form.errors['placement.storageId']}>
+              <Input bind:value={$form.placement.storageId} placeholder={`${slugify($form.name) || 'database'}-postgres-data`} />
+            </FormField>
+          </div>
+        {/if}
         <Accordion.Root type="multiple" class="sm:col-span-2">
           <Accordion.Item value="advanced" class="border border-border px-4">
             <Accordion.Trigger class="py-4 hover:no-underline">
@@ -138,18 +182,13 @@
                   <option value="require">Require</option>
                 </select>
               </FormField>
-              {#if $form.desiredInstallationMethod === 'docker'}
-                <FormField label="Docker image" error={$form.errors['placement.imageReference']}>
-                  <Input bind:value={$form.placement.imageReference} required />
-                </FormField>
-              {/if}
             </Accordion.Content>
           </Accordion.Item>
         </Accordion.Root>
       </Card.Content>
       <Card.Footer class="justify-between border-t border-border">
         <Button variant="outline" href={routes.resourceNew()}>Back</Button>
-        <Button type="submit" disabled={$form.processing || !$form.name || !$form.placement.serverId || !$form.administratorPassword}>Create PostgreSQL</Button>
+        <Button type="submit" disabled={$form.processing || !$form.name || !$form.placement.serverId || !$form.administratorPassword || !$form.database.applicationUsername || !$form.database.applicationPassword}>Create PostgreSQL</Button>
       </Card.Footer>
     </Card.Root>
   </form>

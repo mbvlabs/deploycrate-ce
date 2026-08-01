@@ -8,7 +8,6 @@ CREATE TABLE database_clusters (
     slug TEXT NOT NULL,
     engine TEXT NOT NULL,
     engine_version TEXT NOT NULL,
-    sharing_mode TEXT NOT NULL,
     management_mode TEXT NOT NULL,
     desired_installation_method TEXT,
     topology JSONB NOT NULL,

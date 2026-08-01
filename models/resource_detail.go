@@ -22,7 +22,7 @@ type ResourceListItem struct {
 	Slug              string                     `bun:"slug"`
 	Category          string                     `bun:"category"`
 	Kind              string                     `bun:"kind"`
-	DatabaseName      string                     `bun:"database_name"`
+	DatabaseCount     int                        `bun:"database_count"`
 	ManagementMode    ResourceManagementModeEnum `bun:"management_mode"`
 	SharingScope      ResourceSharingScopeEnum   `bun:"sharing_scope"`
 	ConnectionCount   int                        `bun:"connection_count"`
@@ -79,6 +79,7 @@ type ResourceDetails struct {
 	Mounts            []ResourceMountDetail
 	HealthChecks      []ResourceHealthCheckDetail
 	DatabaseBacking   *ResourceDatabaseBackingDetail
+	Databases         []ResourceDatabaseDetail
 }
 
 type ResourceEnvironmentGrantDetail struct {
@@ -95,11 +96,15 @@ type ResourceApplicationGrantDetail struct {
 }
 
 type ResourceDatabaseBackingDetail struct {
-	DatabaseID   uuid.UUID `bun:"database_id"`
-	DatabaseName string    `bun:"database_name"`
-	ClusterID    uuid.UUID `bun:"cluster_id"`
-	ClusterName  string    `bun:"cluster_name"`
-	SharingMode  string    `bun:"sharing_mode"`
+	ClusterID uuid.UUID `bun:"cluster_id"`
+	Engine    string    `bun:"engine"`
+}
+
+type ResourceDatabaseDetail struct {
+	ID            uuid.UUID `bun:"id"`
+	Name          string    `bun:"name"`
+	DesiredState  string    `bun:"desired_state"`
+	ObservedState string    `bun:"observed_state"`
 }
 
 type ResourceBackupEligibility struct {
@@ -109,11 +114,17 @@ type ResourceBackupEligibility struct {
 }
 
 type ResourceBackupDetails struct {
+	DatabaseID   uuid.UUID
+	DatabaseName string
 	Eligibility  ResourceBackupEligibility
 	Policy       *BackupPolicyEntity
-	Destinations []BackupDestinationSummary
 	History      []DatabaseBackupHistory
 	Restores     []DatabaseRestoreHistory
+}
+
+type ResourceBackupCatalog struct {
+	Destinations []BackupDestinationSummary
+	Databases    []ResourceBackupDetails
 }
 
 type ResourcePrivateAccessDetails struct {
@@ -123,14 +134,15 @@ type ResourcePrivateAccessDetails struct {
 
 type ResourceConnectionDetail struct {
 	EnvironmentResourceEntity
-	EnvironmentName     string `bun:"environment_name"`
-	EnvironmentKind     string `bun:"environment_kind"`
-	EnvironmentArchived bool   `bun:"environment_archived"`
-	ApplicationName     string `bun:"application_name"`
-	ApplicationSlug     string `bun:"application_slug"`
-	ApplicationArchived bool   `bun:"application_archived"`
-	EndpointName        string `bun:"endpoint_name"`
-	CredentialName      string `bun:"credential_name"`
+	EnvironmentName     string          `bun:"environment_name"`
+	EnvironmentKind     string          `bun:"environment_kind"`
+	EnvironmentArchived bool            `bun:"environment_archived"`
+	ApplicationName     string          `bun:"application_name"`
+	ApplicationSlug     string          `bun:"application_slug"`
+	ApplicationArchived bool            `bun:"application_archived"`
+	EndpointName        string          `bun:"endpoint_name"`
+	EndpointSettings    json.RawMessage `bun:"endpoint_settings"`
+	CredentialName      string          `bun:"credential_name"`
 }
 
 type ResourceCredentialSummary struct {
