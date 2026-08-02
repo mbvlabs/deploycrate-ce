@@ -518,6 +518,7 @@ func environmentFlashProps(etx *echo.Context) []inertia.Props {
 }
 
 type environmentSetupPayload struct {
+	ServerID      uuid.UUID                                `json:"serverId"`
 	Hostname      string                                   `json:"hostname"`
 	ContainerPort int32                                    `json:"containerPort"`
 	HealthPath    string                                   `json:"healthPath"`
@@ -534,7 +535,7 @@ func (controller Environments) CompleteSetup(etx *echo.Context) error {
 	}
 	if err == nil {
 		_, err = controller.setup.Complete(etx.Request().Context(), params.ApplicationID, params.EnvironmentID, cookies.ExtractFromCookieApp(etx).UserID, services.EnvironmentSetupInput{
-			Hostname: payload.Hostname, ContainerPort: payload.ContainerPort,
+			ServerID: payload.ServerID, Hostname: payload.Hostname, ContainerPort: payload.ContainerPort,
 			HealthPath: payload.HealthPath, BPGOTargets: payload.BPGOTargets,
 			Resources: payload.Resources, Secrets: payload.Secrets,
 		})

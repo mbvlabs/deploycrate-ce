@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -85,7 +87,8 @@ func (service CaddyRouteService) Reconcile(ctx context.Context, routeID uuid.UUI
 	backends := make([]caddyclients.Backend, 0, len(rows))
 	for _, row := range rows {
 		var ports struct {
-			HTTP int `json:"http"`
+			Host string `json:"host"`
+			HTTP int    `json:"http"`
 		}
 		if err := json.Unmarshal(row.Ports, &ports); err != nil {
 			return "", fmt.Errorf("decode Caddy backend ports: %w", err)
@@ -93,8 +96,14 @@ func (service CaddyRouteService) Reconcile(ctx context.Context, routeID uuid.UUI
 		if ports.HTTP < 1 || ports.HTTP > 65535 {
 			return "", fmt.Errorf("Caddy backend has invalid HTTP port %d", ports.HTTP)
 		}
+		if ports.Host == "" {
+			ports.Host = "127.0.0.1"
+		}
+		if !validWorkloadBackendAddress(ports.Host) {
+			return "", fmt.Errorf("Caddy backend has invalid workload address %q", ports.Host)
+		}
 		backends = append(backends, caddyclients.Backend{
-			Dial: fmt.Sprintf("127.0.0.1:%d", ports.HTTP), Weight: int(row.Weight),
+			Dial: net.JoinHostPort(ports.Host, fmt.Sprint(ports.HTTP)), Weight: int(row.Weight),
 		})
 	}
 
@@ -788,12 +797,27 @@ func validateManagedCaddyRoute(ctx context.Context, exec storage.Executor, route
 
 func instanceHTTPAddress(ports json.RawMessage) string {
 	var value struct {
-		HTTP int `json:"http"`
+		Host string `json:"host"`
+		HTTP int    `json:"http"`
 	}
 	if json.Unmarshal(ports, &value) != nil || value.HTTP == 0 {
 		return "unavailable"
 	}
-	return fmt.Sprintf("127.0.0.1:%d", value.HTTP)
+	if value.Host == "" {
+		value.Host = "127.0.0.1"
+	}
+	if !validWorkloadBackendAddress(value.Host) {
+		return "unavailable"
+	}
+	return net.JoinHostPort(value.Host, fmt.Sprint(value.HTTP))
+}
+
+func validWorkloadBackendAddress(value string) bool {
+	address, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil || !address.Is4() {
+		return false
+	}
+	return address.IsLoopback() || netip.MustParsePrefix(WireGuardMeshCIDR).Contains(address)
 }
 
 func nullableTimeString(value sql.NullTime) string {

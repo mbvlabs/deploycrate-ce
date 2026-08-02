@@ -16,7 +16,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-const ManifestVersion = 1
+const ManifestVersion = 2
 
 type Manifest struct {
 	ManifestVersion       int                       `json:"manifest_version"`
@@ -24,6 +24,7 @@ type Manifest struct {
 	NodeName              string                    `json:"node_name"`
 	PrivateAddress        string                    `json:"private_address"`
 	ListenPort            int                       `json:"listen_port"`
+	SSHPort               int                       `json:"ssh_port"`
 	ControlPlanePublicKey string                    `json:"control_plane_public_key"`
 	ControlPlaneAddress   string                    `json:"control_plane_address"`
 	ControlPlaneEndpoint  string                    `json:"control_plane_endpoint"`
@@ -73,6 +74,9 @@ func (manifest Manifest) Validate() error {
 	}
 	if manifest.ListenPort < 1 || manifest.ListenPort > 65535 {
 		errs = append(errs, errors.New("WireGuard listen port is invalid"))
+	}
+	if manifest.SSHPort < 1 || manifest.SSHPort > 65535 {
+		errs = append(errs, errors.New("SSH port is invalid"))
 	}
 	key, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(manifest.ControlPlanePublicKey))
 	if decodeErr != nil || len(key) != 32 {

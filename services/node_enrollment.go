@@ -349,6 +349,9 @@ ${dc_sudo} /usr/local/bin/bootstrap node install --manifest-stdin`, nodeInstalle
 	if _, err := service.updateServer(ctx, tx, refreshedServer, true); err != nil {
 		return err
 	}
+	if err := service.ensureServerNetwork(ctx, tx, detail.Server.ID, detail.Enrollment.AllocatedAddress); err != nil {
+		return err
+	}
 	if _, err := models.ServerStatus.Create(ctx, tx, models.CreateServerStatusData{
 		State: "ready", ObservedAt: time.Now().UTC(), ServerID: detail.Server.ID,
 	}); err != nil {
@@ -361,6 +364,35 @@ ${dc_sudo} /usr/local/bin/bootstrap node install --manifest-stdin`, nodeInstalle
 		return err
 	}
 	return tx.Commit()
+}
+
+func (service *NodeEnrollment) ensureServerNetwork(ctx context.Context, db storage.Executor, serverID uuid.UUID, privateAddress string) error {
+	var networkID uuid.UUID
+	if err := db.NewSelect().TableExpr("applications AS application").
+		ColumnExpr("membership.private_network_id").
+		Join("JOIN environments AS environment ON environment.application_id = application.id AND environment.archived_at IS NULL").
+		Join("JOIN environment_networks AS membership ON membership.environment_id = environment.id AND membership.removed_at IS NULL").
+		Where("application.slug = ?", models.SystemApplicationSlug).Where("application.archived_at IS NULL").Limit(1).Scan(ctx, &networkID); err != nil {
+		return fmt.Errorf("load control-plane private network: %w", err)
+	}
+	count, err := db.NewSelect().Model((*models.ServerNetworkEntity)(nil)).Where("server_id = ?", serverID).
+		Where("private_network_id = ?", networkID).Where("removed_at IS NULL").Count(ctx)
+	if err != nil || count > 0 {
+		return err
+	}
+	now := sql.NullTime{Time: time.Now().UTC(), Valid: true}
+	configuration, err := json.Marshal(map[string]any{
+		"address": privateAddress, "cidr": WireGuardMeshCIDR, "interface": "wg0",
+	})
+	if err != nil {
+		return err
+	}
+	_, err = models.ServerNetwork.Create(ctx, db, models.CreateServerNetworkData{
+		Driver: "wireguard", ExternalID: sql.NullString{String: "wg0", Valid: true},
+		Configuration: configuration, State: "applied", AppliedAt: now, ObservedAt: now,
+		ServerID: serverID, PrivateNetworkID: networkID,
+	})
+	return err
 }
 
 func (service *NodeEnrollment) updateServer(ctx context.Context, db storage.Executor, server models.ServerEntity, configured bool) (models.ServerEntity, error) {
@@ -393,7 +425,7 @@ func (service *NodeEnrollment) manifest(ctx context.Context, detail NodeEnrollme
 	}
 	return nodeinstall.Manifest{
 		ManifestVersion: nodeinstall.ManifestVersion, ServerID: detail.Server.ID.String(), NodeName: detail.Server.Name,
-		PrivateAddress: detail.Enrollment.AllocatedAddress, ListenPort: 51820,
+		PrivateAddress: detail.Enrollment.AllocatedAddress, ListenPort: 51820, SSHPort: int(detail.Credential.Port),
 		ControlPlanePublicKey: control.PublicKey, ControlPlaneAddress: WireGuardPrivateAddress,
 		ControlPlaneEndpoint: control.Endpoint.String, SSHUserCAPublicKey: strings.TrimSpace(string(userCA)),
 		OTLPEndpoint: net.JoinHostPort(WireGuardPrivateAddress, "4318"),

@@ -26,6 +26,7 @@ type BuildpackConfigurationEntity struct {
 	Settings            json.RawMessage `bun:"settings,type:jsonb"`
 	EnvironmentSourceID uuid.UUID       `bun:"environment_source_id,type:uuid"`
 	RegistryResourceID  uuid.UUID       `bun:"registry_resource_id,type:uuid"`
+	ServerID            uuid.UUID       `bun:"server_id,type:uuid"`
 }
 
 func (e *BuildpackConfigurationEntity) Validate() error {
@@ -39,7 +40,7 @@ func (e *BuildpackConfigurationEntity) Validate() error {
 	if strings.TrimSpace(e.ImageRepository) == "" {
 		builder.Add("image_repository", "required", "image repository is required")
 	}
-	if e.EnvironmentSourceID == uuid.Nil || e.RegistryResourceID == uuid.Nil {
+	if e.EnvironmentSourceID == uuid.Nil || e.RegistryResourceID == uuid.Nil || e.ServerID == uuid.Nil {
 		builder.Add("environment_source_id", "required", "source and Registry Resource are required")
 	}
 	if len(e.Settings) == 0 || !json.Valid(e.Settings) {
@@ -93,6 +94,7 @@ type CreateBuildpackConfigurationData struct {
 	Settings            json.RawMessage
 	EnvironmentSourceID uuid.UUID
 	RegistryResourceID  uuid.UUID
+	ServerID            uuid.UUID
 }
 
 func (bc buildpackConfiguration) Create(
@@ -109,10 +111,14 @@ func (bc buildpackConfiguration) Create(
 		Settings:            data.Settings,
 		EnvironmentSourceID: data.EnvironmentSourceID,
 		RegistryResourceID:  data.RegistryResourceID,
+		ServerID:            data.ServerID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
 		return BuildpackConfigurationEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if _, err := RequireServerCapability(ctx, db, entity.ServerID, ServerCapabilityBuild); err != nil {
+		return BuildpackConfigurationEntity{}, err
 	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
@@ -131,6 +137,7 @@ type UpdateBuildpackConfigurationData struct {
 	Settings            json.RawMessage
 	EnvironmentSourceID uuid.UUID
 	RegistryResourceID  uuid.UUID
+	ServerID            uuid.UUID
 }
 
 func (bc buildpackConfiguration) Update(
@@ -147,10 +154,14 @@ func (bc buildpackConfiguration) Update(
 		Settings:            data.Settings,
 		EnvironmentSourceID: data.EnvironmentSourceID,
 		RegistryResourceID:  data.RegistryResourceID,
+		ServerID:            data.ServerID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
 		return BuildpackConfigurationEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if _, err := RequireServerCapability(ctx, db, entity.ServerID, ServerCapabilityBuild); err != nil {
+		return BuildpackConfigurationEntity{}, err
 	}
 
 	if err := db.NewUpdate().
@@ -162,6 +173,7 @@ func (bc buildpackConfiguration) Update(
 		Column("settings").
 		Column("environment_source_id").
 		Column("registry_resource_id").
+		Column("server_id").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	containerclient "deploycrate-ce/clients/container"
-	registryclient "deploycrate-ce/clients/registry"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
 	"deploycrate-ce/telemetry"
@@ -47,12 +46,11 @@ type DeploymentExecution struct {
 	secrets   *EnvironmentSecrets
 	builds    *BuildExecution
 	caddy     CaddyRouteService
-	container containerclient.WorkloadClient
-	registry  registryclient.Client
+	workloads *WorkloadExecution
 }
 
-func NewDeploymentExecution(db storage.Pool, secrets *EnvironmentSecrets, builds *BuildExecution, caddy CaddyRouteService) *DeploymentExecution {
-	return &DeploymentExecution{db: db, secrets: secrets, builds: builds, caddy: caddy, container: containerclient.NewWorkload(), registry: registryclient.New()}
+func NewDeploymentExecution(db storage.Pool, secrets *EnvironmentSecrets, builds *BuildExecution, caddy CaddyRouteService, workloads *WorkloadExecution) *DeploymentExecution {
+	return &DeploymentExecution{db: db, secrets: secrets, builds: builds, caddy: caddy, workloads: workloads}
 }
 
 func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uuid.UUID) error {
@@ -93,7 +91,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	if err != nil {
 		return fail(fmt.Errorf("resolve exact Environment revision secrets: %w", err))
 	}
-	networkName, err := service.container.ReconcileNetwork(ctx, scope.Environment.ID)
+	networkName, err := service.workloads.ReconcileNetwork(ctx, scope.Target.ServerID, scope.Environment.ID)
 	if err != nil {
 		return err
 	}
@@ -102,7 +100,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		return fail(err)
 	}
 	for _, attachment := range resourceAttachments {
-		if err := service.container.ConnectResourceContainer(ctx, scope.Environment.ID, attachment); err != nil {
+		if err := service.workloads.ConnectResourceContainer(ctx, scope.Target.ServerID, scope.Environment.ID, attachment); err != nil {
 			return fail(err)
 		}
 	}
@@ -113,15 +111,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	if err != nil {
 		return err
 	}
-	authentication, err := service.registry.Authenticate(ctx, credentials)
-	if err != nil {
-		return err
-	}
-	defer authentication.Close()
-	if err := service.registry.Pull(ctx, authentication, scope.Release.ArtifactReference); err != nil {
-		return err
-	}
-	candidate, err := service.container.Find(ctx, scope.Deployment.ID, scope.Instance.ID)
+	candidate, err := service.workloads.Find(ctx, scope.Target.ServerID, scope.Deployment.ID, scope.Instance.ID)
 	if err != nil {
 		return err
 	}
@@ -130,21 +120,21 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 			return fail(err)
 		}
 	} else {
-		candidate, err = service.container.Run(ctx, containerclient.WorkloadRunSpec{
+		candidate, err = service.workloads.Run(ctx, scope.Target.ServerID, containerclient.WorkloadRunSpec{
 			ApplicationID: scope.ApplicationID, EnvironmentID: scope.Environment.ID, DeploymentID: scope.Deployment.ID,
 			InstanceID: scope.Instance.ID, ReleaseID: scope.Release.ID,
 			ContainerName:  "dc-app-" + scope.Environment.ID.String() + "-" + scope.Deployment.ID.String(),
 			ImageReference: scope.Release.ArtifactReference, NetworkName: networkName, RestartPolicy: "unless-stopped",
-			ContainerPort: scope.State.Runtime.ContainerPort, Environment: environment, DockerEnvironment: authentication.Environment(),
-		})
+			ContainerPort: scope.State.Runtime.ContainerPort, Environment: environment,
+		}, credentials)
 		if err != nil {
 			return err
 		}
 	}
-	if candidate.HostPort == 0 {
-		return fail(errors.New("candidate workload did not publish its loopback port"))
+	if candidate.HostAddress == "" || candidate.HostPort == 0 {
+		return fail(errors.New("candidate workload did not publish its target address and port"))
 	}
-	encodedPorts, _ := json.Marshal(map[string]int32{"http": candidate.HostPort})
+	encodedPorts, _ := json.Marshal(map[string]any{"host": candidate.HostAddress, "http": candidate.HostPort})
 	ports := json.RawMessage(encodedPorts)
 	instanceState := "running"
 	if !candidate.Running {
@@ -166,10 +156,10 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		return err
 	}
 	if !candidate.Running {
-		return fail(errors.New("candidate workload exited after publishing its loopback port"))
+		return fail(errors.New("candidate workload exited after publishing its target port"))
 	}
-	if err := waitForWorkloadHealth(ctx, candidate.HostPort, scope.State.Runtime.HealthPath); err != nil {
-		_ = service.container.Remove(context.WithoutCancel(ctx), scope.Deployment.ID, scope.Instance.ID)
+	if err := waitForWorkloadHealth(ctx, candidate.HostAddress, candidate.HostPort, scope.State.Runtime.HealthPath); err != nil {
+		_ = service.workloads.Remove(context.WithoutCancel(ctx), scope.Target.ServerID, scope.Deployment.ID, scope.Instance.ID)
 		return fail(err)
 	}
 	if err := service.advance(ctx, deploymentID, "traffic_switch"); err != nil {
@@ -200,7 +190,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 			if fallback != uuid.Nil {
 				rollback[fallback] = 100
 				_ = service.caddy.SwitchTraffic(context.WithoutCancel(ctx), route.ID, previousRelease(previous, fallback), rollback)
-				if service.container.Remove(context.WithoutCancel(ctx), scope.Deployment.ID, scope.Instance.ID) == nil {
+				if service.workloads.Remove(context.WithoutCancel(ctx), scope.Target.ServerID, scope.Deployment.ID, scope.Instance.ID) == nil {
 					_ = service.caddy.RemoveBackend(context.WithoutCancel(ctx), route.ID, scope.Instance.ID)
 				}
 			}
@@ -211,7 +201,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		return err
 	}
 	for _, old := range previous {
-		if err := service.container.Remove(ctx, old.DeploymentID, old.ID); err != nil {
+		if err := service.workloads.Remove(ctx, scope.Target.ServerID, old.DeploymentID, old.ID); err != nil {
 			_ = service.recordEvent(ctx, deploymentID, "cleanup", "warning", "previous container cleanup will be retried", err)
 			continue
 		}
@@ -222,10 +212,10 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		now := time.Now().UTC()
 		_, _ = service.db.Executor().NewUpdate().TableExpr("instances").Set("state = 'removed'").Set("removed_at = ?", now).Set("updated_at = ?", now).Where("id = ?", old.ID).Exec(ctx)
 	}
-	if err := cleanupUnroutedWorkloadInstances(ctx, service.db, service.container, scope.Target.ID); err != nil {
+	if err := cleanupUnroutedWorkloadInstances(ctx, service.db, service.workloads, scope.Target.ID); err != nil {
 		_ = service.recordEvent(ctx, deploymentID, "cleanup", "warning", "stale candidate cleanup will be retried", err)
 	}
-	if err := service.container.PruneResourceContainers(ctx, scope.Environment.ID, resourceAttachments); err != nil {
+	if err := service.workloads.PruneResourceContainers(ctx, scope.Target.ServerID, scope.Environment.ID, resourceAttachments); err != nil {
 		_ = service.recordEvent(ctx, deploymentID, "cleanup", "warning", "stale Resource network access cleanup will be retried", err)
 	}
 	return nil
@@ -470,13 +460,13 @@ func validateCandidateOwnership(candidate containerclient.WorkloadState, scope d
 	return nil
 }
 
-func waitForWorkloadHealth(ctx context.Context, port int32, healthPath string) error {
+func waitForWorkloadHealth(ctx context.Context, host string, port int32, healthPath string) error {
 	deadline := time.NewTimer(90 * time.Second)
 	defer deadline.Stop()
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
 	check := func() bool {
-		address := net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port)))
+		address := net.JoinHostPort(host, strconv.Itoa(int(port)))
 		if healthPath == "" {
 			connection, err := net.DialTimeout("tcp", address, time.Second)
 			if err == nil {

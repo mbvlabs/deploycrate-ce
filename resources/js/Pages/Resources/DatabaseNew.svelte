@@ -8,7 +8,7 @@
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
-  type Options = { servers: Array<{ id: string; name: string; address: string }>; networks: Array<{ id: string; name: string }> }
+  type Options = { servers: Array<{ id: string; name: string; kind: string; address: string }>; networks: Array<{ id: string; name: string }> }
   let { auth, options }: { auth: { email: string }; options: Options } = $props()
   const selectClass = 'h-9 w-full border border-input bg-background px-3 text-sm'
   const form = useForm(() => ({
@@ -18,6 +18,12 @@
     placement: { serverId: '', nodeName: 'primary', storageName: 'Database data', storageDriver: 'docker', storageId: '', dataPath: '/var/lib/postgresql/data', imageReference: 'postgres:17-alpine', imageDigest: '', containerName: '', restartPolicy: 'unless-stopped', packageName: 'postgresql-17', packageVersion: '', serviceName: 'postgresql', configPath: '/etc/postgresql/17/main/conf.d/deploycrate.conf' },
     database: { name: '', encoding: 'UTF8', collation: '', applicationUsername: '', applicationPassword: '', resourceName: '', resourceSlug: '', sharingScope: 'environment' },
   }))
+  const selectedServer = $derived(options.servers.find((server) => server.id === $form.placement.serverId))
+
+  function selectServer(serverId: string) {
+    $form.placement.serverId = serverId
+    if (options.servers.find((server) => server.id === serverId)?.kind === 'worker') $form.desiredInstallationMethod = 'docker'
+  }
 
   function submit(event: SubmitEvent) {
     event.preventDefault()
@@ -95,12 +101,12 @@
         <FormField label="Installation method" error={$form.errors.desiredInstallationMethod}>
           <select class={selectClass} bind:value={$form.desiredInstallationMethod} required>
             <option value="docker">Docker</option>
-            <option value="native">Native package</option>
+            <option value="native" disabled={selectedServer?.kind === 'worker'}>Native package</option>
           </select>
         </FormField>
         <div class="sm:col-span-2">
           <FormField label="Server" error={$form.errors['placement.serverId']}>
-            <select class={selectClass} bind:value={$form.placement.serverId} required>
+            <select class={selectClass} value={$form.placement.serverId} onchange={(event) => selectServer(event.currentTarget.value)} required>
               <option value="">Select a Server</option>
               {#each options.servers as server}<option value={server.id}>{server.name} · {server.address}</option>{/each}
             </select>

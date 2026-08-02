@@ -193,35 +193,47 @@ func boundedCommandOutput(output []byte) string {
 }
 
 func PinnedBuilder() (string, error) {
-	switch runtime.GOARCH {
+	return PinnedBuilderForArchitecture(runtime.GOARCH)
+}
+
+func PinnedBuilderForArchitecture(architecture string) (string, error) {
+	switch architecture {
 	case "amd64":
 		return NobleBuilderAMD64, nil
 	case "arm64":
 		return NobleBuilderARM64, nil
 	default:
-		return "", fmt.Errorf("Go Buildpacks are not approved for host architecture %s", runtime.GOARCH)
+		return "", fmt.Errorf("Go Buildpacks are not approved for host architecture %s", architecture)
 	}
 }
 
 func PinnedGoBuildpack() (string, error) {
-	switch runtime.GOARCH {
+	return PinnedGoBuildpackForArchitecture(runtime.GOARCH)
+}
+
+func PinnedGoBuildpackForArchitecture(architecture string) (string, error) {
+	switch architecture {
 	case "amd64":
 		return GoBuildpackAMD64, nil
 	case "arm64":
 		return GoBuildpackARM64, nil
 	default:
-		return "", fmt.Errorf("Go Buildpacks are not approved for host architecture %s", runtime.GOARCH)
+		return "", fmt.Errorf("Go Buildpacks are not approved for host architecture %s", architecture)
 	}
 }
 
 func PinnedRunImage() (string, error) {
-	switch runtime.GOARCH {
+	return PinnedRunImageForArchitecture(runtime.GOARCH)
+}
+
+func PinnedRunImageForArchitecture(architecture string) (string, error) {
+	switch architecture {
 	case "amd64":
 		return NobleRunImageAMD64, nil
 	case "arm64":
 		return NobleRunImageARM64, nil
 	default:
-		return "", fmt.Errorf("Go Buildpacks are not approved for host architecture %s", runtime.GOARCH)
+		return "", fmt.Errorf("Go Buildpacks are not approved for host architecture %s", architecture)
 	}
 }
 

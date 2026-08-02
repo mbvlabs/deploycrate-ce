@@ -6,6 +6,7 @@ set -euo pipefail
 : "${DEPLOYCRATE_NODE_NAME_YAML:?DEPLOYCRATE_NODE_NAME_YAML is required}"
 : "${DEPLOYCRATE_PRIVATE_ADDRESS:?DEPLOYCRATE_PRIVATE_ADDRESS is required}"
 : "${DEPLOYCRATE_WIREGUARD_PORT:?DEPLOYCRATE_WIREGUARD_PORT is required}"
+: "${DEPLOYCRATE_SSH_PORT:?DEPLOYCRATE_SSH_PORT is required}"
 : "${DEPLOYCRATE_CONTROL_PUBLIC_KEY:?DEPLOYCRATE_CONTROL_PUBLIC_KEY is required}"
 : "${DEPLOYCRATE_CONTROL_ADDRESS:?DEPLOYCRATE_CONTROL_ADDRESS is required}"
 : "${DEPLOYCRATE_CONTROL_ENDPOINT:?DEPLOYCRATE_CONTROL_ENDPOINT is required}"
@@ -24,6 +25,40 @@ set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq ca-certificates curl docker.io openssh-server openssl sudo tar ufw wireguard-tools
+
+install -d -m 0755 /etc/systemd/journald.conf.d
+install -d -m 2755 /var/log/journal
+cat > /etc/systemd/journald.conf.d/deploycrate-node.conf <<'EOF'
+[Journal]
+Storage=persistent
+Compress=yes
+SystemMaxUse=1G
+SystemKeepFree=1G
+RuntimeMaxUse=256M
+RuntimeKeepFree=256M
+MaxRetentionSec=14day
+EOF
+systemctl restart systemd-journald
+
+install -d -m 0755 /etc/docker
+cat > /etc/docker/daemon.json <<'EOF'
+{
+  "log-driver": "journald",
+  "log-opts": {
+    "tag": "{{.Name}}",
+    "labels": "com.deploycrate.application,com.deploycrate.environment,com.deploycrate.deployment,com.deploycrate.instance,com.deploycrate.release,com.deploycrate.resource-installation,com.deploycrate.component"
+  },
+  "live-restore": true
+}
+EOF
+install -d -m 0755 /etc/systemd/system/docker.service.d
+cat > /etc/systemd/system/docker.service.d/deploycrate-node-accounting.conf <<'EOF'
+[Service]
+CPUAccounting=yes
+MemoryAccounting=yes
+IOAccounting=yes
+TasksAccounting=yes
+EOF
 
 if ! id admin >/dev/null 2>&1; then
   useradd --create-home --shell /bin/bash admin
@@ -190,12 +225,14 @@ WantedBy=multi-user.target
 EOF
 
 ufw allow "${DEPLOYCRATE_WIREGUARD_PORT}/udp"
-ufw allow OpenSSH
+ufw allow "${DEPLOYCRATE_SSH_PORT}/tcp"
 ufw allow in on wg0 to "${DEPLOYCRATE_PRIVATE_ADDRESS}" port 9100 proto tcp
 ufw allow in on wg0 to "${DEPLOYCRATE_PRIVATE_ADDRESS}" port 9101 proto tcp
 ufw --force enable
 systemctl daemon-reload
-systemctl enable --now docker.service node-exporter.service cadvisor.service otelcol-contrib.service
+systemctl enable docker.service node-exporter.service cadvisor.service otelcol-contrib.service
+systemctl restart docker.service
+systemctl start node-exporter.service cadvisor.service otelcol-contrib.service
 usermod --append --groups docker deploycrate
 
 if [ "${DEPLOYCRATE_CAPABILITY_RUNTIME}" = "true" ]; then
@@ -234,5 +271,6 @@ for attempt in $(seq 1 30); do
 done
 
 ssh_host_public_key="$(cat /etc/ssh/ssh_host_ed25519_key.pub)"
+rm -f /usr/local/bin/bootstrap
 printf '{"wireguard_public_key":"%s","ssh_host_public_key":"%s","operating_system":"linux","distribution":"%s","distribution_version":"%s","architecture":"%s"}\n' \
   "${wireguard_public_key}" "${ssh_host_public_key}" "${ID}" "${VERSION_ID}" "${architecture}"

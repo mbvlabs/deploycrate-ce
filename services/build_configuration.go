@@ -23,6 +23,7 @@ type buildSnapshot struct {
 	RegistryEndpoint           string          `json:"registry_endpoint"`
 	Settings                   json.RawMessage `json:"settings"`
 	BPGOTargets                string          `json:"bp_go_targets"`
+	ServerID                   uuid.UUID       `json:"server_id"`
 	parsedSettings             models.BuildpackSettings
 }
 

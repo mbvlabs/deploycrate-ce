@@ -98,6 +98,7 @@ func applicationSetupOptionsProps(options services.ApplicationSetupOptions) map[
 		"installations": options.Installations,
 		"repositories":  options.Repositories,
 		"registries":    registries,
+		"buildServers":  options.BuildServers,
 	}
 }
 
@@ -116,6 +117,7 @@ type applicationSetupPayload struct {
 	BuildpackSettings    json.RawMessage `json:"buildpackSettings"`
 	RegistryResourceID   string          `json:"registryResourceId"`
 	ImageRepository      string          `json:"imageRepository"`
+	BuildServerID        string          `json:"buildServerId"`
 }
 
 func (payload applicationSetupPayload) serviceData() (services.ApplicationSetupData, error) {
@@ -131,7 +133,11 @@ func (payload applicationSetupPayload) serviceData() (services.ApplicationSetupD
 	if err != nil {
 		return services.ApplicationSetupData{}, err
 	}
-	return services.ApplicationSetupData{ApplicationName: payload.ApplicationName, ApplicationSlug: payload.ApplicationSlug, EnvironmentName: payload.EnvironmentName, EnvironmentSlug: payload.EnvironmentSlug, EnvironmentKind: payload.EnvironmentKind, GitHubInstallationID: installationID, GitHubRepositoryID: repositoryID, Reference: payload.Reference, AutoBuild: payload.AutoBuild, ContextPath: payload.ContextPath, BuilderReference: payload.BuilderReference, BuildpackSettings: payload.BuildpackSettings, RegistryResourceID: registryID, ImageRepository: payload.ImageRepository}, nil
+	buildServerID, err := uuid.Parse(payload.BuildServerID)
+	if err != nil {
+		return services.ApplicationSetupData{}, err
+	}
+	return services.ApplicationSetupData{ApplicationName: payload.ApplicationName, ApplicationSlug: payload.ApplicationSlug, EnvironmentName: payload.EnvironmentName, EnvironmentSlug: payload.EnvironmentSlug, EnvironmentKind: payload.EnvironmentKind, GitHubInstallationID: installationID, GitHubRepositoryID: repositoryID, Reference: payload.Reference, AutoBuild: payload.AutoBuild, ContextPath: payload.ContextPath, BuilderReference: payload.BuilderReference, BuildpackSettings: payload.BuildpackSettings, RegistryResourceID: registryID, ImageRepository: payload.ImageRepository, BuildServerID: buildServerID}, nil
 }
 
 func (controller Applications) Create(etx *echo.Context) error {

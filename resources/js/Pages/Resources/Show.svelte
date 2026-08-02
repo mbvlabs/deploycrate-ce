@@ -444,7 +444,7 @@
               <DataField label="Observed" value={observedLabel(item.observedAt)} />
             </div>
             {#if item.healthReason}<p class="mt-4 border-l-2 border-border pl-3 text-xs text-muted-foreground">{item.healthReason}</p>{/if}
-            {#if !item.canControl}<p class="mt-4 text-xs text-muted-foreground">Container controls are unavailable because this Server does not have a connected Resource container executor.</p>{/if}
+            {#if !item.canControl}<p class="mt-4 text-xs text-muted-foreground">Container controls are unavailable because the selected Server cannot currently be reached.</p>{/if}
           </article>
         {/each}
       </Card.Content>

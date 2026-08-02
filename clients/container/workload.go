@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
@@ -23,6 +25,11 @@ const (
 	labelRelease              = "com.deploycrate.release"
 	labelNetworkOwner         = "com.deploycrate.environment"
 	labelResourceInstallation = "com.deploycrate.resource-installation"
+	WorkloadLabelEnvironment  = labelEnvironment
+	WorkloadLabelDeployment   = labelDeployment
+	WorkloadLabelInstance     = labelInstance
+	WorkloadLabelResource     = labelResourceInstallation
+	WorkloadLabelNetworkOwner = labelNetworkOwner
 )
 
 type WorkloadRunSpec struct {
@@ -35,6 +42,7 @@ type WorkloadRunSpec struct {
 	ImageReference    string
 	NetworkName       string
 	RestartPolicy     string
+	PublishAddress    string
 	ContainerPort     int32
 	Environment       map[string]string
 	Command           []string
@@ -49,6 +57,7 @@ type WorkloadState struct {
 	ImageID        string
 	Running        bool
 	Status         string
+	HostAddress    string
 	HostPort       int32
 	Labels         map[string]string
 }
@@ -56,6 +65,11 @@ type WorkloadState struct {
 type ResourceContainerAttachment struct {
 	InstallationID uuid.UUID
 	ContainerName  string
+}
+
+type PreparedWorkloadRun struct {
+	Arguments   []string
+	Environment []string
 }
 
 type WorkloadClient struct{}
@@ -201,13 +215,33 @@ func (WorkloadClient) Find(ctx context.Context, deploymentID, instanceID uuid.UU
 }
 
 func (WorkloadClient) Run(ctx context.Context, spec WorkloadRunSpec) (WorkloadState, error) {
+	if existing, err := (WorkloadClient{}).Find(ctx, spec.DeploymentID, spec.InstanceID); err != nil || existing.Exists {
+		return existing, err
+	}
+	prepared, err := PrepareWorkloadRun(spec)
+	if err != nil {
+		return WorkloadState{}, err
+	}
+	command := sudo.CommandContextPreserveEnvironment(ctx, workloadDockerExecutable, prepared.Arguments...)
+	command.Env = prepared.Environment
+	if output, err := command.CombinedOutput(); err != nil {
+		return WorkloadState{}, fmt.Errorf("run workload container: %w: %s", err, boundedDockerMessage(output))
+	}
+	return (WorkloadClient{}).Find(ctx, spec.DeploymentID, spec.InstanceID)
+}
+
+func PrepareWorkloadRun(spec WorkloadRunSpec) (PreparedWorkloadRun, error) {
+	publishAddress := strings.TrimSpace(spec.PublishAddress)
+	if publishAddress == "" {
+		publishAddress = "127.0.0.1"
+	}
+	if !validWorkloadPublishAddress(publishAddress) {
+		return PreparedWorkloadRun{}, errors.New("workload publish address is invalid")
+	}
 	if spec.ApplicationID == uuid.Nil || spec.EnvironmentID == uuid.Nil || spec.DeploymentID == uuid.Nil ||
 		spec.InstanceID == uuid.Nil || spec.ReleaseID == uuid.Nil || spec.ContainerPort < 1 || spec.ContainerPort > 65535 ||
 		!strings.Contains(spec.ImageReference, "@sha256:") || spec.RestartPolicy != "unless-stopped" {
-		return WorkloadState{}, errors.New("workload Docker specification is invalid")
-	}
-	if existing, err := (WorkloadClient{}).Find(ctx, spec.DeploymentID, spec.InstanceID); err != nil || existing.Exists {
-		return existing, err
+		return PreparedWorkloadRun{}, errors.New("workload Docker specification is invalid")
 	}
 	arguments := []string{"run", "--detach", "--name", spec.ContainerName,
 		"--label", labelApplication + "=" + spec.ApplicationID.String(),
@@ -216,11 +250,11 @@ func (WorkloadClient) Run(ctx context.Context, spec WorkloadRunSpec) (WorkloadSt
 		"--label", labelInstance + "=" + spec.InstanceID.String(),
 		"--label", labelRelease + "=" + spec.ReleaseID.String(),
 		"--network", spec.NetworkName, "--restart", spec.RestartPolicy,
-		"--publish", "127.0.0.1::" + strconv.Itoa(int(spec.ContainerPort))}
+		"--publish", net.JoinHostPort(publishAddress, "") + ":" + strconv.Itoa(int(spec.ContainerPort))}
 	keys := make([]string, 0, len(spec.Environment))
 	for key := range spec.Environment {
 		if key == "" || strings.ContainsAny(key, "=\x00") {
-			return WorkloadState{}, errors.New("workload environment contains an invalid key")
+			return PreparedWorkloadRun{}, errors.New("workload environment contains an invalid key")
 		}
 		keys = append(keys, key)
 	}
@@ -230,17 +264,15 @@ func (WorkloadClient) Run(ctx context.Context, spec WorkloadRunSpec) (WorkloadSt
 		childEnvironment = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
 	}
 	for _, key := range keys {
+		if strings.ContainsRune(spec.Environment[key], '\x00') {
+			return PreparedWorkloadRun{}, errors.New("workload environment contains an invalid value")
+		}
 		arguments = append(arguments, "--env", key)
 		childEnvironment = append(childEnvironment, key+"="+spec.Environment[key])
 	}
 	arguments = append(arguments, spec.ImageReference)
 	arguments = append(arguments, spec.Command...)
-	command := sudo.CommandContextPreserveEnvironment(ctx, workloadDockerExecutable, arguments...)
-	command.Env = childEnvironment
-	if output, err := command.CombinedOutput(); err != nil {
-		return WorkloadState{}, fmt.Errorf("run workload container: %w: %s", err, boundedDockerMessage(output))
-	}
-	return (WorkloadClient{}).Find(ctx, spec.DeploymentID, spec.InstanceID)
+	return PreparedWorkloadRun{Arguments: arguments, Environment: childEnvironment}, nil
 }
 
 func inspectWorkload(ctx context.Context, identifier string) (WorkloadState, error) {
@@ -249,6 +281,10 @@ func inspectWorkload(ctx context.Context, identifier string) (WorkloadState, err
 	if err != nil {
 		return WorkloadState{}, fmt.Errorf("inspect workload container: %w: %s", err, boundedDockerMessage(output))
 	}
+	return ParseWorkloadInspect(output)
+}
+
+func ParseWorkloadInspect(output []byte) (WorkloadState, error) {
 	var values []struct {
 		ID     string `json:"Id"`
 		Name   string `json:"Name"`
@@ -275,16 +311,38 @@ func inspectWorkload(ctx context.Context, identifier string) (WorkloadState, err
 	state := WorkloadState{Exists: true, ID: value.ID, Name: strings.TrimPrefix(value.Name, "/"), ImageReference: value.Config.Image, ImageID: value.Image, Running: value.State.Running, Status: value.State.Status, Labels: value.Config.Labels}
 	for _, bindings := range value.NetworkSettings.Ports {
 		for _, binding := range bindings {
-			if binding.HostIP != "127.0.0.1" {
+			if !validWorkloadPublishAddress(binding.HostIP) {
 				continue
 			}
 			port, parseErr := strconv.Atoi(binding.HostPort)
 			if parseErr == nil && port > 0 && port <= 65535 {
+				state.HostAddress = binding.HostIP
 				state.HostPort = int32(port)
 			}
 		}
 	}
 	return state, nil
+}
+
+func (WorkloadClient) FindEnvironment(ctx context.Context, environmentID uuid.UUID) ([]WorkloadState, error) {
+	if environmentID == uuid.Nil {
+		return nil, errors.New("Environment is required")
+	}
+	command := sudo.CommandContext(ctx, workloadDockerExecutable, "ps", "--all", "--quiet", "--filter", "label="+labelEnvironment+"="+environmentID.String())
+	output, err := command.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("find Environment workload containers: %w: %s", err, boundedDockerMessage(output))
+	}
+	identifiers := strings.Fields(string(output))
+	states := make([]WorkloadState, 0, len(identifiers))
+	for _, identifier := range identifiers {
+		state, inspectErr := inspectWorkload(ctx, identifier)
+		if inspectErr != nil {
+			return nil, inspectErr
+		}
+		states = append(states, state)
+	}
+	return states, nil
 }
 
 func (WorkloadClient) Remove(ctx context.Context, deploymentID, instanceID uuid.UUID) error {
@@ -348,4 +406,12 @@ func boundedDockerMessage(output []byte) string {
 		message = message[:2048]
 	}
 	return message
+}
+
+func validWorkloadPublishAddress(value string) bool {
+	address, err := netip.ParseAddr(strings.TrimSpace(value))
+	if err != nil || !address.Is4() {
+		return false
+	}
+	return address.IsLoopback() || netip.MustParsePrefix("10.99.0.0/16").Contains(address)
 }

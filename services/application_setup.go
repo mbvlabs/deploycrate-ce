@@ -30,6 +30,7 @@ type ApplicationSetupData struct {
 	BuildpackSettings    json.RawMessage
 	RegistryResourceID   uuid.UUID
 	ImageRepository      string
+	BuildServerID        uuid.UUID
 }
 
 type ApplicationSetupResult struct {
@@ -42,6 +43,14 @@ type ApplicationSetupOptions struct {
 	Installations []GitHubInstallationSummary     `json:"installations"`
 	Repositories  []models.GitHubRepositoryEntity `json:"repositories"`
 	Registries    []RegistryResourceOption        `json:"registries"`
+	BuildServers  []ApplicationBuildServerOption  `json:"buildServers"`
+}
+
+type ApplicationBuildServerOption struct {
+	ID      uuid.UUID `json:"id" bun:"id"`
+	Name    string    `json:"name" bun:"name"`
+	Kind    string    `json:"kind" bun:"kind"`
+	Address string    `json:"address" bun:"address"`
 }
 
 type RegistryResourceOption struct {
@@ -85,6 +94,8 @@ type ApplicationDetails struct {
 	ImageRepository         string          `json:"imageRepository" bun:"image_repository"`
 	RegistryName            string          `json:"registryName" bun:"registry_name"`
 	RegistryID              uuid.UUID       `json:"registryId" bun:"registry_id"`
+	BuildServerID           uuid.UUID       `json:"buildServerId" bun:"build_server_id"`
+	BuildServerName         string          `json:"buildServerName" bun:"build_server_name"`
 	LatestRevision          sql.NullString  `json:"latestRevision" bun:"latest_revision"`
 	LatestDeliveryStatus    sql.NullString  `json:"latestDeliveryStatus" bun:"latest_delivery_status"`
 	LatestBuildStatus       sql.NullString  `json:"latestBuildStatus" bun:"latest_build_status"`
@@ -155,7 +166,7 @@ func (service *ApplicationSetup) Create(ctx context.Context, data ApplicationSet
 		return ApplicationSetupResult{}, err
 	}
 	builderReference := sql.NullString{String: strings.TrimSpace(data.BuilderReference), Valid: strings.TrimSpace(data.BuilderReference) != ""}
-	if _, err := models.BuildpackConfiguration.Create(ctx, tx, models.CreateBuildpackConfigurationData{ContextPath: data.ContextPath, BuilderReference: builderReference, ImageRepository: data.ImageRepository, Settings: data.BuildpackSettings, EnvironmentSourceID: source.ID, RegistryResourceID: data.RegistryResourceID}); err != nil {
+	if _, err := models.BuildpackConfiguration.Create(ctx, tx, models.CreateBuildpackConfigurationData{ContextPath: data.ContextPath, BuilderReference: builderReference, ImageRepository: data.ImageRepository, Settings: data.BuildpackSettings, EnvironmentSourceID: source.ID, RegistryResourceID: data.RegistryResourceID, ServerID: data.BuildServerID}); err != nil {
 		return ApplicationSetupResult{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -172,7 +183,7 @@ func (service *ApplicationSetup) Options(ctx context.Context) (ApplicationSetupO
 	}
 	app, err := models.GitHubApp.ActiveByInstance(ctx, service.db.Executor(), instanceID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return ApplicationSetupOptions{Installations: []GitHubInstallationSummary{}, Repositories: []models.GitHubRepositoryEntity{}, Registries: []RegistryResourceOption{}}, nil
+		return ApplicationSetupOptions{Installations: []GitHubInstallationSummary{}, Repositories: []models.GitHubRepositoryEntity{}, Registries: []RegistryResourceOption{}, BuildServers: []ApplicationBuildServerOption{}}, nil
 	}
 	if err != nil {
 		return ApplicationSetupOptions{}, err
@@ -198,7 +209,16 @@ func (service *ApplicationSetup) Options(ctx context.Context) (ApplicationSetupO
 	if err := service.db.Executor().NewSelect().TableExpr("registry_resources AS registry").ColumnExpr("resource.id, resource.name").ColumnExpr("CASE WHEN endpoint.port IN (80, 443) THEN endpoint.address ELSE endpoint.address || ':' || endpoint.port::text END AS endpoint").Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.archived_at IS NULL").Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = resource.id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL").Where("EXISTS (SELECT 1 FROM resource_credentials credential WHERE credential.resource_id = resource.id AND credential.archived_at IS NULL)").OrderExpr("resource.name ASC").Scan(ctx, &registries); err != nil {
 		return ApplicationSetupOptions{}, err
 	}
-	return ApplicationSetupOptions{Installations: summaries, Repositories: repositories, Registries: registries}, nil
+	buildServers := make([]ApplicationBuildServerOption, 0)
+	if err := service.db.Executor().NewSelect().TableExpr("servers AS server").
+		ColumnExpr("server.id, server.name, server.kind, server.address").
+		Where("server.archived_at IS NULL").Where("server.is_configured = TRUE").
+		Where("server.kind IN ('self_hosted', 'worker')").
+		Where("server.capabilities @> '{\"build\":true}'::jsonb").
+		OrderExpr("CASE WHEN server.kind = 'self_hosted' THEN 0 ELSE 1 END, server.name").Scan(ctx, &buildServers); err != nil {
+		return ApplicationSetupOptions{}, err
+	}
+	return ApplicationSetupOptions{Installations: summaries, Repositories: repositories, Registries: registries, BuildServers: buildServers}, nil
 }
 
 func (service *ApplicationSetup) List(ctx context.Context) ([]ApplicationListItem, error) {
@@ -248,6 +268,7 @@ func (service *ApplicationSetup) details(
 		ColumnExpr("repository.id AS repository_id").ColumnExpr("repository.full_name AS repository_full_name").ColumnExpr("repository.removed_at AS repository_removed_at").
 		ColumnExpr("installation.id AS installation_id").ColumnExpr("installation.account_login AS installation_account").ColumnExpr("installation.suspended_at AS installation_suspended_at").
 		ColumnExpr("buildpack.context_path").ColumnExpr("buildpack.builder_reference").ColumnExpr("buildpack.settings AS buildpack_settings").ColumnExpr("buildpack.image_repository").
+		ColumnExpr("build_server.id AS build_server_id, build_server.name AS build_server_name").
 		ColumnExpr("registry_resource.id AS registry_id").ColumnExpr("registry_resource.name AS registry_name").
 		ColumnExpr("(SELECT event.source_revision FROM source_events AS event WHERE event.environment_source_id = source.id ORDER BY event.received_at DESC LIMIT 1) AS latest_revision").
 		ColumnExpr("(SELECT delivery.status FROM github_webhook_deliveries AS delivery WHERE delivery.repository_external_id = repository.external_id ORDER BY delivery.received_at DESC LIMIT 1) AS latest_delivery_status").
@@ -255,7 +276,7 @@ func (service *ApplicationSetup) details(
 		Join("JOIN environments AS environment ON environment.application_id = application.id AND environment.archived_at IS NULL").
 		Join("JOIN environment_sources AS source ON source.environment_id = environment.id AND source.archived_at IS NULL").
 		Join("JOIN github_environment_sources AS binding ON binding.environment_source_id = source.id").Join("JOIN github_repositories AS repository ON repository.id = binding.github_repository_id").Join("JOIN github_installations AS installation ON installation.id = repository.github_installation_id").
-		Join("JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = source.id").Join("JOIN registry_resources AS registry ON registry.resource_id = buildpack.registry_resource_id").Join("JOIN resources AS registry_resource ON registry_resource.id = registry.resource_id").
+		Join("JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = source.id").Join("JOIN servers AS build_server ON build_server.id = buildpack.server_id").Join("JOIN registry_resources AS registry ON registry.resource_id = buildpack.registry_resource_id").Join("JOIN resources AS registry_resource ON registry_resource.id = registry.resource_id").
 		Where("application.id = ?", applicationID).Where("application.archived_at IS NULL").Where("application.slug <> ?", models.SystemApplicationSlug)
 	if environmentID != nil {
 		query = query.Where("environment.id = ?", *environmentID)
@@ -349,7 +370,7 @@ func (service *ApplicationSetup) updateSource(
 	if err := tx.NewSelect().Model(&buildpack).Where("environment_source_id = ?", source.ID).Scan(ctx); err != nil {
 		return err
 	}
-	_, err = models.BuildpackConfiguration.Update(ctx, tx, models.UpdateBuildpackConfigurationData{ID: buildpack.ID, ContextPath: data.ContextPath, BuilderReference: sql.NullString{String: strings.TrimSpace(data.BuilderReference), Valid: strings.TrimSpace(data.BuilderReference) != ""}, ImageRepository: strings.TrimSpace(data.ImageRepository), Settings: data.BuildpackSettings, EnvironmentSourceID: source.ID, RegistryResourceID: data.RegistryResourceID})
+	_, err = models.BuildpackConfiguration.Update(ctx, tx, models.UpdateBuildpackConfigurationData{ID: buildpack.ID, ContextPath: data.ContextPath, BuilderReference: sql.NullString{String: strings.TrimSpace(data.BuilderReference), Valid: strings.TrimSpace(data.BuilderReference) != ""}, ImageRepository: strings.TrimSpace(data.ImageRepository), Settings: data.BuildpackSettings, EnvironmentSourceID: source.ID, RegistryResourceID: data.RegistryResourceID, ServerID: data.BuildServerID})
 	if err != nil {
 		return err
 	}

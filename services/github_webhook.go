@@ -221,13 +221,14 @@ func (service *GitHubWebhook) processPush(ctx context.Context, delivery models.G
 			return fmt.Errorf("create build change item: %w", err)
 		}
 		buildConfiguration, err := marshalBuildSnapshot(buildSnapshot{
-			SchemaVersion: 1, SourceEventID: event.ID, EnvironmentStateRevisionID: stateRevision.ID,
+			SchemaVersion: 2, SourceEventID: event.ID, EnvironmentStateRevisionID: stateRevision.ID,
 			Repository: source.RepositoryFullName, Reference: source.Reference, SourceRevision: payload.After,
 			ContextPath: source.ContextPath, BuilderReference: nullableStringPointer(source.BuilderReference),
 			ImageRepository: source.ImageRepository, RegistryResourceID: source.RegistryResourceID,
 			RegistryCredentialID: source.RegistryCredentialID,
 			RegistryEndpoint:     source.RegistryEndpoint, Settings: source.BuildpackSettings,
 			BPGOTargets: state.Runtime.BPGOTargets,
+			ServerID:    source.BuildServerID,
 		})
 		if err != nil {
 			return fmt.Errorf("create Build configuration snapshot: %w", err)

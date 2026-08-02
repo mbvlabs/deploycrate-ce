@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/netip"
 	"net/url"
 	"strings"
 	"time"
@@ -33,13 +32,13 @@ var ErrSystemResourceImmutable = errors.New("DeployCrate system Resources cannot
 type ResourceManagement struct {
 	db        storage.Pool
 	config    config.Config
-	container containerclient.Client
+	container *ContainerExecution
 	postgres  postgresqlclient.Client
 	secrets   *EnvironmentSecrets
 }
 
-func NewResourceManagement(db storage.Pool, cfg config.Config, secrets *EnvironmentSecrets) *ResourceManagement {
-	return &ResourceManagement{db: db, config: cfg, container: containerclient.New(), postgres: postgresqlclient.New(), secrets: secrets}
+func NewResourceManagement(db storage.Pool, cfg config.Config, secrets *EnvironmentSecrets, container *ContainerExecution) *ResourceManagement {
+	return &ResourceManagement{db: db, config: cfg, container: container, postgres: postgresqlclient.New(), secrets: secrets}
 }
 
 type ResourceInput struct {
@@ -240,7 +239,9 @@ func (service *ResourceManagement) Options(ctx context.Context) (models.Resource
 		func() error {
 			return service.db.Executor().NewSelect().TableExpr("servers AS server").
 				ColumnExpr("server.id, server.name, server.address").
-				Where("server.archived_at IS NULL").OrderExpr("server.name").Scan(ctx, &options.Servers)
+				Where("server.archived_at IS NULL").Where("server.is_configured = TRUE").
+				Where("server.kind IN ('self_hosted', 'worker')").
+				Where("server.capabilities @> '{\"resource\":true}'::jsonb").OrderExpr("server.name").Scan(ctx, &options.Servers)
 		},
 		func() error {
 			return service.db.Executor().NewSelect().TableExpr("private_networks AS network").
@@ -960,8 +961,12 @@ func (service *ResourceManagement) createManagedPrimaryEndpoint(ctx context.Cont
 		return models.ResourceEndpointEntity{}, domainError("endpoint", "primary", "managed Resource already has a primary origin endpoint")
 	}
 	installationID := installation.ID
+	originAddress, err := models.ServerOriginAddress(ctx, db, installation.ServerID)
+	if err != nil {
+		return models.ResourceEndpointEntity{}, err
+	}
 	return models.ResourceEndpoint.Create(ctx, db, models.CreateResourceEndpointData{
-		Name: "Primary service", Role: "primary", Address: "127.0.0.1", Port: mapping.HostPort,
+		Name: "Primary service", Role: "primary", Address: originAddress, Port: mapping.HostPort,
 		Protocol: definition.DefaultProtocol, TlsMode: definition.DefaultTLSMode,
 		Settings:   json.RawMessage(`{}`),
 		ResourceID: resource.ID, ResourceInstallationID: &installationID,
@@ -989,7 +994,10 @@ func (service *ResourceManagement) syncManagedEndpoints(ctx context.Context, db 
 	origins := 0
 	privateEndpoints := 0
 	for _, endpoint := range endpoints {
-		address := "127.0.0.1"
+		address, err := models.ServerOriginAddress(ctx, db, installation.ServerID)
+		if err != nil {
+			return err
+		}
 		if endpoint.PrivateNetworkID == nil {
 			if endpoint.Role != "primary" {
 				return domainError("endpoint", "primary", "managed Resource origin endpoint must use the primary role")
@@ -1711,7 +1719,7 @@ func (service *ResourceManagement) createInstallation(ctx context.Context, db st
 	if installations > 0 {
 		return models.ResourceInstallationEntity{}, domainError("installation", "topology", "only one active Docker installation is supported for a Resource right now")
 	}
-	if err := service.validatePlacement(ctx, db, input.ServerID); err != nil {
+	if err := service.validatePlacement(ctx, db, input.ServerID, managedResourceCapability(resource.Kind)); err != nil {
 		return models.ResourceInstallationEntity{}, err
 	}
 	if input.RegistryCredentialID != nil {
@@ -1763,7 +1771,7 @@ func (service *ResourceManagement) UpdateInstallation(ctx context.Context, resou
 	if err != nil {
 		return models.ResourceInstallationEntity{}, err
 	}
-	if err := service.validatePlacement(ctx, tx, input.ServerID); err != nil {
+	if err := service.validatePlacement(ctx, tx, input.ServerID, managedResourceCapability(resource.Kind)); err != nil {
 		return models.ResourceInstallationEntity{}, err
 	}
 	if input.RegistryCredentialID != nil {
@@ -1853,15 +1861,6 @@ func (service *ResourceManagement) RunInstallation(ctx context.Context, resource
 		return errors.New("running an installation with a registry credential is not supported yet")
 	}
 
-	server, err := models.Server.Find(ctx, service.db.Executor(), installation.ServerID)
-	if err != nil {
-		return err
-	}
-	serverAddress, addressErr := netip.ParseAddr(strings.TrimSpace(server.Ipv4Address))
-	if addressErr != nil || !serverAddress.IsLoopback() {
-		return errors.New("this Server is not the local DeployCrate CE host and does not have a container executor")
-	}
-
 	mapping, err := managedPrimaryPortMapping(resource.Kind, installation.Configuration)
 	if err != nil {
 		return err
@@ -1900,7 +1899,7 @@ func (service *ResourceManagement) RunInstallation(ctx context.Context, resource
 	if installation.ImageDigest.Valid && !strings.Contains(imageReference, "@") {
 		imageReference += "@" + installation.ImageDigest.String
 	}
-	if err := service.container.Run(ctx, containerclient.RunSpec{
+	if err := service.container.Run(ctx, installation.ServerID, managedResourceCapability(resource.Kind), containerclient.RunSpec{
 		InstallationID: installation.ID.String(), ContainerName: installation.ContainerName,
 		ImageReference: imageReference, RestartPolicy: installation.RestartPolicy,
 		PortMappings: portMappings, VolumeMounts: mounts, Environment: environment,
@@ -1931,16 +1930,17 @@ func (service *ResourceManagement) controlInstallation(ctx context.Context, reso
 	if err != nil {
 		return err
 	}
-	if err := service.requireLocalInstallationServer(ctx, installation.ServerID); err != nil {
+	capability, err := service.resourceCapability(ctx, resourceID)
+	if err != nil {
 		return err
 	}
 	switch action {
 	case "stop":
-		err = service.container.Stop(ctx, installation.ID.String(), installation.ContainerName)
+		err = service.container.Stop(ctx, installation.ServerID, capability, installation.ID.String(), installation.ContainerName)
 	case "restart":
-		err = service.container.Restart(ctx, installation.ID.String(), installation.ContainerName)
+		err = service.container.Restart(ctx, installation.ServerID, capability, installation.ID.String(), installation.ContainerName)
 	case "remove":
-		err = service.container.Remove(ctx, installation.ID.String(), installation.ContainerName)
+		err = service.container.Remove(ctx, installation.ServerID, capability, installation.ID.String(), installation.ContainerName)
 	default:
 		err = errors.New("unsupported container action")
 	}
@@ -1967,28 +1967,7 @@ func (service *ResourceManagement) loadInstallationForControl(ctx context.Contex
 	return installation, err
 }
 
-func (service *ResourceManagement) requireLocalInstallationServer(ctx context.Context, serverID uuid.UUID) error {
-	server, err := models.Server.Find(ctx, service.db.Executor(), serverID)
-	if err != nil {
-		return err
-	}
-	address, parseErr := netip.ParseAddr(strings.TrimSpace(server.Ipv4Address))
-	if parseErr != nil || !address.IsLoopback() {
-		return errors.New("this Server is not the local DeployCrate CE host and does not have a Resource container executor")
-	}
-	return nil
-}
-
 func (service *ResourceManagement) observeInstallation(ctx context.Context, detail *models.ResourceInstallationDetail) {
-	if err := service.requireLocalInstallationServer(ctx, detail.ServerID); err != nil {
-		if detail.ServiceState == "" {
-			detail.State = "unavailable"
-			detail.ServiceState = "not-observed"
-			detail.Health = "unknown"
-			detail.HealthReason = err.Error()
-		}
-		return
-	}
 	detail.CanControl = true
 	status, err := service.observeDockerInstallation(ctx, detail.ResourceInstallationEntity)
 	if err != nil {
@@ -2008,7 +1987,11 @@ func (service *ResourceManagement) observeInstallation(ctx context.Context, deta
 }
 
 func (service *ResourceManagement) observeDockerInstallation(ctx context.Context, installation models.ResourceInstallationEntity) (models.ResourceInstallationStatusEntity, error) {
-	state, err := service.container.Inspect(ctx, installation.ID.String(), installation.ContainerName)
+	capability, err := service.resourceCapability(ctx, installation.ResourceID)
+	if err != nil {
+		return models.ResourceInstallationStatusEntity{}, err
+	}
+	state, err := service.container.Inspect(ctx, installation.ServerID, capability, installation.ID.String(), installation.ContainerName)
 	if err != nil {
 		return models.ResourceInstallationStatusEntity{}, err
 	}
@@ -2066,12 +2049,24 @@ func (service *ResourceManagement) DeployResource(ctx context.Context, resourceI
 	return nil
 }
 
-func (service *ResourceManagement) validatePlacement(ctx context.Context, db storage.Executor, serverID uuid.UUID) error {
-	count, err := db.NewSelect().TableExpr("servers").Where("id = ?", serverID).Where("archived_at IS NULL").Count(ctx)
-	if err != nil {
-		return err
+func (service *ResourceManagement) validatePlacement(ctx context.Context, db storage.Executor, serverID uuid.UUID, capability models.ServerCapability) error {
+	_, err := models.RequireServerCapability(ctx, db, serverID, capability)
+	return err
+}
+
+func managedResourceCapability(kind string) models.ServerCapability {
+	if kind == "registry" {
+		return models.ServerCapabilityRepository
 	}
-	return requireChild(count, "serverId", "Server must be active")
+	return models.ServerCapabilityResource
+}
+
+func (service *ResourceManagement) resourceCapability(ctx context.Context, resourceID uuid.UUID) (models.ServerCapability, error) {
+	var kind string
+	if err := service.db.Executor().NewSelect().TableExpr("resources").ColumnExpr("kind").Where("id = ?", resourceID).Scan(ctx, &kind); err != nil {
+		return "", err
+	}
+	return managedResourceCapability(kind), nil
 }
 
 func (service *ResourceManagement) validateInstallationMove(ctx context.Context, db storage.Executor, installationID, targetServerID uuid.UUID) error {
@@ -2200,7 +2195,7 @@ func (service *ResourceManagement) createVolume(ctx context.Context, db storage.
 	if volumes > 0 {
 		return models.ResourceVolumeEntity{}, domainError("volume", "topology", "only one active volume is supported for a Resource right now")
 	}
-	if err := service.validatePlacement(ctx, db, input.ServerID); err != nil {
+	if err := service.validatePlacement(ctx, db, input.ServerID, managedResourceCapability(resource.Kind)); err != nil {
 		return models.ResourceVolumeEntity{}, err
 	}
 	created, err := models.ResourceVolume.Create(ctx, db, models.CreateResourceVolumeData{
@@ -2231,7 +2226,7 @@ func (service *ResourceManagement) UpdateVolume(ctx context.Context, resourceID,
 	if err != nil {
 		return models.ResourceVolumeEntity{}, err
 	}
-	if err := service.validatePlacement(ctx, tx, input.ServerID); err != nil {
+	if err := service.validatePlacement(ctx, tx, input.ServerID, managedResourceCapability(resource.Kind)); err != nil {
 		return models.ResourceVolumeEntity{}, err
 	}
 	if current.ServerID != input.ServerID {

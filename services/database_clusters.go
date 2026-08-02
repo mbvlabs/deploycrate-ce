@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/netip"
 	"strings"
 	"time"
 
@@ -28,14 +27,15 @@ import (
 type DatabaseClusters struct {
 	db        storage.Pool
 	config    config.Config
-	container containerclient.Client
+	container *ContainerExecution
+	servers   *ServerExecution
 	native    nativeclient.Client
 	postgres  postgresqlclient.Client
 	resources *ResourceManagement
 }
 
-func NewDatabaseClusters(db storage.Pool, cfg config.Config, resources *ResourceManagement) *DatabaseClusters {
-	return &DatabaseClusters{db: db, config: cfg, container: containerclient.New(), native: nativeclient.New(), postgres: postgresqlclient.New(), resources: resources}
+func NewDatabaseClusters(db storage.Pool, cfg config.Config, resources *ResourceManagement, container *ContainerExecution, servers *ServerExecution) *DatabaseClusters {
+	return &DatabaseClusters{db: db, config: cfg, container: container, servers: servers, native: nativeclient.New(), postgres: postgresqlclient.New(), resources: resources}
 }
 
 type DatabaseClusterEndpointInput struct {
@@ -110,6 +110,7 @@ type DatabaseClusterServerOption struct {
 	ID          uuid.UUID `bun:"id" json:"id"`
 	Name        string    `bun:"name" json:"name"`
 	Address     string    `bun:"address" json:"address"`
+	Kind        string    `bun:"kind" json:"kind"`
 	IPv4Address string    `bun:"ipv4_address" json:"-"`
 }
 
@@ -124,16 +125,11 @@ type DatabaseClusterOptions struct {
 }
 
 func (service *DatabaseClusters) Options(ctx context.Context) (DatabaseClusterOptions, error) {
-	servers := make([]DatabaseClusterServerOption, 0)
 	options := DatabaseClusterOptions{Servers: make([]DatabaseClusterServerOption, 0), Networks: make([]DatabaseClusterNetworkOption, 0)}
-	if err := service.db.Executor().NewSelect().TableExpr("servers").ColumnExpr("id, name, address, ipv4_address").Where("archived_at IS NULL").OrderExpr("name").Scan(ctx, &servers); err != nil {
+	if err := service.db.Executor().NewSelect().TableExpr("servers").ColumnExpr("id, name, kind, address, ipv4_address").
+		Where("archived_at IS NULL").Where("is_configured = TRUE").Where("kind IN ('self_hosted', 'worker')").
+		Where("capabilities @> '{\"database\":true}'::jsonb").OrderExpr("name").Scan(ctx, &options.Servers); err != nil {
 		return DatabaseClusterOptions{}, err
-	}
-	for _, server := range servers {
-		address, err := netip.ParseAddr(strings.TrimSpace(server.IPv4Address))
-		if err == nil && address.IsLoopback() {
-			options.Servers = append(options.Servers, server)
-		}
 	}
 	if err := service.db.Executor().NewSelect().TableExpr("private_networks").ColumnExpr("id, name").Where("archived_at IS NULL").OrderExpr("name").Scan(ctx, &options.Networks); err != nil {
 		return DatabaseClusterOptions{}, err
@@ -239,6 +235,11 @@ func (service *DatabaseClusters) Create(ctx context.Context, input CreateDatabas
 	if err := service.requireLocalDatabaseServer(ctx, service.db.Executor(), input.Placement.ServerID); err != nil {
 		return models.DatabaseClusterEntity{}, err
 	}
+	originAddress, err := models.ServerOriginAddress(ctx, service.db.Executor(), input.Placement.ServerID)
+	if err != nil {
+		return models.DatabaseClusterEntity{}, err
+	}
+	input.Endpoint.Address = originAddress
 	desiredMethod := sql.NullString{String: input.DesiredInstallationMethod, Valid: input.DesiredInstallationMethod != ""}
 	encrypted, digest, err := service.clusterCredential(input.AdministratorPassword)
 	if err != nil {
@@ -274,7 +275,7 @@ func (service *DatabaseClusters) Create(ctx context.Context, input CreateDatabas
 	if input.Endpoint.PrivateNetworkID != nil {
 		attachments, err := tx.NewSelect().TableExpr("server_networks").
 			Where("server_id = ?", input.Placement.ServerID).Where("private_network_id = ?", *input.Endpoint.PrivateNetworkID).
-			Where("driver = 'wireguard'").Where("removed_at IS NULL").Where("configuration ->> 'address' = ?", WireGuardPrivateAddress).Count(ctx)
+			Where("driver = 'wireguard'").Where("removed_at IS NULL").Where("configuration ->> 'address' = ?", originAddress).Count(ctx)
 		if err != nil {
 			return models.DatabaseClusterEntity{}, err
 		}
@@ -282,7 +283,7 @@ func (service *DatabaseClusters) Create(ctx context.Context, input CreateDatabas
 			return models.DatabaseClusterEntity{}, domainError("privateNetworkId", "topology", "Database Cluster Server must have the DeployCrate WireGuard attachment")
 		}
 		if _, err := models.DatabaseClusterEndpoint.Create(ctx, tx, models.CreateDatabaseClusterEndpointData{
-			Name: "WireGuard " + input.Endpoint.Name, Role: "wireguard", Address: WireGuardPrivateAddress,
+			Name: "WireGuard " + input.Endpoint.Name, Role: "wireguard", Address: originAddress,
 			Port: input.Endpoint.Port, Protocol: input.Endpoint.Protocol, TLSMode: input.Endpoint.TLSMode,
 			DesiredState: "available", ObservedState: "available", Settings: json.RawMessage(`{}`),
 			DatabaseClusterID: cluster.ID, PrivateNetworkID: input.Endpoint.PrivateNetworkID,
@@ -435,21 +436,8 @@ type databaseRuntime struct {
 }
 
 func (service *DatabaseClusters) requireLocalDatabaseServer(ctx context.Context, db storage.Executor, serverID uuid.UUID) error {
-	var server struct {
-		IPv4Address string `bun:"ipv4_address"`
-	}
-	err := db.NewSelect().TableExpr("servers").Column("ipv4_address").Where("id = ?", serverID).Where("archived_at IS NULL").Scan(ctx, &server)
-	if errors.Is(err, sql.ErrNoRows) {
-		return domainError("placement.serverId", "unavailable", "Database Node Server is unavailable")
-	}
-	if err != nil {
-		return err
-	}
-	address, parseErr := netip.ParseAddr(strings.TrimSpace(server.IPv4Address))
-	if parseErr != nil || !address.IsLoopback() {
-		return domainError("placement.serverId", "executor", "managed Database Nodes must use the local DeployCrate CE Server")
-	}
-	return nil
+	_, err := models.RequireServerCapability(ctx, db, serverID, models.ServerCapabilityDatabase)
+	return err
 }
 
 func (service *DatabaseClusters) activeClusterRuntimes(ctx context.Context, clusterID uuid.UUID) ([]databaseRuntime, error) {
@@ -484,7 +472,7 @@ func (service *DatabaseClusters) runInstallationRuntime(ctx context.Context, run
 		return err
 	}
 	if topology.Method == models.DatabaseInstallDocker {
-		return service.container.Run(ctx, containerclient.RunSpec{
+		return service.container.Run(ctx, topology.ServerID, models.ServerCapabilityDatabase, containerclient.RunSpec{
 			InstallationID: runtime.InstallationID.String(), ContainerName: topology.ContainerName,
 			ImageReference: topology.ImageReference, RestartPolicy: topology.RestartPolicy,
 			PortMappings: []containerclient.PortMapping{{HostPort: topology.Port, ContainerPort: defaultDatabasePort(topology.Engine), Protocol: "tcp"}},
@@ -494,6 +482,13 @@ func (service *DatabaseClusters) runInstallationRuntime(ctx context.Context, run
 	}
 	if topology.Method != models.DatabaseInstallNative {
 		return domainError("installationMethod", "unsupported", "Database Node Installation method is unsupported")
+	}
+	target, err := service.servers.Target(ctx, topology.ServerID, models.ServerCapabilityDatabase)
+	if err != nil {
+		return err
+	}
+	if target.Remote {
+		return domainError("installationMethod", "worker_native", "native Database installs are available only on the control plane; choose Docker for a database-capable worker")
 	}
 	return service.native.Install(ctx, nativeclient.InstallSpec{
 		InstallationID: runtime.InstallationID.String(), Engine: topology.Engine, EngineVersion: topology.EngineVersion,
@@ -508,13 +503,20 @@ func (service *DatabaseClusters) stopInstallationRuntime(ctx context.Context, ru
 		return err
 	}
 	if runtime.Topology.Method == models.DatabaseInstallDocker {
-		state, err := service.container.Inspect(ctx, runtime.InstallationID.String(), runtime.Topology.ContainerName)
+		state, err := service.container.Inspect(ctx, runtime.Topology.ServerID, models.ServerCapabilityDatabase, runtime.InstallationID.String(), runtime.Topology.ContainerName)
 		if err != nil || !state.Exists {
 			return err
 		}
-		return service.container.Remove(ctx, runtime.InstallationID.String(), runtime.Topology.ContainerName)
+		return service.container.Remove(ctx, runtime.Topology.ServerID, models.ServerCapabilityDatabase, runtime.InstallationID.String(), runtime.Topology.ContainerName)
 	}
 	if runtime.Topology.Method == models.DatabaseInstallNative {
+		target, targetErr := service.servers.Target(ctx, runtime.Topology.ServerID, models.ServerCapabilityDatabase)
+		if targetErr != nil {
+			return targetErr
+		}
+		if target.Remote {
+			return domainError("installationMethod", "worker_native", "native Database installs are available only on the control plane")
+		}
 		state, err := service.native.Inspect(ctx, runtime.InstallationID.String(), runtime.Topology.PackageName, runtime.Topology.ServiceName)
 		if err != nil || !state.Running {
 			return err

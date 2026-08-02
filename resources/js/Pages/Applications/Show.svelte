@@ -6,7 +6,7 @@
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
-  type Application = { id: string; name: string; slug: string; environmentId: string; environmentName: string; environmentKind: string; setupComplete: boolean; installationAccount: string; repositoryFullName: string; repositoryRemovedAt: any; installationSuspendedAt: any; reference: string; autoBuild: boolean; contextPath: string; builderReference: any; imageRepository: string; registryName: string; latestRevision: any; latestDeliveryStatus: any; latestBuildStatus: any }
+  type Application = { id: string; name: string; slug: string; environmentId: string; environmentName: string; environmentKind: string; setupComplete: boolean; installationAccount: string; repositoryFullName: string; repositoryRemovedAt: any; installationSuspendedAt: any; reference: string; autoBuild: boolean; contextPath: string; builderReference: any; buildServerName: string; imageRepository: string; registryName: string; latestRevision: any; latestDeliveryStatus: any; latestBuildStatus: any }
   let { auth, application }: { auth: { email: string }; application: Application } = $props()
   function nullValue(value: any) { return value?.String ?? value?.string ?? (typeof value === 'string' ? value : '') }
   const healthy = $derived(!application.repositoryRemovedAt?.Valid && !application.installationSuspendedAt?.Valid)
@@ -20,7 +20,7 @@
       <Card.Header><Card.Action><span class:text-success={healthy} class:text-destructive={!healthy} class="text-xs">{healthy ? 'Connected' : 'Degraded'}</span></Card.Action><Card.Title>GitHub source</Card.Title><Card.Description>{application.installationAccount} · {application.repositoryFullName}</Card.Description></Card.Header>
       <Card.Content class="grid gap-5 text-sm sm:grid-cols-3">
         <DataField label="Reference" value={application.reference} /><DataField label="Automatic builds" value={application.autoBuild ? 'Enabled' : 'Disabled'} /><DataField label="Latest revision" value={nullValue(application.latestRevision) || 'No push received'} />
-        <DataField label="Build context" value={application.contextPath} /><DataField label="Builder" value={nullValue(application.builderReference) || 'Default builder'} /><DataField label="Destination" value={`${application.registryName}/${application.imageRepository}`} />
+        <DataField label="Build context" value={application.contextPath} /><DataField label="Build Server" value={application.buildServerName} /><DataField label="Builder" value={nullValue(application.builderReference) || 'Default builder'} /><DataField label="Destination" value={`${application.registryName}/${application.imageRepository}`} />
         <DataField label="Latest delivery" value={nullValue(application.latestDeliveryStatus) || 'None'} /><DataField label="Latest build request" value={nullValue(application.latestBuildStatus) || 'None'} />
       </Card.Content>
     </Card.Root>

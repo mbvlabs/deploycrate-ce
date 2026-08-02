@@ -244,7 +244,7 @@
           <FormField label="Port" error={errors['endpoint.port']}><Input type="number" bind:value={form.endpoint.port} aria-invalid={Boolean(errors['endpoint.port'])} min="1" max="65535" /></FormField>
           <FormField label="TLS mode" error={errors['endpoint.tlsMode']}><select bind:value={form.endpoint.tlsMode} class={selectClass} aria-invalid={Boolean(errors['endpoint.tlsMode'])}>{#each definition.tlsModes as mode}<option value={mode}>{mode}</option>{/each}</select></FormField>
         {:else}
-          <DataField label="Runtime origin" value={`127.0.0.1:${form.installation.portMappings[0].hostPort}`} />
+          <DataField label="Runtime origin" value={`Selected Server:${form.installation.portMappings[0].hostPort}`} />
           <DataField label="Protocol" value={definition?.label ?? form.endpoint.protocol} />
           <p class="col-span-full text-xs text-muted-foreground">Private access can be enabled from the Resource page after creation.</p>
         {/if}
@@ -254,7 +254,7 @@
     <Card.Root>
       <Card.Header>
         <Card.Title>Docker placement</Card.Title>
-        <Card.Description>Choose the Server, image, loopback publication, and optional persistent storage.</Card.Description>
+        <Card.Description>Choose the Server, image, private-mesh publication, and optional persistent storage.</Card.Description>
       </Card.Header>
       <Card.Content class="grid gap-5 sm:grid-cols-2">
         {#if form.managementMode === 'external'}
@@ -267,7 +267,7 @@
             <FormField label="Registry credential" error={errors['installation.registryCredentialId']}><select bind:value={form.installation.registryCredentialId} class={selectClass} aria-invalid={Boolean(errors['installation.registryCredentialId'])}><option value="">None</option>{#each options.registryCredentials as credential}<option value={credential.id}>{credential.name}</option>{/each}</select></FormField>
             <FormField label="Published host port" error={errors['installation.portMappings.0.hostPort']}><Input type="number" bind:value={form.installation.portMappings[0].hostPort} aria-invalid={Boolean(errors['installation.portMappings.0.hostPort'])} min="1" max="65535" /></FormField>
             <div class="border border-border bg-muted/20 px-3 py-2"><p class="text-[10px] uppercase tracking-wider text-muted-foreground">Container port</p><p class="mt-1 font-mono text-sm">{definition.label} default: {definition.defaultPort}/tcp</p></div>
-            <div class="col-span-full border border-border bg-muted/20 px-3 py-3"><p class="text-[10px] uppercase tracking-wider text-muted-foreground">Docker port mapping</p><p class="mt-1 font-mono text-sm">127.0.0.1:{form.installation.portMappings[0].hostPort} → {definition.label} container:{definition.defaultPort}/tcp</p><p class="mt-2 text-xs text-muted-foreground">Only the host port changes. Use a different host port for each installation on the same Server, for example 1234:5432 and 2345:5432.</p></div>
+            <div class="col-span-full border border-border bg-muted/20 px-3 py-3"><p class="text-[10px] uppercase tracking-wider text-muted-foreground">Docker port mapping</p><p class="mt-1 font-mono text-sm">Selected Server:{form.installation.portMappings[0].hostPort} → {definition.label} container:{definition.defaultPort}/tcp</p><p class="mt-2 text-xs text-muted-foreground">Worker ports bind only to that Server's private WireGuard address. Use a different host port for each installation on the same Server.</p></div>
             <label class="col-span-full flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={includeVolume} /> Add a local volume</label>
             {#if includeVolume}
               <FormField label="Volume name" error={errors['volume.name']}><Input bind:value={form.volume.name} aria-invalid={Boolean(errors['volume.name'])} /></FormField>

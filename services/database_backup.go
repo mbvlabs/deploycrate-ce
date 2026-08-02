@@ -17,6 +17,7 @@ import (
 	containerclient "deploycrate-ce/clients/container"
 	"deploycrate-ce/clients/objectstorage"
 	"deploycrate-ce/config"
+	"deploycrate-ce/models"
 
 	"filippo.io/age"
 	"github.com/google/uuid"
@@ -27,11 +28,11 @@ const backupWorkRoot = "/var/lib/deploycrate-ce/runtime/backups"
 type DatabaseBackup struct {
 	config    config.Config
 	version   CurrentVersion
-	container containerclient.Client
+	container *ContainerExecution
 }
 
-func NewDatabaseBackup(configuration config.Config, version CurrentVersion) *DatabaseBackup {
-	return &DatabaseBackup{config: configuration, version: version, container: containerclient.New()}
+func NewDatabaseBackup(configuration config.Config, version CurrentVersion, container *ContainerExecution) *DatabaseBackup {
+	return &DatabaseBackup{config: configuration, version: version, container: container}
 }
 
 type PostgreSQLBackupTarget struct {
@@ -40,6 +41,7 @@ type PostgreSQLBackupTarget struct {
 	ClusterID             uuid.UUID
 	NodeID                uuid.UUID
 	InstallationID        uuid.UUID
+	ServerID              uuid.UUID
 	ContainerName         string
 	DatabaseName          string
 	Username              string
@@ -247,7 +249,7 @@ func (service *DatabaseBackup) runContainerPostgres(
 	executable string,
 	arguments ...string,
 ) error {
-	return service.container.Exec(ctx, containerclient.ExecSpec{
+	return service.container.Exec(ctx, target.ServerID, models.ServerCapabilityDatabase, containerclient.ExecSpec{
 		InstallationID: target.InstallationID.String(), ContainerName: target.ContainerName,
 		Executable: executable, Arguments: arguments,
 		Environment: map[string]string{"PGPASSWORD": target.Password}, Stdin: stdin, Stdout: stdout,

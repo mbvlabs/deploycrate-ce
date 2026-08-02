@@ -52,6 +52,21 @@ func ensureEnvironmentTargetUnique(ctx context.Context, db storage.Executor, ent
 	return nil
 }
 
+func ensureEnvironmentTargetRuntime(ctx context.Context, db storage.Executor, entity EnvironmentTargetEntity) error {
+	if entity.DetachedAt.Valid {
+		return nil
+	}
+	server, err := Server.Find(ctx, db, entity.ServerID)
+	if err != nil || server.ArchivedAt.Valid || !server.IsConfigured || (server.Kind != "self_hosted" && server.Kind != "worker") {
+		return errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "serverId", Code: "unavailable", Message: "runtime Server is unavailable"}})
+	}
+	capabilities, err := ParseServerCapabilities(server.Capabilities)
+	if err != nil || !capabilities.Runtime {
+		return errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "serverId", Code: "capability", Message: "runtime Server does not support application workloads"}})
+	}
+	return nil
+}
+
 func (et environmentTarget) Find(
 	ctx context.Context,
 	db storage.Executor,
@@ -100,6 +115,9 @@ func (et environmentTarget) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return EnvironmentTargetEntity{}, errors.Join(ErrDomainValidation, err)
 	}
+	if err := ensureEnvironmentTargetRuntime(ctx, db, entity); err != nil {
+		return EnvironmentTargetEntity{}, err
+	}
 	if err := ensureEnvironmentTargetUnique(ctx, db, entity); err != nil {
 		return EnvironmentTargetEntity{}, err
 	}
@@ -136,6 +154,9 @@ func (et environmentTarget) Update(
 
 	if err := validation.Validate(&entity); err != nil {
 		return EnvironmentTargetEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureEnvironmentTargetRuntime(ctx, db, entity); err != nil {
+		return EnvironmentTargetEntity{}, err
 	}
 	if err := ensureEnvironmentTargetUnique(ctx, db, entity); err != nil {
 		return EnvironmentTargetEntity{}, err
@@ -248,6 +269,9 @@ func (et environmentTarget) Upsert(
 
 	if err := validation.Validate(&entity); err != nil {
 		return EnvironmentTargetEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureEnvironmentTargetRuntime(ctx, db, entity); err != nil {
+		return EnvironmentTargetEntity{}, err
 	}
 	if err := ensureEnvironmentTargetUnique(ctx, db, entity); err != nil {
 		return EnvironmentTargetEntity{}, err

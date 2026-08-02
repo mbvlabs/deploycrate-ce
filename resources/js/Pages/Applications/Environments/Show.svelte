@@ -24,7 +24,7 @@
   type DeploymentEventSnapshot = { deployment: Deployment; events: DeploymentEvent[]; nextSequence: number; hasMore: boolean }
   type EnvironmentLog = { id: string; message: string; stream: string; container: string; deployment: string; instance: string; release: string; occurredAt: string }
   type EnvironmentLogSnapshot = { logs: EnvironmentLog[]; nextCursor: string; hasMore: boolean }
-  type Instance = { id: string; state: string; slot: string; ports: Record<string, number>; releaseId: string; observedAt: string }
+  type Instance = { id: string; state: string; slot: string; ports: { host?: string; http?: number }; releaseId: string; observedAt: string }
   type TelemetryPoint = { observedAt: string; cpuCores: number; memoryBytes: number; diskReadBytesPerSecond: number; diskWriteBytesPerSecond: number; networkReceiveBytesPerSecond: number; networkTransmitBytesPerSecond: number; cpuAvailable: boolean; memoryAvailable: boolean; diskReadAvailable: boolean; diskWriteAvailable: boolean; networkReceiveAvailable: boolean; networkTransmitAvailable: boolean }
   type TelemetryRow = {
     application: string; environment: string; release: string; deployment: string; target: string; instance: string
@@ -44,6 +44,8 @@
     contextPath: string
     registryName: string
     registryEndpoint: string
+    runtimeServerId: string
+    runtimeServer: string
     domain: string
     deployability: { deployable: boolean; missing: string[] }
     secrets: Secret[]
@@ -408,7 +410,7 @@
       <div class="flex flex-wrap gap-2"><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentEdit(environment.applicationId, environment.environment.id)}>Edit environment</Link>{/snippet}</Button><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentSourceEdit(environment.applicationId, environment.environment.id)}>Edit source</Link>{/snippet}</Button><Button onclick={buildAndDeploy}>Build & deploy</Button><EnvironmentDeleteDialog applicationId={environment.applicationId} environmentId={environment.environment.id} environmentName={environment.environment.name} /></div>
     </header>
 
-    <Card.Root><Card.Header><Card.Action><span class:text-success={environment.deployability.deployable} class:text-destructive={!environment.deployability.deployable}>{environment.deployability.deployable ? 'Ready' : 'Blocked'}</span></Card.Action><Card.Title>Desired state</Card.Title></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><DataField label="Repository" value={environment.repository} /><DataField label="Reference" value={environment.reference} /><DataField label="Build context" value={environment.contextPath} /><DataField label="Domain" value={environment.domain} /><DataField label="Registry" value={environment.registryName} /><DataField label="Registry endpoint" value={environment.registryEndpoint} />{#if !environment.deployability.deployable}<DataField label="Missing" value={environment.deployability.missing.join(', ')} />{/if}</Card.Content></Card.Root>
+    <Card.Root><Card.Header><Card.Action><span class:text-success={environment.deployability.deployable} class:text-destructive={!environment.deployability.deployable}>{environment.deployability.deployable ? 'Ready' : 'Blocked'}</span></Card.Action><Card.Title>Desired state</Card.Title></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><DataField label="Repository" value={environment.repository} /><DataField label="Reference" value={environment.reference} /><DataField label="Build context" value={environment.contextPath} /><DataField label="Domain" value={environment.domain} /><DataField label="Runtime Server" value={environment.runtimeServer} /><DataField label="Registry" value={environment.registryName} /><DataField label="Registry endpoint" value={environment.registryEndpoint} />{#if !environment.deployability.deployable}<DataField label="Missing" value={environment.deployability.missing.join(', ')} />{/if}</Card.Content></Card.Root>
 
     <section aria-labelledby="workload-telemetry-heading" class="space-y-4">
       <div class="flex flex-wrap items-end justify-between gap-3">
@@ -580,7 +582,7 @@
       </Card.Content>
     </Card.Root>
 
-    <Card.Root><Card.Header><Card.Title>Active instance</Card.Title></Card.Header><Card.Content>{#if activeInstance}<div class="grid gap-1 border border-border p-3 text-sm sm:grid-cols-4"><span class="font-mono">{short(activeInstance.id)}</span><span>{activeInstance.state}</span><span>{activeInstance.slot}</span><span class="text-muted-foreground">{activeInstance.ports?.http ? `127.0.0.1:${activeInstance.ports.http}` : 'No observed port'}</span></div>{:else}<p class="text-sm text-muted-foreground">No active Instance yet.</p>{/if}</Card.Content></Card.Root>
+    <Card.Root><Card.Header><Card.Title>Active instance</Card.Title></Card.Header><Card.Content>{#if activeInstance}<div class="grid gap-1 border border-border p-3 text-sm sm:grid-cols-4"><span class="font-mono">{short(activeInstance.id)}</span><span>{activeInstance.state}</span><span>{activeInstance.slot}</span><span class="text-muted-foreground">{activeInstance.ports?.http ? `${activeInstance.ports.host || '127.0.0.1'}:${activeInstance.ports.http}` : 'No observed port'}</span></div>{:else}<p class="text-sm text-muted-foreground">No active Instance yet.</p>{/if}</Card.Content></Card.Root>
   </div>
 
   <ConfirmActionDialog

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"net/netip"
 	"strings"
 	"time"
 
@@ -303,10 +302,6 @@ func validateBackupScope(scope BackupScope) error {
 		len(scope.AdministratorPayload) < 2 {
 		return errors.New("database backup target is not the local PostgreSQL resource")
 	}
-	address, addressErr := netip.ParseAddr(strings.TrimSpace(scope.InstallationServerIPv4))
-	if addressErr != nil || !address.IsLoopback() {
-		return errors.New("database backup target is not installed on the local DeployCrate CE host")
-	}
 	if scope.Backup.Strategy != "logical" || scope.Backup.Driver != "postgresql" ||
 		scope.Backup.Format != "tar.age" {
 		return errors.New("database backup driver scope is incompatible")
@@ -339,6 +334,7 @@ func (service *BackupExecutor) postgreSQLTarget(scope BackupScope) (PostgreSQLBa
 		ResourceID: valueOrNil(scope.ResourceID), DatabaseID: *scope.Backup.DatabaseID,
 		ClusterID: *scope.Backup.DatabaseClusterID, NodeID: *scope.Backup.DatabaseClusterNodeID,
 		InstallationID: *scope.Backup.DatabaseNodeInstallationID,
+		ServerID:       *scope.InstallationServerID,
 		ContainerName:  scope.InstallationContainer, DatabaseName: scope.DatabaseName,
 		Username: scope.AdministratorUsername, Password: payload.Values["password"],
 		ExcludeRiverTableData: scope.ResourceSystemManaged,
@@ -351,6 +347,7 @@ func (service *BackupExecutor) postgreSQLTargetForDatabase(ctx context.Context, 
 		ClusterID            uuid.UUID  `bun:"cluster_id"`
 		NodeID               uuid.UUID  `bun:"node_id"`
 		InstallationID       uuid.UUID  `bun:"installation_id"`
+		ServerID             uuid.UUID  `bun:"server_id"`
 		ResourceID           *uuid.UUID `bun:"resource_id"`
 		DatabaseName         string     `bun:"database_name"`
 		ContainerName        string     `bun:"container_name"`
@@ -360,7 +357,7 @@ func (service *BackupExecutor) postgreSQLTargetForDatabase(ctx context.Context, 
 	}
 	err := service.db.Executor().NewSelect().TableExpr("databases AS database").
 		ColumnExpr("database.id AS database_id, database.name AS database_name, cluster.id AS cluster_id").
-		ColumnExpr("node.id AS node_id, installation.id AS installation_id, docker_installation.container_name").
+		ColumnExpr("node.id AS node_id, installation.id AS installation_id, installation.server_id, docker_installation.container_name").
 		ColumnExpr("backing.resource_id, COALESCE(resource.system_managed, FALSE) AS system_managed").
 		ColumnExpr("administrator.username, administrator.enc_payload AS administrator_payload").
 		Join("JOIN database_clusters AS cluster ON cluster.id = database.database_cluster_id AND cluster.engine = 'postgresql' AND cluster.management_mode = 'managed' AND cluster.archived_at IS NULL").
@@ -386,7 +383,7 @@ func (service *BackupExecutor) postgreSQLTargetForDatabase(ctx context.Context, 
 	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 || strings.TrimSpace(payload.Values["password"]) == "" {
 		return PostgreSQLBackupTarget{}, errors.New("Database Cluster administrator credential is incomplete")
 	}
-	return PostgreSQLBackupTarget{ResourceID: valueOrNil(target.ResourceID), DatabaseID: target.DatabaseID, ClusterID: target.ClusterID, NodeID: target.NodeID, InstallationID: target.InstallationID, ContainerName: target.ContainerName, DatabaseName: target.DatabaseName, Username: target.Username, Password: payload.Values["password"], ExcludeRiverTableData: target.SystemManaged}, nil
+	return PostgreSQLBackupTarget{ResourceID: valueOrNil(target.ResourceID), DatabaseID: target.DatabaseID, ClusterID: target.ClusterID, NodeID: target.NodeID, InstallationID: target.InstallationID, ServerID: target.ServerID, ContainerName: target.ContainerName, DatabaseName: target.DatabaseName, Username: target.Username, Password: payload.Values["password"], ExcludeRiverTableData: target.SystemManaged}, nil
 }
 
 func valueOrNil(value *uuid.UUID) uuid.UUID {

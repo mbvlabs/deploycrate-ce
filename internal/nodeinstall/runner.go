@@ -47,6 +47,7 @@ func Install(ctx context.Context, manifest Manifest) (Result, error) {
 		"DEPLOYCRATE_NODE_NAME_YAML="+string(nodeNameYAML),
 		"DEPLOYCRATE_PRIVATE_ADDRESS="+manifest.PrivateAddress,
 		fmt.Sprintf("DEPLOYCRATE_WIREGUARD_PORT=%d", manifest.ListenPort),
+		fmt.Sprintf("DEPLOYCRATE_SSH_PORT=%d", manifest.SSHPort),
 		"DEPLOYCRATE_CONTROL_PUBLIC_KEY="+manifest.ControlPlanePublicKey,
 		"DEPLOYCRATE_CONTROL_ADDRESS="+manifest.ControlPlaneAddress,
 		"DEPLOYCRATE_CONTROL_ENDPOINT="+manifest.ControlPlaneEndpoint,

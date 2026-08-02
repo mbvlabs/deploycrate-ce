@@ -70,29 +70,64 @@ func (client Client) Run(ctx context.Context, address string, credentials Creden
 }
 
 func (client Client) RunWithCertificate(ctx context.Context, address, username, hostKey string, privateKey, certificate []byte, command string, stdin io.Reader) (Result, error) {
+	authentication, err := certificateAuthentication(privateKey, certificate)
+	if err != nil {
+		return Result{}, err
+	}
+	return client.run(ctx, address, username, hostKey, authentication, command, stdin)
+}
+
+func (client Client) RunWithCertificateStreaming(ctx context.Context, address, username, hostKey string, privateKey, certificate []byte, command string, stdin io.Reader, stdout, stderr io.Writer) error {
+	authentication, err := certificateAuthentication(privateKey, certificate)
+	if err != nil {
+		return err
+	}
+	if stdout == nil {
+		stdout = io.Discard
+	}
+	if stderr == nil {
+		stderr = io.Discard
+	}
+	return client.runStreaming(ctx, address, username, hostKey, authentication, command, stdin, stdout, stderr)
+}
+
+func certificateAuthentication(privateKey, certificate []byte) (cryptossh.AuthMethod, error) {
 	signer, err := cryptossh.ParsePrivateKey(privateKey)
 	if err != nil {
-		return Result{}, fmt.Errorf("parse ephemeral SSH private key: %w", err)
+		return nil, fmt.Errorf("parse ephemeral SSH private key: %w", err)
 	}
 	publicKey, _, _, remainder, err := cryptossh.ParseAuthorizedKey(certificate)
 	if err != nil || len(bytes.TrimSpace(remainder)) != 0 {
-		return Result{}, errors.New("parse SSH user certificate")
+		return nil, errors.New("parse SSH user certificate")
 	}
 	sshCertificate, ok := publicKey.(*cryptossh.Certificate)
 	if !ok {
-		return Result{}, errors.New("SSH user certificate has the wrong key type")
+		return nil, errors.New("SSH user certificate has the wrong key type")
 	}
 	certificateSigner, err := cryptossh.NewCertSigner(sshCertificate, signer)
 	if err != nil {
-		return Result{}, fmt.Errorf("create SSH certificate signer: %w", err)
+		return nil, fmt.Errorf("create SSH certificate signer: %w", err)
 	}
-	return client.run(ctx, address, username, hostKey, cryptossh.PublicKeys(certificateSigner), command, stdin)
+	return cryptossh.PublicKeys(certificateSigner), nil
 }
 
 func (client Client) run(ctx context.Context, address, username, hostKey string, authentication cryptossh.AuthMethod, command string, stdin io.Reader) (Result, error) {
+	stdout := &limitedBuffer{remaining: maximumCommandOutput}
+	stderr := &limitedBuffer{remaining: maximumCommandOutput}
+	if err := client.runStreaming(ctx, address, username, hostKey, authentication, command, stdin, stdout, stderr); err != nil {
+		message := strings.TrimSpace(stderr.String())
+		if message == "" {
+			message = err.Error()
+		}
+		return Result{Stdout: stdout.String(), Stderr: stderr.String()}, fmt.Errorf("run SSH command: %s", message)
+	}
+	return Result{Stdout: stdout.String(), Stderr: stderr.String()}, nil
+}
+
+func (client Client) runStreaming(ctx context.Context, address, username, hostKey string, authentication cryptossh.AuthMethod, command string, stdin io.Reader, stdout, stderr io.Writer) error {
 	expectedKey, _, _, remainder, err := cryptossh.ParseAuthorizedKey([]byte(hostKey))
 	if err != nil || len(bytes.TrimSpace(remainder)) != 0 {
-		return Result{}, errors.New("pinned SSH host key is invalid")
+		return errors.New("pinned SSH host key is invalid")
 	}
 	configuration := &cryptossh.ClientConfig{
 		User: username,
@@ -107,12 +142,12 @@ func (client Client) run(ctx context.Context, address, username, hostKey string,
 	}
 	connection, err := (&net.Dialer{Timeout: client.timeout}).DialContext(ctx, "tcp", address)
 	if err != nil {
-		return Result{}, fmt.Errorf("connect to SSH server: %w", err)
+		return fmt.Errorf("connect to SSH server: %w", err)
 	}
 	clientConnection, channels, requests, err := client.handshake(ctx, connection, address, configuration)
 	if err != nil {
 		connection.Close()
-		return Result{}, fmt.Errorf("authenticate to SSH server: %w", err)
+		return fmt.Errorf("authenticate to SSH server: %w", err)
 	}
 	sshClient := cryptossh.NewClient(clientConnection, channels, requests)
 	defer sshClient.Close()
@@ -127,24 +162,15 @@ func (client Client) run(ctx context.Context, address, username, hostKey string,
 	}()
 	session, err := sshClient.NewSession()
 	if err != nil {
-		return Result{}, fmt.Errorf("create SSH session: %w", err)
+		return fmt.Errorf("create SSH session: %w", err)
 	}
 	defer session.Close()
 	if stdin != nil {
 		session.Stdin = stdin
 	}
-	stdout := &limitedBuffer{remaining: maximumCommandOutput}
-	stderr := &limitedBuffer{remaining: maximumCommandOutput}
 	session.Stdout = stdout
 	session.Stderr = stderr
-	if err := session.Run(command); err != nil {
-		message := strings.TrimSpace(stderr.String())
-		if message == "" {
-			message = err.Error()
-		}
-		return Result{Stdout: stdout.String(), Stderr: stderr.String()}, fmt.Errorf("run SSH command: %s", message)
-	}
-	return Result{Stdout: stdout.String(), Stderr: stderr.String()}, nil
+	return session.Run(command)
 }
 
 func (client Client) handshake(ctx context.Context, connection net.Conn, address string, configuration *cryptossh.ClientConfig) (cryptossh.Conn, <-chan cryptossh.NewChannel, <-chan *cryptossh.Request, error) {

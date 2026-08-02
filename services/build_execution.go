@@ -10,17 +10,20 @@ import (
 	githubclient "deploycrate-ce/clients/github"
 	registryclient "deploycrate-ce/clients/registry"
 	"deploycrate-ce/config"
+	"deploycrate-ce/internal/buildpacks/nodeassets"
 	"deploycrate-ce/internal/secretcrypto"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/sudo"
 	"deploycrate-ce/models"
 	"deploycrate-ce/queue/jobs"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -52,6 +55,7 @@ type BuildExecution struct {
 	github   *GitHubConnection
 	pack     buildpacksclient.Client
 	registry registryclient.Client
+	servers  *ServerExecution
 }
 
 type buildLogger struct {
@@ -166,8 +170,8 @@ func truncateBuildLogMessage(message string, preserveTail bool) string {
 	return message
 }
 
-func NewBuildExecution(db storage.Pool, queue storage.InsertQueue, cfg config.Config, github *GitHubConnection) *BuildExecution {
-	return &BuildExecution{db: db, queue: queue, config: cfg, github: github, pack: buildpacksclient.New(), registry: registryclient.New()}
+func NewBuildExecution(db storage.Pool, queue storage.InsertQueue, cfg config.Config, github *GitHubConnection, servers *ServerExecution) *BuildExecution {
+	return &BuildExecution{db: db, queue: queue, config: cfg, github: github, pack: buildpacksclient.New(), registry: registryclient.New(), servers: servers}
 }
 
 func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) error {
@@ -229,6 +233,10 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	snapshot, err := parseBuildSnapshot(build)
 	if err != nil {
 		return fail(err)
+	}
+	buildTarget, err := service.servers.Target(ctx, snapshot.ServerID, models.ServerCapabilityBuild)
+	if err != nil {
+		return fail(fmt.Errorf("load selected Build Server: %w", err))
 	}
 	if err := progress("loading_source", "Loading the GitHub source configuration"); err != nil {
 		return err
@@ -324,20 +332,28 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 		}
 		return fail(operationErr)
 	}
-	authentication, err := service.registry.Authenticate(ctx, credentials)
-	if err != nil {
-		operationErr := fmt.Errorf("authenticate Build registry: %w", err)
-		if isRetryableBuildFailure(operationErr) {
-			return operationErr
+	var dockerEnvironment []string
+	var closeAuthentication func() error
+	if !buildTarget.Remote {
+		authentication, authenticateErr := service.registry.Authenticate(ctx, credentials)
+		if authenticateErr != nil {
+			operationErr := fmt.Errorf("authenticate Build registry: %w", authenticateErr)
+			if isRetryableBuildFailure(operationErr) {
+				return operationErr
+			}
+			return fail(operationErr)
 		}
-		return fail(operationErr)
+		dockerEnvironment = authentication.Environment()
+		closeAuthentication = authentication.Close
 	}
 	recordTiming("registry authentication", registryStarted)
-	defer func() {
-		if closeErr := authentication.Close(); closeErr != nil {
-			slog.WarnContext(context.WithoutCancel(ctx), "Build registry authentication cleanup failed", "build_id", build.ID, "error", closeErr)
-		}
-	}()
+	if closeAuthentication != nil {
+		defer func() {
+			if closeErr := closeAuthentication(); closeErr != nil {
+				slog.WarnContext(context.WithoutCancel(ctx), "Build registry authentication cleanup failed", "build_id", build.ID, "error", closeErr)
+			}
+		}()
+	}
 	imageTag := strings.TrimSuffix(snapshot.RegistryEndpoint, "/") + "/" + strings.Trim(snapshot.ImageRepository, "/") + ":build-" + build.ID.String()
 	caches, err := buildpacksclient.EnvironmentCacheNames(build.EnvironmentID)
 	if err != nil {
@@ -373,12 +389,17 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 		frontendScript = snapshot.parsedSettings.Frontend.Script
 	}
 	packStarted := time.Now()
-	_, err = service.pack.Build(buildCtx, buildpacksclient.BuildSpec{
+	buildSpec := buildpacksclient.BuildSpec{
 		Image: imageTag, Path: contextPath, ReportDirectory: reportDirectory, TemporaryDirectory: temporaryDirectory,
 		BuildCache: caches.Build, LaunchCache: caches.Launch, PreviousImage: previousImage, PullPolicy: buildpacksclient.PullPolicyIfNotPresent,
-		DockerEnvironment: authentication.Environment(), BPGOTargets: snapshot.BPGOTargets, FrontendScript: frontendScript,
+		DockerEnvironment: dockerEnvironment, BPGOTargets: snapshot.BPGOTargets, FrontendScript: frontendScript,
 		Output: logger,
-	})
+	}
+	if buildTarget.Remote {
+		err = service.buildRemote(buildCtx, buildTarget, build, snapshot, archivePath, buildSpec, credentials, logger)
+	} else {
+		_, err = service.pack.Build(buildCtx, buildSpec)
+	}
 	recordTiming("Pack execution", packStarted)
 	if persistenceErr := logger.PersistenceError(); persistenceErr != nil {
 		slog.WarnContext(ctx, "Build output logging became unavailable", "build_id", build.ID, "error", persistenceErr)
@@ -412,6 +433,151 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	}
 	slog.InfoContext(ctx, "Build completed", "build_id", build.ID, "artifact", immutableReference)
 	return nil
+}
+
+func (service *BuildExecution) buildRemote(
+	ctx context.Context,
+	target ServerExecutionTarget,
+	build models.BuildEntity,
+	snapshot buildSnapshot,
+	archivePath string,
+	spec buildpacksclient.BuildSpec,
+	credentials registryclient.Credentials,
+	logger io.Writer,
+) error {
+	workspace := filepath.Join(buildWorkspaceRoot, build.ID.String())
+	sourceRoot := filepath.Join(workspace, "source")
+	reportDirectory := filepath.Join(workspace, "report")
+	temporaryDirectory := filepath.Join(workspace, "tmp")
+	contextPath := filepath.Join(sourceRoot, filepath.FromSlash(snapshot.ContextPath))
+	if contextPath != sourceRoot && !strings.HasPrefix(contextPath, sourceRoot+string(filepath.Separator)) {
+		return errors.New("remote Buildpacks context escaped the Build workspace")
+	}
+	setup := []byte("set -euo pipefail\n" +
+		shellJoin("/usr/bin/rm", "-rf", "--", workspace) + "\n" +
+		shellJoin("/usr/bin/install", "-d", "-m", "0700", workspace, sourceRoot, reportDirectory, temporaryDirectory) + "\n")
+	if _, err := service.servers.RunRootScript(ctx, target, setup); err != nil {
+		return fmt.Errorf("prepare remote Build workspace: %w", err)
+	}
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+		defer cancel()
+		_, _ = service.servers.RunRootCommand(cleanupCtx, target, nil, "/usr/bin/rm", "-rf", "--", workspace)
+	}()
+	if err := service.streamCommandToRemote(ctx, target, sudo.CommandContext(ctx, "/usr/bin/cat", "--", archivePath),
+		"/usr/bin/tar", "--extract", "--gzip", "--file", "-", "--directory", sourceRoot,
+		"--strip-components", "1", "--no-same-owner", "--no-same-permissions"); err != nil {
+		return fmt.Errorf("stage source on selected Build Server: %w", err)
+	}
+	if _, err := service.servers.RunRootCommand(ctx, target, nil, "/usr/bin/test", "-f", filepath.Join(contextPath, "go.mod")); err != nil {
+		return errors.New("Go Buildpacks context must contain go.mod on the selected Build Server")
+	}
+
+	assetsBuildpack := ""
+	if spec.FrontendScript != "" {
+		localAssets, err := nodeassets.Materialize(filepath.Join(spec.TemporaryDirectory, "buildpacks"))
+		if err != nil {
+			return err
+		}
+		remoteAssetsParent := filepath.Join(temporaryDirectory, "buildpacks")
+		assetsBuildpack = filepath.Join(remoteAssetsParent, "node-assets")
+		if _, err := service.servers.RunRootCommand(ctx, target, nil, "/usr/bin/install", "-d", "-m", "0755", assetsBuildpack); err != nil {
+			return err
+		}
+		if err := service.streamCommandToRemote(ctx, target, exec.CommandContext(ctx, "/usr/bin/tar", "--create", "--gzip", "--file", "-", "--directory", localAssets, "."),
+			"/usr/bin/tar", "--extract", "--gzip", "--file", "-", "--directory", assetsBuildpack); err != nil {
+			return fmt.Errorf("stage frontend Buildpack on selected Build Server: %w", err)
+		}
+	}
+
+	arguments, err := remotePackArguments(target.Server.Architecture.String, spec, contextPath, reportDirectory, assetsBuildpack)
+	if err != nil {
+		return err
+	}
+	authDirectory := filepath.Join(workspace, "registry-auth")
+	var script strings.Builder
+	script.WriteString("set -euo pipefail\n")
+	script.WriteString(shellJoin("/usr/bin/install", "-d", "-m", "0700", authDirectory))
+	script.WriteString("\nexport HOME=")
+	script.WriteString(shellQuote(authDirectory))
+	script.WriteString(" DOCKER_CONFIG=")
+	script.WriteString(shellQuote(authDirectory))
+	script.WriteString(" TMPDIR=")
+	script.WriteString(shellQuote(temporaryDirectory))
+	script.WriteString("\n/usr/bin/printf '%s' ")
+	script.WriteString(shellQuote(base64.StdEncoding.EncodeToString([]byte(credentials.Password))))
+	script.WriteString(" | /usr/bin/base64 --decode | ")
+	script.WriteString(shellJoin(remoteDockerExecutable, "login", credentials.Endpoint, "--username", credentials.Username, "--password-stdin"))
+	script.WriteString(" >/dev/null\n")
+	script.WriteString(shellJoin("/usr/local/bin/pack", arguments...))
+	script.WriteString("\n")
+	scriptBytes := []byte(script.String())
+	defer clear(scriptBytes)
+	result, err := service.servers.RunRootScript(ctx, target, scriptBytes)
+	if result.Stdout != "" {
+		_, _ = io.WriteString(logger, result.Stdout)
+	}
+	if result.Stderr != "" {
+		_, _ = io.WriteString(logger, result.Stderr)
+	}
+	if err != nil {
+		return fmt.Errorf("Pack build failed on Server %s: %w", target.Server.Name, err)
+	}
+	return nil
+}
+
+func (service *BuildExecution) streamCommandToRemote(ctx context.Context, target ServerExecutionTarget, command *exec.Cmd, remoteExecutable string, remoteArguments ...string) error {
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	if err := command.Start(); err != nil {
+		return err
+	}
+	_, remoteErr := service.servers.RunRootCommand(ctx, target, stdout, remoteExecutable, remoteArguments...)
+	_ = stdout.Close()
+	waitErr := command.Wait()
+	if remoteErr != nil {
+		return remoteErr
+	}
+	if waitErr != nil {
+		return fmt.Errorf("read staged Build content: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
+func remotePackArguments(architecture string, spec buildpacksclient.BuildSpec, contextPath, reportDirectory, assetsBuildpack string) ([]string, error) {
+	builder, err := buildpacksclient.PinnedBuilderForArchitecture(architecture)
+	if err != nil {
+		return nil, err
+	}
+	goBuildpack, err := buildpacksclient.PinnedGoBuildpackForArchitecture(architecture)
+	if err != nil {
+		return nil, err
+	}
+	runImage, err := buildpacksclient.PinnedRunImageForArchitecture(architecture)
+	if err != nil {
+		return nil, err
+	}
+	arguments := []string{"build", spec.Image, "--path", contextPath, "--builder", builder}
+	if assetsBuildpack != "" {
+		arguments = append(arguments, "--buildpack", buildpacksclient.NodeEngineBuildpack, "--buildpack", assetsBuildpack, "--env", "BP_DEPLOYCRATE_FRONTEND_SCRIPT="+spec.FrontendScript)
+	}
+	arguments = append(arguments,
+		"--buildpack", goBuildpack, "--trust-extra-buildpacks", "--run-image", runImage, "--publish",
+		"--cache", "type=build;format=volume;name="+spec.BuildCache,
+		"--cache", "type=launch;format=volume;name="+spec.LaunchCache,
+		"--pull-policy", spec.PullPolicy, "--timestamps", "--report-output-dir", reportDirectory,
+	)
+	if spec.PreviousImage != "" {
+		arguments = append(arguments, "--previous-image", spec.PreviousImage)
+	}
+	if spec.BPGOTargets != "" {
+		arguments = append(arguments, "--env", "BP_GO_TARGETS="+spec.BPGOTargets)
+	}
+	return arguments, nil
 }
 
 func (service *BuildExecution) Fail(ctx context.Context, buildID uuid.UUID, operationErr error) error {
@@ -508,7 +674,7 @@ func parseBuildSnapshot(build models.BuildEntity) (buildSnapshot, error) {
 	}
 	missingField := ""
 	switch {
-	case snapshot.SchemaVersion != 1:
+	case snapshot.SchemaVersion != 2:
 		missingField = "schema_version"
 	case snapshot.SourceEventID == uuid.Nil:
 		missingField = "source_event_id"
@@ -528,6 +694,8 @@ func parseBuildSnapshot(build models.BuildEntity) (buildSnapshot, error) {
 		missingField = "registry_credential_id"
 	case strings.TrimSpace(snapshot.RegistryEndpoint) == "":
 		missingField = "registry_endpoint"
+	case snapshot.ServerID == uuid.Nil:
+		missingField = "server_id"
 	}
 	if missingField != "" {
 		return snapshot, fmt.Errorf("Build configuration snapshot is incomplete: %s is missing or invalid", missingField)

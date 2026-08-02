@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/netip"
-	"strings"
 	"time"
 
 	"deploycrate-ce/internal/storage"
@@ -285,12 +283,13 @@ func (service *DatabaseBackups) validateDestination(ctx context.Context, db stor
 
 func (service *DatabaseBackups) eligibility(ctx context.Context, db storage.Executor, databaseID uuid.UUID) (models.ResourceBackupEligibility, error) {
 	var target struct {
-		DatabaseID                                              uuid.UUID
-		Engine, ManagementMode, InstallationMethod, IPv4Address string
-		NodeID, InstallationID                                  uuid.UUID
-		AdministratorCount                                      int
+		DatabaseID                                 uuid.UUID
+		Engine, ManagementMode, InstallationMethod string
+		NodeID, InstallationID                     uuid.UUID
+		ServerID                                   uuid.UUID
+		AdministratorCount                         int
 	}
-	err := db.NewSelect().TableExpr("databases AS database").ColumnExpr("database.id AS database_id, cluster.engine, cluster.management_mode, COALESCE(installation.installation_method, '') AS installation_method").ColumnExpr("COALESCE(server.ipv4_address, '') AS ipv4_address, node.id AS node_id, installation.id AS installation_id").ColumnExpr("(SELECT count(*) FROM database_cluster_credentials credential WHERE credential.database_cluster_id = cluster.id AND credential.role = 'administrator' AND credential.archived_at IS NULL) AS administrator_count").Join("JOIN database_clusters AS cluster ON cluster.id = database.database_cluster_id AND cluster.archived_at IS NULL").Join("LEFT JOIN database_cluster_nodes AS node ON node.database_cluster_id = cluster.id AND node.role = 'primary' AND node.archived_at IS NULL").Join("LEFT JOIN database_node_installations AS installation ON installation.database_cluster_node_id = node.id AND installation.archived_at IS NULL").Join("LEFT JOIN servers AS server ON server.id = installation.server_id AND server.archived_at IS NULL").Where("database.id = ?", databaseID).Where("database.archived_at IS NULL").Scan(ctx, &target)
+	err := db.NewSelect().TableExpr("databases AS database").ColumnExpr("database.id AS database_id, cluster.engine, cluster.management_mode, COALESCE(installation.installation_method, '') AS installation_method").ColumnExpr("installation.server_id, node.id AS node_id, installation.id AS installation_id").ColumnExpr("(SELECT count(*) FROM database_cluster_credentials credential WHERE credential.database_cluster_id = cluster.id AND credential.role = 'administrator' AND credential.archived_at IS NULL) AS administrator_count").Join("JOIN database_clusters AS cluster ON cluster.id = database.database_cluster_id AND cluster.archived_at IS NULL").Join("LEFT JOIN database_cluster_nodes AS node ON node.database_cluster_id = cluster.id AND node.role = 'primary' AND node.archived_at IS NULL").Join("LEFT JOIN database_node_installations AS installation ON installation.database_cluster_node_id = node.id AND installation.archived_at IS NULL").Where("database.id = ?", databaseID).Where("database.archived_at IS NULL").Scan(ctx, &target)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.ResourceBackupEligibility{}, models.ErrNotFound
 	}
@@ -306,9 +305,8 @@ func (service *DatabaseBackups) eligibility(ctx context.Context, db storage.Exec
 	if target.ManagementMode != "managed" || target.InstallationMethod != "docker" {
 		return ineligible("This Database does not currently have an executable managed Docker primary Node.")
 	}
-	address, parseErr := netip.ParseAddr(strings.TrimSpace(target.IPv4Address))
-	if parseErr != nil || !address.IsLoopback() {
-		return ineligible("The active primary Node is not on the local DeployCrate CE host.")
+	if _, err := models.RequireServerCapability(ctx, db, target.ServerID, models.ServerCapabilityDatabase); err != nil {
+		return ineligible("The active primary Node is not an available Database-capable Server.")
 	}
 	if target.AdministratorCount != 1 {
 		return ineligible("Exactly one active Database Cluster administrator credential is required.")

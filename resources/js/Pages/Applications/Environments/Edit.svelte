@@ -10,16 +10,17 @@
   import { routes } from '@/routes'
 
   type ResourceInput = { resourceId: string; endpointId: string; credentialId?: string; alias: string; database: string; credentialProjection: 'connection_url' | 'individual_parts' }
-  type ResourceOption = { id: string; name: string; kind: string; database: string; endpointId: string; endpoint: string; credentialId?: string; credential: string }
-  type Configuration = { name: string; slug: string; kind: string; hostname: string; containerPort: number; healthPath: string; bpGoTargets: string; resources: ResourceInput[] }
+  type ResourceOption = { id: string; name: string; kind: string; database: string; endpointId: string; endpoint: string; credentialId?: string; credential: string; serverId?: string }
+  type Configuration = { name: string; slug: string; kind: string; hostname: string; containerPort: number; healthPath: string; bpGoTargets: string; resources: ResourceInput[]; serverId: string; serverName: string }
   type Environment = { applicationId: string; applicationName: string; environment: { id: string; name: string; kind: string }; repository: string; reference: string; contextPath: string }
 
   let { auth, environment, configuration, options }: { auth: { email: string }; environment: Environment; configuration: Configuration; options: { resources: ResourceOption[] } } = $props()
   let selectedResource = $state('')
   const form = useForm(() => ({ ...configuration, resources: configuration.resources.map((resource) => ({ ...resource })) }))
+  const availableResources = $derived(options.resources.filter((resource) => !resource.serverId || resource.serverId === configuration.serverId))
 
   function addResource() {
-    const option = options.resources.find((candidate) => `${candidate.id}:${candidate.endpointId}:${candidate.credentialId ?? ''}` === selectedResource)
+    const option = availableResources.find((candidate) => `${candidate.id}:${candidate.endpointId}:${candidate.credentialId ?? ''}` === selectedResource)
     if (!option || $form.resources.some((resource) => resource.resourceId === option.id)) return
     $form.resources = [...$form.resources, {
       resourceId: option.id, endpointId: option.endpointId, credentialId: option.credentialId,
@@ -61,6 +62,7 @@
     <Card.Root>
       <Card.Header><Card.Title>Runtime</Card.Title><Card.Description>Edit every user-controlled Go Buildpacks runtime value.</Card.Description></Card.Header>
       <Card.Content class="grid gap-5 sm:grid-cols-2">
+        <div class="sm:col-span-2"><FormField label="Runtime Server"><Input value={configuration.serverName} readonly /></FormField><p class="mt-2 text-xs text-muted-foreground">Runtime placement is fixed after setup. Create a new Environment to move workloads safely between Servers.</p></div>
         <FormField label="Container port" error={$form.errors.containerPort}><Input type="number" min="1" max="65535" bind:value={$form.containerPort} required /></FormField>
         <FormField label="HTTP health path" error={$form.errors.healthPath}><Input bind:value={$form.healthPath} placeholder="/health" /></FormField>
         <FormField label="BP_GO_TARGETS" error={$form.errors.bpGoTargets}><Input bind:value={$form.bpGoTargets} placeholder="./cmd/app" /></FormField>
@@ -70,7 +72,7 @@
     <Card.Root>
       <Card.Header><Card.Title>Resources</Card.Title><Card.Description>Replace the active Resource connections and their managed Environment variables.</Card.Description></Card.Header>
       <Card.Content class="space-y-4">
-        <div class="flex gap-2"><select bind:value={selectedResource} class="h-9 flex-1 border border-input bg-background px-3 text-sm"><option value="">Select a PostgreSQL Resource</option>{#each options.resources as option}<option value={`${option.id}:${option.endpointId}:${option.credentialId ?? ''}`}>{option.name} · {option.database} · {option.endpoint} · {option.credential || 'No credential'}</option>{/each}</select><Button type="button" variant="outline" onclick={addResource}>Attach</Button></div>
+        <div class="flex gap-2"><select bind:value={selectedResource} class="h-9 flex-1 border border-input bg-background px-3 text-sm"><option value="">Select a PostgreSQL Resource</option>{#each availableResources as option}<option value={`${option.id}:${option.endpointId}:${option.credentialId ?? ''}`}>{option.name} · {option.database} · {option.endpoint} · {option.credential || 'No credential'}</option>{/each}</select><Button type="button" variant="outline" onclick={addResource}>Attach</Button></div>
         {#each $form.resources as resource, index}
           <div class="grid gap-3 border border-border p-4 sm:grid-cols-2">
             <FormField label="Alias" error={$form.errors[`resources.${index}.alias`]}><Input bind:value={resource.alias} /></FormField>

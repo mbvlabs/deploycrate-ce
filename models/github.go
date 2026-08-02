@@ -346,13 +346,14 @@ type GitHubMatchingSource struct {
 	RegistryResourceID   uuid.UUID       `bun:"registry_resource_id"`
 	RegistryCredentialID uuid.UUID       `bun:"registry_credential_id"`
 	RegistryEndpoint     string          `bun:"registry_endpoint"`
+	BuildServerID        uuid.UUID       `bun:"build_server_id"`
 }
 
 func (githubEnvironmentSource) MatchingActive(ctx context.Context, db storage.Executor, installationExternalID, repositoryExternalID int64, reference string) ([]GitHubMatchingSource, error) {
 	var entities []GitHubMatchingSource
 	err := db.NewSelect().TableExpr("github_environment_sources AS binding").
 		ColumnExpr("source.id AS environment_source_id").ColumnExpr("source.environment_id").ColumnExpr("source.reference").ColumnExpr("source.auto_build").ColumnExpr("repository.full_name AS repository_full_name").
-		ColumnExpr("buildpack.context_path, buildpack.builder_reference, buildpack.settings AS buildpack_settings, buildpack.image_repository").
+		ColumnExpr("buildpack.context_path, buildpack.builder_reference, buildpack.settings AS buildpack_settings, buildpack.image_repository, buildpack.server_id AS build_server_id").
 		ColumnExpr("registry_resource.id AS registry_resource_id, registry_credential.id AS registry_credential_id").
 		ColumnExpr("CASE WHEN registry_endpoint.port IN (80, 443) THEN registry_endpoint.address ELSE registry_endpoint.address || ':' || registry_endpoint.port::text END AS registry_endpoint").
 		Join("JOIN environment_sources AS source ON source.id = binding.environment_source_id").

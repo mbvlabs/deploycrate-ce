@@ -18,7 +18,6 @@ import (
 	"time"
 
 	buildpacksclient "deploycrate-ce/clients/buildpacks"
-	containerclient "deploycrate-ce/clients/container"
 
 	"github.com/google/uuid"
 	"github.com/gosimple/slug"
@@ -40,8 +39,9 @@ type EnvironmentSetup struct {
 	secrets    *EnvironmentSecrets
 	resources  *ResourceManagement
 	caddy      CaddyRouteService
-	container  containerclient.WorkloadClient
+	workloads  *WorkloadExecution
 	buildpacks buildpacksclient.Client
+	servers    *ServerExecution
 }
 
 func NewEnvironmentSetup(
@@ -52,10 +52,12 @@ func NewEnvironmentSetup(
 	secrets *EnvironmentSecrets,
 	resources *ResourceManagement,
 	caddy CaddyRouteService,
+	workloads *WorkloadExecution,
+	servers *ServerExecution,
 ) *EnvironmentSetup {
 	return &EnvironmentSetup{
 		db: db, queue: queue, jobControl: jobControl, github: github, secrets: secrets,
-		resources: resources, caddy: caddy, container: containerclient.NewWorkload(), buildpacks: buildpacksclient.New(),
+		resources: resources, caddy: caddy, workloads: workloads, buildpacks: buildpacksclient.New(), servers: servers,
 	}
 }
 
@@ -82,6 +84,7 @@ type EnvironmentSetupResourceInput struct {
 }
 
 type EnvironmentSetupInput struct {
+	ServerID      uuid.UUID
 	Hostname      string
 	ContainerPort int32
 	HealthPath    string
@@ -105,10 +108,19 @@ type EnvironmentSetupResourceOption struct {
 	Endpoint     string     `json:"endpoint" bun:"endpoint"`
 	CredentialID *uuid.UUID `json:"credentialId" bun:"credential_id"`
 	Credential   string     `json:"credential" bun:"credential"`
+	ServerID     *uuid.UUID `json:"serverId" bun:"server_id"`
+}
+
+type EnvironmentSetupServerOption struct {
+	ID      uuid.UUID `json:"id" bun:"id"`
+	Name    string    `json:"name" bun:"name"`
+	Kind    string    `json:"kind" bun:"kind"`
+	Address string    `json:"address" bun:"address"`
 }
 
 type EnvironmentSetupOptions struct {
 	Resources []EnvironmentSetupResourceOption `json:"resources"`
+	Servers   []EnvironmentSetupServerOption   `json:"servers"`
 }
 
 type EnvironmentEditConfiguration struct {
@@ -120,6 +132,8 @@ type EnvironmentEditConfiguration struct {
 	HealthPath    string                          `json:"healthPath"`
 	BPGOTargets   string                          `json:"bpGoTargets"`
 	Resources     []EnvironmentSetupResourceInput `json:"resources"`
+	ServerID      uuid.UUID                       `json:"serverId"`
+	ServerName    string                          `json:"serverName"`
 }
 
 type EnvironmentEditData struct {
@@ -148,6 +162,8 @@ type EnvironmentOverview struct {
 	ContextPath      string                          `json:"contextPath"`
 	RegistryName     string                          `json:"registryName"`
 	RegistryEndpoint string                          `json:"registryEndpoint"`
+	RuntimeServerID  uuid.UUID                       `json:"runtimeServerId"`
+	RuntimeServer    string                          `json:"runtimeServer"`
 	Deployability    models.EnvironmentDeployability `json:"deployability"`
 	Secrets          []EnvironmentSecretActivity     `json:"secrets"`
 	Variables        []EnvironmentVariableActivity   `json:"variables"`
@@ -358,6 +374,18 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 	}
 	var domain string
 	_ = service.db.Executor().NewSelect().TableExpr("environment_domains").ColumnExpr("hostname").Where("environment_id = ?", environmentID).Where("is_primary = TRUE").Where("archived_at IS NULL").Limit(1).Scan(ctx, &domain)
+	var runtimeServer struct {
+		ID   uuid.UUID `bun:"id"`
+		Name string    `bun:"name"`
+	}
+	if setupComplete {
+		if err := service.db.Executor().NewSelect().TableExpr("environment_targets AS target").
+			ColumnExpr("server.id, server.name").
+			Join("JOIN servers AS server ON server.id = target.server_id").
+			Where("target.environment_id = ?", environmentID).Where("target.detached_at IS NULL").Limit(1).Scan(ctx, &runtimeServer); err != nil {
+			return EnvironmentOverview{}, err
+		}
+	}
 	resources := make([]EnvironmentResourceActivity, 0)
 	if err := service.db.Executor().NewSelect().TableExpr("environment_resources AS connection").ColumnExpr("connection.id, connection.alias, resource.name, resource.kind").Join("JOIN resources AS resource ON resource.id = connection.resource_id").Where("connection.environment_id = ?", environmentID).Where("connection.archived_at IS NULL").OrderExpr("connection.alias").Scan(ctx, &resources); err != nil {
 		return EnvironmentOverview{}, err
@@ -392,6 +420,7 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 		ApplicationID: applicationID, ApplicationName: source.ApplicationName, Environment: environment, SetupComplete: setupComplete,
 		Repository: source.Repository, Reference: source.Reference, ContextPath: source.ContextPath,
 		RegistryName: source.RegistryName, RegistryEndpoint: source.RegistryEndpoint,
+		RuntimeServerID: runtimeServer.ID, RuntimeServer: runtimeServer.Name,
 		Deployability: deployability, Secrets: secretActivity, Variables: variables, Domain: domain,
 		Resources: resources, Builds: builds, Releases: releases, Deployments: deployments, Instances: instances,
 	}, nil
@@ -517,6 +546,14 @@ func (service *EnvironmentSetup) EditData(
 	if err != nil {
 		return EnvironmentEditData{}, err
 	}
+	target, err := models.EnvironmentTarget.ActiveForEnvironment(ctx, service.db.Executor(), environmentID)
+	if err != nil {
+		return EnvironmentEditData{}, err
+	}
+	server, err := models.Server.Find(ctx, service.db.Executor(), target.ServerID)
+	if err != nil {
+		return EnvironmentEditData{}, err
+	}
 	if !overview.SetupComplete {
 		return EnvironmentEditData{}, errors.New("Environment setup is incomplete")
 	}
@@ -571,6 +608,7 @@ func (service *EnvironmentSetup) EditData(
 			Name: overview.Environment.Name, Slug: overview.Environment.Slug, Kind: overview.Environment.Kind,
 			Hostname: state.Domain.Hostname, ContainerPort: state.Runtime.ContainerPort,
 			HealthPath: state.Runtime.HealthPath, BPGOTargets: state.Runtime.BPGOTargets, Resources: resources,
+			ServerID: target.ServerID, ServerName: server.Name,
 		},
 	}, nil
 }
@@ -671,16 +709,28 @@ func (service *EnvironmentSetup) DeploymentEvents(
 
 func (service *EnvironmentSetup) Options(ctx context.Context) (EnvironmentSetupOptions, error) {
 	options := make([]EnvironmentSetupResourceOption, 0)
-	err := service.db.Executor().NewSelect().TableExpr("resources AS resource").
+	if err := service.db.Executor().NewSelect().TableExpr("resources AS resource").
 		ColumnExpr("resource.id, resource.name, resource.kind, COALESCE(endpoint.settings ->> 'database', '') AS database_name, endpoint.id AS endpoint_id").
 		ColumnExpr("endpoint.address || ':' || endpoint.port::text AS endpoint").
-		ColumnExpr("credential.id AS credential_id, COALESCE(credential.name, '') AS credential").
+		ColumnExpr("credential.id AS credential_id, COALESCE(credential.name, '') AS credential, installation.server_id AS server_id").
 		Join("JOIN database_resources AS backing ON backing.resource_id = resource.id").
 		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = resource.id AND endpoint.archived_at IS NULL").
+		Join("LEFT JOIN resource_installations AS installation ON installation.id = endpoint.resource_installation_id AND installation.archived_at IS NULL").
 		Join("LEFT JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.archived_at IS NULL").
 		Where("resource.archived_at IS NULL").Where("resource.kind = 'postgresql'").
-		OrderExpr("resource.name, endpoint.role, credential.name").Scan(ctx, &options)
-	return EnvironmentSetupOptions{Resources: options}, err
+		OrderExpr("resource.name, endpoint.role, credential.name").Scan(ctx, &options); err != nil {
+		return EnvironmentSetupOptions{}, err
+	}
+	servers := make([]EnvironmentSetupServerOption, 0)
+	if err := service.db.Executor().NewSelect().TableExpr("servers AS server").
+		ColumnExpr("server.id, server.name, server.kind, server.address").
+		Where("server.archived_at IS NULL").Where("server.is_configured = TRUE").
+		Where("server.kind IN ('self_hosted', 'worker')").
+		Where("server.capabilities @> '{\"runtime\":true}'::jsonb").
+		OrderExpr("CASE WHEN server.kind = 'self_hosted' THEN 0 ELSE 1 END, server.name").Scan(ctx, &servers); err != nil {
+		return EnvironmentSetupOptions{}, err
+	}
+	return EnvironmentSetupOptions{Resources: options, Servers: servers}, nil
 }
 
 type environmentSetupSource struct {
@@ -700,6 +750,7 @@ type environmentSetupSource struct {
 	RegistryID            uuid.UUID       `bun:"registry_id"`
 	RegistryCredentialID  uuid.UUID       `bun:"registry_credential_id"`
 	RegistryEndpoint      string          `bun:"registry_endpoint"`
+	BuildServerID         uuid.UUID       `bun:"build_server_id"`
 }
 
 type preparedSetupResource struct {
@@ -733,11 +784,11 @@ func (service *EnvironmentSetup) Complete(
 	if err != nil {
 		return EnvironmentSetupResult{}, fmt.Errorf("resolve configured GitHub reference: %w", err)
 	}
-	serverID, networkID, serverNetwork, err := service.controlPlanePlacement(ctx)
+	serverID, networkID, serverNetwork, err := service.runtimePlacement(ctx, input.ServerID)
 	if err != nil {
 		return EnvironmentSetupResult{}, err
 	}
-	preparedResources, err := service.prepareResources(ctx, environmentID, networkID, input.Resources)
+	preparedResources, err := service.prepareResources(ctx, environmentID, serverID, networkID, input.Resources)
 	if err != nil {
 		return EnvironmentSetupResult{}, err
 	}
@@ -887,13 +938,14 @@ func (service *EnvironmentSetup) Complete(
 		return EnvironmentSetupResult{}, err
 	}
 	buildConfiguration, err := marshalBuildSnapshot(buildSnapshot{
-		SchemaVersion: 1, SourceEventID: event.ID, EnvironmentStateRevisionID: revision.ID,
+		SchemaVersion: 2, SourceEventID: event.ID, EnvironmentStateRevisionID: revision.ID,
 		Repository: source.Repository, Reference: source.Reference, SourceRevision: revisionSHA,
 		ContextPath: source.ContextPath, BuilderReference: nullableStringPointer(source.BuilderReference),
 		ImageRepository: source.ImageRepository, RegistryResourceID: source.RegistryID,
 		RegistryCredentialID: source.RegistryCredentialID,
 		RegistryEndpoint:     source.RegistryEndpoint, Settings: source.BuildpackSettings,
 		BPGOTargets: input.BPGOTargets,
+		ServerID:    source.BuildServerID,
 	})
 	if err != nil {
 		return EnvironmentSetupResult{}, fmt.Errorf("create Build configuration snapshot: %w", err)
@@ -966,13 +1018,14 @@ func (service *EnvironmentSetup) QueueManualDeploy(
 		return models.BuildEntity{}, err
 	}
 	buildConfiguration, err := marshalBuildSnapshot(buildSnapshot{
-		SchemaVersion: 1, SourceEventID: event.ID, EnvironmentStateRevisionID: stateRevision.ID,
+		SchemaVersion: 2, SourceEventID: event.ID, EnvironmentStateRevisionID: stateRevision.ID,
 		Repository: source.Repository, Reference: source.Reference, SourceRevision: revisionSHA,
 		ContextPath: source.ContextPath, BuilderReference: nullableStringPointer(source.BuilderReference),
 		ImageRepository: source.ImageRepository, RegistryResourceID: source.RegistryID,
 		RegistryCredentialID: source.RegistryCredentialID,
 		RegistryEndpoint:     source.RegistryEndpoint, Settings: source.BuildpackSettings,
 		BPGOTargets: state.Runtime.BPGOTargets,
+		ServerID:    source.BuildServerID,
 	})
 	if err != nil {
 		return models.BuildEntity{}, fmt.Errorf("create Build configuration snapshot: %w", err)
@@ -1267,7 +1320,11 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 		Where("removed_at IS NULL").Limit(1).Scan(ctx, &networkID); err != nil {
 		return fmt.Errorf("load Environment network: %w", err)
 	}
-	preparedResources, err := service.prepareResources(ctx, environmentID, networkID, input.Resources)
+	target, err := models.EnvironmentTarget.ActiveForEnvironment(ctx, service.db.Executor(), environmentID)
+	if err != nil {
+		return err
+	}
+	preparedResources, err := service.prepareResources(ctx, environmentID, target.ServerID, networkID, input.Resources)
 	if err != nil {
 		return err
 	}
@@ -1530,8 +1587,15 @@ func (service *EnvironmentSetup) DeleteEnvironment(
 			return fmt.Errorf("delete Environment Caddy route: %w", err)
 		}
 	}
-	if err := service.container.DeleteEnvironment(ctx, environmentID); err != nil {
-		return err
+	serverIDs := make([]uuid.UUID, 0)
+	if err := service.db.Executor().NewSelect().TableExpr("environment_targets").Column("server_id").
+		Where("environment_id = ?", environmentID).Group("server_id").Scan(ctx, &serverIDs); err != nil {
+		return fmt.Errorf("load Environment workload Servers: %w", err)
+	}
+	for _, serverID := range serverIDs {
+		if err := service.workloads.DeleteEnvironment(ctx, serverID, environmentID); err != nil {
+			return err
+		}
 	}
 	for _, job := range jobsToDelete {
 		if err := service.jobControl.DeleteJob(ctx, job.ID); err != nil {
@@ -1546,7 +1610,7 @@ func (service *EnvironmentSetup) DeleteEnvironment(
 			}
 		}
 	}
-	if err := service.buildpacks.DeleteEnvironmentCaches(ctx, environmentID); err != nil {
+	if err := service.deleteEnvironmentBuildCaches(ctx, environmentID); err != nil {
 		return fmt.Errorf("delete Environment Build caches: %w", err)
 	}
 
@@ -1572,6 +1636,57 @@ func (service *EnvironmentSetup) DeleteEnvironment(
 		}
 	}
 	return tx.Commit()
+}
+
+func (service *EnvironmentSetup) deleteEnvironmentBuildCaches(ctx context.Context, environmentID uuid.UUID) error {
+	serverIDs := make([]uuid.UUID, 0)
+	if err := service.db.Executor().NewSelect().TableExpr("builds").
+		ColumnExpr("DISTINCT (build_configuration ->> 'server_id')::uuid AS server_id").
+		Where("environment_id = ?", environmentID).Where("build_configuration ->> 'server_id' IS NOT NULL").Scan(ctx, &serverIDs); err != nil {
+		return err
+	}
+	var configuredServerID uuid.UUID
+	if err := service.db.Executor().NewSelect().TableExpr("buildpack_configurations AS buildpack").ColumnExpr("buildpack.server_id").
+		Join("JOIN environment_sources AS source ON source.id = buildpack.environment_source_id").
+		Where("source.environment_id = ?", environmentID).Limit(1).Scan(ctx, &configuredServerID); err == nil {
+		serverIDs = append(serverIDs, configuredServerID)
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	caches, err := buildpacksclient.EnvironmentCacheNames(environmentID)
+	if err != nil {
+		return err
+	}
+	seen := make(map[uuid.UUID]struct{}, len(serverIDs))
+	for _, serverID := range serverIDs {
+		if serverID == uuid.Nil {
+			continue
+		}
+		if _, exists := seen[serverID]; exists {
+			continue
+		}
+		seen[serverID] = struct{}{}
+		target, err := service.servers.Target(ctx, serverID, models.ServerCapabilityBuild)
+		if err != nil {
+			return err
+		}
+		if !target.Remote {
+			if err := service.buildpacks.DeleteEnvironmentCaches(ctx, environmentID); err != nil {
+				return err
+			}
+			continue
+		}
+		for _, cache := range []string{caches.Build, caches.Launch} {
+			if _, err := service.servers.RunRootCommand(ctx, target, nil, remoteDockerExecutable, "volume", "rm", cache); err != nil {
+				message := strings.ToLower(err.Error())
+				if strings.Contains(message, "no such volume") || strings.Contains(message, "not found") {
+					continue
+				}
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func (service *EnvironmentSetup) RetryDeployment(
@@ -1673,7 +1788,7 @@ func (service *EnvironmentSetup) loadSource(ctx context.Context, applicationID, 
 		ColumnExpr("environment.application_id, environment.id AS environment_id, environment.archived_at AS environment_archived_at").
 		ColumnExpr("source.id AS environment_source_id, source.reference, source.repository").
 		ColumnExpr("repository.id AS repository_id, installation.id AS installation_id").
-		ColumnExpr("buildpack.context_path, buildpack.builder_reference, buildpack.settings AS buildpack_settings, buildpack.image_repository").
+		ColumnExpr("buildpack.context_path, buildpack.builder_reference, buildpack.settings AS buildpack_settings, buildpack.image_repository, buildpack.server_id AS build_server_id").
 		ColumnExpr("registry_resource.id AS registry_id, registry_credential.id AS registry_credential_id").
 		ColumnExpr("CASE WHEN registry_endpoint.port IN (80, 443) THEN registry_endpoint.address ELSE registry_endpoint.address || ':' || registry_endpoint.port::text END AS registry_endpoint").
 		Join("JOIN environment_sources AS source ON source.environment_id = environment.id AND source.archived_at IS NULL").
@@ -1701,9 +1816,17 @@ func (service *EnvironmentSetup) loadSource(ctx context.Context, applicationID, 
 	return source, repository, installation, err
 }
 
-func (service *EnvironmentSetup) controlPlanePlacement(ctx context.Context) (uuid.UUID, uuid.UUID, models.ServerNetworkEntity, error) {
+func (service *EnvironmentSetup) runtimePlacement(ctx context.Context, serverID uuid.UUID) (uuid.UUID, uuid.UUID, models.ServerNetworkEntity, error) {
+	server, err := models.Server.Find(ctx, service.db.Executor(), serverID)
+	if err != nil || server.ArchivedAt.Valid || !server.IsConfigured || (server.Kind != "self_hosted" && server.Kind != "worker") {
+		return uuid.Nil, uuid.Nil, models.ServerNetworkEntity{}, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: "serverId", Code: "unavailable", Message: "selected runtime Server is unavailable"}})
+	}
+	capabilities, err := models.ParseServerCapabilities(server.Capabilities)
+	if err != nil || !capabilities.Runtime {
+		return uuid.Nil, uuid.Nil, models.ServerNetworkEntity{}, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: "serverId", Code: "capability", Message: "selected Server does not support application runtimes"}})
+	}
 	var row struct{ ServerID, NetworkID uuid.UUID }
-	err := service.db.Executor().NewSelect().TableExpr("applications AS application").
+	err = service.db.Executor().NewSelect().TableExpr("applications AS application").
 		ColumnExpr("target.server_id, membership.private_network_id AS network_id").
 		Join("JOIN environments AS environment ON environment.application_id = application.id AND environment.archived_at IS NULL").
 		Join("JOIN environment_targets AS target ON target.environment_id = environment.id AND target.detached_at IS NULL").
@@ -1713,11 +1836,14 @@ func (service *EnvironmentSetup) controlPlanePlacement(ctx context.Context) (uui
 		return uuid.Nil, uuid.Nil, models.ServerNetworkEntity{}, err
 	}
 	var network models.ServerNetworkEntity
-	err = service.db.Executor().NewSelect().Model(&network).Where("server_id = ?", row.ServerID).Where("private_network_id = ?", row.NetworkID).Where("removed_at IS NULL").Limit(1).Scan(ctx)
-	return row.ServerID, row.NetworkID, network, err
+	err = service.db.Executor().NewSelect().Model(&network).Where("server_id = ?", serverID).Where("private_network_id = ?", row.NetworkID).Where("removed_at IS NULL").Limit(1).Scan(ctx)
+	if err != nil {
+		return uuid.Nil, uuid.Nil, models.ServerNetworkEntity{}, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: "serverId", Code: "network", Message: "selected Server is not attached to the DeployCrate private network"}})
+	}
+	return serverID, row.NetworkID, network, nil
 }
 
-func (service *EnvironmentSetup) prepareResources(ctx context.Context, environmentID, networkID uuid.UUID, inputs []EnvironmentSetupResourceInput) ([]preparedSetupResource, error) {
+func (service *EnvironmentSetup) prepareResources(ctx context.Context, environmentID, serverID, networkID uuid.UUID, inputs []EnvironmentSetupResourceInput) ([]preparedSetupResource, error) {
 	prepared := make([]preparedSetupResource, 0, len(inputs))
 	aliases := make(map[string]struct{}, len(inputs))
 	resources := make(map[uuid.UUID]struct{}, len(inputs))
@@ -1750,6 +1876,12 @@ func (service *EnvironmentSetup) prepareResources(ctx context.Context, environme
 		endpoint, err := models.ResourceEndpoint.Find(ctx, service.db.Executor(), input.EndpointID)
 		if err != nil || endpoint.ArchivedAt.Valid || endpoint.ResourceID != resource.ID || (endpoint.PrivateNetworkID != nil && *endpoint.PrivateNetworkID != networkID) {
 			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected Resource endpoint is unavailable from the Environment target"))
+		}
+		if endpoint.ResourceInstallationID != nil {
+			installation, installationErr := models.ResourceInstallation.Find(ctx, service.db.Executor(), *endpoint.ResourceInstallationID)
+			if installationErr != nil || installation.ArchivedAt.Valid || installation.ServerID != serverID {
+				return nil, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: fmt.Sprintf("resources.%d.resourceId", index), Code: "placement", Message: "selected managed Resource is not installed on the runtime Server"}})
+			}
 		}
 		var endpointSettings struct {
 			Database string `json:"database"`
