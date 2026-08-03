@@ -42,7 +42,11 @@
   let revokeProcessing = $state(false)
   let revokeError = $state('')
 
-  let installations = $state(resource.installations.map((item: any) => ({
+  function initializeFromResource<T>(initialize: (value: any) => T): T {
+    return initialize(resource)
+  }
+
+  let installations = $state(initializeFromResource((initial) => initial.installations.map((item: any) => ({
     ...item,
     imageDigest: item.imageDigest ?? '',
     registryCredentialId: item.registryCredentialId ?? '',
@@ -50,17 +54,17 @@
     hostPort: item.configuration?.portMappings?.[0]?.hostPort ?? 1,
     containerPort: item.configuration?.portMappings?.[0]?.containerPort ?? 1,
     protocol: item.configuration?.portMappings?.[0]?.protocol ?? 'tcp',
-  })))
-  let endpoints = $state(resource.endpoints.map((item: any) => ({ ...item, settingsText: formattedJSON(item.settings), privateNetworkId: item.privateNetworkId ?? '' })))
-  let credentials = $state(resource.credentials.map((item: any) => ({ ...item, metadataText: formattedJSON(item.metadata), rotate: false, secretValues: {} as Record<string, string> })))
-  let volumes = $state(resource.volumes.map((item: any) => ({ ...item, configurationText: formattedJSON(item.configuration) })))
-  let mounts = $state(resource.mounts.map((item: any) => ({ ...item })))
-  let healthChecks = $state(resource.healthChecks.map((item: any) => ({
+  }))))
+  let endpoints = $state(initializeFromResource((initial) => initial.endpoints.map((item: any) => ({ ...item, settingsText: formattedJSON(item.settings), privateNetworkId: item.privateNetworkId ?? '' }))))
+  let credentials = $state(initializeFromResource((initial) => initial.credentials.map((item: any) => ({ ...item, metadataText: formattedJSON(item.metadata), rotate: false, secretValues: {} as Record<string, string> }))))
+  let volumes = $state(initializeFromResource((initial) => initial.volumes.map((item: any) => ({ ...item, configurationText: formattedJSON(item.configuration) }))))
+  let mounts = $state(initializeFromResource((initial) => initial.mounts.map((item: any) => ({ ...item }))))
+  let healthChecks = $state(initializeFromResource((initial) => initial.healthChecks.map((item: any) => ({
     ...item,
     configurationText: formattedJSON(item.configuration),
     resourceEndpointId: item.resourceEndpointId ?? '',
     resourceCredentialId: item.resourceCredentialId ?? '',
-  })))
+  }))))
 
   function formattedJSON(value: unknown) { return JSON.stringify(value ?? {}, null, 2) }
   function initialSlugCustomized() { return resource.slug !== slugify(resource.name) }
