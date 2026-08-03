@@ -46,8 +46,8 @@
     contextPath: string
     registryName: string
     registryEndpoint: string
-    runtimeServerId: string
-    runtimeServer: string
+    runtimeServerIds: string[]
+    runtimeServers: string[]
     domain: string
     deployability: { deployable: boolean; missing: string[] }
     secrets: Secret[]
@@ -436,7 +436,7 @@
       <div class="flex flex-wrap gap-2"><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentEdit(environment.applicationId, environment.environment.id)}>Edit environment</Link>{/snippet}</Button><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentSourceEdit(environment.applicationId, environment.environment.id)}>Edit source</Link>{/snippet}</Button>{#if environment.sourceType === 'buildpacks'}<Button onclick={buildAndDeploy}>Build & deploy</Button>{/if}<EnvironmentDeleteDialog applicationId={environment.applicationId} environmentId={environment.environment.id} environmentName={environment.environment.name} /></div>
     </header>
 
-    <Card.Root><Card.Header><Card.Action><span class:text-success={environment.deployability.deployable} class:text-destructive={!environment.deployability.deployable}>{environment.deployability.deployable ? 'Ready' : 'Blocked'}</span></Card.Action><Card.Title>Desired state</Card.Title></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><DataField label="Repository" value={environment.repository} /><DataField label="Reference" value={environment.reference} /><DataField label="Build context" value={environment.contextPath} /><DataField label="Domain" value={environment.domain} /><DataField label="Runtime Server" value={environment.runtimeServer} /><DataField label="Registry" value={environment.registryName} /><DataField label="Registry endpoint" value={environment.registryEndpoint} />{#if !environment.deployability.deployable}<DataField label="Missing" value={environment.deployability.missing.join(', ')} />{/if}</Card.Content></Card.Root>
+    <Card.Root><Card.Header><Card.Action><span class:text-success={environment.deployability.deployable} class:text-destructive={!environment.deployability.deployable}>{environment.deployability.deployable ? 'Ready' : 'Blocked'}</span></Card.Action><Card.Title>Desired state</Card.Title></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><DataField label="Repository" value={environment.repository} /><DataField label="Reference" value={environment.reference} /><DataField label="Build context" value={environment.contextPath} /><DataField label="Domain" value={environment.domain} /><DataField label="Runtime Server targets" value={environment.runtimeServers.join(', ')} /><DataField label="Registry" value={environment.registryName} /><DataField label="Registry endpoint" value={environment.registryEndpoint} />{#if !environment.deployability.deployable}<DataField label="Missing" value={environment.deployability.missing.join(', ')} />{/if}</Card.Content></Card.Root>
 
     {#if environment.sourceType === 'image'}
       <Card.Root><Card.Header><Card.Title>Deploy image version</Card.Title><Card.Description>Use the configured reference or override it with another tag or sha256 digest.</Card.Description></Card.Header><Card.Content class="flex flex-col gap-3 sm:flex-row"><Input bind:value={imageReference} placeholder="latest" /><Button onclick={buildAndDeploy}>Resolve & deploy</Button></Card.Content></Card.Root>

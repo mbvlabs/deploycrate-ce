@@ -1,83 +1,318 @@
 <script lang="ts">
-  import { useForm } from '@inertiajs/svelte'
+  import { router } from '@inertiajs/svelte'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
+  import BulkEnvironmentSecretsDialog from '@/Components/BulkEnvironmentSecretsDialog.svelte'
   import FormField from '@/Components/FormField.svelte'
   import { Input } from '@/Components/ui/input'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
+  import { slugify } from '@/lib/slug'
   import { routes } from '@/routes'
 
   type Installation = { id: string; accountLogin: string }
   type Repository = { id: string; githubInstallationId: string; fullName: string; defaultBranch: string }
   type Registry = { id: string; name: string; endpoint: string }
-  type BuildServer = { id: string; name: string; kind: string; address: string }
-  type FrontendSettings = { runtime: 'node'; script: 'build' }
-  let { auth, options, environmentIntent = false }: { auth: { email: string }; options: { installations: Installation[]; repositories: Repository[]; registries: Registry[]; buildServers: BuildServer[] }; environmentIntent?: boolean } = $props()
+  type Server = { id: string; name: string; kind: string; address: string }
+  type ResourceOption = { id: string; name: string; engine: string; database: string; endpointId: string; endpoint: string; credentialId?: string; credential: string; serverId?: string; credentialFields: string[]; supportsConnectionUrl: boolean }
+  type EnvironmentResource = { resourceId: string; endpointId: string; credentialId?: string; alias: string; database: string; credentialProjection: 'connection_url' | 'individual_parts' }
+  type EnvironmentSecret = { key: string; value: string }
+  type EnvironmentForm = {
+    kind: 'staging' | 'production'
+    sourceType: 'buildpacks' | 'image'
+    githubInstallationId: string
+    githubRepositoryId: string
+    reference: string
+    autoBuild: boolean
+    buildFrontendAssets: boolean
+    contextPath: string
+    registryResourceId: string
+    imageRepository: string
+    buildServerId: string
+    serverIds: string[]
+    hostname: string
+    containerPort: number
+    healthPath: string
+    bpGoTargets: string
+    resources: EnvironmentResource[]
+    secrets: EnvironmentSecret[]
+    deploy: boolean
+    selectedResource: string
+  }
+  type Options = { installations: Installation[]; repositories: Repository[]; registries: Registry[]; buildServers: Server[]; servers: Server[]; resources: ResourceOption[] }
+
+  let { auth, options, errors = {} }: { auth: { email: string }; options: Options; errors?: Record<string, string> } = $props()
   const installations = $derived(options.installations ?? [])
-  const repositoryOptions = $derived(options.repositories ?? [])
+  const repositories = $derived(options.repositories ?? [])
   const registries = $derived(options.registries ?? [])
   const buildServers = $derived(options.buildServers ?? [])
-  let step = $state(1)
-  let buildFrontendAssets = $state(false)
-	const form = useForm(() => ({ sourceType: 'buildpacks', applicationName: '', applicationSlug: '', environmentName: 'Production', environmentSlug: 'production', environmentKind: 'production', githubInstallationId: installations[0]?.id ?? '', githubRepositoryId: '', reference: '', autoBuild: true, contextPath: '.', builderReference: '', buildpackSettings: { schema_version: 2, frontend: null as FrontendSettings | null }, registryResourceId: registries[0]?.id ?? '', imageRepository: '', buildServerId: buildServers[0]?.id ?? '' }))
-  const repositories = $derived(repositoryOptions.filter((repository) => repository.githubInstallationId === $form.githubInstallationId))
+  const servers = $derived(options.servers ?? [])
+  const resources = $derived(options.resources ?? [])
+  let applicationName = $state('')
+  let applicationSlug = $state('')
+  let slugCustomized = $state(false)
+  let includeStaging = $state(false)
+  let processing = $state(false)
+  let responseErrors = $state<Record<string, string>>({})
+  const displayedErrors = $derived(Object.keys(responseErrors).length > 0 ? responseErrors : errors)
+  let staging = $state(initialEnvironment('staging'))
+  let production = $state(initialEnvironment('production'))
+  let bulkSecretDialogOpen = $state(false)
+  let bulkSecretEnvironment = $state<EnvironmentForm | null>(null)
+
+  function initialEnvironment(kind: 'staging' | 'production'): EnvironmentForm {
+    return {
+      kind,
+      sourceType: 'buildpacks',
+      githubInstallationId: installations[0]?.id ?? '',
+      githubRepositoryId: '',
+      reference: '',
+      autoBuild: false,
+      buildFrontendAssets: false,
+      contextPath: '.',
+      registryResourceId: registries[0]?.id ?? '',
+      imageRepository: '',
+      buildServerId: buildServers[0]?.id ?? '',
+      serverIds: [],
+      hostname: '',
+      containerPort: 8080,
+      healthPath: '/health',
+      bpGoTargets: '',
+      resources: [],
+      secrets: [],
+      deploy: false,
+      selectedResource: '',
+    }
+  }
+
+  function updateApplicationName(value: string) {
+    applicationName = value
+    if (!slugCustomized) applicationSlug = slugify(value)
+  }
+
+  function updateApplicationSlug(value: string) {
+    applicationSlug = value
+    slugCustomized = true
+  }
+
+  function repositoryOptions(environment: EnvironmentForm) {
+    return repositories.filter((repository) => repository.githubInstallationId === environment.githubInstallationId)
+  }
+
+  function chooseInstallation(environment: EnvironmentForm, installationId: string) {
+    environment.githubInstallationId = installationId
+    environment.githubRepositoryId = ''
+  }
+
+  function chooseRepository(environment: EnvironmentForm, repositoryId: string) {
+    environment.githubRepositoryId = repositoryId
+    const repository = repositories.find((candidate) => candidate.id === repositoryId)
+    if (repository && environment.reference.trim() === '') environment.reference = repository.defaultBranch
+  }
+
+  function availableResources(environment: EnvironmentForm) {
+    return resources.filter((resource) => !resource.serverId || environment.serverIds.includes(resource.serverId))
+  }
+
+  function attachedResourceOption(resource: EnvironmentResource) {
+    return resources.find((option) => option.id === resource.resourceId && option.endpointId === resource.endpointId && option.credentialId === resource.credentialId)
+  }
+
+  function resourceAlias(engine: string) {
+    return engine.toUpperCase().replace(/[^A-Z0-9]+/g, '_')
+  }
+
+  function toggleRuntimeServer(environment: EnvironmentForm, serverId: string, selected: boolean) {
+    environment.serverIds = selected
+      ? [...new Set([...environment.serverIds, serverId])]
+      : environment.serverIds.filter((candidate) => candidate !== serverId)
+    const available = new Set(availableResources(environment).map((resource) => resource.id))
+    environment.resources = environment.resources.filter((resource) => available.has(resource.resourceId))
+    environment.selectedResource = ''
+  }
+
+  function addResource(environment: EnvironmentForm) {
+    const option = availableResources(environment).find((candidate) => `${candidate.id}:${candidate.endpointId}:${candidate.credentialId ?? ''}` === environment.selectedResource)
+    if (!option || environment.resources.some((resource) => resource.resourceId === option.id)) return
+    environment.resources = [...environment.resources, { resourceId: option.id, endpointId: option.endpointId, credentialId: option.credentialId, alias: resourceAlias(option.engine), database: option.database, credentialProjection: option.supportsConnectionUrl ? 'connection_url' : 'individual_parts' }]
+    environment.selectedResource = ''
+  }
+
+  function addSecret(environment: EnvironmentForm) {
+    environment.secrets = [...environment.secrets, { key: '', value: '' }]
+  }
+
+  function openBulkSecrets(environment: EnvironmentForm) {
+    bulkSecretEnvironment = environment
+    bulkSecretDialogOpen = true
+  }
+
+  function reservedSecretKeys(environment: EnvironmentForm) {
+    const keys = ['PORT']
+    for (const resource of environment.resources) {
+      const option = attachedResourceOption(resource)
+      const alias = resource.alias.trim().toUpperCase() || resourceAlias(option?.engine ?? 'RESOURCE')
+      const suffixes = resource.credentialProjection === 'connection_url'
+        ? ['URL']
+        : ['HOST', 'PORT', 'PROTOCOL', 'TLS_MODE', ...(resource.database ? ['DATABASE'] : []), ...(option?.credentialId ? ['USER', ...(option.credentialFields ?? []).map((field) => field.toUpperCase())] : [])]
+      keys.push(...suffixes.map((suffix) => `${alias}_${suffix}`))
+    }
+    return keys
+  }
+
+  function importBulkSecrets(secrets: EnvironmentSecret[]) {
+    if (!bulkSecretEnvironment) return
+    bulkSecretEnvironment.secrets = [...bulkSecretEnvironment.secrets, ...secrets]
+  }
+
+  function environmentPayload(environment: EnvironmentForm) {
+    return {
+      sourceType: environment.sourceType,
+      githubInstallationId: environment.githubInstallationId,
+      githubRepositoryId: environment.githubRepositoryId,
+      reference: environment.reference,
+      autoBuild: environment.autoBuild,
+      contextPath: environment.contextPath,
+      builderReference: '',
+      buildpackSettings: { schema_version: 2, frontend: environment.buildFrontendAssets ? { runtime: 'node', script: 'build' } : null },
+      registryResourceId: environment.registryResourceId,
+      imageRepository: environment.imageRepository,
+      buildServerId: environment.buildServerId,
+      serverIds: environment.serverIds,
+      hostname: environment.hostname,
+      containerPort: environment.containerPort,
+      healthPath: environment.healthPath,
+      bpGoTargets: environment.bpGoTargets,
+      resources: environment.resources,
+      secrets: environment.secrets,
+      deploy: environment.deploy,
+    }
+  }
+
   function submit(event: SubmitEvent) {
     event.preventDefault()
-    $form.buildpackSettings.frontend = buildFrontendAssets ? { runtime: 'node', script: 'build' } : null
-    $form.post(environmentIntent ? routes.environmentCreate() : routes.applicationCreate())
+    processing = true
+    responseErrors = {}
+    router.post(routes.applicationCreate(), {
+      applicationName,
+      applicationSlug,
+      staging: includeStaging ? environmentPayload(staging) : null,
+      production: environmentPayload(production),
+    }, {
+      onError: (validationErrors) => { responseErrors = validationErrors },
+      onFinish: () => { processing = false },
+    })
   }
 </script>
 
-<svelte:head><title>{environmentIntent ? 'Create environment' : 'New application'}</title></svelte:head>
-<DashboardLayout email={auth.email}>
-  <div class="space-y-8">
-    <header><p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">{environmentIntent ? 'Environments' : 'Applications'} · Step {step} of 4</p><h1 class="mt-3 text-3xl font-semibold">{environmentIntent ? 'Create a deployable Environment' : 'Configure a build-ready application'}</h1>{#if environmentIntent}<p class="mt-2 max-w-2xl text-sm text-muted-foreground">The Environment is created with its owning Application, GitHub source, Buildpacks configuration, and image destination.</p>{/if}</header>
-    {#if registries.length === 0}
-      <Card.Root><Card.Header><Card.Title>Registry connection required</Card.Title><Card.Description>Connect Docker Hub or another Registry Resource before creating an Environment.</Card.Description></Card.Header></Card.Root>
-    {:else}
-      <form onsubmit={submit}>
-        <Card.Root>
-          <Card.Header><Card.Title>{['Application', 'Source', $form.sourceType === 'image' ? 'Image' : 'Buildpacks', $form.sourceType === 'image' ? 'Deployment source' : 'Image destination'][step - 1]}</Card.Title></Card.Header>
-          <Card.Content class="grid gap-5 sm:grid-cols-2">
-            {#if step === 1}
-              <FormField label="Application name"><Input bind:value={$form.applicationName} required /></FormField>
-              <FormField label="Application slug"><Input bind:value={$form.applicationSlug} required /></FormField>
-              <FormField label="Environment name"><Input bind:value={$form.environmentName} required /></FormField>
-              <FormField label="Environment slug"><Input bind:value={$form.environmentSlug} required /></FormField>
-              <FormField label="Environment kind"><Input bind:value={$form.environmentKind} required /></FormField>
-            {:else if step === 2}
-              <FormField label="Deployment source"><select bind:value={$form.sourceType} class="h-9 w-full border border-input bg-background px-3 text-sm"><option value="buildpacks">GitHub with Buildpacks</option><option value="image">Registry image</option></select></FormField>
-              {#if $form.sourceType === 'buildpacks'}
-                <FormField label="GitHub account"><select bind:value={$form.githubInstallationId} class="h-9 w-full border border-input bg-background px-3 text-sm">{#each installations as installation}<option value={installation.id}>{installation.accountLogin}</option>{/each}</select></FormField>
-                <FormField label="Repository"><select bind:value={$form.githubRepositoryId} class="h-9 w-full border border-input bg-background px-3 text-sm" required><option value="">Select a repository</option>{#each repositories as repository}<option value={repository.id}>{repository.fullName}</option>{/each}</select></FormField>
-                <FormField label="Branch or full ref"><Input bind:value={$form.reference} placeholder="main" required /></FormField>
-                <label class="flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={$form.autoBuild} /> Build automatically on matching pushes</label>
-                {#if installations.length === 0}<p class="text-xs text-destructive sm:col-span-2">Connect GitHub before selecting the Buildpacks source.</p>{/if}
-              {:else}
-                <FormField label="Registry Resource"><select bind:value={$form.registryResourceId} class="h-9 w-full border border-input bg-background px-3 text-sm">{#each registries as registry}<option value={registry.id}>{registry.name} · {registry.endpoint}</option>{/each}</select></FormField>
-                <FormField label="Image repository"><Input bind:value={$form.imageRepository} placeholder="team/application" required /></FormField>
-                <FormField label="Default tag or digest"><Input bind:value={$form.reference} placeholder="latest" required /></FormField>
-              {/if}
-            {:else if step === 3}
-              {#if $form.sourceType === 'buildpacks'}
-                <FormField label="Build Server"><select bind:value={$form.buildServerId} class="h-9 w-full border border-input bg-background px-3 text-sm" required>{#each buildServers as server}<option value={server.id}>{server.name} · {server.kind === 'worker' ? server.address : 'Control plane'}</option>{/each}</select></FormField>
-                <FormField label="Build context"><Input bind:value={$form.contextPath} placeholder="." required /></FormField>
-                <div class="border border-border bg-muted/20 px-3 py-2"><p class="text-[10px] uppercase tracking-wider text-muted-foreground">Builder</p><p class="mt-1 text-sm">Paketo Ubuntu Noble</p><p class="mt-1 text-xs text-muted-foreground">Managed and digest-pinned by DeployCrate for this server.</p></div>
-                <label class="flex gap-3 border border-border p-4 sm:col-span-2"><input class="mt-1" type="checkbox" bind:checked={buildFrontendAssets} /><span><span class="font-medium">Build Node frontend assets</span><span class="mt-1 block text-xs text-muted-foreground">Requires package.json, a supported npm, pnpm, or Bun lockfile, and a build script.</span></span></label>
-                {#if buildServers.length === 0}<p class="text-xs text-destructive sm:col-span-2">Configure a Build-capable Server before using Buildpacks.</p>{/if}
-              {:else}
-                <div class="border border-border bg-muted/20 p-4 sm:col-span-2"><p class="font-medium">Deploy an existing OCI image</p><p class="mt-2 text-sm text-muted-foreground">DeployCrate resolves the configured tag to an immutable digest before every deployment. No Build is created.</p></div>
-              {/if}
-            {:else}
-				{#if $form.sourceType === 'buildpacks'}<FormField label="Registry Resource"><select bind:value={$form.registryResourceId} class="h-9 w-full border border-input bg-background px-3 text-sm">{#each registries as registry}<option value={registry.id}>{registry.name} · {registry.endpoint}</option>{/each}</select></FormField><FormField label="Image repository"><Input bind:value={$form.imageRepository} placeholder="team/application" required /></FormField>{:else}<div class="border border-border p-4 sm:col-span-2"><p class="font-mono text-sm">{$form.imageRepository}:{$form.reference}</p><p class="mt-2 text-xs text-muted-foreground">The first deployment will resolve and store the registry digest.</p></div>{/if}
-            {/if}
-          </Card.Content>
-          <Card.Footer class="justify-between border-t border-border">
-            <Button type="button" variant="outline" disabled={step === 1} onclick={() => step--}>Back</Button>
-            {#if step < 4}<Button type="button" onclick={() => step++}>Continue</Button>{:else}<Button type="submit" disabled={$form.processing}>{environmentIntent ? 'Create environment' : 'Create application'}</Button>{/if}
-          </Card.Footer>
-        </Card.Root>
-      </form>
+{#snippet environmentCard(title: string, environment: EnvironmentForm, enabled: boolean)}
+  <Card.Root>
+    <Card.Header>
+      <Card.Action>{#if environment.kind === 'staging'}<label class="flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={includeStaging} /> Include Staging</label>{:else}<span class="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">Required</span>{/if}</Card.Action>
+      <Card.Title>{title}</Card.Title>
+      <Card.Description>{enabled ? `Choose how this Environment receives its application and where it runs.` : 'Optional. Enable Staging to configure it independently from Production.'}</Card.Description>
+    </Card.Header>
+    {#if enabled}
+    <Card.Content class="space-y-6">
+      <section class="space-y-3">
+        <div><p class="text-sm font-medium">Delivery method</p><p class="mt-1 text-xs text-muted-foreground">This choice belongs only to the {title} Environment.</p></div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class={`flex cursor-pointer gap-3 border p-4 transition-colors hover:border-primary/60 ${environment.sourceType === 'buildpacks' ? 'border-primary bg-primary/5' : 'border-border'}`}>
+            <input class="mt-1" type="radio" name={`source-${environment.kind}`} value="buildpacks" checked={environment.sourceType === 'buildpacks'} onchange={() => environment.sourceType = 'buildpacks'} />
+            <span><span class="block text-sm font-medium">Buildpack</span><span class="mt-1 block text-xs leading-5 text-muted-foreground">Build source from GitHub and publish the resulting image.</span></span>
+          </label>
+          <label class={`flex cursor-pointer gap-3 border p-4 transition-colors hover:border-primary/60 ${environment.sourceType === 'image' ? 'border-primary bg-primary/5' : 'border-border'}`}>
+            <input class="mt-1" type="radio" name={`source-${environment.kind}`} value="image" checked={environment.sourceType === 'image'} onchange={() => environment.sourceType = 'image'} />
+            <span><span class="block text-sm font-medium">Repository</span><span class="mt-1 block text-xs leading-5 text-muted-foreground">Deploy directly from an existing container repository.</span></span>
+          </label>
+        </div>
+      </section>
+
+      {#if environment.sourceType === 'buildpacks'}
+        <section class="grid gap-5 border-t border-border pt-5 sm:grid-cols-2">
+          <FormField label="GitHub account"><select value={environment.githubInstallationId} onchange={(event) => chooseInstallation(environment, event.currentTarget.value)} class="h-9 w-full border border-input bg-background px-3 text-sm" required><option value="">Select an account</option>{#each installations as installation}<option value={installation.id}>{installation.accountLogin}</option>{/each}</select></FormField>
+          <FormField label="Source repository"><select value={environment.githubRepositoryId} onchange={(event) => chooseRepository(environment, event.currentTarget.value)} class="h-9 w-full border border-input bg-background px-3 text-sm" required><option value="">Select a repository</option>{#each repositoryOptions(environment) as repository}<option value={repository.id}>{repository.fullName}</option>{/each}</select></FormField>
+          <FormField label="Git reference"><Input value={environment.reference} oninput={(event) => environment.reference = event.currentTarget.value} placeholder={environment.kind === 'production' ? 'main' : 'staging'} required /></FormField>
+          <FormField label="Build server"><select value={environment.buildServerId} onchange={(event) => environment.buildServerId = event.currentTarget.value} class="h-9 w-full border border-input bg-background px-3 text-sm" required><option value="">Select a Build Server</option>{#each buildServers as server}<option value={server.id}>{server.name} · {server.kind === 'worker' ? server.address : 'Control plane'}</option>{/each}</select></FormField>
+          <FormField label="Build context"><Input value={environment.contextPath} oninput={(event) => environment.contextPath = event.currentTarget.value} placeholder="." required /></FormField>
+          <FormField label="Image destination"><Input value={environment.imageRepository} oninput={(event) => environment.imageRepository = event.currentTarget.value} placeholder={`team/application-${environment.kind}`} required /></FormField>
+          <FormField label="Registry"><select value={environment.registryResourceId} onchange={(event) => environment.registryResourceId = event.currentTarget.value} class="h-9 w-full border border-input bg-background px-3 text-sm" required><option value="">Select a Registry</option>{#each registries as registry}<option value={registry.id}>{registry.name} · {registry.endpoint}</option>{/each}</select></FormField>
+          <label class="flex items-center gap-2 self-end pb-2 text-sm"><input type="checkbox" checked={environment.autoBuild} onchange={(event) => environment.autoBuild = event.currentTarget.checked} /> Build automatically on matching pushes</label>
+          <label class="flex items-start gap-3 border border-border p-4 sm:col-span-2"><input class="mt-1" type="checkbox" checked={environment.buildFrontendAssets} onchange={(event) => environment.buildFrontendAssets = event.currentTarget.checked} /><span><span class="block text-sm font-medium">Build Node frontend assets</span><span class="mt-1 block text-xs text-muted-foreground">Requires a supported lockfile and build script.</span></span></label>
+        </section>
+      {:else}
+        <section class="grid gap-5 border-t border-border pt-5 sm:grid-cols-2">
+          <FormField label="Registry"><select value={environment.registryResourceId} onchange={(event) => environment.registryResourceId = event.currentTarget.value} class="h-9 w-full border border-input bg-background px-3 text-sm" required><option value="">Select a Registry</option>{#each registries as registry}<option value={registry.id}>{registry.name} · {registry.endpoint}</option>{/each}</select></FormField>
+          <FormField label="Repository"><Input value={environment.imageRepository} oninput={(event) => environment.imageRepository = event.currentTarget.value} placeholder="team/application" required /></FormField>
+          <FormField label="Tag or digest"><Input value={environment.reference} oninput={(event) => environment.reference = event.currentTarget.value} placeholder="stable" required /></FormField>
+        </section>
+      {/if}
+
+      <section class="space-y-5 border-t border-border pt-5">
+        <p class="text-sm font-medium">Target servers</p>
+        {#if servers.length === 0}
+          <div class="flex items-center justify-between gap-4 border border-border p-4"><p class="text-sm text-muted-foreground">No runtime target servers are available.</p><Button type="button" href={routes.nodeNew()} variant="outline">Add node</Button></div>
+        {:else}
+          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {#each servers as server}
+              <label class={`flex cursor-pointer gap-3 border p-4 transition-colors hover:border-primary/60 ${environment.serverIds.includes(server.id) ? 'border-primary bg-primary/5' : 'border-border'}`}>
+                <input class="mt-1" type="checkbox" checked={environment.serverIds.includes(server.id)} onchange={(event) => toggleRuntimeServer(environment, server.id, event.currentTarget.checked)} />
+                <span><span class="block text-sm font-medium">{server.name}</span><span class="mt-1 block text-xs text-muted-foreground">{server.kind === 'worker' ? server.address : 'Control plane'}</span></span>
+              </label>
+            {/each}
+          </div>
+        {/if}
+        <div class="grid gap-5 sm:grid-cols-2">
+          <FormField label="Domain"><Input value={environment.hostname} oninput={(event) => environment.hostname = event.currentTarget.value} placeholder={`${environment.kind}.example.com`} required /></FormField>
+          <FormField label="Container port"><Input type="number" min="1" max="65535" value={environment.containerPort} oninput={(event) => environment.containerPort = Number(event.currentTarget.value)} required /></FormField>
+          <FormField label="Health path"><Input value={environment.healthPath} oninput={(event) => environment.healthPath = event.currentTarget.value} placeholder="/health" /></FormField>
+          {#if environment.sourceType === 'buildpacks'}<FormField label="Target"><Input value={environment.bpGoTargets} oninput={(event) => environment.bpGoTargets = event.currentTarget.value} placeholder="./cmd/server" /></FormField>{/if}
+        </div>
+      </section>
+
+      <section class="space-y-3 border-t border-border pt-5">
+        <p class="text-sm font-medium">Resources</p>
+        <div class="flex gap-2"><select value={environment.selectedResource} onchange={(event) => environment.selectedResource = event.currentTarget.value} class="h-9 flex-1 border border-input bg-background px-3 text-sm"><option value="">Select a Resource</option>{#each availableResources(environment) as option}<option value={`${option.id}:${option.endpointId}:${option.credentialId ?? ''}`}>{option.name} · {option.engine}{option.database ? ` · ${option.database}` : ''} · {option.endpoint} · {option.credential || 'without credentials'}</option>{/each}</select><Button type="button" variant="outline" onclick={() => addResource(environment)}>Attach</Button></div>
+        {#each environment.resources as resource, index}
+          <div class="grid gap-3 border border-border p-4 sm:grid-cols-2"><FormField label="Alias"><Input bind:value={resource.alias} /></FormField>{#if resource.database}<FormField label="Database"><Input bind:value={resource.database} readonly /></FormField>{/if}{#if attachedResourceOption(resource)?.supportsConnectionUrl}<FormField label="Connection format"><select bind:value={resource.credentialProjection} class="h-9 w-full border border-input bg-background px-3 text-sm"><option value="connection_url">Connection URL</option><option value="individual_parts">Individual parts</option></select></FormField>{/if}<Button type="button" variant="ghost" onclick={() => environment.resources = environment.resources.filter((_, itemIndex) => itemIndex !== index)}>Remove</Button></div>
+        {:else}<p class="text-xs text-muted-foreground">No Resources attached.</p>{/each}
+      </section>
+
+      <section class="space-y-3 border-t border-border pt-5">
+        <div class="flex items-start justify-between gap-3"><div><p class="text-sm font-medium">Secrets</p><p class="mt-1 text-xs text-muted-foreground">Add the write-only values required by this Environment.</p></div><div class="flex gap-2"><Button type="button" variant="outline" onclick={() => openBulkSecrets(environment)}>Import secrets</Button><Button type="button" variant="outline" onclick={() => addSecret(environment)}>Add secret</Button></div></div>
+        {#each environment.secrets as secret, index}
+          <div class="grid gap-3 border border-border p-4 sm:grid-cols-2"><FormField label="Key"><Input bind:value={secret.key} autocomplete="off" /></FormField><FormField label="Value"><Input type="password" bind:value={secret.value} autocomplete="new-password" /></FormField><Button type="button" variant="ghost" onclick={() => environment.secrets = environment.secrets.filter((_, itemIndex) => itemIndex !== index)}>Remove</Button></div>
+        {:else}<p class="text-xs text-muted-foreground">No secrets added.</p>{/each}
+      </section>
+
+      <label class="flex items-center gap-3 border border-border bg-muted/20 p-4"><input type="checkbox" checked={environment.deploy} onchange={(event) => environment.deploy = event.currentTarget.checked} /><span class="text-sm font-medium">Deploy after create</span></label>
+    </Card.Content>
     {/if}
-  </div>
+  </Card.Root>
+{/snippet}
+
+<svelte:head><title>New application</title></svelte:head>
+<DashboardLayout email={auth.email}>
+  <form class="mx-auto max-w-5xl space-y-6" onsubmit={submit}>
+    <header><p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">Applications</p><h1 class="mt-3 text-3xl font-semibold">Set up a new application</h1><p class="mt-2 max-w-2xl text-sm text-muted-foreground">Configure the application, optional Staging Environment, and required Production Environment on one page.</p></header>
+
+    {#if Object.keys(displayedErrors).length > 0}<div class="border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive"><p class="font-medium">The application could not be created.</p>{#each [...new Set(Object.values(displayedErrors))] as error}<p class="mt-1">{error}</p>{/each}</div>{/if}
+    {#if registries.length === 0}<div class="border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">Connect a Registry Resource before creating an application.</div>{/if}
+
+    <Card.Root>
+      <Card.Header><Card.Title>Application</Card.Title><Card.Description>The slug follows the name until you customize it.</Card.Description></Card.Header>
+      <Card.Content class="grid gap-5 sm:grid-cols-2"><FormField label="Name" error={displayedErrors.applicationName}><Input value={applicationName} oninput={(event) => updateApplicationName(event.currentTarget.value)} placeholder="Acme API" required autofocus /></FormField><FormField label="Slug" error={displayedErrors.applicationSlug}><Input value={applicationSlug} oninput={(event) => updateApplicationSlug(event.currentTarget.value)} placeholder="acme-api" required /></FormField></Card.Content>
+    </Card.Root>
+
+    {@render environmentCard('Staging', staging, includeStaging)}
+    {@render environmentCard('Production', production, true)}
+
+    <div class="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5"><p class="text-xs text-muted-foreground">Nothing deploys unless selected in its Environment.</p><div class="flex gap-3"><Button href={routes.applications()} variant="outline">Cancel</Button><Button type="submit" disabled={processing || registries.length === 0 || production.serverIds.length === 0 || (includeStaging && staging.serverIds.length === 0)}>{processing ? 'Creating application...' : 'Create application'}</Button></div></div>
+  </form>
+
+  <BulkEnvironmentSecretsDialog
+    bind:open={bulkSecretDialogOpen}
+    existingSecrets={bulkSecretEnvironment?.secrets ?? []}
+    reservedKeys={bulkSecretEnvironment ? reservedSecretKeys(bulkSecretEnvironment) : []}
+    onImport={importBulkSecrets}
+  />
 </DashboardLayout>

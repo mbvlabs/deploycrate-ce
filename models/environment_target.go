@@ -90,6 +90,13 @@ func (et environmentTarget) ActiveForEnvironment(ctx context.Context, db storage
 	return entity, err
 }
 
+func (et environmentTarget) ActiveForEnvironmentAll(ctx context.Context, db storage.Executor, environmentID uuid.UUID) ([]EnvironmentTargetEntity, error) {
+	entities := make([]EnvironmentTargetEntity, 0)
+	err := db.NewSelect().Model(&entities).Where("environment_id = ?", environmentID).
+		Where("detached_at IS NULL").OrderExpr("attached_at, id").Scan(ctx)
+	return entities, err
+}
+
 type CreateEnvironmentTargetData struct {
 	AttachedAt    time.Time
 	DetachedAt    sql.NullTime

@@ -481,33 +481,40 @@ func (service *EnvironmentSecrets) queueRevisionDeployment(
 	if err != nil {
 		return err
 	}
-	target, err := models.EnvironmentTarget.ActiveForEnvironment(ctx, db, revision.EnvironmentID)
+	targets, err := models.EnvironmentTarget.ActiveForEnvironmentAll(ctx, db, revision.EnvironmentID)
 	if err != nil {
 		return err
+	}
+	if len(targets) == 0 {
+		return errors.New("Environment has no runtime Server targets")
 	}
 	if _, err := models.ChangeRelease.Create(ctx, db, models.CreateChangeReleaseData{ChangeID: change.ID, ReleaseID: release.ID}); err != nil {
 		return err
 	}
 	runtimeSnapshot, _ := json.Marshal(state.Runtime)
-	deployment, err := models.Deployment.Create(ctx, db, models.CreateDeploymentData{
-		Attempt: 1, Strategy: json.RawMessage(`{"type":"blue_green","replicas":1}`), RuntimeConfiguration: runtimeSnapshot,
-		Status: "queued", CurrentStep: sql.NullString{String: "queued", Valid: true}, ChangeID: change.ID,
-		ReleaseID: release.ID, EnvironmentTargetID: target.ID,
-	})
-	if err != nil {
-		return err
-	}
-	if _, err := models.Instance.Create(ctx, db, models.CreateInstanceData{
-		ExternalID: "pending:" + deployment.ID.String(), Slot: "candidate", ReplicaKey: "primary", State: "candidate",
-		Ports: json.RawMessage(`{}`), ObservedAt: time.Now().UTC(), DeploymentID: deployment.ID,
-		ReleaseID: release.ID, EnvironmentTargetID: target.ID,
-	}); err != nil {
-		return err
-	}
 	tx, ok := db.(bun.Tx)
 	if !ok {
 		return errors.New("secret revision deployment requires a database transaction")
 	}
-	_, err = service.queue.InsertTx(ctx, tx.Tx, jobs.DeployReleaseArgs{DeploymentID: deployment.ID}, jobs.DeployReleaseInsertOpts(deployment.ID))
-	return err
+	for _, target := range targets {
+		deployment, createErr := models.Deployment.Create(ctx, db, models.CreateDeploymentData{
+			Attempt: 1, Strategy: json.RawMessage(`{"type":"blue_green","replicas":1}`), RuntimeConfiguration: runtimeSnapshot,
+			Status: "queued", CurrentStep: sql.NullString{String: "queued", Valid: true}, ChangeID: change.ID,
+			ReleaseID: release.ID, EnvironmentTargetID: target.ID,
+		})
+		if createErr != nil {
+			return createErr
+		}
+		if _, createErr := models.Instance.Create(ctx, db, models.CreateInstanceData{
+			ExternalID: "pending:" + deployment.ID.String(), Slot: "candidate", ReplicaKey: "primary", State: "candidate",
+			Ports: json.RawMessage(`{}`), ObservedAt: time.Now().UTC(), DeploymentID: deployment.ID,
+			ReleaseID: release.ID, EnvironmentTargetID: target.ID,
+		}); createErr != nil {
+			return createErr
+		}
+		if _, createErr := service.queue.InsertTx(ctx, tx.Tx, jobs.DeployReleaseArgs{DeploymentID: deployment.ID}, jobs.DeployReleaseInsertOpts(deployment.ID)); createErr != nil {
+			return createErr
+		}
+	}
+	return nil
 }

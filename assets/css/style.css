@@ -708,6 +708,9 @@
   .cursor-default {
     cursor: default;
   }
+  .cursor-pointer {
+    cursor: pointer;
+  }
   .touch-none {
     touch-action: none;
   }
@@ -892,6 +895,9 @@
     :where(& > :not(:last-child)) {
       border-color: var(--border);
     }
+  }
+  .self-end {
+    align-self: flex-end;
   }
   .self-start {
     align-self: flex-start;
@@ -1192,6 +1198,12 @@
   .bg-primary-foreground {
     background-color: var(--primary-foreground);
   }
+  .bg-primary\/5 {
+    background-color: var(--primary);
+    @supports (color: color-mix(in lab, red, red)) {
+      background-color: color-mix(in oklab, var(--primary) 5%, transparent);
+    }
+  }
   .bg-primary\/10 {
     background-color: var(--primary);
     @supports (color: color-mix(in lab, red, red)) {
@@ -1368,6 +1380,9 @@
   }
   .pr-8 {
     padding-right: calc(var(--spacing) * 8);
+  }
+  .pb-2 {
+    padding-bottom: calc(var(--spacing) * 2);
   }
   .pb-2\.5 {
     padding-bottom: calc(var(--spacing) * 2.5);

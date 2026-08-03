@@ -7,12 +7,14 @@ import (
 const EnvironmentsPrefix = "/environments"
 
 var Environments = routing.NewSimpleRoute("", "environments.index", EnvironmentsPrefix)
-var EnvironmentNew = routing.NewSimpleRoute("/new", "environments.new", EnvironmentsPrefix)
-var EnvironmentCreate = routing.NewSimpleRoute("", "environments.create", EnvironmentsPrefix)
 
 type EnvironmentParams struct {
 	ApplicationID string `param:"applicationID"`
 	EnvironmentID string `param:"environmentID"`
+}
+
+type ApplicationEnvironmentParams struct {
+	ApplicationID string `param:"applicationID"`
 }
 
 type EnvironmentSecretParams struct {
@@ -49,6 +51,8 @@ type EnvironmentBuildActionParams struct {
 	BuildID       string `param:"buildID"`
 }
 
+var EnvironmentNew = routing.NewRouteWithParams[ApplicationEnvironmentParams]("/:applicationID/environments/new", "applications.environments.new", ApplicationsPrefix)
+var EnvironmentCreate = routing.NewRouteWithParams[ApplicationEnvironmentParams]("/:applicationID/environments", "applications.environments.create", ApplicationsPrefix)
 var EnvironmentShow = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID", "applications.environments.show", ApplicationsPrefix)
 var EnvironmentLogs = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/logs", "applications.environments.logs", ApplicationsPrefix)
 var EnvironmentEdit = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/edit", "applications.environments.edit", ApplicationsPrefix)
@@ -56,7 +60,6 @@ var EnvironmentUpdate = routing.NewRouteWithParams[EnvironmentParams]("/:applica
 var EnvironmentDestroy = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID", "applications.environments.destroy", ApplicationsPrefix)
 var EnvironmentSourceEdit = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/source/edit", "applications.environments.source.edit", ApplicationsPrefix)
 var EnvironmentSourceUpdate = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/source", "applications.environments.source.update", ApplicationsPrefix)
-var EnvironmentSetup = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/setup", "applications.environments.setup", ApplicationsPrefix)
 var EnvironmentDeploymentsCreate = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/deployments", "applications.environments.deployments.create", ApplicationsPrefix)
 var EnvironmentReleaseDeploymentsCreate = routing.NewRouteWithParams[EnvironmentReleaseParams]("/:applicationID/environments/:environmentID/releases/:releaseID/deployments", "applications.environments.releases.deployments.create", ApplicationsPrefix)
 var EnvironmentDeploymentRetry = routing.NewRouteWithParams[EnvironmentDeploymentParams]("/:applicationID/environments/:environmentID/deployments/:deploymentID/retry", "applications.environments.deployments.retry", ApplicationsPrefix)

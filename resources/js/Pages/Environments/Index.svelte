@@ -13,7 +13,6 @@
     kind: string
     applicationId: string
     applicationName: string
-    setupComplete: boolean
     domain: string
     repository: string
     reference: string
@@ -21,9 +20,7 @@
   }
 
   let { auth, environments }: { auth: { email: string }; environments: Environment[] } = $props()
-  const destination = (environment: Environment) => environment.setupComplete
-    ? routes.environmentShow(environment.applicationId, environment.id)
-    : routes.environmentSetup(environment.applicationId, environment.id)
+  const destination = (environment: Environment) => routes.environmentShow(environment.applicationId, environment.id)
 </script>
 
 <svelte:head><title>Environments</title></svelte:head>
@@ -34,17 +31,17 @@
       <div>
         <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">Environments</p>
         <h1 class="mt-3 text-3xl font-semibold">Build and deploy</h1>
-        <p class="mt-2 max-w-2xl text-sm text-muted-foreground">Create an Environment, complete its runtime setup, and follow Builds and Deployments from one workspace.</p>
+        <p class="mt-2 max-w-2xl text-sm text-muted-foreground">Configure Staging and Production while creating their owning Application, then follow Builds and Deployments here.</p>
       </div>
-      <Button>{#snippet child({ props })}<Link {...props} href={routes.environmentNew()}>Create environment</Link>{/snippet}</Button>
+      <Button>{#snippet child({ props })}<Link {...props} href={routes.applicationNew()}>New application</Link>{/snippet}</Button>
     </header>
 
     {#if environments.length === 0}
       <Card.Root>
         <Card.Content class="grid place-items-center gap-4 py-14 text-center">
           <BoxesIcon class="size-8 text-muted-foreground" />
-          <div><p class="font-medium">No Environments yet</p><p class="mt-1 text-sm text-muted-foreground">Create the owning Application, source binding, and initial Environment together.</p></div>
-          <Button>{#snippet child({ props })}<Link {...props} href={routes.environmentNew()}>Create environment</Link>{/snippet}</Button>
+          <div><p class="font-medium">No Environments yet</p><p class="mt-1 text-sm text-muted-foreground">Create an Application with its Production and optional Staging Environment.</p></div>
+          <Button>{#snippet child({ props })}<Link {...props} href={routes.applicationNew()}>New application</Link>{/snippet}</Button>
         </Card.Content>
       </Card.Root>
     {:else}
@@ -52,7 +49,7 @@
         {#each environments as environment (environment.id)}
           <Card.Root>
             <Card.Header>
-              <Card.Action><span class:text-success={environment.setupComplete} class:text-primary={!environment.setupComplete} class="text-xs">{environment.setupComplete ? 'Ready' : 'Setup required'}</span></Card.Action>
+              <Card.Action><span class="text-xs text-success">Ready</span></Card.Action>
               <Card.Title>{environment.name}</Card.Title>
               <Card.Description>{environment.applicationName} · {environment.kind}</Card.Description>
             </Card.Header>
@@ -62,8 +59,8 @@
               <p class="text-muted-foreground">{environment.domain || 'Domain not configured'}{environment.latestBuildStatus ? ` · Build ${environment.latestBuildStatus}` : ''}</p>
             </Card.Content>
             <Card.Footer class="border-t border-border">
-              <Button size="sm" variant={environment.setupComplete ? 'outline' : 'default'}>
-                {#snippet child({ props })}<Link {...props} href={destination(environment)}>{environment.setupComplete ? 'Open environment' : 'Complete setup'}</Link>{/snippet}
+              <Button size="sm" variant="outline">
+                {#snippet child({ props })}<Link {...props} href={destination(environment)}>Open environment</Link>{/snippet}
               </Button>
             </Card.Footer>
           </Card.Root>

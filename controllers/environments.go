@@ -50,6 +50,8 @@ func (controller Environments) RegisterRoutes(router *router.Router) error {
 		handler echo.HandlerFunc
 	}{
 		{http.MethodGet, routes.Environments, controller.Index},
+		{http.MethodGet, routes.EnvironmentNew, controller.New},
+		{http.MethodPost, routes.EnvironmentCreate, controller.Create},
 		{http.MethodGet, routes.EnvironmentShow, controller.Show},
 		{http.MethodGet, routes.EnvironmentLogs, controller.Logs},
 		{http.MethodGet, routes.EnvironmentEdit, controller.Edit},
@@ -62,8 +64,6 @@ func (controller Environments) RegisterRoutes(router *router.Router) error {
 		{http.MethodPost, routes.EnvironmentBuildStart, controller.StartBuild},
 		{http.MethodPost, routes.EnvironmentBuildStop, controller.StopBuild},
 		{http.MethodPost, routes.EnvironmentBuildRetry, controller.RetryBuild},
-		{http.MethodGet, routes.EnvironmentSetup, controller.Setup},
-		{http.MethodPatch, routes.EnvironmentSetup, controller.CompleteSetup},
 		{http.MethodPost, routes.EnvironmentDeploymentsCreate, controller.Deploy},
 		{http.MethodPost, routes.EnvironmentReleaseDeploymentsCreate, controller.RedeployRelease},
 		{http.MethodPost, routes.EnvironmentDeploymentRetry, controller.RetryDeployment},
@@ -191,6 +191,100 @@ func (controller Environments) Index(etx *echo.Context) error {
 	})
 }
 
+func (controller Environments) New(etx *echo.Context) error {
+	applicationID, err := uuid.Parse(etx.Param("applicationID"))
+	if err != nil {
+		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
+	}
+	return controller.newEnvironmentPage(etx, applicationID, nil)
+}
+
+func (controller Environments) Create(etx *echo.Context) error {
+	applicationID, err := uuid.Parse(etx.Param("applicationID"))
+	var payload applicationEnvironmentCreationPayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	application, applicationErr := controller.applications.Overview(etx.Request().Context(), applicationID)
+	if err == nil {
+		err = applicationErr
+	}
+	var prepared preparedApplicationEnvironmentCreation
+	if err == nil {
+		prepared, err = payload.prepare(
+			application.Name,
+			application.Slug,
+			payload.EnvironmentName,
+			payload.EnvironmentSlug,
+			payload.EnvironmentKind,
+		)
+	}
+	var created services.ApplicationSetupResult
+	if err == nil {
+		created, err = controller.applications.CreateEnvironment(etx.Request().Context(), applicationID, prepared.source)
+	}
+	if err == nil {
+		_, err = controller.setup.Complete(
+			etx.Request().Context(),
+			applicationID,
+			created.Environment.ID,
+			cookies.ExtractFromCookieApp(etx).UserID,
+			prepared.setup,
+		)
+		if err != nil {
+			cleanupErr := controller.applications.DeleteIncompleteEnvironment(etx.Request().Context(), applicationID, created.Environment.ID)
+			if cleanupErr != nil {
+				err = errors.Join(err, cleanupErr)
+			}
+		}
+	}
+	if err != nil {
+		return controller.newEnvironmentPage(etx, applicationID, err)
+	}
+	if payload.Deploy {
+		userID := cookies.ExtractFromCookieApp(etx).UserID
+		if _, deployErr := controller.setup.QueueSourceDeployment(
+			etx.Request().Context(), applicationID, created.Environment.ID, &userID, "user", "",
+		); deployErr != nil {
+			_ = cookies.AddFlash(etx, cookies.FlashError, "Environment created, but the initial deployment could not be queued: "+deployErr.Error())
+			return inertia.Redirect(etx, routes.EnvironmentShow.URL(environmentPathIDs{ApplicationID: applicationID, EnvironmentID: created.Environment.ID}.routeParams()), http.StatusSeeOther)
+		}
+	}
+	message := "Environment created"
+	if payload.Deploy {
+		message = "Environment created and deployment queued"
+	}
+	_ = cookies.AddFlash(etx, cookies.FlashSuccess, message)
+	return inertia.Redirect(etx, routes.EnvironmentShow.URL(environmentPathIDs{ApplicationID: applicationID, EnvironmentID: created.Environment.ID}.routeParams()), http.StatusSeeOther)
+}
+
+func (controller Environments) newEnvironmentPage(etx *echo.Context, applicationID uuid.UUID, operationErr error) error {
+	application, err := controller.applications.Overview(etx.Request().Context(), applicationID)
+	if err != nil {
+		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
+	}
+	applicationOptions, err := controller.applications.Options(etx.Request().Context())
+	if err != nil {
+		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
+	}
+	environmentOptions, err := controller.setup.Options(etx.Request().Context())
+	if err != nil {
+		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
+	}
+	props := inertia.Props{
+		"auth": authProps(etx), "application": application,
+		"options": applicationCreationOptionsProps(applicationOptions, environmentOptions),
+	}
+	if operationErr == nil {
+		return inertia.Page(etx, "Applications/Environments/New", props)
+	}
+	if validationErrors, ok := validation.As(operationErr); ok {
+		return inertia.Page(etx, "Applications/Environments/New", props, inertia.WithValidationErrors(validationErrors.ToMap()))
+	}
+	props["setupError"] = operationErr.Error()
+	return inertia.Page(etx, "Applications/Environments/New", props)
+}
+
 func (controller Environments) RetryDeployment(etx *echo.Context) error {
 	params, err := environmentPathParams(etx)
 	deploymentID, parseErr := uuid.Parse(etx.Param("deploymentID"))
@@ -303,6 +397,8 @@ func environmentOverviewProps(overview services.EnvironmentOverview) map[string]
 		"contextPath":      overview.ContextPath,
 		"registryName":     overview.RegistryName,
 		"registryEndpoint": overview.RegistryEndpoint,
+		"runtimeServerIds": overview.RuntimeServerIDs,
+		"runtimeServers":   overview.RuntimeServers,
 		"deployability":    overview.Deployability,
 		"secrets":          overview.Secrets,
 		"variables":        overview.Variables,
@@ -342,7 +438,7 @@ func (controller Environments) Show(etx *echo.Context) error {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
 	if !overview.SetupComplete {
-		return inertia.Redirect(etx, routes.EnvironmentSetup.URL(params.routeParams()), http.StatusSeeOther)
+		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
 	telemetryRows, telemetryErr := controller.metric.EnvironmentTelemetry(etx.Request().Context(), params.EnvironmentID)
 	if telemetryErr != nil {
@@ -438,10 +534,7 @@ func (controller Environments) EditSource(etx *echo.Context) error {
 	if err != nil {
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
-	returnURL := routes.EnvironmentSetup.URL(params.routeParams())
-	if details.SetupComplete {
-		returnURL = routes.EnvironmentEdit.URL(params.routeParams())
-	}
+	returnURL := routes.EnvironmentEdit.URL(params.routeParams())
 	return inertia.Page(etx, "Applications/Source/Edit", inertia.Props{
 		"auth": authProps(etx), "application": details, "options": applicationSetupOptionsProps(options),
 		"updateUrl": routes.EnvironmentSourceUpdate.URL(params.routeParams()),
@@ -452,7 +545,6 @@ func (controller Environments) EditSource(etx *echo.Context) error {
 func (controller Environments) UpdateSource(etx *echo.Context) error {
 	params, err := environmentPathParams(etx)
 	queued := false
-	setupComplete := false
 	var payload applicationSetupPayload
 	if err == nil {
 		err = etx.Bind(&payload)
@@ -466,7 +558,6 @@ func (controller Environments) UpdateSource(etx *echo.Context) error {
 		if detailsErr != nil {
 			err = errors.New("Environment source is unavailable")
 		} else {
-			setupComplete = details.SetupComplete
 			err = controller.applications.UpdateEnvironmentSource(etx.Request().Context(), params.ApplicationID, params.EnvironmentID, data)
 			if err == nil && details.SetupComplete {
 				userID := cookies.ExtractFromCookieApp(etx).UserID
@@ -487,9 +578,6 @@ func (controller Environments) UpdateSource(etx *echo.Context) error {
 		message = "Environment source updated and replacement Build queued"
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, message)
-	if !setupComplete {
-		return inertia.Redirect(etx, routes.EnvironmentSetup.URL(params.routeParams()), http.StatusSeeOther)
-	}
 	return inertia.Redirect(etx, routes.EnvironmentEdit.URL(params.routeParams()), http.StatusSeeOther)
 }
 
@@ -500,36 +588,10 @@ func (controller Environments) Destroy(etx *echo.Context) error {
 	}
 	if err != nil {
 		_ = cookies.AddFlash(etx, cookies.FlashError, err.Error())
-		destination := routes.EnvironmentShow.URL(params.routeParams())
-		if overview, overviewErr := controller.setup.Overview(etx.Request().Context(), params.ApplicationID, params.EnvironmentID); overviewErr == nil && !overview.SetupComplete {
-			destination = routes.EnvironmentSetup.URL(params.routeParams())
-		}
-		return inertia.Redirect(etx, destination, http.StatusSeeOther)
+		return inertia.Redirect(etx, routes.EnvironmentShow.URL(params.routeParams()), http.StatusSeeOther)
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Environment permanently deleted")
 	return inertia.Redirect(etx, routes.Environments.URL(), http.StatusSeeOther)
-}
-
-func (controller Environments) Setup(etx *echo.Context) error {
-	params, err := environmentPathParams(etx)
-	if err != nil {
-		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
-	}
-	overview, err := controller.setup.Overview(etx.Request().Context(), params.ApplicationID, params.EnvironmentID)
-	if err != nil {
-		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
-	}
-	if overview.SetupComplete {
-		return inertia.Redirect(etx, routes.EnvironmentShow.URL(params.routeParams()), http.StatusSeeOther)
-	}
-	options, err := controller.setup.Options(etx.Request().Context())
-	if err != nil {
-		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
-	}
-	return inertia.Page(etx, "Applications/Environments/Setup", inertia.Props{
-		"auth": authProps(etx), "environment": environmentOverviewProps(overview), "options": options,
-		"setupUrl": routes.EnvironmentSetup.URL(params.routeParams()), "flash": environmentFlashProps(etx),
-	})
 }
 
 func environmentFlashProps(etx *echo.Context) []inertia.Props {
@@ -539,55 +601,6 @@ func environmentFlashProps(etx *echo.Context) []inertia.Props {
 		props = append(props, inertia.Props{"type": flash.Type, "message": flash.Message})
 	}
 	return props
-}
-
-type environmentSetupPayload struct {
-	ServerID      uuid.UUID                                `json:"serverId"`
-	Hostname      string                                   `json:"hostname"`
-	ContainerPort int32                                    `json:"containerPort"`
-	HealthPath    string                                   `json:"healthPath"`
-	BPGOTargets   string                                   `json:"bpGoTargets"`
-	Resources     []services.EnvironmentSetupResourceInput `json:"resources"`
-	Secrets       []services.EnvironmentSetupSecretInput   `json:"secrets"`
-}
-
-func (controller Environments) CompleteSetup(etx *echo.Context) error {
-	params, err := environmentPathParams(etx)
-	var payload environmentSetupPayload
-	if err == nil {
-		err = etx.Bind(&payload)
-	}
-	if err == nil {
-		_, err = controller.setup.Complete(etx.Request().Context(), params.ApplicationID, params.EnvironmentID, cookies.ExtractFromCookieApp(etx).UserID, services.EnvironmentSetupInput{
-			ServerID: payload.ServerID, Hostname: payload.Hostname, ContainerPort: payload.ContainerPort,
-			HealthPath: payload.HealthPath, BPGOTargets: payload.BPGOTargets,
-			Resources: payload.Resources, Secrets: payload.Secrets,
-		})
-	}
-	if err != nil {
-		if validationErrors, ok := validation.As(err); ok {
-			overview, overviewErr := controller.setup.Overview(etx.Request().Context(), params.ApplicationID, params.EnvironmentID)
-			options, optionsErr := controller.setup.Options(etx.Request().Context())
-			if overviewErr == nil && optionsErr == nil {
-				return inertia.Page(etx, "Applications/Environments/Setup", inertia.Props{
-					"auth": authProps(etx), "environment": environmentOverviewProps(overview), "options": options,
-					"setupUrl": routes.EnvironmentSetup.URL(params.routeParams()),
-				}, inertia.WithValidationErrors(validationErrors.ToMap()))
-			}
-		}
-		overview, overviewErr := controller.setup.Overview(etx.Request().Context(), params.ApplicationID, params.EnvironmentID)
-		options, optionsErr := controller.setup.Options(etx.Request().Context())
-		if overviewErr == nil && optionsErr == nil {
-			return inertia.Page(etx, "Applications/Environments/Setup", inertia.Props{
-				"auth": authProps(etx), "environment": environmentOverviewProps(overview), "options": options,
-				"setupUrl": routes.EnvironmentSetup.URL(params.routeParams()), "setupError": err.Error(),
-			})
-		}
-		_ = cookies.AddFlash(etx, cookies.FlashError, "Environment setup failed")
-		return inertia.Redirect(etx, routes.EnvironmentSetup.URL(params.routeParams()), http.StatusSeeOther)
-	}
-	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Environment setup completed and the first deployment was queued")
-	return inertia.Redirect(etx, routes.EnvironmentShow.URL(params.routeParams()), http.StatusSeeOther)
 }
 
 func (controller Environments) CreateSecret(etx *echo.Context) error {

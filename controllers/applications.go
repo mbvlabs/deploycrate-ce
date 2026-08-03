@@ -20,11 +20,12 @@ import (
 )
 
 type Applications struct {
-	service *services.ApplicationSetup
+	service      *services.ApplicationSetup
+	environments *services.EnvironmentSetup
 }
 
-func NewApplications(service *services.ApplicationSetup) Applications {
-	return Applications{service: service}
+func NewApplications(service *services.ApplicationSetup, environments *services.EnvironmentSetup) Applications {
+	return Applications{service: service, environments: environments}
 }
 
 func (controller Applications) RegisterRoutes(r *router.Router) error {
@@ -40,8 +41,6 @@ func (controller Applications) RegisterRoutes(r *router.Router) error {
 		{http.MethodGet, routes.Applications, controller.Index},
 		{http.MethodGet, routes.ApplicationNew, controller.New},
 		{http.MethodPost, routes.ApplicationCreate, controller.Create},
-		{http.MethodGet, routes.EnvironmentNew, controller.NewEnvironment},
-		{http.MethodPost, routes.EnvironmentCreate, controller.CreateEnvironment},
 		{http.MethodGet, routes.ApplicationShow, controller.Show},
 		{http.MethodGet, routes.ApplicationEdit, controller.Edit},
 		{http.MethodPatch, routes.ApplicationUpdate, controller.Update},
@@ -68,19 +67,19 @@ func (controller Applications) Index(etx *echo.Context) error {
 }
 
 func (controller Applications) New(etx *echo.Context) error {
-	return controller.newPage(etx, false)
+	return controller.newPage(etx)
 }
 
-func (controller Applications) NewEnvironment(etx *echo.Context) error {
-	return controller.newPage(etx, true)
-}
-
-func (controller Applications) newPage(etx *echo.Context, environmentIntent bool) error {
+func (controller Applications) newPage(etx *echo.Context) error {
 	options, err := controller.service.Options(etx.Request().Context())
 	if err != nil {
 		return controller.renderError(etx, err)
 	}
-	return inertia.Page(etx, "Applications/New", inertia.Props{"auth": authProps(etx), "options": applicationSetupOptionsProps(options), "environmentIntent": environmentIntent})
+	environmentOptions, err := controller.environments.Options(etx.Request().Context())
+	if err != nil {
+		return controller.renderError(etx, err)
+	}
+	return inertia.Page(etx, "Applications/New", inertia.Props{"auth": authProps(etx), "options": applicationCreationOptionsProps(options, environmentOptions)})
 }
 
 type registryResourceOptionProps struct {
@@ -100,6 +99,16 @@ func applicationSetupOptionsProps(options services.ApplicationSetupOptions) map[
 		"registries":    registries,
 		"buildServers":  options.BuildServers,
 	}
+}
+
+func applicationCreationOptionsProps(
+	options services.ApplicationSetupOptions,
+	environmentOptions services.EnvironmentSetupOptions,
+) map[string]any {
+	props := applicationSetupOptionsProps(options)
+	props["resources"] = environmentOptions.Resources
+	props["servers"] = environmentOptions.Servers
+	return props
 }
 
 type applicationSetupPayload struct {
@@ -149,33 +158,134 @@ func (payload applicationSetupPayload) serviceData() (services.ApplicationSetupD
 	return services.ApplicationSetupData{SourceType: sourceType, ApplicationName: payload.ApplicationName, ApplicationSlug: payload.ApplicationSlug, EnvironmentName: payload.EnvironmentName, EnvironmentSlug: payload.EnvironmentSlug, EnvironmentKind: payload.EnvironmentKind, GitHubInstallationID: installationID, GitHubRepositoryID: repositoryID, Reference: payload.Reference, AutoBuild: payload.AutoBuild, ContextPath: payload.ContextPath, BuilderReference: payload.BuilderReference, BuildpackSettings: payload.BuildpackSettings, RegistryResourceID: registryID, ImageRepository: payload.ImageRepository, BuildServerID: buildServerID}, nil
 }
 
+type applicationEnvironmentCreationPayload struct {
+	EnvironmentName      string                                   `json:"environmentName"`
+	EnvironmentSlug      string                                   `json:"environmentSlug"`
+	EnvironmentKind      string                                   `json:"environmentKind"`
+	SourceType           string                                   `json:"sourceType"`
+	GitHubInstallationID string                                   `json:"githubInstallationId"`
+	GitHubRepositoryID   string                                   `json:"githubRepositoryId"`
+	Reference            string                                   `json:"reference"`
+	AutoBuild            bool                                     `json:"autoBuild"`
+	ContextPath          string                                   `json:"contextPath"`
+	BuilderReference     string                                   `json:"builderReference"`
+	BuildpackSettings    json.RawMessage                          `json:"buildpackSettings"`
+	RegistryResourceID   string                                   `json:"registryResourceId"`
+	ImageRepository      string                                   `json:"imageRepository"`
+	BuildServerID        string                                   `json:"buildServerId"`
+	ServerIDs            []string                                 `json:"serverIds"`
+	Hostname             string                                   `json:"hostname"`
+	ContainerPort        int32                                    `json:"containerPort"`
+	HealthPath           string                                   `json:"healthPath"`
+	BPGOTargets          string                                   `json:"bpGoTargets"`
+	Resources            []services.EnvironmentSetupResourceInput `json:"resources"`
+	Secrets              []services.EnvironmentSetupSecretInput   `json:"secrets"`
+	Deploy               bool                                     `json:"deploy"`
+}
+
+type applicationCreationPayload struct {
+	ApplicationName string                                 `json:"applicationName"`
+	ApplicationSlug string                                 `json:"applicationSlug"`
+	Staging         *applicationEnvironmentCreationPayload `json:"staging"`
+	Production      applicationEnvironmentCreationPayload  `json:"production"`
+}
+
+type preparedApplicationEnvironmentCreation struct {
+	source services.ApplicationSetupData
+	setup  services.EnvironmentSetupInput
+	deploy bool
+}
+
+func (payload applicationEnvironmentCreationPayload) prepare(
+	applicationName, applicationSlug, environmentName, environmentSlug, environmentKind string,
+) (preparedApplicationEnvironmentCreation, error) {
+	source, err := (applicationSetupPayload{
+		SourceType: payload.SourceType, ApplicationName: applicationName, ApplicationSlug: applicationSlug,
+		EnvironmentName: environmentName, EnvironmentSlug: environmentSlug, EnvironmentKind: environmentKind,
+		GitHubInstallationID: payload.GitHubInstallationID, GitHubRepositoryID: payload.GitHubRepositoryID,
+		Reference: payload.Reference, AutoBuild: payload.AutoBuild, ContextPath: payload.ContextPath,
+		BuilderReference: payload.BuilderReference, BuildpackSettings: payload.BuildpackSettings,
+		RegistryResourceID: payload.RegistryResourceID, ImageRepository: payload.ImageRepository,
+		BuildServerID: payload.BuildServerID,
+	}).serviceData()
+	if err != nil {
+		return preparedApplicationEnvironmentCreation{}, err
+	}
+	serverIDs := make([]uuid.UUID, 0, len(payload.ServerIDs))
+	for _, value := range payload.ServerIDs {
+		serverID, err := uuid.Parse(value)
+		if err != nil {
+			return preparedApplicationEnvironmentCreation{}, err
+		}
+		serverIDs = append(serverIDs, serverID)
+	}
+	return preparedApplicationEnvironmentCreation{
+		source: source,
+		setup: services.EnvironmentSetupInput{
+			ServerIDs: serverIDs, Hostname: payload.Hostname, ContainerPort: payload.ContainerPort,
+			HealthPath: payload.HealthPath, BPGOTargets: payload.BPGOTargets,
+			Resources: payload.Resources, Secrets: payload.Secrets,
+		},
+		deploy: payload.Deploy,
+	}, nil
+}
+
 func (controller Applications) Create(etx *echo.Context) error {
-	return controller.create(etx, false)
-}
-
-func (controller Applications) CreateEnvironment(etx *echo.Context) error {
-	return controller.create(etx, true)
-}
-
-func (controller Applications) create(etx *echo.Context, environmentIntent bool) error {
-	var payload applicationSetupPayload
+	var payload applicationCreationPayload
 	if err := etx.Bind(&payload); err != nil {
 		return inertia.Page(etx, "Errors/BadRequest", inertia.Props{})
 	}
-	data, err := payload.serviceData()
-	if err == nil {
-		var result services.ApplicationSetupResult
-		result, err = controller.service.Create(etx.Request().Context(), data)
-		if err == nil {
-			if environmentIntent {
-				_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Environment created. Complete its deployment setup")
-				return inertia.Redirect(etx, routes.EnvironmentSetup.URL(routes.EnvironmentParams{ApplicationID: result.Application.ID.String(), EnvironmentID: result.Environment.ID.String()}), http.StatusSeeOther)
-			}
-			_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Application created")
-			return inertia.Redirect(etx, routes.ApplicationShow.URL(result.Application.ID), http.StatusSeeOther)
+	prepared := make([]preparedApplicationEnvironmentCreation, 0, 2)
+	if payload.Staging != nil {
+		staging, err := payload.Staging.prepare(payload.ApplicationName, payload.ApplicationSlug, "Staging", "staging", "staging")
+		if err != nil {
+			return controller.renderCreationError(etx, err)
+		}
+		prepared = append(prepared, staging)
+	}
+	production, err := payload.Production.prepare(payload.ApplicationName, payload.ApplicationSlug, "Production", "production", "production")
+	if err != nil {
+		return controller.renderCreationError(etx, err)
+	}
+	prepared = append(prepared, production)
+	sources := make([]services.ApplicationSetupData, 0, len(prepared))
+	for _, environment := range prepared {
+		sources = append(sources, environment.source)
+	}
+	result, err := controller.service.CreateApplication(etx.Request().Context(), services.ApplicationCreationData{
+		ApplicationName: payload.ApplicationName, ApplicationSlug: payload.ApplicationSlug, Environments: sources,
+	})
+	if err != nil {
+		return controller.renderCreationError(etx, err)
+	}
+	userID := cookies.ExtractFromCookieApp(etx).UserID
+	for index, environment := range result.Environments {
+		if _, err = controller.environments.Complete(
+			etx.Request().Context(), result.Application.ID, environment.Environment.ID, userID, prepared[index].setup,
+		); err != nil {
+			_ = controller.service.Archive(etx.Request().Context(), result.Application.ID)
+			return controller.renderCreationError(etx, err)
 		}
 	}
-	return controller.renderSetupError(etx, "Applications/New", environmentIntent, err)
+	deploymentsQueued := 0
+	for index, environment := range result.Environments {
+		if !prepared[index].deploy {
+			continue
+		}
+		if _, err = controller.environments.QueueSourceDeployment(
+			etx.Request().Context(), result.Application.ID, environment.Environment.ID, &userID, "user", "",
+		); err != nil {
+			_ = cookies.AddFlash(etx, cookies.FlashError, "Application created, but an initial deployment could not be queued: "+err.Error())
+			return inertia.Redirect(etx, routes.ApplicationShow.URL(result.Application.ID), http.StatusSeeOther)
+		}
+		deploymentsQueued++
+	}
+	message := "Application created"
+	if deploymentsQueued > 0 {
+		message = "Application created and selected deployments queued"
+	}
+	_ = cookies.AddFlash(etx, cookies.FlashSuccess, message)
+	return inertia.Redirect(etx, routes.ApplicationShow.URL(result.Application.ID), http.StatusSeeOther)
 }
 
 func (controller Applications) Show(etx *echo.Context) error {
@@ -183,7 +293,7 @@ func (controller Applications) Show(etx *echo.Context) error {
 	if err != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
-	details, err := controller.service.Details(etx.Request().Context(), id)
+	details, err := controller.service.Overview(etx.Request().Context(), id)
 	if err != nil {
 		return controller.renderError(etx, err)
 	}
@@ -269,19 +379,18 @@ func (controller Applications) Destroy(etx *echo.Context) error {
 	return inertia.Redirect(etx, routes.Applications.URL(), http.StatusSeeOther)
 }
 
-func (controller Applications) renderSetupError(etx *echo.Context, page string, environmentIntent bool, err error) error {
+func (controller Applications) renderCreationError(etx *echo.Context, err error) error {
 	options, optionsErr := controller.service.Options(etx.Request().Context())
-	if optionsErr != nil {
-		return controller.renderError(etx, errors.Join(err, optionsErr))
+	environmentOptions, environmentOptionsErr := controller.environments.Options(etx.Request().Context())
+	if optionsErr != nil || environmentOptionsErr != nil {
+		return controller.renderError(etx, errors.Join(err, optionsErr, environmentOptionsErr))
 	}
 	if validationErrors, ok := validation.As(err); ok {
-		return inertia.Page(etx, page, inertia.Props{"auth": authProps(etx), "options": applicationSetupOptionsProps(options), "environmentIntent": environmentIntent}, inertia.WithValidationErrors(validationErrors.ToMap()))
+		return inertia.Page(etx, "Applications/New", inertia.Props{
+			"auth": authProps(etx), "options": applicationCreationOptionsProps(options, environmentOptions),
+		}, inertia.WithValidationErrors(validationErrors.ToMap()))
 	}
-	location := routes.ApplicationNew.URL()
-	if environmentIntent {
-		location = routes.EnvironmentNew.URL()
-	}
-	return controller.redirectWithError(etx, location, err)
+	return controller.redirectWithError(etx, routes.ApplicationNew.URL(), err)
 }
 
 func (controller Applications) redirectWithError(etx *echo.Context, location string, err error) error {

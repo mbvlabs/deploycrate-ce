@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/url"
 	"regexp"
 	"sort"
@@ -96,12 +97,14 @@ type EnvironmentSetupResourceInput struct {
 
 type EnvironmentSetupInput struct {
 	ServerID      uuid.UUID
+	ServerIDs     []uuid.UUID
 	Hostname      string
 	ContainerPort int32
 	HealthPath    string
 	BPGOTargets   string
 	Resources     []EnvironmentSetupResourceInput
 	Secrets       []EnvironmentSetupSecretInput
+	Deploy        bool
 }
 
 type EnvironmentSetupResult struct {
@@ -113,15 +116,17 @@ type EnvironmentSetupResult struct {
 }
 
 type EnvironmentSetupResourceOption struct {
-	ID           uuid.UUID  `json:"id" bun:"id"`
-	Name         string     `json:"name" bun:"name"`
-	Engine       string     `json:"engine" bun:"engine"`
-	Database     string     `json:"database" bun:"database_name"`
-	EndpointID   uuid.UUID  `json:"endpointId" bun:"endpoint_id"`
-	Endpoint     string     `json:"endpoint" bun:"endpoint"`
-	CredentialID *uuid.UUID `json:"credentialId" bun:"credential_id"`
-	Credential   string     `json:"credential" bun:"credential"`
-	ServerID     *uuid.UUID `json:"serverId" bun:"server_id"`
+	ID                    uuid.UUID  `json:"id" bun:"id"`
+	Name                  string     `json:"name" bun:"name"`
+	Engine                string     `json:"engine" bun:"engine"`
+	Database              string     `json:"database" bun:"database_name"`
+	EndpointID            uuid.UUID  `json:"endpointId" bun:"endpoint_id"`
+	Endpoint              string     `json:"endpoint" bun:"endpoint"`
+	CredentialID          *uuid.UUID `json:"credentialId" bun:"credential_id"`
+	Credential            string     `json:"credential" bun:"credential"`
+	ServerID              *uuid.UUID `json:"serverId" bun:"server_id"`
+	CredentialFields      []string   `json:"credentialFields" bun:"-"`
+	SupportsConnectionURL bool       `json:"supportsConnectionUrl" bun:"-"`
 }
 
 type EnvironmentSetupServerOption struct {
@@ -145,8 +150,8 @@ type EnvironmentEditConfiguration struct {
 	HealthPath    string                          `json:"healthPath"`
 	BPGOTargets   string                          `json:"bpGoTargets"`
 	Resources     []EnvironmentSetupResourceInput `json:"resources"`
-	ServerID      uuid.UUID                       `json:"serverId"`
-	ServerName    string                          `json:"serverName"`
+	ServerIDs     []uuid.UUID                     `json:"serverIds"`
+	ServerNames   []string                        `json:"serverNames"`
 }
 
 type EnvironmentEditData struct {
@@ -176,8 +181,8 @@ type EnvironmentOverview struct {
 	ContextPath      string                          `json:"contextPath"`
 	RegistryName     string                          `json:"registryName"`
 	RegistryEndpoint string                          `json:"registryEndpoint"`
-	RuntimeServerID  uuid.UUID                       `json:"runtimeServerId"`
-	RuntimeServer    string                          `json:"runtimeServer"`
+	RuntimeServerIDs []uuid.UUID                     `json:"runtimeServerIds"`
+	RuntimeServers   []string                        `json:"runtimeServers"`
 	Deployability    models.EnvironmentDeployability `json:"deployability"`
 	Secrets          []EnvironmentSecretActivity     `json:"secrets"`
 	Variables        []EnvironmentVariableActivity   `json:"variables"`
@@ -391,17 +396,24 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 	}
 	var domain string
 	_ = service.db.Executor().NewSelect().TableExpr("environment_domains").ColumnExpr("hostname").Where("environment_id = ?", environmentID).Where("is_primary = TRUE").Where("archived_at IS NULL").Limit(1).Scan(ctx, &domain)
-	var runtimeServer struct {
+	type runtimeServer struct {
 		ID   uuid.UUID `bun:"id"`
 		Name string    `bun:"name"`
 	}
+	runtimeServers := make([]runtimeServer, 0)
 	if setupComplete {
 		if err := service.db.Executor().NewSelect().TableExpr("environment_targets AS target").
 			ColumnExpr("server.id, server.name").
 			Join("JOIN servers AS server ON server.id = target.server_id").
-			Where("target.environment_id = ?", environmentID).Where("target.detached_at IS NULL").Limit(1).Scan(ctx, &runtimeServer); err != nil {
+			Where("target.environment_id = ?", environmentID).Where("target.detached_at IS NULL").OrderExpr("server.name").Scan(ctx, &runtimeServers); err != nil {
 			return EnvironmentOverview{}, err
 		}
+	}
+	runtimeServerIDs := make([]uuid.UUID, 0, len(runtimeServers))
+	runtimeServerNames := make([]string, 0, len(runtimeServers))
+	for _, server := range runtimeServers {
+		runtimeServerIDs = append(runtimeServerIDs, server.ID)
+		runtimeServerNames = append(runtimeServerNames, server.Name)
 	}
 	resources := make([]EnvironmentResourceActivity, 0)
 	if err := service.db.Executor().NewSelect().TableExpr("environment_resources AS connection").ColumnExpr("connection.id, connection.alias, resource.name, resource.configuration ->> 'engine' AS engine").Join("JOIN resources AS resource ON resource.id = connection.resource_id").Where("connection.environment_id = ?", environmentID).Where("connection.archived_at IS NULL").OrderExpr("connection.alias").Scan(ctx, &resources); err != nil {
@@ -437,7 +449,7 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 		ApplicationID: applicationID, ApplicationName: source.ApplicationName, Environment: environment, SetupComplete: setupComplete,
 		SourceType: source.SourceType, Repository: source.Repository, Reference: source.Reference, ContextPath: source.ContextPath,
 		RegistryName: source.RegistryName, RegistryEndpoint: source.RegistryEndpoint,
-		RuntimeServerID: runtimeServer.ID, RuntimeServer: runtimeServer.Name,
+		RuntimeServerIDs: runtimeServerIDs, RuntimeServers: runtimeServerNames,
 		Deployability: deployability, Secrets: secretActivity, Variables: variables, Domain: domain,
 		Resources: resources, Builds: builds, Releases: releases, Deployments: deployments, Instances: instances,
 		APITokenPrefix: environment.APITokenPrefix.String,
@@ -445,36 +457,45 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 }
 
 func (service *EnvironmentSetup) environmentSecretActivity(ctx context.Context, environmentID uuid.UUID) ([]EnvironmentSecretActivity, error) {
-	target, err := models.EnvironmentTarget.ActiveForEnvironment(ctx, service.db.Executor(), environmentID)
+	targetStates := make([]models.EnvironmentTargetStateEntity, 0)
+	if err := service.db.Executor().NewSelect().Model(&targetStates).
+		Join("JOIN environment_targets AS target ON target.id = environment_target_states.environment_target_id").
+		Where("target.environment_id = ?", environmentID).Where("target.detached_at IS NULL").OrderExpr("target.attached_at, target.id").Scan(ctx); err != nil {
+		return nil, err
+	}
+	if len(targetStates) == 0 {
+		return nil, errors.New("Environment has no runtime Server targets")
+	}
+	desired, err := service.environmentRevisionSecrets(ctx, targetStates[0].DesiredRevisionID)
 	if err != nil {
 		return nil, err
 	}
-	var targetState models.EnvironmentTargetStateEntity
-	if err := service.db.Executor().NewSelect().Model(&targetState).
-		Where("environment_target_id = ?", target.ID).Limit(1).Scan(ctx); err != nil {
-		return nil, err
+	applyingByTarget := make([]map[string]models.EnvironmentSecretDescriptor, 0, len(targetStates))
+	appliedByTarget := make([]map[string]models.EnvironmentSecretDescriptor, 0, len(targetStates))
+	appliedUnion := make(map[string]models.EnvironmentSecretDescriptor)
+	desiredRevisionFailed := false
+	for _, targetState := range targetStates {
+		applying, applyingErr := service.environmentRevisionSecrets(ctx, targetState.ApplyingRevisionID)
+		if applyingErr != nil {
+			return nil, applyingErr
+		}
+		applied, appliedErr := service.environmentRevisionSecrets(ctx, targetState.AppliedRevisionID)
+		if appliedErr != nil {
+			return nil, appliedErr
+		}
+		applyingByTarget = append(applyingByTarget, applying)
+		appliedByTarget = append(appliedByTarget, applied)
+		maps.Copy(appliedUnion, applied)
+		failedRevisionID, failedErr := service.environmentLatestFailedRevisionID(ctx, targetState.EnvironmentTargetID)
+		if failedErr != nil {
+			return nil, failedErr
+		}
+		if targetState.State == "failed" && targetState.DesiredRevisionID != nil && failedRevisionID != nil && *targetState.DesiredRevisionID == *failedRevisionID {
+			desiredRevisionFailed = true
+		}
 	}
 
-	desired, err := service.environmentRevisionSecrets(ctx, targetState.DesiredRevisionID)
-	if err != nil {
-		return nil, err
-	}
-	applying, err := service.environmentRevisionSecrets(ctx, targetState.ApplyingRevisionID)
-	if err != nil {
-		return nil, err
-	}
-	applied, err := service.environmentRevisionSecrets(ctx, targetState.AppliedRevisionID)
-	if err != nil {
-		return nil, err
-	}
-	failedRevisionID, err := service.environmentLatestFailedRevisionID(ctx, target.ID)
-	if err != nil {
-		return nil, err
-	}
-	desiredRevisionFailed := targetState.State == "failed" && targetState.DesiredRevisionID != nil &&
-		failedRevisionID != nil && *targetState.DesiredRevisionID == *failedRevisionID
-
-	activity := make([]EnvironmentSecretActivity, 0, len(desired)+len(applied))
+	activity := make([]EnvironmentSecretActivity, 0, len(desired)+len(appliedUnion))
 	for _, descriptor := range desired {
 		secret, findErr := models.EnvironmentSecret.FindForEnvironment(ctx, service.db.Executor(), environmentID, descriptor.ID)
 		if findErr != nil {
@@ -482,12 +503,22 @@ func (service *EnvironmentSetup) environmentSecretActivity(ctx context.Context, 
 		}
 		metadata := secret.Sanitized()
 		status := "pending"
-		if sameEnvironmentSecretDescriptor(descriptor, applied[descriptor.Key]) {
+		deployedEverywhere := true
+		deploying := false
+		for index := range targetStates {
+			if !sameEnvironmentSecretDescriptor(descriptor, appliedByTarget[index][descriptor.Key]) {
+				deployedEverywhere = false
+			}
+			if sameEnvironmentSecretDescriptor(descriptor, applyingByTarget[index][descriptor.Key]) {
+				deploying = true
+			}
+		}
+		if deployedEverywhere {
 			status = "deployed"
-		} else if sameEnvironmentSecretDescriptor(descriptor, applying[descriptor.Key]) {
-			status = "deploying"
 		} else if desiredRevisionFailed {
 			status = "failed"
+		} else if deploying {
+			status = "deploying"
 		}
 		activity = append(activity, EnvironmentSecretActivity{
 			ID: metadata.ID, Key: metadata.Key, DigestPrefix: metadata.DigestPrefix,
@@ -495,7 +526,7 @@ func (service *EnvironmentSetup) environmentSecretActivity(ctx context.Context, 
 			Status: status, Desired: true,
 		})
 	}
-	for key, descriptor := range applied {
+	for key, descriptor := range appliedUnion {
 		if _, stillDesired := desired[key]; stillDesired {
 			continue
 		}
@@ -564,14 +595,6 @@ func (service *EnvironmentSetup) EditData(
 	if err != nil {
 		return EnvironmentEditData{}, err
 	}
-	target, err := models.EnvironmentTarget.ActiveForEnvironment(ctx, service.db.Executor(), environmentID)
-	if err != nil {
-		return EnvironmentEditData{}, err
-	}
-	server, err := models.Server.Find(ctx, service.db.Executor(), target.ServerID)
-	if err != nil {
-		return EnvironmentEditData{}, err
-	}
 	if !overview.SetupComplete {
 		return EnvironmentEditData{}, errors.New("Environment setup is incomplete")
 	}
@@ -597,7 +620,7 @@ func (service *EnvironmentSetup) EditData(
 		ColumnExpr("connection.id, connection.resource_id, connection.resource_endpoint_id, connection.resource_credential_id, connection.alias, connection.configuration").
 		ColumnExpr("credential.metadata AS credential_metadata").
 		Join("JOIN resource_endpoints AS endpoint ON endpoint.id = connection.resource_endpoint_id AND endpoint.archived_at IS NULL").
-		Join("JOIN resource_credentials AS credential ON credential.id = connection.resource_credential_id AND credential.archived_at IS NULL").
+		Join("LEFT JOIN resource_credentials AS credential ON credential.id = connection.resource_credential_id AND credential.archived_at IS NULL").
 		Where("connection.environment_id = ?", environmentID).Where("connection.archived_at IS NULL").OrderExpr("connection.alias").Scan(ctx, &rows); err != nil {
 		return EnvironmentEditData{}, err
 	}
@@ -610,9 +633,6 @@ func (service *EnvironmentSetup) EditData(
 			return EnvironmentEditData{}, errors.New("Environment Resource configuration is invalid")
 		}
 		database := resourceCredentialMetadataDatabase(row.CredentialMetadata)
-		if database == "" {
-			return EnvironmentEditData{}, errors.New("Environment Resource credential Database configuration is invalid")
-		}
 		resources = append(resources, EnvironmentSetupResourceInput{
 			ResourceID: row.ResourceID, EndpointID: row.ResourceEndpointID,
 			CredentialID: row.ResourceCredentialID, Alias: row.Alias, Database: database,
@@ -625,7 +645,7 @@ func (service *EnvironmentSetup) EditData(
 			Name: overview.Environment.Name, Slug: overview.Environment.Slug, Kind: overview.Environment.Kind,
 			Hostname: state.Domain.Hostname, ContainerPort: state.Runtime.ContainerPort,
 			HealthPath: state.Runtime.HealthPath, BPGOTargets: state.Runtime.BPGOTargets, Resources: resources,
-			ServerID: target.ServerID, ServerName: server.Name,
+			ServerIDs: overview.RuntimeServerIDs, ServerNames: overview.RuntimeServers,
 		},
 	}, nil
 }
@@ -732,11 +752,41 @@ func (service *EnvironmentSetup) Options(ctx context.Context) (EnvironmentSetupO
 		ColumnExpr("credential.id AS credential_id, COALESCE(credential.name, '') AS credential, installation.server_id AS server_id").
 		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = resource.id AND endpoint.archived_at IS NULL").
 		Join("LEFT JOIN resource_installations AS installation ON installation.resource_id = resource.id AND installation.archived_at IS NULL").
-		Join("JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.metadata ->> 'purpose' = 'application' AND credential.archived_at IS NULL").
-		Where("resource.archived_at IS NULL").Where("resource.resource_type = 'database'").Where("resource.configuration ->> 'engine' = 'postgresql'").
+		Join("LEFT JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.metadata ->> 'purpose' = 'application' AND credential.archived_at IS NULL").
+		Where("resource.archived_at IS NULL").
 		OrderExpr("resource.name, endpoint.role, credential.name").Scan(ctx, &options); err != nil {
 		return EnvironmentSetupOptions{}, err
 	}
+	selectable := make([]EnvironmentSetupResourceOption, 0, len(options))
+	credentialless := make(map[string]struct{})
+	for _, option := range options {
+		definition, supported := models.FindResourceEngine(option.Engine)
+		if !supported || option.Engine == "postgresql" && option.CredentialID == nil {
+			continue
+		}
+		option.CredentialFields = make([]string, 0, len(definition.CredentialFields))
+		for _, field := range definition.CredentialFields {
+			option.CredentialFields = append(option.CredentialFields, field.Name)
+		}
+		option.SupportsConnectionURL = option.Engine == "postgresql"
+		key := option.ID.String() + ":" + option.EndpointID.String()
+		if option.Engine != "postgresql" {
+			if _, exists := credentialless[key]; !exists {
+				withoutCredential := option
+				withoutCredential.Database = ""
+				withoutCredential.CredentialID = nil
+				withoutCredential.Credential = ""
+				withoutCredential.CredentialFields = nil
+				selectable = append(selectable, withoutCredential)
+				credentialless[key] = struct{}{}
+			}
+			if option.CredentialID == nil {
+				continue
+			}
+		}
+		selectable = append(selectable, option)
+	}
+	options = selectable
 	servers := make([]EnvironmentSetupServerOption, 0)
 	if err := service.db.Executor().NewSelect().TableExpr("servers AS server").
 		ColumnExpr("server.id, server.name, server.kind, server.address").
@@ -780,6 +830,11 @@ type preparedSetupResource struct {
 	secrets      []PreparedEnvironmentSecret
 }
 
+type preparedRuntimePlacement struct {
+	serverID uuid.UUID
+	network  models.ServerNetworkEntity
+}
+
 func (service *EnvironmentSetup) Complete(
 	ctx context.Context,
 	applicationID, environmentID, userID uuid.UUID,
@@ -799,22 +854,25 @@ func (service *EnvironmentSetup) Complete(
 	}
 	revisionSHA := ""
 	var imageArtifact resolvedImageArtifact
-	if source.Kind == "image" {
-		imageArtifact, err = service.resolveImageArtifact(ctx, source, "")
-		if err != nil {
-			return EnvironmentSetupResult{}, fmt.Errorf("resolve configured image reference: %w", err)
-		}
-	} else {
-		revisionSHA, err = service.github.ResolveRevision(ctx, installation, repository, source.Reference)
-		if err != nil {
-			return EnvironmentSetupResult{}, fmt.Errorf("resolve configured GitHub reference: %w", err)
+	if input.Deploy {
+		if source.Kind == "image" {
+			imageArtifact, err = service.resolveImageArtifact(ctx, source, "")
+			if err != nil {
+				return EnvironmentSetupResult{}, fmt.Errorf("resolve configured image reference: %w", err)
+			}
+		} else {
+			revisionSHA, err = service.github.ResolveRevision(ctx, installation, repository, source.Reference)
+			if err != nil {
+				return EnvironmentSetupResult{}, fmt.Errorf("resolve configured GitHub reference: %w", err)
+			}
 		}
 	}
-	serverID, networkID, serverNetwork, err := service.runtimePlacement(ctx, input.ServerID)
+	serverIDs := normalizedEnvironmentServerIDs(input)
+	placements, networkID, err := service.runtimePlacements(ctx, serverIDs)
 	if err != nil {
 		return EnvironmentSetupResult{}, err
 	}
-	preparedResources, err := service.prepareResources(ctx, environmentID, serverID, networkID, input.Resources)
+	preparedResources, err := service.prepareResources(ctx, environmentID, serverIDs, networkID, input.Resources)
 	if err != nil {
 		return EnvironmentSetupResult{}, err
 	}
@@ -866,19 +924,23 @@ func (service *EnvironmentSetup) Complete(
 	}); err != nil {
 		return EnvironmentSetupResult{}, err
 	}
-	target, err := models.EnvironmentTarget.Create(ctx, tx, models.CreateEnvironmentTargetData{AttachedAt: time.Now().UTC(), EnvironmentID: environment.ID, ServerID: serverID})
-	if err != nil {
-		return EnvironmentSetupResult{}, err
-	}
 	if _, err := models.EnvironmentNetwork.Create(ctx, tx, models.CreateEnvironmentNetworkData{Role: "primary", EnvironmentID: environment.ID, PrivateNetworkID: networkID}); err != nil {
 		return EnvironmentSetupResult{}, err
 	}
-	if _, err := models.EnvironmentTargetNetwork.Create(ctx, tx, models.CreateEnvironmentTargetNetworkData{
-		Driver: serverNetwork.Driver, ExternalID: serverNetwork.ExternalID, Configuration: serverNetwork.Configuration,
-		State: "applied", AppliedAt: serverNetwork.AppliedAt, ObservedAt: serverNetwork.ObservedAt,
-		EnvironmentTargetID: target.ID, PrivateNetworkID: networkID,
-	}); err != nil {
-		return EnvironmentSetupResult{}, err
+	targets := make([]models.EnvironmentTargetEntity, 0, len(placements))
+	for _, placement := range placements {
+		target, createErr := models.EnvironmentTarget.Create(ctx, tx, models.CreateEnvironmentTargetData{AttachedAt: time.Now().UTC(), EnvironmentID: environment.ID, ServerID: placement.serverID})
+		if createErr != nil {
+			return EnvironmentSetupResult{}, createErr
+		}
+		if _, createErr := models.EnvironmentTargetNetwork.Create(ctx, tx, models.CreateEnvironmentTargetNetworkData{
+			Driver: placement.network.Driver, ExternalID: placement.network.ExternalID, Configuration: placement.network.Configuration,
+			State: "applied", AppliedAt: placement.network.AppliedAt, ObservedAt: placement.network.ObservedAt,
+			EnvironmentTargetID: target.ID, PrivateNetworkID: networkID,
+		}); createErr != nil {
+			return EnvironmentSetupResult{}, createErr
+		}
+		targets = append(targets, target)
 	}
 	domain, err := models.EnvironmentDomain.Create(ctx, tx, models.CreateEnvironmentDomainData{Hostname: input.Hostname, IsPrimary: true, EnvironmentID: environment.ID})
 	if err != nil {
@@ -887,8 +949,12 @@ func (service *EnvironmentSetup) Complete(
 	resourceStates := make([]models.EnvironmentResourceState, 0, len(preparedResources))
 	secretEntities := make([]models.EnvironmentSecretEntity, 0, len(preparedUserSecrets)+len(preparedResources))
 	for _, prepared := range preparedResources {
+		credentialSource := "none"
+		if prepared.input.CredentialID != nil {
+			credentialSource = "managed"
+		}
 		configuration, _ := json.Marshal(map[string]any{
-			"schema_version": 1, "credential_source": "managed",
+			"schema_version": 1, "credential_source": credentialSource,
 			"credential_projection": prepared.input.CredentialProjection,
 		})
 		connection, createErr := models.EnvironmentResource.Create(ctx, tx, models.CreateEnvironmentResourceData{
@@ -950,8 +1016,19 @@ func (service *EnvironmentSetup) Complete(
 	if _, err := models.ChangeStateRevision.Create(ctx, tx, models.CreateChangeStateRevisionData{Role: "result", ChangeID: change.ID, EnvironmentStateRevisionID: revision.ID}); err != nil {
 		return EnvironmentSetupResult{}, err
 	}
-	if _, err := models.EnvironmentTargetState.Create(ctx, tx, models.CreateEnvironmentTargetStateData{ObservedState: json.RawMessage(`{}`), State: "pending", EnvironmentTargetID: target.ID, DesiredRevisionID: &revision.ID}); err != nil {
-		return EnvironmentSetupResult{}, err
+	for _, target := range targets {
+		if _, err := models.EnvironmentTargetState.Create(ctx, tx, models.CreateEnvironmentTargetStateData{ObservedState: json.RawMessage(`{}`), State: "pending", EnvironmentTargetID: target.ID, DesiredRevisionID: &revision.ID}); err != nil {
+			return EnvironmentSetupResult{}, err
+		}
+	}
+	if !input.Deploy {
+		if err := models.Change.MarkCompleted(ctx, tx, change.ID, now); err != nil {
+			return EnvironmentSetupResult{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return EnvironmentSetupResult{}, err
+		}
+		return EnvironmentSetupResult{Environment: environment, Revision: revision}, nil
 	}
 	if source.Kind == "image" {
 		if err := models.Change.MarkCompleted(ctx, tx, change.ID, now); err != nil {
@@ -1168,11 +1245,16 @@ func (service *EnvironmentSetup) queueImageDeploymentTx(
 	actorID *uuid.UUID,
 	summary string,
 ) (models.ReleaseEntity, models.DeploymentEntity, error) {
-	target, err := models.EnvironmentTarget.ActiveForEnvironment(ctx, tx, source.EnvironmentID)
+	targets, err := models.EnvironmentTarget.ActiveForEnvironmentAll(ctx, tx, source.EnvironmentID)
 	if err != nil {
 		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
 	}
-	active, err := tx.NewSelect().TableExpr("deployments").Where("environment_target_id = ?", target.ID).Where("status IN ('queued', 'running')").Count(ctx)
+	if len(targets) == 0 {
+		return models.ReleaseEntity{}, models.DeploymentEntity{}, errors.Join(models.ErrDomainValidation, errors.New("Environment has no runtime Server targets"))
+	}
+	active, err := tx.NewSelect().TableExpr("deployments").
+		Where("environment_target_id IN (SELECT id FROM environment_targets WHERE environment_id = ? AND detached_at IS NULL)", source.EnvironmentID).
+		Where("status IN ('queued', 'running')").Count(ctx)
 	if err != nil {
 		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
 	}
@@ -1216,28 +1298,49 @@ func (service *EnvironmentSetup) queueImageDeploymentTx(
 	if _, err := models.ChangeStateRevision.Create(ctx, tx, models.CreateChangeStateRevisionData{Role: "result", ChangeID: change.ID, EnvironmentStateRevisionID: revision.ID}); err != nil {
 		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
 	}
-	if _, err := tx.NewUpdate().TableExpr("environment_target_states").Set("desired_revision_id = ?", revision.ID).Set("state = 'pending'").Set("updated_at = ?", now).Where("environment_target_id = ?", target.ID).Exec(ctx); err != nil {
+	if _, err := tx.NewUpdate().TableExpr("environment_target_states").Set("desired_revision_id = ?", revision.ID).Set("state = 'pending'").Set("updated_at = ?", now).
+		Where("environment_target_id IN (SELECT id FROM environment_targets WHERE environment_id = ? AND detached_at IS NULL)", source.EnvironmentID).Exec(ctx); err != nil {
 		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
 	}
 	runtimeSnapshot, _ := json.Marshal(state.Runtime)
+	var firstDeployment models.DeploymentEntity
+	for index, target := range targets {
+		deployment, queueErr := service.queueDeploymentForTargetTx(ctx, tx, change.ID, release.ID, target.ID, runtimeSnapshot, now)
+		if queueErr != nil {
+			return models.ReleaseEntity{}, models.DeploymentEntity{}, queueErr
+		}
+		if index == 0 {
+			firstDeployment = deployment
+		}
+	}
+	return release, firstDeployment, nil
+}
+
+func (service *EnvironmentSetup) queueDeploymentForTargetTx(
+	ctx context.Context,
+	tx bun.Tx,
+	changeID, releaseID, targetID uuid.UUID,
+	runtimeSnapshot json.RawMessage,
+	now time.Time,
+) (models.DeploymentEntity, error) {
 	deployment, err := models.Deployment.Create(ctx, tx, models.CreateDeploymentData{
 		Attempt: 1, Strategy: json.RawMessage(`{"type":"blue_green","replicas":1}`), RuntimeConfiguration: runtimeSnapshot,
-		Status: "queued", CurrentStep: sql.NullString{String: "queued", Valid: true}, ChangeID: change.ID,
-		ReleaseID: release.ID, EnvironmentTargetID: target.ID,
+		Status: "queued", CurrentStep: sql.NullString{String: "queued", Valid: true}, ChangeID: changeID,
+		ReleaseID: releaseID, EnvironmentTargetID: targetID,
 	})
 	if err != nil {
-		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
+		return models.DeploymentEntity{}, err
 	}
 	if _, err := models.Instance.Create(ctx, tx, models.CreateInstanceData{
 		ExternalID: "pending:" + deployment.ID.String(), Slot: "candidate", ReplicaKey: "primary", State: "candidate",
-		Ports: json.RawMessage(`{}`), ObservedAt: now, DeploymentID: deployment.ID, ReleaseID: release.ID, EnvironmentTargetID: target.ID,
+		Ports: json.RawMessage(`{}`), ObservedAt: now, DeploymentID: deployment.ID, ReleaseID: releaseID, EnvironmentTargetID: targetID,
 	}); err != nil {
-		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
+		return models.DeploymentEntity{}, err
 	}
 	if _, err := service.queue.InsertTx(ctx, tx.Tx, jobs.DeployReleaseArgs{DeploymentID: deployment.ID}, jobs.DeployReleaseInsertOpts(deployment.ID)); err != nil {
-		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
+		return models.DeploymentEntity{}, err
 	}
-	return release, deployment, nil
+	return deployment, nil
 }
 
 func (service *EnvironmentSetup) QueueManualDeploy(
@@ -1337,23 +1440,21 @@ func (service *EnvironmentSetup) QueueReleaseDeployment(
 	if err != nil || release.EnvironmentID != environmentID || release.RegistryResourceID == nil || release.RegistryCredentialID == nil || !release.RegistryEndpoint.Valid {
 		return models.DeploymentEntity{}, errors.New("Release does not belong to this Environment")
 	}
-	target, err := models.EnvironmentTarget.ActiveForEnvironment(ctx, tx, environmentID)
+	targets, err := models.EnvironmentTarget.ActiveForEnvironmentAll(ctx, tx, environmentID)
 	if err != nil {
 		return models.DeploymentEntity{}, err
 	}
-	var active models.DeploymentEntity
-	err = tx.NewSelect().Model(&active).
-		Where("environment_target_id = ?", target.ID).
-		Where("status IN ('queued', 'running')").
-		OrderExpr("created_at DESC").Limit(1).Scan(ctx)
-	if err == nil {
-		if err := tx.Commit(); err != nil {
-			return models.DeploymentEntity{}, err
-		}
-		return active, nil
+	if len(targets) == 0 {
+		return models.DeploymentEntity{}, errors.Join(models.ErrDomainValidation, errors.New("Environment has no runtime Server targets"))
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	active, err := tx.NewSelect().TableExpr("deployments").
+		Where("environment_target_id IN (SELECT id FROM environment_targets WHERE environment_id = ? AND detached_at IS NULL)", environmentID).
+		Where("status IN ('queued', 'running')").Count(ctx)
+	if err != nil {
 		return models.DeploymentEntity{}, err
+	}
+	if active > 0 {
+		return models.DeploymentEntity{}, errors.Join(models.ErrDomainValidation, errors.New("Environment already has an active Deployment"))
 	}
 	revision, err := models.EnvironmentStateRevision.LatestCommitted(ctx, tx, environmentID)
 	if err != nil {
@@ -1384,31 +1485,24 @@ func (service *EnvironmentSetup) QueueReleaseDeployment(
 		return models.DeploymentEntity{}, err
 	}
 	if _, err := tx.NewUpdate().TableExpr("environment_target_states").Set("desired_revision_id = ?", revision.ID).Set("state = 'pending'").
-		Set("updated_at = ?", now).Where("environment_target_id = ?", target.ID).Exec(ctx); err != nil {
+		Set("updated_at = ?", now).Where("environment_target_id IN (SELECT id FROM environment_targets WHERE environment_id = ? AND detached_at IS NULL)", environmentID).Exec(ctx); err != nil {
 		return models.DeploymentEntity{}, err
 	}
 	runtimeSnapshot, _ := json.Marshal(state.Runtime)
-	deployment, err := models.Deployment.Create(ctx, tx, models.CreateDeploymentData{
-		Attempt: 1, Strategy: json.RawMessage(`{"type":"blue_green","replicas":1}`), RuntimeConfiguration: runtimeSnapshot,
-		Status: "queued", CurrentStep: sql.NullString{String: "queued", Valid: true}, ChangeID: change.ID,
-		ReleaseID: release.ID, EnvironmentTargetID: target.ID,
-	})
-	if err != nil {
-		return models.DeploymentEntity{}, err
-	}
-	if _, err := models.Instance.Create(ctx, tx, models.CreateInstanceData{
-		ExternalID: "pending:" + deployment.ID.String(), Slot: "candidate", ReplicaKey: "primary", State: "candidate",
-		Ports: json.RawMessage(`{}`), ObservedAt: now, DeploymentID: deployment.ID, ReleaseID: release.ID, EnvironmentTargetID: target.ID,
-	}); err != nil {
-		return models.DeploymentEntity{}, err
-	}
-	if _, err := service.queue.InsertTx(ctx, tx.Tx, jobs.DeployReleaseArgs{DeploymentID: deployment.ID}, jobs.DeployReleaseInsertOpts(deployment.ID)); err != nil {
-		return models.DeploymentEntity{}, err
+	var firstDeployment models.DeploymentEntity
+	for index, target := range targets {
+		deployment, queueErr := service.queueDeploymentForTargetTx(ctx, tx, change.ID, release.ID, target.ID, runtimeSnapshot, now)
+		if queueErr != nil {
+			return models.DeploymentEntity{}, queueErr
+		}
+		if index == 0 {
+			firstDeployment = deployment
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return models.DeploymentEntity{}, err
 	}
-	return deployment, nil
+	return firstDeployment, nil
 }
 
 func (service *EnvironmentSetup) StartBuild(
@@ -1589,11 +1683,15 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 		Where("removed_at IS NULL").Limit(1).Scan(ctx, &networkID); err != nil {
 		return fmt.Errorf("load Environment network: %w", err)
 	}
-	target, err := models.EnvironmentTarget.ActiveForEnvironment(ctx, service.db.Executor(), environmentID)
+	targets, err := models.EnvironmentTarget.ActiveForEnvironmentAll(ctx, service.db.Executor(), environmentID)
 	if err != nil {
 		return err
 	}
-	preparedResources, err := service.prepareResources(ctx, environmentID, target.ServerID, networkID, input.Resources)
+	serverIDs := make([]uuid.UUID, 0, len(targets))
+	for _, target := range targets {
+		serverIDs = append(serverIDs, target.ServerID)
+	}
+	preparedResources, err := service.prepareResources(ctx, environmentID, serverIDs, networkID, input.Resources)
 	if err != nil {
 		return err
 	}
@@ -1705,8 +1803,12 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	resourceStates := make([]models.EnvironmentResourceState, 0, len(preparedResources))
 	secretDescriptors := append([]models.EnvironmentSecretDescriptor{}, userSecretDescriptors...)
 	for _, prepared := range preparedResources {
+		credentialSource := "none"
+		if prepared.input.CredentialID != nil {
+			credentialSource = "managed"
+		}
 		resourceConfiguration, _ := json.Marshal(map[string]any{
-			"schema_version": 1, "credential_source": "managed",
+			"schema_version": 1, "credential_source": credentialSource,
 			"credential_projection": prepared.input.CredentialProjection,
 		})
 		connection, createErr := models.EnvironmentResource.Create(ctx, tx, models.CreateEnvironmentResourceData{
@@ -2043,7 +2145,7 @@ func validateEnvironmentSetupInput(input EnvironmentSetupInput) error {
 		builder.Add("healthPath", "format", "health path must be an absolute HTTP path")
 	}
 	if input.BPGOTargets != "" && (!goTargetsPattern.MatchString(input.BPGOTargets) || strings.Contains(input.BPGOTargets, "..")) {
-		builder.Add("bpGoTargets", "format", "BP_GO_TARGETS must contain repository-relative Go targets")
+		builder.Add("bpGoTargets", "format", "Target must contain repository-relative Go targets")
 	}
 	if len(input.Resources) > 32 || len(input.Secrets) > 128 {
 		builder.Add("resources", "max_items", "Environment setup exceeds the supported item count")
@@ -2089,14 +2191,55 @@ func (service *EnvironmentSetup) loadSource(ctx context.Context, applicationID, 
 	return source, repository, installation, err
 }
 
+func normalizedEnvironmentServerIDs(input EnvironmentSetupInput) []uuid.UUID {
+	serverIDs := make([]uuid.UUID, 0, len(input.ServerIDs)+1)
+	seen := make(map[uuid.UUID]struct{}, len(input.ServerIDs)+1)
+	for _, serverID := range input.ServerIDs {
+		if serverID == uuid.Nil {
+			continue
+		}
+		if _, exists := seen[serverID]; exists {
+			continue
+		}
+		seen[serverID] = struct{}{}
+		serverIDs = append(serverIDs, serverID)
+	}
+	if input.ServerID != uuid.Nil {
+		if _, exists := seen[input.ServerID]; !exists {
+			serverIDs = append(serverIDs, input.ServerID)
+		}
+	}
+	return serverIDs
+}
+
+func (service *EnvironmentSetup) runtimePlacements(ctx context.Context, serverIDs []uuid.UUID) ([]preparedRuntimePlacement, uuid.UUID, error) {
+	if len(serverIDs) == 0 {
+		return nil, uuid.Nil, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: "serverIds", Code: "required", Message: "select at least one runtime Server target"}})
+	}
+	placements := make([]preparedRuntimePlacement, 0, len(serverIDs))
+	var networkID uuid.UUID
+	for _, serverID := range serverIDs {
+		resolvedServerID, resolvedNetworkID, network, err := service.runtimePlacement(ctx, serverID)
+		if err != nil {
+			return nil, uuid.Nil, err
+		}
+		if networkID != uuid.Nil && networkID != resolvedNetworkID {
+			return nil, uuid.Nil, errors.Join(models.ErrDomainValidation, errors.New("selected runtime Server targets do not share the DeployCrate private network"))
+		}
+		networkID = resolvedNetworkID
+		placements = append(placements, preparedRuntimePlacement{serverID: resolvedServerID, network: network})
+	}
+	return placements, networkID, nil
+}
+
 func (service *EnvironmentSetup) runtimePlacement(ctx context.Context, serverID uuid.UUID) (uuid.UUID, uuid.UUID, models.ServerNetworkEntity, error) {
 	server, err := models.Server.Find(ctx, service.db.Executor(), serverID)
 	if err != nil || server.ArchivedAt.Valid || !server.IsConfigured || (server.Kind != "self_hosted" && server.Kind != "worker") {
-		return uuid.Nil, uuid.Nil, models.ServerNetworkEntity{}, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: "serverId", Code: "unavailable", Message: "selected runtime Server is unavailable"}})
+		return uuid.Nil, uuid.Nil, models.ServerNetworkEntity{}, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: "serverIds", Code: "unavailable", Message: "selected runtime Server is unavailable"}})
 	}
 	capabilities, err := models.ParseServerCapabilities(server.Capabilities)
 	if err != nil || !capabilities.Runtime {
-		return uuid.Nil, uuid.Nil, models.ServerNetworkEntity{}, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: "serverId", Code: "capability", Message: "selected Server does not support application runtimes"}})
+		return uuid.Nil, uuid.Nil, models.ServerNetworkEntity{}, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: "serverIds", Code: "capability", Message: "selected Server does not support application runtimes"}})
 	}
 	var row struct{ ServerID, NetworkID uuid.UUID }
 	err = service.db.Executor().NewSelect().TableExpr("applications AS application").
@@ -2111,40 +2254,48 @@ func (service *EnvironmentSetup) runtimePlacement(ctx context.Context, serverID 
 	var network models.ServerNetworkEntity
 	err = service.db.Executor().NewSelect().Model(&network).Where("server_id = ?", serverID).Where("private_network_id = ?", row.NetworkID).Where("removed_at IS NULL").Limit(1).Scan(ctx)
 	if err != nil {
-		return uuid.Nil, uuid.Nil, models.ServerNetworkEntity{}, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: "serverId", Code: "network", Message: "selected Server is not attached to the DeployCrate private network"}})
+		return uuid.Nil, uuid.Nil, models.ServerNetworkEntity{}, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: "serverIds", Code: "network", Message: "selected Server is not attached to the DeployCrate private network"}})
 	}
 	return serverID, row.NetworkID, network, nil
 }
 
-func (service *EnvironmentSetup) prepareResources(ctx context.Context, environmentID, serverID, networkID uuid.UUID, inputs []EnvironmentSetupResourceInput) ([]preparedSetupResource, error) {
+func (service *EnvironmentSetup) prepareResources(ctx context.Context, environmentID uuid.UUID, serverIDs []uuid.UUID, networkID uuid.UUID, inputs []EnvironmentSetupResourceInput) ([]preparedSetupResource, error) {
 	prepared := make([]preparedSetupResource, 0, len(inputs))
 	aliases := make(map[string]struct{}, len(inputs))
 	resources := make(map[uuid.UUID]struct{}, len(inputs))
+	selectedServers := make(map[uuid.UUID]struct{}, len(serverIDs))
+	for _, serverID := range serverIDs {
+		selectedServers[serverID] = struct{}{}
+	}
 	for index, input := range inputs {
-		input.Alias = strings.ToUpper(strings.TrimSpace(input.Alias))
-		input.CredentialProjection = strings.ToLower(strings.TrimSpace(input.CredentialProjection))
-		if input.Alias == "" {
-			input.Alias = "DATABASE"
-		}
-		if input.CredentialProjection != resourceCredentialProjectionConnectionURL && input.CredentialProjection != resourceCredentialProjectionIndividualParts {
-			return nil, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: fmt.Sprintf("resources.%d.credentialProjection", index), Code: "unsupported", Message: "Choose Connection URL or Individual parts"}})
-		}
-		if _, exists := aliases[input.Alias]; exists {
-			return nil, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: fmt.Sprintf("resources.%d.alias", index), Code: "duplicate", Message: "Resource alias is already selected"}})
-		}
 		if _, exists := resources[input.ResourceID]; exists {
 			return nil, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: fmt.Sprintf("resources.%d.resourceId", index), Code: "duplicate", Message: "Resource is already selected"}})
 		}
 		resource, err := models.Resource.Find(ctx, service.db.Executor(), input.ResourceID)
-		if err != nil || resource.ArchivedAt.Valid || resource.Engine() != "postgresql" {
-			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected PostgreSQL Resource is unavailable"))
+		definition, supported := models.FindResourceEngine(resource.Engine())
+		if err != nil || resource.ArchivedAt.Valid || !supported {
+			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected Resource is unavailable"))
+		}
+		input.Alias = strings.ToUpper(strings.TrimSpace(input.Alias))
+		input.CredentialProjection = strings.ToLower(strings.TrimSpace(input.CredentialProjection))
+		if input.Alias == "" {
+			input.Alias = strings.ToUpper(resource.Engine())
+		}
+		if input.CredentialProjection != resourceCredentialProjectionConnectionURL && input.CredentialProjection != resourceCredentialProjectionIndividualParts {
+			return nil, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: fmt.Sprintf("resources.%d.credentialProjection", index), Code: "unsupported", Message: "Choose Connection URL or Individual parts"}})
+		}
+		if input.CredentialProjection == resourceCredentialProjectionConnectionURL && resource.Engine() != "postgresql" {
+			return nil, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: fmt.Sprintf("resources.%d.credentialProjection", index), Code: "unsupported", Message: "Connection URL is not supported for this Resource"}})
+		}
+		if _, exists := aliases[input.Alias]; exists {
+			return nil, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: fmt.Sprintf("resources.%d.alias", index), Code: "duplicate", Message: "Resource alias is already selected"}})
 		}
 		allowed, err := models.ResourceSelectableByEnvironment(ctx, service.db.Executor(), resource.ID, environmentID)
 		if err != nil {
 			return nil, err
 		}
 		if !allowed {
-			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected PostgreSQL Resource is not granted to this Environment"))
+			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected Resource is not granted to this Environment"))
 		}
 		endpoint, err := models.ResourceEndpoint.Find(ctx, service.db.Executor(), input.EndpointID)
 		if err != nil || endpoint.ArchivedAt.Valid || endpoint.ResourceID != resource.ID || (endpoint.PrivateNetworkID != nil && *endpoint.PrivateNetworkID != networkID) {
@@ -2154,39 +2305,56 @@ func (service *EnvironmentSetup) prepareResources(ctx context.Context, environme
 		installationErr := service.db.Executor().NewSelect().Model(&installation).
 			Where("resource_id = ?", resource.ID).Where("archived_at IS NULL").OrderExpr("created_at").Limit(1).Scan(ctx)
 		if installationErr == nil {
-			if installation.ServerID != serverID {
-				return nil, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: fmt.Sprintf("resources.%d.resourceId", index), Code: "placement", Message: "selected managed Resource is not installed on the runtime Server"}})
+			if _, selected := selectedServers[installation.ServerID]; !selected {
+				return nil, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: fmt.Sprintf("resources.%d.resourceId", index), Code: "placement", Message: "selected managed Resource is not installed on a selected runtime Server target"}})
 			}
 		} else if !errors.Is(installationErr, sql.ErrNoRows) {
 			return nil, installationErr
 		}
-		if input.CredentialID == nil {
+		if input.CredentialID == nil && resource.Engine() == "postgresql" {
 			return nil, errors.Join(models.ErrDomainValidation, errors.New("PostgreSQL application credential is required"))
-		}
-		credential, err := models.ResourceCredential.Find(ctx, service.db.Executor(), *input.CredentialID)
-		if err != nil || credential.ArchivedAt.Valid || credential.ResourceID != resource.ID {
-			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected Resource credential is unavailable"))
-		}
-		if resourceCredentialMetadataPurpose(credential.Metadata) != "application" {
-			return nil, errors.Join(models.ErrDomainValidation, errors.New("Resource administrator credentials cannot be injected into an Environment"))
-		}
-		input.Database = resourceCredentialMetadataDatabase(credential.Metadata)
-		if !resourceHasDatabase(resource, input.Database) {
-			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected PostgreSQL Resource Database is unavailable"))
-		}
-		values, err := service.resources.credentialSecretValues(credential)
-		if err != nil {
-			return nil, err
-		}
-		password := values["password"]
-		if password == "" || !credential.Username.Valid {
-			return nil, errors.New("selected PostgreSQL application credential is incomplete")
 		}
 		prefix := input.Alias
 		connectionID := uuid.New()
-		variables := make(map[string]string)
-		secrets := make([]PreparedEnvironmentSecret, 0, 1)
+		variables := map[string]string{
+			prefix + "_HOST":     endpoint.Address,
+			prefix + "_PORT":     fmt.Sprint(endpoint.Port),
+			prefix + "_PROTOCOL": endpoint.Protocol,
+			prefix + "_TLS_MODE": endpoint.TlsMode,
+		}
+		secrets := make([]PreparedEnvironmentSecret, 0, len(definition.CredentialFields))
+		var credential *models.ResourceCredentialEntity
+		credentialValues := make(map[string]string)
+		if input.CredentialID != nil {
+			selectedCredential, findErr := models.ResourceCredential.Find(ctx, service.db.Executor(), *input.CredentialID)
+			if findErr != nil || selectedCredential.ArchivedAt.Valid || selectedCredential.ResourceID != resource.ID {
+				return nil, errors.Join(models.ErrDomainValidation, errors.New("selected Resource credential is unavailable"))
+			}
+			if resourceCredentialMetadataPurpose(selectedCredential.Metadata) != "application" {
+				return nil, errors.Join(models.ErrDomainValidation, errors.New("Resource administrator credentials cannot be injected into an Environment"))
+			}
+			input.Database = resourceCredentialMetadataDatabase(selectedCredential.Metadata)
+			if input.Database != "" && !resourceHasDatabase(resource, input.Database) {
+				return nil, errors.Join(models.ErrDomainValidation, errors.New("selected Resource Database is unavailable"))
+			}
+			credentialValues, err = service.resources.credentialSecretValues(selectedCredential)
+			if err != nil {
+				return nil, err
+			}
+			credential = &selectedCredential
+			if selectedCredential.Username.Valid {
+				variables[prefix+"_USER"] = selectedCredential.Username.String
+			}
+		}
+		if input.Database != "" {
+			variables[prefix+"_DATABASE"] = input.Database
+		}
 		if input.CredentialProjection == resourceCredentialProjectionConnectionURL {
+			password := credentialValues["password"]
+			if credential == nil || password == "" || !credential.Username.Valid || input.Database == "" {
+				return nil, errors.New("selected PostgreSQL application credential is incomplete")
+			}
+			variables = make(map[string]string)
 			uri := &url.URL{Scheme: "postgresql", Host: fmt.Sprintf("%s:%d", endpoint.Address, endpoint.Port), Path: "/" + input.Database, User: url.UserPassword(credential.Username.String, password)}
 			query := uri.Query()
 			query.Set("sslmode", endpoint.TlsMode)
@@ -2197,17 +2365,19 @@ func (service *EnvironmentSetup) prepareResources(ctx context.Context, environme
 			}
 			secrets = append(secrets, urlSecret)
 		} else {
-			variables[prefix+"_HOST"] = endpoint.Address
-			variables[prefix+"_PORT"] = fmt.Sprint(endpoint.Port)
-			variables[prefix+"_USER"] = credential.Username.String
-			variables[prefix+"_TLS_MODE"] = endpoint.TlsMode
-			passwordSecret, prepareErr := service.secrets.Prepare(environmentID, prefix+"_PASSWORD", password, models.EnvironmentSecretSourceResource, connectionID)
-			if prepareErr != nil {
-				return nil, prepareErr
+			for _, field := range definition.CredentialFields {
+				value := credentialValues[field.Name]
+				if value == "" {
+					continue
+				}
+				secret, prepareErr := service.secrets.Prepare(environmentID, prefix+"_"+models.NormalizeEnvironmentSecretKey(field.Name), value, models.EnvironmentSecretSourceResource, connectionID)
+				if prepareErr != nil {
+					return nil, prepareErr
+				}
+				secrets = append(secrets, secret)
 			}
-			secrets = append(secrets, passwordSecret)
 		}
-		prepared = append(prepared, preparedSetupResource{input: input, connectionID: connectionID, resource: resource, endpoint: endpoint, credential: &credential, variables: variables, secrets: secrets})
+		prepared = append(prepared, preparedSetupResource{input: input, connectionID: connectionID, resource: resource, endpoint: endpoint, credential: credential, variables: variables, secrets: secrets})
 		aliases[input.Alias] = struct{}{}
 		resources[input.ResourceID] = struct{}{}
 	}

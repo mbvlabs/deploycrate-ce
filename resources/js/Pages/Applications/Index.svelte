@@ -6,7 +6,8 @@
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
-  type Application = { id: string; name: string; slug: string; environmentName: string; environmentKind: string; repositoryFullName: string; reference: string; sourceHealthy: boolean; sourceType: string }
+  type Environment = { id: string; environmentName: string; environmentKind: string; repositoryFullName: string; reference: string; sourceHealthy: boolean; sourceType: string }
+  type Application = { id: string; name: string; slug: string; environments: Environment[] }
   let { auth, applications }: { auth: { email: string }; applications: Application[] } = $props()
 </script>
 
@@ -23,8 +24,8 @@
       <div class="grid gap-4 md:grid-cols-2">
         {#each applications as application (application.id)}
           <Card.Root>
-            <Card.Header><Card.Action><span class:text-success={application.sourceHealthy} class:text-destructive={!application.sourceHealthy} class="text-xs">{application.sourceHealthy ? 'Source ready' : 'Source degraded'}</span></Card.Action><Card.Title>{application.name}</Card.Title><Card.Description>{application.environmentName} · {application.environmentKind}</Card.Description></Card.Header>
-            <Card.Content><p class="font-mono text-xs">{application.repositoryFullName}</p><p class="mt-2 font-mono text-xs text-muted-foreground">{application.reference}</p></Card.Content>
+            <Card.Header><Card.Title>{application.name}</Card.Title><Card.Description>{application.slug}</Card.Description></Card.Header>
+            <Card.Content class="space-y-3">{#each application.environments as environment (environment.id)}<div class="flex items-start justify-between gap-4 border border-border p-3"><div><p class="text-sm font-medium">{environment.environmentName}</p><p class="mt-1 font-mono text-xs text-muted-foreground">{environment.repositoryFullName} · {environment.reference}</p></div><span class:text-success={environment.sourceHealthy} class:text-destructive={!environment.sourceHealthy} class="text-xs">{environment.sourceHealthy ? 'Ready' : 'Degraded'}</span></div>{/each}</Card.Content>
             <Card.Footer class="border-t border-border"><Button size="sm" variant="outline">{#snippet child({ props })}<Link {...props} href={routes.applicationShow(application.id)}>Open</Link>{/snippet}</Button></Card.Footer>
           </Card.Root>
         {/each}

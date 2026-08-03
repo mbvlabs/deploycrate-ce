@@ -16,6 +16,8 @@ import (
 	"github.com/uptrace/bun"
 )
 
+var systemServerCapabilities = json.RawMessage(`{"build":true,"runtime":true,"resource":true,"database":true,"repository":true,"telemetry":true}`)
+
 func ensureSystemApplication(ctx context.Context, exec storage.Executor, now time.Time) error {
 	if db, ok := exec.(*bun.DB); ok {
 		tx, err := db.BeginTx(ctx, nil)
@@ -33,6 +35,11 @@ func ensureSystemApplication(ctx context.Context, exec storage.Executor, now tim
 
 func ensureSystemApplicationInTransaction(ctx context.Context, exec storage.Executor, now time.Time) error {
 	if _, err := models.Application.FindSystem(ctx, exec); err == nil {
+		if _, err := exec.NewUpdate().TableExpr("servers").Set("capabilities = ?", systemServerCapabilities).
+			Set("updated_at = ?", now).Where("slug = ?", models.SystemApplicationSlug).
+			Where("kind = 'self_hosted'").Where("archived_at IS NULL").Exec(ctx); err != nil {
+			return fmt.Errorf("update DeployCrate CE system server capabilities: %w", err)
+		}
 		return nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("find DeployCrate CE system application: %w", err)
@@ -50,11 +57,7 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		factories.WithServersName("DeployCrate CE Server"),
 		factories.WithServersSlug(models.SystemApplicationSlug),
 		factories.WithServersKind("self_hosted"),
-		factories.WithServersCapabilities(
-			json.RawMessage(
-				`{"runtime":"systemd","proxy":"caddy","deployment_strategies":["blue_green"],"slots":{"blue":8080,"green":8081}}`,
-			),
-		),
+		factories.WithServersCapabilities(systemServerCapabilities),
 		factories.WithServersOperatingSystem(sql.NullString{String: "linux", Valid: true}),
 		factories.WithServersDistribution(sql.NullString{String: "ubuntu", Valid: true}),
 		factories.WithServersDistributionVersion(sql.NullString{String: "24.04", Valid: true}),

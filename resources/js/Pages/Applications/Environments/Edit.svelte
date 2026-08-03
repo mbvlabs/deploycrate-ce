@@ -10,21 +10,29 @@
   import { routes } from '@/routes'
 
   type ResourceInput = { resourceId: string; endpointId: string; credentialId?: string; alias: string; database: string; credentialProjection: 'connection_url' | 'individual_parts' }
-  type ResourceOption = { id: string; name: string; engine: string; database: string; endpointId: string; endpoint: string; credentialId?: string; credential: string; serverId?: string }
-  type Configuration = { name: string; slug: string; kind: string; hostname: string; containerPort: number; healthPath: string; bpGoTargets: string; resources: ResourceInput[]; serverId: string; serverName: string }
-  type Environment = { applicationId: string; applicationName: string; environment: { id: string; name: string; kind: string }; repository: string; reference: string; contextPath: string }
+  type ResourceOption = { id: string; name: string; engine: string; database: string; endpointId: string; endpoint: string; credentialId?: string; credential: string; serverId?: string; credentialFields: string[]; supportsConnectionUrl: boolean }
+  type Configuration = { name: string; slug: string; kind: string; hostname: string; containerPort: number; healthPath: string; bpGoTargets: string; resources: ResourceInput[]; serverIds: string[]; serverNames: string[] }
+  type Environment = { applicationId: string; applicationName: string; sourceType: 'buildpacks' | 'image'; environment: { id: string; name: string; kind: string }; repository: string; reference: string; contextPath: string }
 
   let { auth, environment, configuration, options }: { auth: { email: string }; environment: Environment; configuration: Configuration; options: { resources: ResourceOption[] } } = $props()
   let selectedResource = $state('')
   const form = useForm(() => ({ ...configuration, resources: configuration.resources.map((resource) => ({ ...resource })) }))
-  const availableResources = $derived(options.resources.filter((resource) => !resource.serverId || resource.serverId === configuration.serverId))
+  const availableResources = $derived(options.resources.filter((resource) => !resource.serverId || configuration.serverIds.includes(resource.serverId)))
+
+  function attachedResourceOption(resource: ResourceInput) {
+    return options.resources.find((option) => option.id === resource.resourceId && option.endpointId === resource.endpointId && option.credentialId === resource.credentialId)
+  }
+
+  function resourceAlias(engine: string) {
+    return engine.toUpperCase().replace(/[^A-Z0-9]+/g, '_')
+  }
 
   function addResource() {
     const option = availableResources.find((candidate) => `${candidate.id}:${candidate.endpointId}:${candidate.credentialId ?? ''}` === selectedResource)
     if (!option || $form.resources.some((resource) => resource.resourceId === option.id)) return
     $form.resources = [...$form.resources, {
       resourceId: option.id, endpointId: option.endpointId, credentialId: option.credentialId,
-      alias: 'DATABASE', database: option.database, credentialProjection: 'connection_url',
+      alias: resourceAlias(option.engine), database: option.database, credentialProjection: option.supportsConnectionUrl ? 'connection_url' : 'individual_parts',
     }]
   }
 
@@ -60,25 +68,25 @@
     </Card.Root>
 
     <Card.Root>
-      <Card.Header><Card.Title>Runtime</Card.Title><Card.Description>Edit every user-controlled Go Buildpacks runtime value.</Card.Description></Card.Header>
+      <Card.Header><Card.Title>Runtime</Card.Title><Card.Description>Edit the Environment runtime values.</Card.Description></Card.Header>
       <Card.Content class="grid gap-5 sm:grid-cols-2">
-        <div class="sm:col-span-2"><FormField label="Runtime Server"><Input value={configuration.serverName} readonly /></FormField><p class="mt-2 text-xs text-muted-foreground">Runtime placement is fixed after setup. Create a new Environment to move workloads safely between Servers.</p></div>
+        <div class="sm:col-span-2"><FormField label="Runtime Server targets"><Input value={configuration.serverNames.join(', ')} readonly /></FormField><p class="mt-2 text-xs text-muted-foreground">Runtime placement is fixed after setup. Create a new Environment to change its Server targets.</p></div>
         <FormField label="Container port" error={$form.errors.containerPort}><Input type="number" min="1" max="65535" bind:value={$form.containerPort} required /></FormField>
         <FormField label="HTTP health path" error={$form.errors.healthPath}><Input bind:value={$form.healthPath} placeholder="/health" /></FormField>
-        <FormField label="BP_GO_TARGETS" error={$form.errors.bpGoTargets}><Input bind:value={$form.bpGoTargets} placeholder="./cmd/app" /></FormField>
+        {#if environment.sourceType === 'buildpacks'}<FormField label="Target" error={$form.errors.bpGoTargets}><Input bind:value={$form.bpGoTargets} placeholder="./cmd/app" /></FormField>{/if}
       </Card.Content>
     </Card.Root>
 
     <Card.Root>
       <Card.Header><Card.Title>Resources</Card.Title><Card.Description>Replace the active Resource connections and their managed Environment variables.</Card.Description></Card.Header>
       <Card.Content class="space-y-4">
-        <div class="flex gap-2"><select bind:value={selectedResource} class="h-9 flex-1 border border-input bg-background px-3 text-sm"><option value="">Select a PostgreSQL Resource</option>{#each availableResources as option}<option value={`${option.id}:${option.endpointId}:${option.credentialId ?? ''}`}>{option.name} · {option.database} · {option.endpoint} · {option.credential || 'No credential'}</option>{/each}</select><Button type="button" variant="outline" onclick={addResource}>Attach</Button></div>
+        <div class="flex gap-2"><select bind:value={selectedResource} class="h-9 flex-1 border border-input bg-background px-3 text-sm"><option value="">Select a Resource</option>{#each availableResources as option}<option value={`${option.id}:${option.endpointId}:${option.credentialId ?? ''}`}>{option.name} · {option.engine}{option.database ? ` · ${option.database}` : ''} · {option.endpoint} · {option.credential || 'without credentials'}</option>{/each}</select><Button type="button" variant="outline" onclick={addResource}>Attach</Button></div>
         {#each $form.resources as resource, index}
           <div class="grid gap-3 border border-border p-4 sm:grid-cols-2">
             <FormField label="Alias" error={$form.errors[`resources.${index}.alias`]}><Input bind:value={resource.alias} /></FormField>
-            <FormField label="Database"><Input bind:value={resource.database} readonly /></FormField>
-            <FormField label="Connection format" error={$form.errors[`resources.${index}.credentialProjection`]}><select bind:value={resource.credentialProjection} class="h-9 w-full border border-input bg-background px-3 text-sm"><option value="connection_url">Connection URL</option><option value="individual_parts">Individual parts</option></select></FormField>
-            <div class="border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">{resource.credentialProjection === 'connection_url' ? `${resource.alias.trim().toUpperCase() || 'DATABASE'}_URL` : ['HOST', 'PORT', 'USER', 'PASSWORD', 'TLS_MODE'].map((suffix) => `${resource.alias.trim().toUpperCase() || 'DATABASE'}_${suffix}`).join(', ')}</div>
+            {#if resource.database}<FormField label="Database"><Input bind:value={resource.database} readonly /></FormField>{/if}
+            {#if attachedResourceOption(resource)?.supportsConnectionUrl}<FormField label="Connection format" error={$form.errors[`resources.${index}.credentialProjection`]}><select bind:value={resource.credentialProjection} class="h-9 w-full border border-input bg-background px-3 text-sm"><option value="connection_url">Connection URL</option><option value="individual_parts">Individual parts</option></select></FormField>{/if}
+            <div class="border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">{resource.credentialProjection === 'connection_url' ? `${resource.alias.trim().toUpperCase() || 'RESOURCE'}_URL` : ['HOST', 'PORT', 'PROTOCOL', 'TLS_MODE', ...(resource.database ? ['DATABASE'] : []), ...(attachedResourceOption(resource)?.credentialId ? ['USER', ...(attachedResourceOption(resource)?.credentialFields ?? []).map((field) => field.toUpperCase())] : [])].map((suffix) => `${resource.alias.trim().toUpperCase() || 'RESOURCE'}_${suffix}`).join(', ')}</div>
             <Button type="button" variant="ghost" onclick={() => $form.resources = $form.resources.filter((_, itemIndex) => itemIndex !== index)}>Remove</Button>
           </div>
         {:else}<p class="text-sm text-muted-foreground">No Resources attached.</p>{/each}

@@ -579,8 +579,14 @@ func (service *DeploymentExecution) markSucceeded(ctx context.Context, scope dep
 		Set("error = NULL").Set("updated_at = ?", now).Where("id = ?", scope.Deployment.ID).Where("status = 'running'").Exec(ctx); err != nil {
 		return err
 	}
-	if err := models.Change.MarkCompleted(ctx, tx, scope.Deployment.ChangeID, now); err != nil {
+	remaining, err := tx.NewSelect().TableExpr("deployments").Where("change_id = ?", scope.Deployment.ChangeID).Where("status <> 'succeeded'").Count(ctx)
+	if err != nil {
 		return err
+	}
+	if remaining == 0 {
+		if err := models.Change.MarkCompleted(ctx, tx, scope.Deployment.ChangeID, now); err != nil {
+			return err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return err
