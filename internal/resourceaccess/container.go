@@ -23,6 +23,8 @@ const (
 	dockerExecutable            = "/usr/bin/docker"
 	installationLabel           = "com.deploycrate.resource-installation"
 	maximumContainerInputLength = 64 * 1024
+	maximumContainerLogLength   = 64 * 1024
+	maximumContainerLogTail     = 500
 )
 
 var (
@@ -366,6 +368,30 @@ func printContainerInspection(installationIDValue, name string) error {
 	return nil
 }
 
+func printContainerLogs(installationIDValue, name string, tail int) error {
+	if tail < 1 || tail > maximumContainerLogTail {
+		return fmt.Errorf("container log tail must be between 1 and %d", maximumContainerLogTail)
+	}
+	inspection, err := inspectOwnedContainer(installationIDValue, name)
+	if err != nil {
+		return err
+	}
+	if !inspection.Exists {
+		return fmt.Errorf("container %q does not exist", name)
+	}
+	output, err := exec.Command(dockerExecutable, "logs", "--tail", strconv.Itoa(tail), name).CombinedOutput()
+	if len(output) > maximumContainerLogLength {
+		output = output[len(output)-maximumContainerLogLength:]
+	}
+	if _, writeErr := os.Stdout.Write(output); writeErr != nil {
+		return fmt.Errorf("write Docker container logs: %w", writeErr)
+	}
+	if err != nil {
+		return fmt.Errorf("read Docker container logs: %w", err)
+	}
+	return nil
+}
+
 func inspectOwnedContainer(installationIDValue, name string) (containerInspection, error) {
 	installationID, err := uuid.Parse(installationIDValue)
 	if err != nil {
@@ -416,4 +442,19 @@ func controlContainer(operation, installationID, name string) error {
 		arguments = []string{"rm", "--force", name}
 	}
 	return run(dockerExecutable, arguments...)
+}
+
+func removeContainerVolume(name string) error {
+	if !volumeNamePattern.MatchString(name) || len(name) > 128 {
+		return errors.New("container volume name is invalid")
+	}
+	output, err := exec.Command(dockerExecutable, "volume", "inspect", name).CombinedOutput()
+	if err != nil {
+		message := strings.TrimSpace(string(output))
+		if strings.Contains(message, "No such volume") {
+			return nil
+		}
+		return fmt.Errorf("inspect Docker volume %q: %w: %s", name, err, message)
+	}
+	return run(dockerExecutable, "volume", "rm", name)
 }

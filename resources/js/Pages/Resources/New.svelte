@@ -43,6 +43,7 @@
       name: '', slug: '', sharingScope: 'environment', privateNetworkId: '',
       installation: { imageReference: '', imageDigest: '', containerName: '', restartPolicy: 'unless-stopped', configuration: {}, hostPort: 1, serverId: '', registryCredentialId: '' },
       volume: { name: '', driver: 'local', configuration: {}, serverId: '' },
+      mountPath: '/data',
       administrator: { name: 'Resource administrator', username: '', password: '' },
     }
   }
@@ -54,6 +55,7 @@
     form.installation.containerName = ''
     form.installation.hostPort = engine.defaultPort
     form.volume.name = ''
+    form.mountPath = selectedPreset?.mountPath ?? '/data'
     form.administrator.username = engine.engine === 'postgresql' ? 'resource_admin' : ''
   }
 
@@ -88,7 +90,7 @@
       privateNetworkId: form.privateNetworkId,
       installation: { ...form.installation, portMappings },
       volume: includeVolume ? { ...form.volume, serverId: form.installation.serverId } : null,
-      mount: includeVolume ? { mountPath: preset?.mountPath ?? '/data', readOnly: false, resourceVolumeId: '', resourceInstallationId: '' } : null,
+      mount: includeVolume ? { mountPath: form.mountPath, readOnly: false, resourceVolumeId: '', resourceInstallationId: '' } : null,
       credential: definition.resourceType === 'database' ? {
         name: form.administrator.name,
         username: form.administrator.username,
@@ -131,7 +133,7 @@
         <Card.Root><Card.Header><Card.Title>Database administrator</Card.Title><Card.Description>This credential becomes the Resource superuser. It is stored encrypted and is never offered to an Environment.</Card.Description></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2"><FormField label="Display name" error={errors['credential.name']}><Input bind:value={form.administrator.name} required /></FormField><FormField label="Administrator username" error={errors['credential.username']}><Input bind:value={form.administrator.username} autocomplete="username" required /></FormField><FormField label="Administrator password" error={errors['credential.secretValues.password']}><Input type="password" bind:value={form.administrator.password} autocomplete="new-password" required /></FormField></Card.Content></Card.Root>
       {/if}
 
-      <Card.Root><Card.Header><Card.Title>Persistent storage</Card.Title><Card.Description>Optionally attach one Docker volume at {preset?.mountPath ?? '/data'}.</Card.Description></Card.Header><Card.Content class="space-y-5"><label class="flex cursor-pointer items-center gap-3 text-sm"><Checkbox bind:checked={includeVolume} /> Create persistent volume</label>{#if includeVolume}<div class="grid gap-5 sm:grid-cols-2"><FormField label="Volume name" error={errors['volume.name']}><Input bind:value={form.volume.name} placeholder={`${form.slug || 'resource'}-data`} required /></FormField><FormField label="Driver" error={errors['volume.driver']}><Input bind:value={form.volume.driver} required /></FormField></div>{/if}</Card.Content></Card.Root>
+      <Card.Root><Card.Header><Card.Title>Persistent storage</Card.Title><Card.Description>Optionally attach one Docker volume and choose where it is mounted inside the container.</Card.Description></Card.Header><Card.Content class="space-y-5"><label class="flex cursor-pointer items-center gap-3 text-sm"><Checkbox bind:checked={includeVolume} /> Create persistent volume</label>{#if includeVolume}<div class="grid gap-5 sm:grid-cols-2"><FormField label="Volume name" error={errors['volume.name']}><Input bind:value={form.volume.name} placeholder={`${form.slug || 'resource'}-data`} required /></FormField><FormField label="Driver" error={errors['volume.driver']}><Input bind:value={form.volume.driver} required /></FormField><div class="sm:col-span-2"><FormField label="Container mount path" error={errors['mount.mountPath']}><Input bind:value={form.mountPath} placeholder={preset?.mountPath ?? '/data'} required /></FormField></div></div>{/if}</Card.Content></Card.Root>
 
       <div class="flex flex-wrap justify-end gap-3 border-t border-border pt-5"><Button variant="outline" href={routes.resources()}>Cancel</Button><Button type="submit" disabled={processing} aria-busy={processing}>{#if processing}<Spinner />{/if}Create Resource</Button></div>
     </form>

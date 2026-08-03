@@ -19,6 +19,11 @@ import (
 
 const resourceInstallationLabel = "com.deploycrate.resource-installation"
 
+const (
+	maximumResourceContainerLogLength = 64 * 1024
+	maximumResourceContainerLogTail   = 500
+)
+
 type ContainerExecution struct {
 	local   containerclient.Client
 	servers *ServerExecution
@@ -109,6 +114,36 @@ func (service *ContainerExecution) Inspect(ctx context.Context, serverID uuid.UU
 	return service.inspectRemote(ctx, target, installationID, containerName)
 }
 
+func (service *ContainerExecution) Logs(ctx context.Context, serverID uuid.UUID, capability models.ServerCapability, installationID, containerName string, tail int) (string, error) {
+	if tail < 1 || tail > maximumResourceContainerLogTail {
+		return "", fmt.Errorf("container log tail must be between 1 and %d", maximumResourceContainerLogTail)
+	}
+	target, err := service.servers.Target(ctx, serverID, capability)
+	if err != nil {
+		return "", err
+	}
+	if !target.Remote {
+		logs, err := service.local.Logs(ctx, installationID, containerName, tail)
+		return boundedContainerLogs(logs), err
+	}
+	state, err := service.inspectRemote(ctx, target, installationID, containerName)
+	if err != nil {
+		return "", err
+	}
+	if !state.Exists {
+		return "", fmt.Errorf("container %q does not exist", containerName)
+	}
+	result, err := service.servers.RunRootCommand(ctx, target, nil, remoteDockerExecutable, "logs", "--tail", strconv.Itoa(tail), containerName)
+	logs := result.Stdout
+	if result.Stderr != "" {
+		if logs != "" && !strings.HasSuffix(logs, "\n") {
+			logs += "\n"
+		}
+		logs += result.Stderr
+	}
+	return boundedContainerLogs(strings.TrimSpace(logs)), err
+}
+
 func (service *ContainerExecution) Exec(ctx context.Context, serverID uuid.UUID, capability models.ServerCapability, spec containerclient.ExecSpec) error {
 	target, err := service.servers.Target(ctx, serverID, capability)
 	if err != nil {
@@ -176,6 +211,28 @@ func (service *ContainerExecution) Restart(ctx context.Context, serverID uuid.UU
 
 func (service *ContainerExecution) Remove(ctx context.Context, serverID uuid.UUID, capability models.ServerCapability, installationID, containerName string) error {
 	return service.control(ctx, serverID, capability, installationID, containerName, "rm", "--force")
+}
+
+func (service *ContainerExecution) RemoveVolume(ctx context.Context, serverID uuid.UUID, capability models.ServerCapability, name string) error {
+	if strings.TrimSpace(name) != name || name == "" || strings.HasPrefix(name, "-") || strings.ContainsAny(name, " \t\r\n") {
+		return errors.New("container volume name is invalid")
+	}
+	target, err := service.servers.Target(ctx, serverID, capability)
+	if err != nil {
+		return err
+	}
+	if !target.Remote {
+		return service.local.RemoveVolume(ctx, name)
+	}
+	if _, err := service.remoteDocker(ctx, target, "volume", "inspect", name); err != nil {
+		message := strings.ToLower(err.Error())
+		if strings.Contains(message, "no such volume") {
+			return nil
+		}
+		return err
+	}
+	_, err = service.remoteDocker(ctx, target, "volume", "rm", name)
+	return err
 }
 
 func (service *ContainerExecution) control(ctx context.Context, serverID uuid.UUID, capability models.ServerCapability, installationID, containerName, operation string, extra ...string) error {
@@ -314,4 +371,11 @@ func (service *ContainerExecution) remoteDocker(ctx context.Context, target Serv
 		return "", fmt.Errorf("run Docker command on Server %s: %w", target.Server.Name, err)
 	}
 	return result.Stdout, nil
+}
+
+func boundedContainerLogs(logs string) string {
+	if len(logs) <= maximumResourceContainerLogLength {
+		return logs
+	}
+	return logs[len(logs)-maximumResourceContainerLogLength:]
 }

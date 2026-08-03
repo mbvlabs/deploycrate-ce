@@ -144,6 +144,15 @@ func RunHostCommand(arguments []string) error {
 			return errors.New("usage: host-resource-access container-inspect INSTALLATION_ID CONTAINER_NAME")
 		}
 		return printContainerInspection(arguments[1], arguments[2])
+	case "container-logs":
+		if len(arguments) != 4 {
+			return errors.New("usage: host-resource-access container-logs INSTALLATION_ID CONTAINER_NAME TAIL")
+		}
+		tail, err := strconv.Atoi(arguments[3])
+		if err != nil {
+			return errors.New("container log tail must be a number")
+		}
+		return printContainerLogs(arguments[1], arguments[2], tail)
 	case "container-exec":
 		if len(arguments) != 1 {
 			return errors.New("usage: host-resource-access container-exec")
@@ -154,6 +163,11 @@ func RunHostCommand(arguments []string) error {
 			return errors.New("usage: host-resource-access container-(start|stop|restart|remove) INSTALLATION_ID CONTAINER_NAME")
 		}
 		return controlContainer(strings.TrimPrefix(arguments[0], "container-"), arguments[1], arguments[2])
+	case "container-volume-remove":
+		if len(arguments) != 2 {
+			return errors.New("usage: host-resource-access container-volume-remove VOLUME_NAME")
+		}
+		return removeContainerVolume(arguments[1])
 	case "node-telemetry-target":
 		if len(arguments) != 3 {
 			return errors.New("usage: host-resource-access node-telemetry-target SERVER_ID PRIVATE_ADDRESS")

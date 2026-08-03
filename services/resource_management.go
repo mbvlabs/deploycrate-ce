@@ -545,26 +545,56 @@ func (service *ResourceManagement) UpdateResource(ctx context.Context, resourceI
 }
 
 func (service *ResourceManagement) ArchiveResource(ctx context.Context, resourceID uuid.UUID) (err error) {
-	resource, err := service.loadResource(ctx, service.db.Executor(), resourceID, false)
+	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	if err := service.requireNoActiveRestore(ctx, service.db.Executor(), resourceID, nil); err != nil {
+	defer tx.Rollback()
+	if err := service.requireNoActiveRestore(ctx, tx, resourceID, nil); err != nil {
 		return err
 	}
+	resource, err := service.loadResource(ctx, tx, resourceID, true)
+	if err != nil {
+		return err
+	}
+	bindings, err := tx.NewSelect().TableExpr("environment_resources").Where("resource_id = ?", resourceID).Where("archived_at IS NULL").Count(ctx)
+	if err != nil {
+		return err
+	}
+	if bindings > 0 {
+		return domainError("resource", "dependency", "archive active Environment bindings before archiving this Resource")
+	}
+	privateAccess, err := tx.NewSelect().TableExpr("wireguard_device_resource_grants").Where("resource_id = ?", resourceID).
+		Where("revoked_at IS NULL").Count(ctx)
+	if err != nil {
+		return err
+	}
+	if privateAccess > 0 {
+		return domainError("resource", "private_access", "revoke active WireGuard device grants before archiving this Resource")
+	}
 	installations := make([]models.ResourceInstallationEntity, 0)
-	if err := service.db.Executor().NewSelect().Model(&installations).
-		Where("resource_id = ?", resourceID).Where("archived_at IS NULL").OrderExpr("created_at").Scan(ctx); err != nil {
+	if err := tx.NewSelect().Model(&installations).Where("resource_id = ?", resourceID).
+		Where("archived_at IS NULL").OrderExpr("created_at").Scan(ctx); err != nil {
+		return err
+	}
+	volumes := make([]models.ResourceVolumeEntity, 0)
+	if err := tx.NewSelect().Model(&volumes).Where("resource_id = ?", resourceID).
+		Where("archived_at IS NULL").OrderExpr("created_at").Scan(ctx); err != nil {
 		return err
 	}
 	capability := managedResourceCapability(resource.Engine())
+	existing := make([]models.ResourceInstallationEntity, 0, len(installations))
 	running := make([]models.ResourceInstallationEntity, 0, len(installations))
 	for _, installation := range installations {
 		state, inspectErr := service.container.Inspect(ctx, installation.ServerID, capability, installation.ID.String(), installation.ContainerName)
 		if inspectErr != nil {
 			return inspectErr
 		}
-		if !state.Exists || !state.Running {
+		if !state.Exists {
+			continue
+		}
+		existing = append(existing, installation)
+		if !state.Running {
 			continue
 		}
 		if stopErr := service.container.Stop(ctx, installation.ServerID, capability, installation.ID.String(), installation.ContainerName); stopErr != nil {
@@ -587,32 +617,18 @@ func (service *ResourceManagement) ArchiveResource(ctx context.Context, resource
 		}
 	}()
 
-	tx, err := service.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
+	restoreContainers = false
+	for _, installation := range existing {
+		if err := service.container.Remove(ctx, installation.ServerID, capability, installation.ID.String(), installation.ContainerName); err != nil {
+			return fmt.Errorf("remove Resource container %q: %w", installation.ContainerName, err)
+		}
 	}
-	defer tx.Rollback()
-	if err := service.requireNoActiveRestore(ctx, tx, resourceID, nil); err != nil {
-		return err
+	for _, volume := range volumes {
+		if err := service.container.RemoveVolume(ctx, volume.ServerID, capability, volume.Name); err != nil {
+			return fmt.Errorf("remove Resource volume %q: %w", volume.Name, err)
+		}
 	}
-	if _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
-		return err
-	}
-	bindings, err := tx.NewSelect().TableExpr("environment_resources").Where("resource_id = ?", resourceID).Where("archived_at IS NULL").Count(ctx)
-	if err != nil {
-		return err
-	}
-	if bindings > 0 {
-		return domainError("resource", "dependency", "archive active Environment bindings before archiving this Resource")
-	}
-	privateAccess, err := tx.NewSelect().TableExpr("wireguard_device_resource_grants").Where("resource_id = ?", resourceID).
-		Where("revoked_at IS NULL").Count(ctx)
-	if err != nil {
-		return err
-	}
-	if privateAccess > 0 {
-		return domainError("resource", "private_access", "revoke active WireGuard device grants before archiving this Resource")
-	}
+
 	now := time.Now().UTC()
 	if _, err := tx.NewUpdate().Table("backup_policies").Set("activated_at = NULL").Set("archived_at = ?", now).Set("updated_at = ?", now).
 		Where("resource_id = ?", resourceID).Where("archived_at IS NULL").Exec(ctx); err != nil {
@@ -639,12 +655,7 @@ func (service *ResourceManagement) ArchiveResource(ctx context.Context, resource
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	restoreContainers = false
-	removeErrors := make([]error, 0, len(installations))
-	for _, installation := range installations {
-		removeErrors = append(removeErrors, service.container.Remove(context.WithoutCancel(ctx), installation.ServerID, capability, installation.ID.String(), installation.ContainerName))
-	}
-	return errors.Join(removeErrors...)
+	return nil
 }
 
 func (service *ResourceManagement) loadResource(ctx context.Context, db storage.Executor, resourceID uuid.UUID, lock bool) (models.ResourceEntity, error) {
@@ -2111,8 +2122,16 @@ func (service *ResourceManagement) RunInstallation(ctx context.Context, resource
 	}); err != nil {
 		return err
 	}
-	_, err = service.observeDockerInstallation(ctx, installation)
-	return err
+	status, err := service.observeDockerInstallation(ctx, installation)
+	if err != nil {
+		return err
+	}
+	if status.ServiceState != "running" {
+		var state containerclient.State
+		_ = json.Unmarshal(status.Details, &state)
+		return fmt.Errorf("container did not stay running: state %s, exit code %d; open container logs for details", status.ServiceState, state.ExitCode)
+	}
+	return nil
 }
 
 func (service *ResourceManagement) StopInstallation(ctx context.Context, resourceID, installationID uuid.UUID) error {
@@ -2170,6 +2189,18 @@ func (service *ResourceManagement) loadInstallationForControl(ctx context.Contex
 		return models.ResourceInstallationEntity{}, models.ErrNotFound
 	}
 	return installation, err
+}
+
+func (service *ResourceManagement) InstallationLogs(ctx context.Context, resourceID, installationID uuid.UUID, tail int) (string, error) {
+	installation, err := service.loadInstallationForControl(ctx, resourceID, installationID)
+	if err != nil {
+		return "", err
+	}
+	capability, err := service.resourceCapability(ctx, resourceID)
+	if err != nil {
+		return "", err
+	}
+	return service.container.Logs(ctx, installation.ServerID, capability, installation.ID.String(), installation.ContainerName, tail)
 }
 
 func (service *ResourceManagement) observeInstallation(ctx context.Context, detail *models.ResourceInstallationDetail) {

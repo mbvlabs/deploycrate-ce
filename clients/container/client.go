@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"deploycrate-ce/internal/hostcommand"
@@ -83,6 +84,10 @@ func (Client) Inspect(ctx context.Context, installationID, containerName string)
 	return state, nil
 }
 
+func (Client) Logs(ctx context.Context, installationID, containerName string, tail int) (string, error) {
+	return hostcommand.Run(ctx, "container-logs", installationID, containerName, strconv.Itoa(tail))
+}
+
 func (Client) Start(ctx context.Context, installationID, containerName string) error {
 	_, err := hostcommand.Run(ctx, "container-start", installationID, containerName)
 	return err
@@ -100,6 +105,11 @@ func (Client) Restart(ctx context.Context, installationID, containerName string)
 
 func (Client) Remove(ctx context.Context, installationID, containerName string) error {
 	_, err := hostcommand.Run(ctx, "container-remove", installationID, containerName)
+	return err
+}
+
+func (Client) RemoveVolume(ctx context.Context, name string) error {
+	_, err := hostcommand.Run(ctx, "container-volume-remove", name)
 	return err
 }
 

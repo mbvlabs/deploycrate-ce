@@ -76,6 +76,7 @@ type ResourceInstallationParams struct {
 var ResourceInstallationCreate = routing.NewRouteWithUUIDID("/:id/installations", "resources.installations.create", ResourcesPrefix)
 var ResourceInstallationUpdate = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID", "resources.installations.update", ResourcesPrefix)
 var ResourceInstallationDestroy = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID", "resources.installations.destroy", ResourcesPrefix)
+var ResourceInstallationLogs = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID/logs", "resources.installations.logs", ResourcesPrefix)
 var ResourceInstallationStart = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID/start", "resources.installations.start", ResourcesPrefix)
 var ResourceInstallationStop = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID/stop", "resources.installations.stop", ResourcesPrefix)
 var ResourceInstallationRestart = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID/restart", "resources.installations.restart", ResourcesPrefix)

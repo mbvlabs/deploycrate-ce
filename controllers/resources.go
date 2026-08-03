@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"deploycrate-ce/internal/inertia"
@@ -68,6 +69,7 @@ func (controller Resources) RegisterRoutes(r *router.Router) error {
 		{http.MethodDelete, routes.ResourceCredentialDestroy, controller.DestroyCredential},
 		{http.MethodPost, routes.ResourceDatabaseCreateForResource, controller.CreateDatabase},
 		{http.MethodPost, routes.ResourceInstallationCreate, controller.CreateInstallation},
+		{http.MethodGet, routes.ResourceInstallationLogs, controller.InstallationLogs},
 		{http.MethodPost, routes.ResourceInstallationStart, controller.StartInstallation},
 		{http.MethodPost, routes.ResourceInstallationStop, controller.StopInstallation},
 		{http.MethodPost, routes.ResourceInstallationRestart, controller.RestartInstallation},
@@ -661,6 +663,25 @@ func (controller Resources) StartInstallation(etx *echo.Context) error {
 		err = controller.service.RunInstallation(etx.Request().Context(), resourceID, installationID)
 	}
 	return controller.finishChildMutation(etx, resourceID, err, "Container is running")
+}
+
+func (controller Resources) InstallationLogs(etx *echo.Context) error {
+	resourceID, installationID, err := parseChildIDs(etx, "installationID")
+	tail := 200
+	if value := strings.TrimSpace(etx.QueryParam("tail")); err == nil && value != "" {
+		tail, err = strconv.Atoi(value)
+	}
+	if err != nil {
+		return etx.JSON(http.StatusBadRequest, map[string]string{"error": "Resource installation or log tail is invalid"})
+	}
+	logs, err := controller.service.InstallationLogs(etx.Request().Context(), resourceID, installationID, tail)
+	if errors.Is(err, models.ErrNotFound) {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Resource installation not found"})
+	}
+	if err != nil {
+		return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+	}
+	return etx.JSON(http.StatusOK, map[string]string{"logs": logs})
 }
 
 func (controller Resources) StopInstallation(etx *echo.Context) error {

@@ -84,6 +84,11 @@
   let destructiveActionDialogOpen = $state(false)
   let restoreDialogOpen = $state(false)
   let wireGuardConfigurationDialogOpen = $state(false)
+  let containerLogsDialogOpen = $state(false)
+  let containerLogsInstallation = $state<any>(null)
+  let containerLogs = $state('')
+  let containerLogsError = $state('')
+  let containerLogsLoading = $state(false)
   let jsonError = $state('')
   let pendingAction = $state('')
   let dialogAction = $state('')
@@ -253,7 +258,7 @@
     confirmDestructive({
       kind: 'archive-resource',
       title: `Archive ${resource.name}?`,
-      description: 'The Resource will no longer be available for new operations. Existing dependencies must be removed first.',
+      description: 'The Resource, its Docker container, and its associated Docker volume will be permanently removed. Existing dependencies must be removed first, and volume data cannot be recovered.',
       confirmationLabel: 'Archive Resource',
     })
   }
@@ -288,6 +293,27 @@
     if (!configuration) return
     try { await navigator.clipboard.writeText(configuration); toast.success('WireGuard configuration copied') }
     catch { toast.error('WireGuard configuration could not be copied') }
+  }
+
+  async function openContainerLogs(installation: any) {
+    containerLogsInstallation = installation
+    containerLogs = ''
+    containerLogsError = ''
+    containerLogsLoading = true
+    containerLogsDialogOpen = true
+    try {
+      const response = await window.fetch(`${routes.resourceInstallationLogs(resource.id, installation.id)}?tail=200`, {
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' },
+      })
+      const payload = await response.json().catch(() => ({})) as { logs?: string; error?: string }
+      if (!response.ok) throw new Error(payload.error || 'Container logs could not be loaded')
+      containerLogs = payload.logs || 'The container has not written any logs.'
+    } catch (error) {
+      containerLogsError = error instanceof Error ? error.message : 'Container logs could not be loaded'
+    } finally {
+      containerLogsLoading = false
+    }
   }
 
   function observedLabel(value: string | null) {
@@ -450,6 +476,7 @@
                 <p class="mt-1 font-mono text-xs text-muted-foreground">{item.imageReference}</p>
               </div>
               <div class="flex flex-wrap gap-2">
+                {#if item.state !== 'missing'}<Button size="sm" variant="outline" disabled={containerLogsLoading && containerLogsInstallation?.id === item.id} onclick={() => openContainerLogs(item)}>{#if containerLogsLoading && containerLogsInstallation?.id === item.id}<Spinner />{/if}View logs</Button>{/if}
                 {#if item.canControl}
                   {#if item.serviceState === 'running'}
                     <Button size="sm" variant="outline" disabled={Boolean(pendingAction)} onclick={() => lifecycle(item.id, 'stop')}>Stop</Button>
@@ -461,6 +488,12 @@
                 {/if}
               </div>
             </div>
+            {#if item.state !== 'missing' && item.serviceState !== 'running'}
+              <Alert.Root variant="destructive" class="mt-4">
+                <Alert.Title>Container is {item.serviceState || 'not running'}</Alert.Title>
+                <Alert.Description>Docker reports exit code {item.containerDetails?.exitCode ?? 'unknown'} and {item.containerDetails?.restartCount ?? 0} restarts. Open the container logs to see the process error.</Alert.Description>
+              </Alert.Root>
+            {/if}
             <div class="mt-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-5">
               <DataField label="Service" value={item.serviceState || 'Unknown'} />
               <DataField label="Health" value={item.health || 'Unknown'} />
@@ -535,6 +568,23 @@
 
     <div class="border-t border-border pt-6"><Button variant="destructive" onclick={confirmResourceArchive}>Archive Resource</Button></div>
   </div>
+
+  <Dialog.Root bind:open={containerLogsDialogOpen}>
+    <Dialog.Content class="sm:max-w-4xl">
+      <Dialog.Header>
+        <Dialog.Title>Container logs</Dialog.Title>
+        <Dialog.Description>{containerLogsInstallation?.containerName ?? 'Resource container'} · latest 200 lines, limited to 64 KiB.</Dialog.Description>
+      </Dialog.Header>
+      {#if containerLogsLoading}
+        <div class="flex min-h-40 items-center justify-center"><Spinner /></div>
+      {:else if containerLogsError}
+        <Alert.Root variant="destructive"><Alert.Title>Logs unavailable</Alert.Title><Alert.Description>{containerLogsError}</Alert.Description></Alert.Root>
+      {:else}
+        <pre class="max-h-[60vh] overflow-auto border border-border bg-muted/30 p-4 font-mono text-xs whitespace-pre-wrap">{containerLogs}</pre>
+      {/if}
+      <Dialog.Footer><Button type="button" variant="outline" onclick={() => (containerLogsDialogOpen = false)}>Close</Button></Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
 
   <Dialog.Root bind:open={wireGuardConfigurationDialogOpen}>
     <Dialog.Content class="sm:max-w-3xl">
