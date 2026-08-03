@@ -22,6 +22,7 @@
   import { Button } from '@/Components/ui/button'
   import * as DropdownMenu from '@/Components/ui/dropdown-menu'
   import * as Sidebar from '@/Components/ui/sidebar'
+  import ThemeToggle from '@/Components/ThemeToggle.svelte'
   import { SIDEBAR_COOKIE_NAME } from '@/Components/ui/sidebar/constants'
   import { routes } from '@/routes'
 
@@ -236,22 +237,26 @@
     <header class="sticky top-0 z-10 flex h-14 shrink-0 items-center justify-between border-b border-border bg-background px-4">
       <Sidebar.Trigger class="-ml-1" />
 
-      <DropdownMenu.Root>
-        <DropdownMenu.Trigger>
-          {#snippet child({ props })}
-            <Button {...props} variant="outline" size="sm" class="max-w-64">
-              <span class="truncate">{email}</span>
-              <ChevronDownIcon data-icon="inline-end" />
-            </Button>
-          {/snippet}
-        </DropdownMenu.Trigger>
-        <DropdownMenu.Content align="end" class="w-48">
-          <DropdownMenu.Item onclick={signOut}>
-            <LogOutIcon />
-            Sign out
-          </DropdownMenu.Item>
-        </DropdownMenu.Content>
-      </DropdownMenu.Root>
+      <div class="flex items-center gap-2">
+        <ThemeToggle />
+
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger>
+            {#snippet child({ props })}
+              <Button {...props} variant="outline" size="sm" class="max-w-64">
+                <span class="truncate">{email}</span>
+                <ChevronDownIcon data-icon="inline-end" />
+              </Button>
+            {/snippet}
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Content align="end" class="w-48">
+            <DropdownMenu.Item onclick={signOut}>
+              <LogOutIcon />
+              Sign out
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Root>
+      </div>
     </header>
 
     <div class="flex-1 p-4 sm:p-6 lg:p-8">
