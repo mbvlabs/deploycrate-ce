@@ -126,10 +126,25 @@ type ApplicationDetails struct {
 }
 
 type ApplicationOverview struct {
-	ID           uuid.UUID            `json:"id"`
-	Name         string               `json:"name"`
-	Slug         string               `json:"slug"`
-	Environments []ApplicationDetails `json:"environments"`
+	ID           uuid.UUID                       `json:"id"`
+	Name         string                          `json:"name"`
+	Slug         string                          `json:"slug"`
+	Environments []ApplicationDetails            `json:"environments"`
+	Deployments  []ApplicationDeploymentActivity `json:"deployments"`
+}
+
+type ApplicationDeploymentActivity struct {
+	ID              uuid.UUID `json:"id" bun:"id"`
+	EnvironmentID   uuid.UUID `json:"environmentId" bun:"environment_id"`
+	EnvironmentName string    `json:"environmentName" bun:"environment_name"`
+	EnvironmentKind string    `json:"environmentKind" bun:"environment_kind"`
+	Status          string    `json:"status" bun:"status"`
+	CurrentStep     string    `json:"currentStep" bun:"current_step"`
+	Error           string    `json:"error" bun:"error"`
+	ReleaseID       uuid.UUID `json:"releaseId" bun:"release_id"`
+	SourceRevision  string    `json:"sourceRevision" bun:"source_revision"`
+	CreatedAt       time.Time `json:"createdAt" bun:"created_at"`
+	Active          bool      `json:"active" bun:"active"`
 }
 
 type ApplicationSetup struct {
@@ -497,7 +512,24 @@ func (service *ApplicationSetup) Overview(ctx context.Context, applicationID uui
 		}
 		environments = append(environments, details)
 	}
-	return ApplicationOverview{ID: application.ID, Name: application.Name, Slug: application.Slug, Environments: environments}, nil
+	deployments := make([]ApplicationDeploymentActivity, 0)
+	if err := service.db.Executor().NewSelect().TableExpr("deployments AS deployment").
+		ColumnExpr("deployment.id, deployment.status, COALESCE(deployment.current_step, '') AS current_step, COALESCE(deployment.error, '') AS error, deployment.release_id, deployment.created_at").
+		ColumnExpr("environment.id AS environment_id, environment.name AS environment_name, environment.kind AS environment_kind").
+		ColumnExpr("COALESCE(release.source_revision, release.version, '') AS source_revision").
+		ColumnExpr(environmentDeploymentActiveExpression+" AS active").
+		Join("JOIN releases AS release ON release.id = deployment.release_id AND release.registry_resource_id IS NOT NULL").
+		Join("JOIN environments AS environment ON environment.id = release.environment_id AND environment.archived_at IS NULL").
+		Where("environment.application_id = ?", applicationID).
+		OrderExpr("deployment.created_at DESC").
+		Limit(20).
+		Scan(ctx, &deployments); err != nil {
+		return ApplicationOverview{}, err
+	}
+	return ApplicationOverview{
+		ID: application.ID, Name: application.Name, Slug: application.Slug,
+		Environments: environments, Deployments: deployments,
+	}, nil
 }
 
 func (service *ApplicationSetup) DetailsForEnvironment(

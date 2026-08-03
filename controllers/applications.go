@@ -22,10 +22,15 @@ import (
 type Applications struct {
 	service      *services.ApplicationSetup
 	environments *services.EnvironmentSetup
+	metric       services.MetricRollupService
 }
 
-func NewApplications(service *services.ApplicationSetup, environments *services.EnvironmentSetup) Applications {
-	return Applications{service: service, environments: environments}
+func NewApplications(
+	service *services.ApplicationSetup,
+	environments *services.EnvironmentSetup,
+	metric services.MetricRollupService,
+) Applications {
+	return Applications{service: service, environments: environments, metric: metric}
 }
 
 func (controller Applications) RegisterRoutes(r *router.Router) error {
@@ -297,7 +302,27 @@ func (controller Applications) Show(etx *echo.Context) error {
 	if err != nil {
 		return controller.renderError(etx, err)
 	}
-	return inertia.Page(etx, "Applications/Show", inertia.Props{"auth": authProps(etx), "application": details})
+	telemetryRows := make([]services.AttributedTelemetryRow, 0)
+	for _, environment := range details.Environments {
+		if !environment.SetupComplete {
+			continue
+		}
+		rows, telemetryErr := controller.metric.EnvironmentTelemetry(etx.Request().Context(), environment.EnvironmentID)
+		if telemetryErr != nil {
+			slog.ErrorContext(
+				etx.Request().Context(),
+				"failed to load Application Environment telemetry",
+				"application_id", id,
+				"environment_id", environment.EnvironmentID,
+				"error", telemetryErr,
+			)
+			continue
+		}
+		telemetryRows = append(telemetryRows, rows...)
+	}
+	return inertia.Page(etx, "Applications/Show", inertia.Props{
+		"auth": authProps(etx), "application": details, "telemetry": telemetryRows,
+	})
 }
 
 func (controller Applications) Edit(etx *echo.Context) error {
