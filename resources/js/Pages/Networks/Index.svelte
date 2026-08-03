@@ -1,9 +1,13 @@
 <script lang="ts">
   import { router } from '@inertiajs/svelte'
   import * as Accordion from '@/Components/ui/accordion'
+  import * as Alert from '@/Components/ui/alert'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
+  import * as Empty from '@/Components/ui/empty'
+  import ConfirmActionDialog from '@/Components/ConfirmActionDialog.svelte'
   import JsonCode from '@/Components/JsonCode.svelte'
+  import StatusBadge from '@/Components/StatusBadge.svelte'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
@@ -74,6 +78,10 @@
 
   let { auth, network, devices }: { auth: { email: string }; network: Network; devices: Device[] } = $props()
   let openRecords = $state<string[]>([])
+  let revokeTarget = $state<Device | null>(null)
+  let revokeDialogOpen = $state(false)
+  let revokeProcessing = $state(false)
+  let revokeError = $state('')
 
   const stateLabel = (value: string) => value ? value.replaceAll('_', ' ') : 'Unknown'
   const timestamp = (value: string | null) => value ? new Date(value).toLocaleString() : 'Not recorded'
@@ -82,8 +90,21 @@
     const field = (value as Record<string, unknown>)[key]
     return field === undefined || field === null ? '' : String(field)
   }
-  function revokeDevice(deviceId: string) {
-    router.delete(routes.networkWireGuardDeviceDestroy(deviceId))
+  function askToRevoke(device: Device) {
+    revokeTarget = device
+    revokeError = ''
+    revokeDialogOpen = true
+  }
+  function revokeDevice() {
+    if (!revokeTarget) return
+    revokeProcessing = true
+    revokeError = ''
+    router.delete(routes.networkWireGuardDeviceDestroy(revokeTarget.id), {
+      preserveScroll: true,
+      onSuccess: () => (revokeDialogOpen = false),
+      onError: () => (revokeError = 'The device could not be revoked. Please try again.'),
+      onFinish: () => (revokeProcessing = false),
+    })
   }
 </script>
 
@@ -101,7 +122,7 @@
           Private-network ownership, environment and server attachments, WireGuard peer state, and the active public route.
         </p>
       </div>
-      <p class="text-sm capitalize text-muted-foreground">{stateLabel(network.serverState)}</p>
+      <StatusBadge status={network.serverState} />
     </section>
 
     <div class="grid gap-4 lg:grid-cols-2">
@@ -206,7 +227,7 @@
             </div>
             <div>
               <dt class="text-muted-foreground">State</dt>
-              <dd class="mt-1 text-sm capitalize">{stateLabel(network.serverState)}</dd>
+              <dd class="mt-1"><StatusBadge status={network.serverState} /></dd>
             </div>
             <div>
               <dt class="text-muted-foreground">External ID</dt>
@@ -228,12 +249,7 @@
               <dt class="text-muted-foreground">Attachment record</dt>
               <dd class="mt-1 font-mono text-xs">{network.serverNetworkId}</dd>
             </div>
-            {#if network.serverError}
-              <div class="sm:col-span-2">
-                <dt class="text-destructive">Error</dt>
-                <dd class="mt-1 text-sm text-destructive">{network.serverError}</dd>
-              </div>
-            {/if}
+            {#if network.serverError}<div class="sm:col-span-2"><Alert.Root variant="destructive"><Alert.Title>Server attachment error</Alert.Title><Alert.Description>{network.serverError}</Alert.Description></Alert.Root></div>{/if}
           </dl>
         </Card.Content>
       </Card.Root>
@@ -251,7 +267,7 @@
             </div>
             <div>
               <dt class="text-muted-foreground">State</dt>
-              <dd class="mt-1 text-sm capitalize">{stateLabel(network.targetState)}</dd>
+              <dd class="mt-1"><StatusBadge status={network.targetState} /></dd>
             </div>
             <div>
               <dt class="text-muted-foreground">External ID</dt>
@@ -277,12 +293,7 @@
               <dt class="text-muted-foreground">Attachment record</dt>
               <dd class="mt-1 font-mono text-xs">{network.targetNetworkId}</dd>
             </div>
-            {#if network.targetError}
-              <div class="sm:col-span-2">
-                <dt class="text-destructive">Error</dt>
-                <dd class="mt-1 text-sm text-destructive">{network.targetError}</dd>
-              </div>
-            {/if}
+            {#if network.targetError}<div class="sm:col-span-2"><Alert.Root variant="destructive"><Alert.Title>Target attachment error</Alert.Title><Alert.Description>{network.targetError}</Alert.Description></Alert.Root></div>{/if}
           </dl>
         </Card.Content>
       </Card.Root>
@@ -310,7 +321,7 @@
             </div>
             <div>
               <dt class="text-muted-foreground">State</dt>
-              <dd class="mt-1 text-sm capitalize">{stateLabel(network.peerState)}</dd>
+              <dd class="mt-1"><StatusBadge status={network.peerState} /></dd>
             </div>
             <div>
               <dt class="text-muted-foreground">Activated</dt>
@@ -332,15 +343,10 @@
               <dt class="text-muted-foreground">Peer ID</dt>
               <dd class="mt-1 break-all font-mono text-xs">{network.peerId}</dd>
             </div>
-            {#if network.peerError}
-              <div class="sm:col-span-2 xl:col-span-4">
-                <dt class="text-destructive">Error</dt>
-                <dd class="mt-1 text-sm text-destructive">{network.peerError}</dd>
-              </div>
-            {/if}
+            {#if network.peerError}<div class="sm:col-span-2 xl:col-span-4"><Alert.Root variant="destructive"><Alert.Title>WireGuard peer error</Alert.Title><Alert.Description>{network.peerError}</Alert.Description></Alert.Root></div>{/if}
           </dl>
         {:else}
-          <p class="text-sm text-muted-foreground">No active WireGuard peer is recorded for the control-plane server.</p>
+          <Empty.Root class="py-8"><Empty.Header><Empty.Title>No active WireGuard peer</Empty.Title><Empty.Description>The control-plane server has not reported an active peer yet.</Empty.Description></Empty.Header></Empty.Root>
         {/if}
       </Card.Content>
     </Card.Root>
@@ -352,7 +358,7 @@
       </Card.Header>
       <Card.Content>
         {#if devices.length === 0}
-          <p class="text-sm text-muted-foreground">No developer devices are enrolled.</p>
+          <Empty.Root class="py-8"><Empty.Header><Empty.Title>No developer devices</Empty.Title><Empty.Description>Devices enrolled for private Resource access will appear here.</Empty.Description></Empty.Header></Empty.Root>
         {:else}
           <div class="space-y-3">
             {#each devices as device (device.id)}
@@ -361,9 +367,9 @@
                   <p class="font-medium">{device.name}</p>
                   <p class="mt-1 font-mono text-xs">{device.privateAddress} · {device.grantCount} active grant{device.grantCount === 1 ? '' : 's'}</p>
                   <p class="mt-1 text-xs text-muted-foreground">Owned by {device.ownerEmail}</p>
-                  <p class="mt-1 text-xs text-muted-foreground">{stateLabel(device.state)} · latest handshake {timestamp(device.latestHandshakeAt)}</p>
+                  <div class="mt-2 flex flex-wrap items-center gap-2"><StatusBadge status={device.state} /><span class="text-xs text-muted-foreground">Latest handshake {timestamp(device.latestHandshakeAt)}</span></div>
                 </div>
-                <Button variant="destructive" size="sm" onclick={() => revokeDevice(device.id)}>Revoke device</Button>
+                <Button variant="destructive" size="sm" onclick={() => askToRevoke(device)}>Revoke device</Button>
               </div>
             {/each}
           </div>
@@ -384,7 +390,7 @@
           </div>
           <div>
             <dt class="text-muted-foreground">Route state</dt>
-            <dd class="mt-1 text-sm capitalize">{stateLabel(network.routeState)}</dd>
+            <dd class="mt-1"><StatusBadge status={network.routeState} /></dd>
           </div>
           <div>
             <dt class="text-muted-foreground">Backend service</dt>
@@ -396,7 +402,7 @@
           </div>
           <div>
             <dt class="text-muted-foreground">Backend state</dt>
-            <dd class="mt-1 text-sm capitalize">{stateLabel(network.backendState)}</dd>
+            <dd class="mt-1"><StatusBadge status={network.backendState} /></dd>
           </div>
           <div>
             <dt class="text-muted-foreground">Backend weight</dt>
@@ -441,4 +447,14 @@
       </Card.Content>
     </Card.Root>
   </div>
+  <ConfirmActionDialog
+    bind:open={revokeDialogOpen}
+    title="Revoke developer device?"
+    description={`Revoke ${revokeTarget?.name ?? 'this device'} and remove all ${revokeTarget?.grantCount ?? 0} of its active Resource grants. The device will immediately lose private network access.`}
+    confirmLabel="Revoke device"
+    destructive
+    processing={revokeProcessing}
+    error={revokeError}
+    onconfirm={revokeDevice}
+  />
 </DashboardLayout>

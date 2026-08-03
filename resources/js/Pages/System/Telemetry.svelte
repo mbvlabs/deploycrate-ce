@@ -1,6 +1,9 @@
 <script lang="ts">
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
+  import * as Empty from '@/Components/ui/empty'
+  import * as Table from '@/Components/ui/table'
+  import StatusBadge from '@/Components/StatusBadge.svelte'
   import TelemetryHistory from '@/Components/System/TelemetryHistory.svelte'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
@@ -452,24 +455,22 @@
         <Card.Content class="p-0">
           {#if platform.length}
             <div class="overflow-x-auto">
-              <table class="w-full min-w-[900px] text-left text-xs">
-                <thead class="border-y border-border bg-muted/30 text-muted-foreground"><tr><th class="px-5 py-3">Service</th><th class="px-5 py-3">State</th><th class="px-5 py-3">CPU</th><th class="px-5 py-3">Memory</th><th class="px-5 py-3">Disk read / write</th><th class="px-5 py-3">Network</th><th class="px-5 py-3">Tasks</th></tr></thead>
-                <tbody>
+              <Table.Root class="min-w-[900px] text-xs">
+                <Table.Header class="border-y border-border bg-muted/30"><Table.Row><Table.Head>Service</Table.Head><Table.Head>State</Table.Head><Table.Head>CPU</Table.Head><Table.Head>Memory</Table.Head><Table.Head>Disk read / write</Table.Head><Table.Head>Network</Table.Head><Table.Head>Tasks</Table.Head></Table.Row></Table.Header>
+                <Table.Body>
                   {#each platform as row (`${row.component}:${row.installation}`)}
-                    <tr class="border-b border-border last:border-0">
-                      <td class="px-5 py-4"><p class="font-medium text-sm">{label(row.component)}</p>{#if row.installation}<p class="mt-1 font-mono text-[11px] text-muted-foreground">Installation {short(row.installation)}</p>{/if}</td>
-                      <td class="px-5 py-4"><span class={row.available ? 'text-success' : 'text-warning'}>{row.available ? `Observed ${stamp(row.observedAt)}` : 'Stale'}</span></td>
-                      <td class="px-5 py-4">{current(row, row.cpuAvailable, formatCores(row.cpuCores))}</td>
-                      <td class="px-5 py-4">{current(row, row.memoryAvailable, formatBytes(row.memoryBytes))}</td>
-                      <td class="px-5 py-4">{current(row, row.diskReadAvailable, formatRate(row.diskReadBytesPerSecond))} / {current(row, row.diskWriteAvailable, formatRate(row.diskWriteBytesPerSecond))}</td>
-                      <td class="px-5 py-4 text-muted-foreground">Not collected</td>
-                      <td class="px-5 py-4">{current(row, row.tasksAvailable, formatCount(row.tasks))}</td>
-                    </tr>
+                    <Table.Row>
+                      <Table.Cell><p class="font-medium text-sm">{label(row.component)}</p>{#if row.installation}<p class="mt-1 font-mono text-[11px] text-muted-foreground">Installation {short(row.installation)}</p>{/if}</Table.Cell>
+                      <Table.Cell><StatusBadge status={row.available ? 'healthy' : 'stale'} label={row.available ? `Observed ${stamp(row.observedAt)}` : 'Stale'} /></Table.Cell>
+                      <Table.Cell>{current(row, row.cpuAvailable, formatCores(row.cpuCores))}</Table.Cell><Table.Cell>{current(row, row.memoryAvailable, formatBytes(row.memoryBytes))}</Table.Cell>
+                      <Table.Cell>{current(row, row.diskReadAvailable, formatRate(row.diskReadBytesPerSecond))} / {current(row, row.diskWriteAvailable, formatRate(row.diskWriteBytesPerSecond))}</Table.Cell>
+                      <Table.Cell class="text-muted-foreground">Not collected</Table.Cell><Table.Cell>{current(row, row.tasksAvailable, formatCount(row.tasks))}</Table.Cell>
+                    </Table.Row>
                   {/each}
-                </tbody>
-              </table>
+                </Table.Body>
+              </Table.Root>
             </div>
-          {:else}<p class="p-6 text-sm text-muted-foreground">No platform telemetry is available yet.</p>{/if}
+          {:else}<Empty.Root class="py-10"><Empty.Header><Empty.Title>No platform telemetry</Empty.Title><Empty.Description>Native service samples will appear after the collector reports them.</Empty.Description></Empty.Header></Empty.Root>{/if}
         </Card.Content>
       </Card.Root>
 
@@ -478,25 +479,23 @@
         <Card.Content class="p-0">
           {#if systemContainers.length}
             <div class="overflow-x-auto">
-              <table class="w-full min-w-[1180px] text-left text-xs">
-                <thead class="border-y border-border bg-muted/30 text-muted-foreground"><tr><th class="px-5 py-3">Service</th><th class="px-5 py-3">State</th><th class="px-5 py-3">CPU</th><th class="px-5 py-3">Memory</th><th class="px-5 py-3">Disk read / write</th><th class="px-5 py-3">Network receive / transmit</th><th class="px-5 py-3">Tasks</th><th class="px-5 py-3">Throttling / OOM</th></tr></thead>
-                <tbody>
+              <Table.Root class="min-w-[1180px] text-xs">
+                <Table.Header class="border-y border-border bg-muted/30"><Table.Row><Table.Head>Service</Table.Head><Table.Head>State</Table.Head><Table.Head>CPU</Table.Head><Table.Head>Memory</Table.Head><Table.Head>Disk read / write</Table.Head><Table.Head>Network receive / transmit</Table.Head><Table.Head>Tasks</Table.Head><Table.Head>Throttling / OOM</Table.Head></Table.Row></Table.Header>
+                <Table.Body>
                   {#each systemContainers as row (`${row.component}:${row.resource}:${row.installation}`)}
-                    <tr class="border-b border-border last:border-0">
-                      <td class="px-5 py-4"><p class="font-medium text-sm">{systemContainerName(row)}</p><p class="mt-1 font-mono text-[11px] text-muted-foreground">{systemContainerIdentity(row)}</p></td>
-                      <td class="px-5 py-4"><span class={row.available ? 'text-success' : 'text-warning'}>{row.available ? `Observed ${stamp(row.observedAt)}` : 'Stale'}</span></td>
-                      <td class="px-5 py-4">{current(row, row.cpuAvailable, formatCores(row.cpuCores))}</td>
-                      <td class="px-5 py-4">{current(row, row.memoryAvailable, formatBytes(row.memoryBytes))}</td>
-                      <td class="px-5 py-4">{current(row, row.diskReadAvailable, formatRate(row.diskReadBytesPerSecond))} / {current(row, row.diskWriteAvailable, formatRate(row.diskWriteBytesPerSecond))}</td>
-                      <td class="px-5 py-4">{current(row, row.networkReceiveAvailable, formatRate(row.networkReceiveBytesPerSecond))} / {current(row, row.networkTransmitAvailable, formatRate(row.networkTransmitBytesPerSecond))}</td>
-                      <td class="px-5 py-4">{current(row, row.tasksAvailable, formatCount(row.tasks))}</td>
-                      <td class="px-5 py-4">{current(row, row.cpuThrottlingAvailable, `${(row.cpuThrottlingRatio * 100).toFixed(1)}%`)} / {current(row, row.oomAvailable, formatCount(row.oomEvents))}</td>
-                    </tr>
+                    <Table.Row>
+                      <Table.Cell><p class="font-medium text-sm">{systemContainerName(row)}</p><p class="mt-1 font-mono text-[11px] text-muted-foreground">{systemContainerIdentity(row)}</p></Table.Cell>
+                      <Table.Cell><StatusBadge status={row.available ? 'healthy' : 'stale'} label={row.available ? `Observed ${stamp(row.observedAt)}` : 'Stale'} /></Table.Cell>
+                      <Table.Cell>{current(row, row.cpuAvailable, formatCores(row.cpuCores))}</Table.Cell><Table.Cell>{current(row, row.memoryAvailable, formatBytes(row.memoryBytes))}</Table.Cell>
+                      <Table.Cell>{current(row, row.diskReadAvailable, formatRate(row.diskReadBytesPerSecond))} / {current(row, row.diskWriteAvailable, formatRate(row.diskWriteBytesPerSecond))}</Table.Cell>
+                      <Table.Cell>{current(row, row.networkReceiveAvailable, formatRate(row.networkReceiveBytesPerSecond))} / {current(row, row.networkTransmitAvailable, formatRate(row.networkTransmitBytesPerSecond))}</Table.Cell>
+                      <Table.Cell>{current(row, row.tasksAvailable, formatCount(row.tasks))}</Table.Cell><Table.Cell>{current(row, row.cpuThrottlingAvailable, `${(row.cpuThrottlingRatio * 100).toFixed(1)}%`)} / {current(row, row.oomAvailable, formatCount(row.oomEvents))}</Table.Cell>
+                    </Table.Row>
                   {/each}
-                </tbody>
-              </table>
+                </Table.Body>
+              </Table.Root>
             </div>
-          {:else}<p class="p-6 text-sm text-muted-foreground">No system container telemetry is available yet.</p>{/if}
+          {:else}<Empty.Root class="py-10"><Empty.Header><Empty.Title>No container telemetry</Empty.Title><Empty.Description>System container samples will appear after the collector reports them.</Empty.Description></Empty.Header></Empty.Root>{/if}
         </Card.Content>
       </Card.Root>
     </section>
@@ -524,7 +523,7 @@
                 <span class="select-none whitespace-nowrap text-muted-foreground">{stamp(log.occurredAt)}</span>
                 <div class="min-w-0">
                   <p class="select-none text-[10px] text-muted-foreground">
-                    {systemLogLevel(log)} · {log.slot || 'slot unknown'} · {systemLogSource(log)}{#if log.traceId} · <button class="underline underline-offset-2 hover:text-foreground" onclick={() => loadTrace(log.traceId)}>trace {short(log.traceId)}</button>{/if}{#if log.spanId} · span {short(log.spanId)}{/if}{#if log.instance} · instance {short(log.instance)}{/if}
+                    {systemLogLevel(log)} · {log.slot || 'slot unknown'} · {systemLogSource(log)}{#if log.traceId} · <Button variant="link" size="xs" class="h-auto p-0 font-mono text-[10px]" onclick={() => loadTrace(log.traceId)}>trace {short(log.traceId)}</Button>{/if}{#if log.spanId} · span {short(log.spanId)}{/if}{#if log.instance} · instance {short(log.instance)}{/if}
                   </p>
                   <pre class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
                   {#if systemLogContext(log).length > 0}
@@ -560,21 +559,18 @@
             {:else if traceError}<p class="p-6 text-sm text-destructive">{traceError}</p>
             {:else if traceSpans.length}
               <div class="overflow-x-auto">
-                <table class="w-full min-w-[920px] text-left text-xs">
-                  <thead class="border-y border-border bg-muted/30 text-muted-foreground"><tr><th class="px-5 py-3">Started</th><th class="px-5 py-3">Service</th><th class="px-5 py-3">Span</th><th class="px-5 py-3">Span ID / parent</th><th class="px-5 py-3">Duration</th><th class="px-5 py-3">Status</th></tr></thead>
-                  <tbody>
+                <Table.Root class="min-w-[920px] text-xs">
+                  <Table.Header class="border-y border-border bg-muted/30"><Table.Row><Table.Head>Started</Table.Head><Table.Head>Service</Table.Head><Table.Head>Span</Table.Head><Table.Head>Span ID / parent</Table.Head><Table.Head>Duration</Table.Head><Table.Head>Status</Table.Head></Table.Row></Table.Header>
+                  <Table.Body>
                     {#each traceSpans as span (span.spanId)}
-                      <tr class="border-b border-border last:border-0">
-                        <td class="px-5 py-4 whitespace-nowrap">{stamp(span.startedAt)}</td>
-                        <td class="px-5 py-4"><p class="font-medium">{span.serviceName}</p><p class="mt-1 text-muted-foreground">{span.kind || span.scope}</p></td>
-                        <td class="px-5 py-4 font-medium">{span.name}</td>
-                        <td class="px-5 py-4 font-mono"><p>{span.spanId}</p><p class="mt-1 text-muted-foreground">{span.parentSpanId || 'root'}</p></td>
-                        <td class="px-5 py-4">{formatSpanDuration(span.durationNs)}</td>
-                        <td class="px-5 py-4" class:text-destructive={span.statusCode === 'Error'}>{span.statusCode || 'Unset'}{#if span.statusMessage}<p class="mt-1 text-muted-foreground">{span.statusMessage}</p>{/if}</td>
-                      </tr>
+                      <Table.Row>
+                        <Table.Cell class="whitespace-nowrap">{stamp(span.startedAt)}</Table.Cell><Table.Cell><p class="font-medium">{span.serviceName}</p><p class="mt-1 text-muted-foreground">{span.kind || span.scope}</p></Table.Cell>
+                        <Table.Cell class="font-medium">{span.name}</Table.Cell><Table.Cell class="font-mono"><p>{span.spanId}</p><p class="mt-1 text-muted-foreground">{span.parentSpanId || 'root'}</p></Table.Cell>
+                        <Table.Cell>{formatSpanDuration(span.durationNs)}</Table.Cell><Table.Cell><StatusBadge status={span.statusCode || 'unset'} />{#if span.statusMessage}<p class="mt-1 text-muted-foreground">{span.statusMessage}</p>{/if}</Table.Cell>
+                      </Table.Row>
                     {/each}
-                  </tbody>
-                </table>
+                  </Table.Body>
+                </Table.Root>
               </div>
             {:else}<p class="p-6 text-sm text-muted-foreground">No spans were retained for this trace.</p>{/if}
           </Card.Content>

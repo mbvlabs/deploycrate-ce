@@ -5,6 +5,10 @@
   import BulkEnvironmentSecretsDialog from '@/Components/BulkEnvironmentSecretsDialog.svelte'
   import FormField from '@/Components/FormField.svelte'
   import { Input } from '@/Components/ui/input'
+  import { Checkbox } from '@/Components/ui/checkbox'
+  import * as NativeSelect from '@/Components/ui/native-select'
+  import * as RadioGroup from '@/Components/ui/radio-group'
+  import { Spinner } from '@/Components/ui/spinner'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { slugify } from '@/lib/slug'
   import { routes } from '@/routes'
@@ -207,7 +211,7 @@
 {#snippet environmentCard(title: string, environment: EnvironmentForm, enabled: boolean)}
   <Card.Root>
     <Card.Header>
-      <Card.Action>{#if environment.kind === 'staging'}<label class="flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={includeStaging} /> Include Staging</label>{:else}<span class="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">Required</span>{/if}</Card.Action>
+      <Card.Action>{#if environment.kind === 'staging'}<label class="flex items-center gap-2 text-sm"><Checkbox bind:checked={includeStaging} /> Include Staging</label>{:else}<span class="text-[10px] font-medium uppercase tracking-[0.2em] text-muted-foreground">Required</span>{/if}</Card.Action>
       <Card.Title>{title}</Card.Title>
       <Card.Description>{enabled ? `Choose how this Environment receives its application and where it runs.` : 'Optional. Enable Staging to configure it independently from Production.'}</Card.Description>
     </Card.Header>
@@ -215,33 +219,33 @@
     <Card.Content class="space-y-6">
       <section class="space-y-3">
         <div><p class="text-sm font-medium">Delivery method</p><p class="mt-1 text-xs text-muted-foreground">This choice belongs only to the {title} Environment.</p></div>
-        <div class="grid gap-3 sm:grid-cols-2">
+        <RadioGroup.Root value={environment.sourceType} onValueChange={(source) => environment.sourceType = source as 'buildpacks' | 'image'} class="grid gap-3 sm:grid-cols-2">
           <label class={`flex cursor-pointer gap-3 border p-4 transition-colors hover:border-primary/60 ${environment.sourceType === 'buildpacks' ? 'border-primary bg-primary/5' : 'border-border'}`}>
-            <input class="mt-1" type="radio" name={`source-${environment.kind}`} value="buildpacks" checked={environment.sourceType === 'buildpacks'} onchange={() => environment.sourceType = 'buildpacks'} />
+            <RadioGroup.Item class="mt-1" value="buildpacks" />
             <span><span class="block text-sm font-medium">Buildpack</span><span class="mt-1 block text-xs leading-5 text-muted-foreground">Build source from GitHub and publish the resulting image.</span></span>
           </label>
           <label class={`flex cursor-pointer gap-3 border p-4 transition-colors hover:border-primary/60 ${environment.sourceType === 'image' ? 'border-primary bg-primary/5' : 'border-border'}`}>
-            <input class="mt-1" type="radio" name={`source-${environment.kind}`} value="image" checked={environment.sourceType === 'image'} onchange={() => environment.sourceType = 'image'} />
+            <RadioGroup.Item class="mt-1" value="image" />
             <span><span class="block text-sm font-medium">Repository</span><span class="mt-1 block text-xs leading-5 text-muted-foreground">Deploy directly from an existing container repository.</span></span>
           </label>
-        </div>
+        </RadioGroup.Root>
       </section>
 
       {#if environment.sourceType === 'buildpacks'}
         <section class="grid gap-5 border-t border-border pt-5 sm:grid-cols-2">
-          <FormField label="GitHub account"><select value={environment.githubInstallationId} onchange={(event) => chooseInstallation(environment, event.currentTarget.value)} class="h-9 w-full border border-input bg-background px-3 text-sm" required><option value="">Select an account</option>{#each installations as installation}<option value={installation.id}>{installation.accountLogin}</option>{/each}</select></FormField>
-          <FormField label="Source repository"><select value={environment.githubRepositoryId} onchange={(event) => chooseRepository(environment, event.currentTarget.value)} class="h-9 w-full border border-input bg-background px-3 text-sm" required><option value="">Select a repository</option>{#each repositoryOptions(environment) as repository}<option value={repository.id}>{repository.fullName}</option>{/each}</select></FormField>
+          <FormField label="GitHub account"><NativeSelect.Root value={environment.githubInstallationId} onchange={(event) => chooseInstallation(environment, event.currentTarget.value)} class="w-full" required><NativeSelect.Option value="">Select an account</NativeSelect.Option>{#each installations as installation}<NativeSelect.Option value={installation.id}>{installation.accountLogin}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
+          <FormField label="Source repository"><NativeSelect.Root value={environment.githubRepositoryId} onchange={(event) => chooseRepository(environment, event.currentTarget.value)} class="w-full" required><NativeSelect.Option value="">Select a repository</NativeSelect.Option>{#each repositoryOptions(environment) as repository}<NativeSelect.Option value={repository.id}>{repository.fullName}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
           <FormField label="Git reference"><Input value={environment.reference} oninput={(event) => environment.reference = event.currentTarget.value} placeholder={environment.kind === 'production' ? 'main' : 'staging'} required /></FormField>
-          <FormField label="Build server"><select value={environment.buildServerId} onchange={(event) => environment.buildServerId = event.currentTarget.value} class="h-9 w-full border border-input bg-background px-3 text-sm" required><option value="">Select a Build Server</option>{#each buildServers as server}<option value={server.id}>{server.name} · {server.kind === 'worker' ? server.address : 'Control plane'}</option>{/each}</select></FormField>
+          <FormField label="Build server"><NativeSelect.Root value={environment.buildServerId} onchange={(event) => environment.buildServerId = event.currentTarget.value} class="w-full" required><NativeSelect.Option value="">Select a Build Server</NativeSelect.Option>{#each buildServers as server}<NativeSelect.Option value={server.id}>{server.name} · {server.kind === 'worker' ? server.address : 'Control plane'}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
           <FormField label="Build context"><Input value={environment.contextPath} oninput={(event) => environment.contextPath = event.currentTarget.value} placeholder="." required /></FormField>
           <FormField label="Image destination"><Input value={environment.imageRepository} oninput={(event) => environment.imageRepository = event.currentTarget.value} placeholder={`team/application-${environment.kind}`} required /></FormField>
-          <FormField label="Registry"><select value={environment.registryResourceId} onchange={(event) => environment.registryResourceId = event.currentTarget.value} class="h-9 w-full border border-input bg-background px-3 text-sm" required><option value="">Select a Registry</option>{#each registries as registry}<option value={registry.id}>{registry.name} · {registry.endpoint}</option>{/each}</select></FormField>
-          <label class="flex items-center gap-2 self-end pb-2 text-sm"><input type="checkbox" checked={environment.autoBuild} onchange={(event) => environment.autoBuild = event.currentTarget.checked} /> Build automatically on matching pushes</label>
-          <label class="flex items-start gap-3 border border-border p-4 sm:col-span-2"><input class="mt-1" type="checkbox" checked={environment.buildFrontendAssets} onchange={(event) => environment.buildFrontendAssets = event.currentTarget.checked} /><span><span class="block text-sm font-medium">Build Node frontend assets</span><span class="mt-1 block text-xs text-muted-foreground">Requires a supported lockfile and build script.</span></span></label>
+          <FormField label="Registry"><NativeSelect.Root value={environment.registryResourceId} onchange={(event) => environment.registryResourceId = event.currentTarget.value} class="w-full" required><NativeSelect.Option value="">Select a Registry</NativeSelect.Option>{#each registries as registry}<NativeSelect.Option value={registry.id}>{registry.name} · {registry.endpoint}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
+          <label class="flex items-center gap-2 self-end pb-2 text-sm"><Checkbox checked={environment.autoBuild} onCheckedChange={(selected) => environment.autoBuild = selected} /> Build automatically on matching pushes</label>
+          <label class="flex items-start gap-3 border border-border p-4 sm:col-span-2"><Checkbox class="mt-1" checked={environment.buildFrontendAssets} onCheckedChange={(selected) => environment.buildFrontendAssets = selected} /><span><span class="block text-sm font-medium">Build Node frontend assets</span><span class="mt-1 block text-xs text-muted-foreground">Requires a supported lockfile and build script.</span></span></label>
         </section>
       {:else}
         <section class="grid gap-5 border-t border-border pt-5 sm:grid-cols-2">
-          <FormField label="Registry"><select value={environment.registryResourceId} onchange={(event) => environment.registryResourceId = event.currentTarget.value} class="h-9 w-full border border-input bg-background px-3 text-sm" required><option value="">Select a Registry</option>{#each registries as registry}<option value={registry.id}>{registry.name} · {registry.endpoint}</option>{/each}</select></FormField>
+          <FormField label="Registry"><NativeSelect.Root value={environment.registryResourceId} onchange={(event) => environment.registryResourceId = event.currentTarget.value} class="w-full" required><NativeSelect.Option value="">Select a Registry</NativeSelect.Option>{#each registries as registry}<NativeSelect.Option value={registry.id}>{registry.name} · {registry.endpoint}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
           <FormField label="Repository"><Input value={environment.imageRepository} oninput={(event) => environment.imageRepository = event.currentTarget.value} placeholder="team/application" required /></FormField>
           <FormField label="Tag or digest"><Input value={environment.reference} oninput={(event) => environment.reference = event.currentTarget.value} placeholder="stable" required /></FormField>
         </section>
@@ -255,7 +259,7 @@
           <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {#each servers as server}
               <label class={`flex cursor-pointer gap-3 border p-4 transition-colors hover:border-primary/60 ${environment.serverIds.includes(server.id) ? 'border-primary bg-primary/5' : 'border-border'}`}>
-                <input class="mt-1" type="checkbox" checked={environment.serverIds.includes(server.id)} onchange={(event) => toggleRuntimeServer(environment, server.id, event.currentTarget.checked)} />
+                <Checkbox class="mt-1" checked={environment.serverIds.includes(server.id)} onCheckedChange={(selected) => toggleRuntimeServer(environment, server.id, selected)} />
                 <span><span class="block text-sm font-medium">{server.name}</span><span class="mt-1 block text-xs text-muted-foreground">{server.kind === 'worker' ? server.address : 'Control plane'}</span></span>
               </label>
             {/each}
@@ -271,9 +275,9 @@
 
       <section class="space-y-3 border-t border-border pt-5">
         <p class="text-sm font-medium">Resources</p>
-        <div class="flex gap-2"><select value={environment.selectedResource} onchange={(event) => environment.selectedResource = event.currentTarget.value} class="h-9 flex-1 border border-input bg-background px-3 text-sm"><option value="">Select a Resource</option>{#each availableResources(environment) as option}<option value={`${option.id}:${option.endpointId}:${option.credentialId ?? ''}`}>{option.name} · {option.engine}{option.database ? ` · ${option.database}` : ''} · {option.endpoint} · {option.credential || 'without credentials'}</option>{/each}</select><Button type="button" variant="outline" onclick={() => addResource(environment)}>Attach</Button></div>
+        <div class="flex flex-col gap-2 sm:flex-row"><NativeSelect.Root value={environment.selectedResource} onchange={(event) => environment.selectedResource = event.currentTarget.value} class="w-full flex-1"><NativeSelect.Option value="">Select a Resource</NativeSelect.Option>{#each availableResources(environment) as option}<NativeSelect.Option value={`${option.id}:${option.endpointId}:${option.credentialId ?? ''}`}>{option.name} · {option.engine}{option.database ? ` · ${option.database}` : ''} · {option.endpoint} · {option.credential || 'without credentials'}</NativeSelect.Option>{/each}</NativeSelect.Root><Button type="button" variant="outline" disabled={!environment.selectedResource} onclick={() => addResource(environment)}>Attach</Button></div>
         {#each environment.resources as resource, index}
-          <div class="grid gap-3 border border-border p-4 sm:grid-cols-2"><FormField label="Alias"><Input bind:value={resource.alias} /></FormField>{#if resource.database}<FormField label="Database"><Input bind:value={resource.database} readonly /></FormField>{/if}{#if attachedResourceOption(resource)?.supportsConnectionUrl}<FormField label="Connection format"><select bind:value={resource.credentialProjection} class="h-9 w-full border border-input bg-background px-3 text-sm"><option value="connection_url">Connection URL</option><option value="individual_parts">Individual parts</option></select></FormField>{/if}<Button type="button" variant="ghost" onclick={() => environment.resources = environment.resources.filter((_, itemIndex) => itemIndex !== index)}>Remove</Button></div>
+          <div class="grid gap-3 border border-border p-4 sm:grid-cols-2"><FormField label="Alias"><Input bind:value={resource.alias} /></FormField>{#if resource.database}<FormField label="Database"><Input bind:value={resource.database} readonly /></FormField>{/if}{#if attachedResourceOption(resource)?.supportsConnectionUrl}<FormField label="Connection format"><NativeSelect.Root bind:value={resource.credentialProjection} class="w-full"><NativeSelect.Option value="connection_url">Connection URL</NativeSelect.Option><NativeSelect.Option value="individual_parts">Individual parts</NativeSelect.Option></NativeSelect.Root></FormField>{/if}<Button type="button" variant="ghost" onclick={() => environment.resources = environment.resources.filter((_, itemIndex) => itemIndex !== index)}>Remove</Button></div>
         {:else}<p class="text-xs text-muted-foreground">No Resources attached.</p>{/each}
       </section>
 
@@ -284,7 +288,7 @@
         {:else}<p class="text-xs text-muted-foreground">No secrets added.</p>{/each}
       </section>
 
-      <label class="flex items-center gap-3 border border-border bg-muted/20 p-4"><input type="checkbox" checked={environment.deploy} onchange={(event) => environment.deploy = event.currentTarget.checked} /><span class="text-sm font-medium">Deploy after create</span></label>
+      <label class="flex items-center gap-3 border border-border bg-muted/20 p-4"><Checkbox checked={environment.deploy} onCheckedChange={(selected) => environment.deploy = selected} /><span class="text-sm font-medium">Deploy after create</span></label>
     </Card.Content>
     {/if}
   </Card.Root>
@@ -306,7 +310,7 @@
     {@render environmentCard('Staging', staging, includeStaging)}
     {@render environmentCard('Production', production, true)}
 
-    <div class="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-5"><p class="text-xs text-muted-foreground">Nothing deploys unless selected in its Environment.</p><div class="flex gap-3"><Button href={routes.applications()} variant="outline">Cancel</Button><Button type="submit" disabled={processing || registries.length === 0 || production.serverIds.length === 0 || (includeStaging && staging.serverIds.length === 0)}>{processing ? 'Creating application...' : 'Create application'}</Button></div></div>
+    <div class="flex flex-col gap-3 border-t border-border pt-5 sm:flex-row sm:items-center sm:justify-between"><p class="text-xs text-muted-foreground">Nothing deploys unless selected in its Environment.</p><div class="flex flex-col-reverse gap-3 sm:flex-row"><Button href={routes.applications()} variant="outline">Cancel</Button><Button type="submit" disabled={processing || registries.length === 0 || production.serverIds.length === 0 || (includeStaging && staging.serverIds.length === 0)} aria-busy={processing}>{#if processing}<Spinner />{/if}Create application</Button></div></div>
   </form>
 
   <BulkEnvironmentSecretsDialog

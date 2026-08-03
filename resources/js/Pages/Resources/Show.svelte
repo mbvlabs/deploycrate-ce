@@ -1,12 +1,20 @@
 <script lang="ts">
   import { Link, router } from '@inertiajs/svelte'
+  import { toast } from 'svelte-sonner'
   import { onMount } from 'svelte'
+  import * as Alert from '@/Components/ui/alert'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
+  import { Checkbox } from '@/Components/ui/checkbox'
+  import ConfirmActionDialog from '@/Components/ConfirmActionDialog.svelte'
   import * as Dialog from '@/Components/ui/dialog'
   import DataField from '@/Components/DataField.svelte'
   import FormField from '@/Components/FormField.svelte'
   import { Input } from '@/Components/ui/input'
+  import * as NativeSelect from '@/Components/ui/native-select'
+  import { Spinner } from '@/Components/ui/spinner'
+  import StatusBadge from '@/Components/StatusBadge.svelte'
+  import { Textarea } from '@/Components/ui/textarea'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
@@ -46,8 +54,6 @@
   const selectedBackups = $derived(backups.databases.find((item) => item.databaseName === selectedBackupDatabaseName) ?? backups.databases[0])
   const lastSuccessfulBackup = $derived(selectedBackups?.history.find((item) => item.status === 'verified'))
   const activeRestore = $derived(Boolean(selectedBackups?.activeRestore))
-  const selectClass = 'h-9 w-full border border-input bg-background px-3 text-sm aria-invalid:border-destructive'
-  const textareaClass = 'min-h-24 w-full border border-input bg-background px-3 py-2 font-mono text-xs'
   const overallStatus = $derived.by(() => {
 		if (databaseBacked) {
 			if (resource.healthChecks.some((item: any) => item.enabled && item.state === 'unhealthy')) return { label: 'Unhealthy', tone: 'bad', detail: 'The published Database access check reached its failure threshold.' }
@@ -80,6 +86,9 @@
   let wireGuardConfigurationDialogOpen = $state(false)
   let jsonError = $state('')
   let pendingAction = $state('')
+  let dialogAction = $state('')
+  let destructiveProcessing = $state(false)
+  let destructiveError = $state('')
   let destructiveAction = $state<DestructiveAction | null>(null)
   let shownEnrollmentGrantId = $state('')
   let endpoint = $state(initialEndpoint())
@@ -150,8 +159,8 @@
 
   function submit(action: () => void) { try { action() } catch {} }
   function openWireGuardConfiguration() { if (enrollment?.clientConfiguration) wireGuardConfigurationDialogOpen = true }
-  function createDatabase() { router.post(routes.resourceDatabaseCreateForResource(resource.id), database, { onSuccess: () => { databaseDialogOpen = false; database = { name: '', encoding: 'UTF8', collation: '' } }, onError: () => (databaseDialogOpen = true) }) }
-  function createEndpoint() { router.post(routes.resourceEndpointCreate(resource.id), { ...endpoint, settings: {} }, { onSuccess: () => (endpointDialogOpen = false), onError: () => (endpointDialogOpen = true) }) }
+  function createDatabase() { if (dialogAction) return; dialogAction = 'database'; router.post(routes.resourceDatabaseCreateForResource(resource.id), database, { onSuccess: () => { databaseDialogOpen = false; database = { name: '', encoding: 'UTF8', collation: '' } }, onError: () => (databaseDialogOpen = true), onFinish: () => (dialogAction = '') }) }
+  function createEndpoint() { if (dialogAction) return; dialogAction = 'endpoint'; router.post(routes.resourceEndpointCreate(resource.id), { ...endpoint, settings: {} }, { onSuccess: () => (endpointDialogOpen = false), onError: () => (endpointDialogOpen = true), onFinish: () => (dialogAction = '') }) }
   function chooseEndpointNetwork(networkId: string) {
     endpoint.privateNetworkId = networkId
     const selected = options.privateNetworks.find((network) => network.id === networkId)
@@ -159,8 +168,8 @@
     endpoint.address = selected && serverId ? selected.serverAddresses[serverId] ?? '127.0.0.1' : '127.0.0.1'
   }
   function openCredentialDialog() { if (canAddApplicationUser) credentialDialogOpen = true }
-  function createCredential() { if (canAddApplicationUser) router.post(routes.resourceCredentialCreate(resource.id), { name: credential.name, username: credential.username, secretValues: credential.secretValues, metadata: { purpose: 'application', database: credential.database } }, { onSuccess: () => { credentialDialogOpen = false; credential.secretValues = {} }, onError: () => (credentialDialogOpen = true) }) }
-  function enablePrivateAccess() { router.post(routes.resourcePrivateAccessCreate(resource.id), { privateNetworkId: privateAccessNetworkId }, { onSuccess: () => (privateAccessDialogOpen = false), onError: () => (privateAccessDialogOpen = true) }) }
+  function createCredential() { if (!canAddApplicationUser || dialogAction) return; dialogAction = 'credential'; router.post(routes.resourceCredentialCreate(resource.id), { name: credential.name, username: credential.username, secretValues: credential.secretValues, metadata: { purpose: 'application', database: credential.database } }, { onSuccess: () => { credentialDialogOpen = false; credential.secretValues = {} }, onError: () => (credentialDialogOpen = true), onFinish: () => (dialogAction = '') }) }
+  function enablePrivateAccess() { if (dialogAction) return; dialogAction = 'private-access'; router.post(routes.resourcePrivateAccessCreate(resource.id), { privateNetworkId: privateAccessNetworkId }, { onSuccess: () => (privateAccessDialogOpen = false), onError: () => (privateAccessDialogOpen = true), onFinish: () => (dialogAction = '') }) }
   function disablePrivateAccess() {
     confirmDestructive({
       kind: 'disable-private-access',
@@ -169,7 +178,7 @@
       confirmationLabel: 'Remove from private network',
     })
   }
-  function submitDevice() { router.post(routes.resourcePrivateAccessDeviceCreate(resource.id), device) }
+  function submitDevice() { if (pendingAction) return; pendingAction = 'device'; router.post(routes.resourcePrivateAccessDeviceCreate(resource.id), device, { onFinish: () => (pendingAction = '') }) }
   function revokeDevice(deviceId: string, deviceName: string) {
     confirmDestructive({
       kind: 'revoke-device',
@@ -180,9 +189,9 @@
     })
   }
   function retryDevice(deviceId: string) { router.post(routes.resourcePrivateAccessDeviceCreate(resource.id), { deviceId, name: '' }) }
-  function createVolume() { submit(() => router.post(routes.resourceVolumeCreate(resource.id), { ...volume, configuration: json(volume.configurationText) }, { onSuccess: () => (volumeDialogOpen = false), onError: () => (volumeDialogOpen = true) })) }
-  function createMount() { router.post(routes.resourceMountCreate(resource.id), mount, { onSuccess: () => (mountDialogOpen = false), onError: () => (mountDialogOpen = true) }) }
-  function createHealth() { submit(() => router.post(routes.resourceHealthCheckCreate(resource.id), { ...health, configuration: json(health.configurationText) }, { onSuccess: () => (healthDialogOpen = false), onError: () => (healthDialogOpen = true) })) }
+  function createVolume() { if (dialogAction) return; submit(() => { const configuration = json(volume.configurationText); dialogAction = 'volume'; router.post(routes.resourceVolumeCreate(resource.id), { ...volume, configuration }, { onSuccess: () => (volumeDialogOpen = false), onError: () => (volumeDialogOpen = true), onFinish: () => (dialogAction = '') }) }) }
+  function createMount() { if (dialogAction) return; dialogAction = 'mount'; router.post(routes.resourceMountCreate(resource.id), mount, { onSuccess: () => (mountDialogOpen = false), onError: () => (mountDialogOpen = true), onFinish: () => (dialogAction = '') }) }
+  function createHealth() { if (dialogAction) return; submit(() => { const configuration = json(health.configurationText); dialogAction = 'health'; router.post(routes.resourceHealthCheckCreate(resource.id), { ...health, configuration }, { onSuccess: () => (healthDialogOpen = false), onError: () => (healthDialogOpen = true), onFinish: () => (dialogAction = '') }) }) }
   function databaseRouteName(name: string) { return encodeURIComponent(name) }
   function saveBackupPolicy() {
     if (!selectedBackups) return
@@ -205,14 +214,16 @@
   }
 
   function submitRestore() {
-    if (!restoreBackup || restoreConfirmation !== resource.name) return
+    if (!restoreBackup || restoreConfirmation !== resource.name || dialogAction) return
     if (!selectedBackups) return
+    dialogAction = 'restore'
     router.post(routes.resourceRestoreCreate(resource.id, databaseRouteName(selectedBackups.databaseName)), {
       backupId: restoreBackup.id,
       confirmation: restoreConfirmation,
     }, {
       onSuccess: () => { restoreDialogOpen = false; restoreBackup = null; restoreConfirmation = '' },
       onError: () => (restoreDialogOpen = true),
+      onFinish: () => (dialogAction = ''),
     })
   }
 
@@ -249,6 +260,7 @@
 
   function confirmDestructive(action: DestructiveAction) {
     destructiveAction = action
+    destructiveError = ''
     destructiveActionDialogOpen = true
   }
 
@@ -256,13 +268,26 @@
     const action = destructiveAction
     if (!action) return
 
-    destructiveActionDialogOpen = false
+    if (destructiveProcessing) return
+    destructiveProcessing = true
+    destructiveError = ''
+    const url = action.kind === 'remove-container' ? routes.resourceInstallationRemove(resource.id, action.installationId)
+      : action.kind === 'disable-private-access' ? routes.resourcePrivateAccessDestroy(resource.id)
+      : action.kind === 'revoke-device' ? routes.resourcePrivateAccessDeviceDestroy(resource.id, action.deviceId)
+      : action.kind === 'archive-resource' ? routes.resourceDestroy(resource.id)
+      : routes.resourceBackupPolicyDestroy(resource.id, databaseRouteName(action.databaseName), action.policyId)
+    router.delete(url, {
+      onSuccess: () => { destructiveActionDialogOpen = false; destructiveAction = null },
+      onError: (errors) => (destructiveError = Object.values(errors).map(String).join('\n') || 'The action could not be completed.'),
+      onFinish: () => (destructiveProcessing = false),
+    })
+  }
 
-    if (action.kind === 'remove-container') lifecycle(action.installationId, 'remove')
-    if (action.kind === 'disable-private-access') router.delete(routes.resourcePrivateAccessDestroy(resource.id))
-    if (action.kind === 'revoke-device') router.delete(routes.resourcePrivateAccessDeviceDestroy(resource.id, action.deviceId))
-    if (action.kind === 'archive-resource') router.delete(routes.resourceDestroy(resource.id))
-    if (action.kind === 'archive-backup-policy') router.delete(routes.resourceBackupPolicyDestroy(resource.id, databaseRouteName(action.databaseName), action.policyId))
+  async function copyWireGuardConfiguration() {
+    const configuration = enrollment?.clientConfiguration
+    if (!configuration) return
+    try { await navigator.clipboard.writeText(configuration); toast.success('WireGuard configuration copied') }
+    catch { toast.error('WireGuard configuration could not be copied') }
   }
 
   function observedLabel(value: string | null) {
@@ -296,15 +321,15 @@
       </div>
     </header>
 
-    {#if Object.keys(errors).length > 0}<div class="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">The item could not be created. Review the dialog fields and try again.</div>{/if}
-    {#if jsonError}<div class="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{jsonError}</div>{/if}
+    {#if Object.keys(errors).length > 0}<Alert.Root variant="destructive"><Alert.Title>The item could not be created</Alert.Title><Alert.Description>Review the dialog fields and try again.</Alert.Description></Alert.Root>{/if}
+    {#if jsonError}<Alert.Root variant="destructive"><Alert.Title>Invalid configuration</Alert.Title><Alert.Description>{jsonError}</Alert.Description></Alert.Root>{/if}
 
     <Card.Root class="overflow-hidden">
       <Card.Content class="grid gap-0 p-0 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div class="p-6">
           <div class="flex flex-wrap items-center gap-3">
-            <span class:!border-success={overallStatus.tone === 'good'} class:!text-success={overallStatus.tone === 'good'} class:!border-destructive={overallStatus.tone === 'bad'} class:!text-destructive={overallStatus.tone === 'bad'} class="border border-border px-2 py-1 text-xs font-medium">{overallStatus.label}</span>
-            {#if resource.installations.length > 0}<span class="border border-border bg-muted/30 px-2 py-1 text-xs">Docker</span>{/if}
+            <StatusBadge status={overallStatus.label} />
+            {#if resource.installations.length > 0}<StatusBadge status="Docker" />{/if}
           </div>
 		  <h2 class="mt-5 text-xl font-semibold">{databaseBacked ? 'Access status' : 'Container status'}</h2>
           <p class="mt-2 max-w-2xl text-sm text-muted-foreground">{overallStatus.detail}</p>
@@ -338,7 +363,7 @@
     {#if resource.engine === 'postgresql'}
     <Card.Root>
       <Card.Header>
-        <Card.Action>{#if selectedBackups?.policy}<span class="border border-border px-2 py-1 text-xs" class:text-success={selectedBackups.policy.active}>{selectedBackups.policy.active ? 'Active' : 'Paused'}</span>{/if}</Card.Action>
+        <Card.Action>{#if selectedBackups?.policy}<StatusBadge status={selectedBackups.policy.active ? 'active' : 'paused'} />{/if}</Card.Action>
         <Card.Title>Backups</Card.Title>
         <Card.Description>Encrypted logical backups of one PostgreSQL Database using a verified Object Storage connection.</Card.Description>
       </Card.Header>
@@ -347,9 +372,9 @@
           <p class="border border-border bg-muted/20 p-3 text-sm text-muted-foreground">No active Database is available for backup.</p>
         {:else if selectedBackups}
           <FormField label="Database">
-            <select value={selectedBackups.databaseName} onchange={(event) => selectBackupDatabase(event.currentTarget.value)} class={selectClass}>
-              {#each backups.databases as database}<option value={database.databaseName}>{database.databaseName}</option>{/each}
-            </select>
+            <NativeSelect.Root value={selectedBackups.databaseName} onchange={(event) => selectBackupDatabase(event.currentTarget.value)} class="w-full">
+              {#each backups.databases as database}<NativeSelect.Option value={database.databaseName}>{database.databaseName}</NativeSelect.Option>{/each}
+            </NativeSelect.Root>
           </FormField>
         {/if}
         {#if selectedBackups && !selectedBackups.eligibility.eligible}
@@ -357,9 +382,9 @@
         {:else if selectedBackups}
           <form class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" onsubmit={(event) => { event.preventDefault(); saveBackupPolicy() }}>
             <FormField label="Object Storage" error={errors.backupDestinationId}>
-              <select bind:value={backupPolicy.backupDestinationId} class={selectClass} required>
-                {#each backups.destinations as destination}<option value={destination.id}>{destination.name} · {destination.bucket}</option>{/each}
-              </select>
+              <NativeSelect.Root bind:value={backupPolicy.backupDestinationId} class="w-full" required>
+                {#each backups.destinations as destination}<NativeSelect.Option value={destination.id}>{destination.name} · {destination.bucket}</NativeSelect.Option>{/each}
+              </NativeSelect.Root>
             </FormField>
             <FormField label="Schedule" error={errors.schedule}><Input bind:value={backupPolicy.schedule} class="font-mono" placeholder="0 2 * * *" required /></FormField>
             <div class="hidden lg:block"></div>
@@ -480,7 +505,7 @@
                   <div class="flex flex-col justify-between gap-3 border border-border p-3 sm:flex-row sm:items-center"><div><p class="font-medium">{grant.deviceName}</p><p class="mt-1 font-mono text-xs text-muted-foreground">{grant.privateAddress} · {accessStateLabel(grant.applicationState === 'applied' ? 'ready' : grant.applicationState === 'failed' ? 'failed' : 'applying')}</p><p class="mt-1 text-xs text-muted-foreground">Latest handshake: {observedLabel(grant.latestHandshakeAt)}</p>{#if grant.applicationError}<p class="mt-1 text-xs text-destructive">{grant.applicationError}</p>{/if}</div><div class="flex gap-2">{#if grant.applicationState !== 'applied'}<Button size="sm" variant="outline" onclick={() => retryDevice(grant.deviceId)}>Retry</Button>{/if}<Button size="sm" variant="destructive" onclick={() => revokeDevice(grant.deviceId, grant.deviceName)}>Revoke</Button></div></div>
                 {/each}
               </div>
-              <form class="mt-5 grid gap-4 border-t border-border pt-5 sm:grid-cols-3" onsubmit={(event) => { event.preventDefault(); submitDevice() }}><FormField label="Existing device"><select bind:value={device.deviceId} class={selectClass}><option value="">Enroll a new device</option>{#each resource.availableDevices as item}<option value={item.id}>{item.name} · {item.privateAddress}</option>{/each}</select></FormField>{#if !device.deviceId}<FormField label="New device name" error={errors.name}><Input bind:value={device.name} placeholder="MBV MacBook" required /></FormField>{/if}<div class="flex items-end"><Button type="submit">{device.deviceId ? 'Grant existing device' : 'Enroll new device'}</Button></div></form>
+              <form class="mt-5 grid gap-4 border-t border-border pt-5 sm:grid-cols-3" onsubmit={(event) => { event.preventDefault(); submitDevice() }}><FormField label="Existing device"><NativeSelect.Root bind:value={device.deviceId} class="w-full"><NativeSelect.Option value="">Enroll a new device</NativeSelect.Option>{#each resource.availableDevices as item}<NativeSelect.Option value={item.id}>{item.name} · {item.privateAddress}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>{#if !device.deviceId}<FormField label="New device name" error={errors.name}><Input bind:value={device.name} placeholder="MBV MacBook" required /></FormField>{/if}<div class="flex items-end"><Button type="submit" disabled={Boolean(pendingAction)} aria-busy={pendingAction === 'device'}>{#if pendingAction === 'device'}<Spinner />{/if}{device.deviceId ? 'Grant existing device' : 'Enroll new device'}</Button></div></form>
             {/if}
         </section>
       </Card.Content>
@@ -497,7 +522,7 @@
 
     <div class="grid gap-6 lg:grid-cols-2">
       <Card.Root><Card.Header><Card.Action>{#if resource.volumes.length === 0 || (resource.volumes.length === 1 && resource.installations.length === 1 && resource.mounts.length === 0)}<div class="flex gap-2">{#if resource.volumes.length === 0}<Button size="sm" variant="outline" onclick={() => (volumeDialogOpen = true)}>Add volume</Button>{/if}{#if resource.volumes.length === 1 && resource.installations.length === 1 && resource.mounts.length === 0}<Button size="sm" variant="outline" onclick={() => (mountDialogOpen = true)}>Add mount</Button>{/if}</div>{/if}</Card.Action><Card.Title>Storage</Card.Title><Card.Description>The primary durable volume and its installation mount.</Card.Description></Card.Header><Card.Content class="space-y-3">{#if resource.volumes.length === 0}<p class="text-sm text-muted-foreground">No primary volume configured.</p>{/if}{#each resource.volumes as item}<div class="border border-border p-3"><p class="font-medium">{item.name}</p><p class="mt-2 text-xs text-muted-foreground">{item.driver} on {item.serverName}</p>{#each resource.mounts.filter((mount: any) => mount.resourceVolumeId === item.id) as mount}<p class="mt-2 font-mono text-xs">{mount.mountPath} → {mount.containerName}{mount.readOnly ? ' (read only)' : ''}</p>{/each}</div>{/each}</Card.Content></Card.Root>
-      <Card.Root><Card.Header><Card.Action><Button size="sm" variant="outline" disabled={databaseBacked ? applicationCredentials.length === 0 || resource.endpoints.length === 0 : resource.installations.length === 0} onclick={() => (healthDialogOpen = true)}>Add check</Button></Card.Action><Card.Title>Health checks</Card.Title><Card.Description>Desired checks and their latest observations.</Card.Description></Card.Header><Card.Content class="space-y-3">{#if resource.healthChecks.length === 0}<p class="text-sm text-muted-foreground">No health checks configured.</p>{/if}{#each resource.healthChecks as item}<div class="border border-border p-3"><div class="flex justify-between gap-3"><p class="font-medium">{item.name}</p><span class:text-success={item.state === 'healthy'} class:text-warning={item.state === 'degraded'} class:text-destructive={item.state === 'unhealthy'} class="text-xs capitalize">{item.state || 'Unknown'}</span></div><p class="mt-2 text-xs text-muted-foreground">{item.kind} · every {item.intervalSeconds}s · {item.enabled ? 'Enabled' : 'Disabled'}</p><p class="mt-1 text-xs text-muted-foreground">Observed {observedLabel(item.observedAt)}{item.latencyMs !== null ? ` · ${item.latencyMs} ms` : ''} · successes {item.consecutiveSuccesses} · failures {item.consecutiveFailures}</p>{#if item.message}<p class="mt-2 text-xs text-muted-foreground">{item.message}</p>{/if}</div>{/each}</Card.Content></Card.Root>
+      <Card.Root><Card.Header><Card.Action><Button size="sm" variant="outline" disabled={databaseBacked ? applicationCredentials.length === 0 || resource.endpoints.length === 0 : resource.installations.length === 0} onclick={() => (healthDialogOpen = true)}>Add check</Button></Card.Action><Card.Title>Health checks</Card.Title><Card.Description>Desired checks and their latest observations.</Card.Description></Card.Header><Card.Content class="space-y-3">{#if resource.healthChecks.length === 0}<p class="text-sm text-muted-foreground">No health checks configured.</p>{/if}{#each resource.healthChecks as item}<div class="border border-border p-3"><div class="flex justify-between gap-3"><p class="font-medium">{item.name}</p><StatusBadge status={item.state || 'unknown'} /></div><p class="mt-2 text-xs text-muted-foreground">{item.kind} · every {item.intervalSeconds}s · {item.enabled ? 'Enabled' : 'Disabled'}</p><p class="mt-1 text-xs text-muted-foreground">Observed {observedLabel(item.observedAt)}{item.latencyMs !== null ? ` · ${item.latencyMs} ms` : ''} · successes {item.consecutiveSuccesses} · failures {item.consecutiveFailures}</p>{#if item.message}<p class="mt-2 text-xs text-muted-foreground">{item.message}</p>{/if}</div>{/each}</Card.Content></Card.Root>
     </div>
 
     <Card.Root>
@@ -513,99 +538,123 @@
 
   <Dialog.Root bind:open={wireGuardConfigurationDialogOpen}>
     <Dialog.Content class="sm:max-w-3xl">
-    <div class="space-y-5">
-      <div><h2 class="text-lg font-semibold">One-time WireGuard configuration</h2><p class="mt-2 text-sm text-muted-foreground">Import this configuration on the newly enrolled device now. The private key is not stored and cannot be shown again after leaving this page.</p></div>
+      <Dialog.Header>
+        <Dialog.Title>One-time WireGuard configuration</Dialog.Title>
+        <Dialog.Description>Import this configuration on the newly enrolled device now. The private key is not stored and cannot be shown again after leaving this page.</Dialog.Description>
+      </Dialog.Header>
       <pre class="max-h-[60vh] overflow-auto border border-border bg-muted/30 p-4 font-mono text-xs whitespace-pre-wrap">{enrollment?.clientConfiguration ?? ''}</pre>
-      <div class="flex justify-end"><Button type="button" onclick={() => (wireGuardConfigurationDialogOpen = false)}>I have saved this configuration</Button></div>
-    </div>
+      <Dialog.Footer>
+        <Button type="button" variant="outline" onclick={copyWireGuardConfiguration}>Copy configuration</Button>
+        <Button type="button" onclick={() => (wireGuardConfigurationDialogOpen = false)}>I have saved it</Button>
+      </Dialog.Footer>
     </Dialog.Content>
   </Dialog.Root>
 
-  <Dialog.Root bind:open={destructiveActionDialogOpen} onOpenChange={(open) => { if (!open) destructiveAction = null }}>
-    <Dialog.Content>
-    <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); executeDestructiveAction() }}>
-      <div>
-        <h2 class="text-lg font-semibold">{destructiveAction?.title ?? 'Confirm destructive action'}</h2>
-        <p class="mt-2 text-sm text-muted-foreground">{destructiveAction?.description}</p>
-      </div>
-      <div class="flex justify-end gap-2">
-        <Button type="button" variant="outline" onclick={() => (destructiveActionDialogOpen = false)}>Cancel</Button>
-        <Button type="submit" variant="destructive">{destructiveAction?.confirmationLabel ?? 'Confirm'}</Button>
-      </div>
-    </form>
-    </Dialog.Content>
-  </Dialog.Root>
+  <ConfirmActionDialog
+    bind:open={destructiveActionDialogOpen}
+    title={destructiveAction?.title ?? 'Confirm destructive action'}
+    description={destructiveAction?.description ?? 'This action cannot be undone.'}
+    confirmLabel={destructiveAction?.confirmationLabel ?? 'Confirm'}
+    processing={destructiveProcessing}
+    error={destructiveError}
+    destructive
+    onconfirm={executeDestructiveAction}
+  />
 
   <Dialog.Root bind:open={restoreDialogOpen} onOpenChange={(open) => { if (!open) { restoreBackup = null; restoreConfirmation = '' } }}>
     <Dialog.Content>
-    <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); submitRestore() }}>
-      <div><h2 class="text-lg font-semibold">Restore database from backup?</h2><p class="mt-2 text-sm text-muted-foreground">DeployCrate will first create and verify a fresh safety backup. Existing database sessions will be terminated during the final cutover and clients must reconnect.</p></div>
-      {#if restoreBackup}<div class="border border-border bg-muted/20 p-3 text-sm"><p>Backup from {observedLabel(restoreBackup.scheduledAt)}</p><p class="mt-1 font-mono text-xs text-muted-foreground">{restoreBackup.id}</p></div>{/if}
-      <FormField label={`Enter ${resource.name} to confirm`} error={errors.confirmation}><Input bind:value={restoreConfirmation} autocomplete="off" /></FormField>
-      <div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (restoreDialogOpen = false)}>Cancel</Button><Button type="submit" variant="destructive" disabled={restoreConfirmation !== resource.name}>Create safety backup and restore</Button></div>
-    </form>
+      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); submitRestore() }}>
+        <Dialog.Header>
+          <Dialog.Title>Restore database from backup?</Dialog.Title>
+          <Dialog.Description>DeployCrate first creates and verifies a fresh safety backup. Existing database sessions are terminated during the final cutover and clients must reconnect.</Dialog.Description>
+        </Dialog.Header>
+        {#if restoreBackup}<div class="border border-border bg-muted/20 p-3 text-sm"><p>Backup from {observedLabel(restoreBackup.scheduledAt)}</p><p class="mt-1 font-mono text-xs text-muted-foreground">{restoreBackup.id}</p></div>{/if}
+        <FormField label={`Enter ${resource.name} to confirm`} error={errors.confirmation}><Input bind:value={restoreConfirmation} autocomplete="off" /></FormField>
+        <Dialog.Footer><Button type="button" variant="outline" disabled={dialogAction === 'restore'} onclick={() => (restoreDialogOpen = false)}>Cancel</Button><Button type="submit" variant="destructive" disabled={restoreConfirmation !== resource.name || dialogAction === 'restore'} aria-busy={dialogAction === 'restore'}>{#if dialogAction === 'restore'}<Spinner />{/if}Create safety backup and restore</Button></Dialog.Footer>
+      </form>
     </Dialog.Content>
   </Dialog.Root>
 
   <Dialog.Root bind:open={privateAccessDialogOpen}>
     <Dialog.Content>
-    <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); enablePrivateAccess() }}>
-      <div><h2 class="text-lg font-semibold">Add to private network</h2><p class="mt-1 text-sm text-muted-foreground">Select the WireGuard network attached to the installation Server. Address, port, protocol, and installation are derived.</p></div>
-      <FormField label="Private network" error={errors.privateNetworkId}><select bind:value={privateAccessNetworkId} class={selectClass} required><option value="">Select a private network</option>{#each endpointNetworks as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField>
-      <div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (privateAccessDialogOpen = false)}>Cancel</Button><Button type="submit">Add to private network</Button></div>
-    </form>
+      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); enablePrivateAccess() }}>
+        <Dialog.Header><Dialog.Title>Add to private network</Dialog.Title><Dialog.Description>Select the WireGuard network attached to the installation Server. Address, port, protocol, and installation are derived.</Dialog.Description></Dialog.Header>
+        <FormField label="Private network" error={errors.privateNetworkId}><NativeSelect.Root bind:value={privateAccessNetworkId} class="w-full" required><NativeSelect.Option value="">Select a private network</NativeSelect.Option>{#each endpointNetworks as value}<NativeSelect.Option value={value.id}>{value.name}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
+        <Dialog.Footer><Button type="button" variant="outline" disabled={dialogAction === 'private-access'} onclick={() => (privateAccessDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'private-access'} aria-busy={dialogAction === 'private-access'}>{#if dialogAction === 'private-access'}<Spinner />{/if}Add to private network</Button></Dialog.Footer>
+      </form>
     </Dialog.Content>
   </Dialog.Root>
 
   <Dialog.Root bind:open={endpointDialogOpen}>
     <Dialog.Content class="sm:max-w-2xl">
-    <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createEndpoint() }}>
-      <div><h2 class="text-lg font-semibold">Add endpoint</h2><p class="mt-1 text-sm text-muted-foreground">Define another address for this Resource.</p></div>
-      <div class="grid gap-4 sm:grid-cols-2"><FormField label="Name" error={errors.name}><Input bind:value={endpoint.name} required /></FormField><FormField label="Address" error={errors.address}><Input bind:value={endpoint.address} required /></FormField><FormField label="Role"><select bind:value={endpoint.role} class={selectClass}>{#each definition.endpointRoles as value}<option value={value}>{value}</option>{/each}</select></FormField><FormField label="Protocol"><select bind:value={endpoint.protocol} class={selectClass}>{#each definition.protocols as value}<option value={value}>{value}</option>{/each}</select></FormField><FormField label="Port"><Input type="number" bind:value={endpoint.port} min="1" max="65535" /></FormField><FormField label="TLS"><select bind:value={endpoint.tlsMode} class={selectClass}>{#each definition.tlsModes as value}<option value={value}>{value}</option>{/each}</select></FormField><FormField label="Private network"><select bind:value={endpoint.privateNetworkId} onchange={(event) => chooseEndpointNetwork(event.currentTarget.value)} class={selectClass}><option value="">No private network</option>{#each endpointNetworks as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><div class="border border-border bg-muted/20 px-3 py-2"><p class="text-[10px] uppercase tracking-wider text-muted-foreground">Docker installation</p><p class="mt-1 text-sm">{resource.installations[0]?.containerName ?? 'Not installed'}</p></div></div>
-      <div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (endpointDialogOpen = false)}>Cancel</Button><Button type="submit">Create endpoint</Button></div>
-    </form>
+      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createEndpoint() }}>
+        <Dialog.Header><Dialog.Title>Add endpoint</Dialog.Title><Dialog.Description>Define another address for this Resource.</Dialog.Description></Dialog.Header>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <FormField label="Name" error={errors.name}><Input bind:value={endpoint.name} required /></FormField>
+          <FormField label="Address" error={errors.address}><Input bind:value={endpoint.address} required /></FormField>
+          <FormField label="Role"><NativeSelect.Root bind:value={endpoint.role} class="w-full">{#each definition.endpointRoles as value}<NativeSelect.Option value={value}>{value}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
+          <FormField label="Protocol"><NativeSelect.Root bind:value={endpoint.protocol} class="w-full">{#each definition.protocols as value}<NativeSelect.Option value={value}>{value}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
+          <FormField label="Port"><Input type="number" bind:value={endpoint.port} min="1" max="65535" /></FormField>
+          <FormField label="TLS"><NativeSelect.Root bind:value={endpoint.tlsMode} class="w-full">{#each definition.tlsModes as value}<NativeSelect.Option value={value}>{value}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
+          <FormField label="Private network"><NativeSelect.Root value={endpoint.privateNetworkId} onchange={(event) => chooseEndpointNetwork(event.currentTarget.value)} class="w-full"><NativeSelect.Option value="">No private network</NativeSelect.Option>{#each endpointNetworks as value}<NativeSelect.Option value={value.id}>{value.name}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
+          <div class="border border-border bg-muted/20 px-3 py-2"><p class="text-[10px] uppercase tracking-wider text-muted-foreground">Docker installation</p><p class="mt-1 text-sm">{resource.installations[0]?.containerName ?? 'Not installed'}</p></div>
+        </div>
+        <Dialog.Footer><Button type="button" variant="outline" disabled={dialogAction === 'endpoint'} onclick={() => (endpointDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'endpoint'} aria-busy={dialogAction === 'endpoint'}>{#if dialogAction === 'endpoint'}<Spinner />{/if}Create endpoint</Button></Dialog.Footer>
+      </form>
     </Dialog.Content>
   </Dialog.Root>
 
   <Dialog.Root bind:open={credentialDialogOpen}>
     <Dialog.Content class="sm:max-w-2xl">
-    <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createCredential() }}>
-      <div><h2 class="text-lg font-semibold">Add application credential</h2><p class="mt-1 text-sm text-muted-foreground">The credential is scoped to one Database. For PostgreSQL, DeployCrate creates the LOGIN role and grants access in code.</p></div>
-      <div class="grid gap-4 sm:grid-cols-2"><FormField label="Display name" error={errors.name}><Input bind:value={credential.name} required /></FormField><FormField label="Username" error={errors.username}><Input bind:value={credential.username} required autocomplete="username" /></FormField>{#if databaseBacked}<FormField label="Database" error={errors['metadata.database']}><select bind:value={credential.database} class={selectClass} required><option value="">Select a Database</option>{#each resource.databases as item}<option value={item.name}>{item.name}</option>{/each}</select></FormField>{/if}{#each definition.credentialFields as field}<FormField label={field.label} error={errors[`secretValues.${field.name}`]}><Input type={field.secret ? 'password' : 'text'} value={credential.secretValues[field.name] ?? ''} oninput={(event) => credential.secretValues[field.name] = event.currentTarget.value} required={field.required} autocomplete="new-password" /></FormField>{/each}</div>
-      <div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (credentialDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={!canAddApplicationUser}>Create application credential</Button></div>
-    </form>
+      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createCredential() }}>
+        <Dialog.Header><Dialog.Title>Add application credential</Dialog.Title><Dialog.Description>The credential is scoped to one Database. For PostgreSQL, DeployCrate creates the LOGIN role and grants access in code.</Dialog.Description></Dialog.Header>
+        <div class="grid gap-4 sm:grid-cols-2"><FormField label="Display name" error={errors.name}><Input bind:value={credential.name} required /></FormField><FormField label="Username" error={errors.username}><Input bind:value={credential.username} required autocomplete="username" /></FormField>{#if databaseBacked}<FormField label="Database" error={errors['metadata.database']}><NativeSelect.Root bind:value={credential.database} class="w-full" required><NativeSelect.Option value="">Select a Database</NativeSelect.Option>{#each resource.databases as item}<NativeSelect.Option value={item.name}>{item.name}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>{/if}{#each definition.credentialFields as field}<FormField label={field.label} error={errors[`secretValues.${field.name}`]}><Input type={field.secret ? 'password' : 'text'} value={credential.secretValues[field.name] ?? ''} oninput={(event) => credential.secretValues[field.name] = event.currentTarget.value} required={field.required} autocomplete="new-password" /></FormField>{/each}</div>
+        <Dialog.Footer><Button type="button" variant="outline" disabled={dialogAction === 'credential'} onclick={() => (credentialDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={!canAddApplicationUser || dialogAction === 'credential'} aria-busy={dialogAction === 'credential'}>{#if dialogAction === 'credential'}<Spinner />{/if}Create application credential</Button></Dialog.Footer>
+      </form>
     </Dialog.Content>
   </Dialog.Root>
 
   <Dialog.Root bind:open={databaseDialogOpen}>
     <Dialog.Content class="sm:max-w-xl">
       <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createDatabase() }}>
-        <div><h2 class="text-lg font-semibold">Add Database</h2><p class="mt-1 text-sm text-muted-foreground">Create a logical Database in the running Resource and record it in Resource configuration.</p></div>
+        <Dialog.Header><Dialog.Title>Add Database</Dialog.Title><Dialog.Description>Create a logical Database in the running Resource and record it in Resource configuration.</Dialog.Description></Dialog.Header>
         <div class="grid gap-4 sm:grid-cols-2">
           <div class="sm:col-span-2"><FormField label="Database name" error={errors.name}><Input bind:value={database.name} required /></FormField></div>
           <FormField label="Encoding" error={errors.encoding}><Input bind:value={database.encoding} required /></FormField>
           <FormField label="Collation" error={errors.collation}><Input bind:value={database.collation} placeholder="Default" /></FormField>
         </div>
-        <div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (databaseDialogOpen = false)}>Cancel</Button><Button type="submit">Create Database</Button></div>
+        <Dialog.Footer><Button type="button" variant="outline" disabled={dialogAction === 'database'} onclick={() => (databaseDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'database'} aria-busy={dialogAction === 'database'}>{#if dialogAction === 'database'}<Spinner />{/if}Create Database</Button></Dialog.Footer>
       </form>
     </Dialog.Content>
   </Dialog.Root>
 
   <Dialog.Root bind:open={volumeDialogOpen}>
     <Dialog.Content class="sm:max-w-xl">
-    <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createVolume() }}><div><h2 class="text-lg font-semibold">Add volume</h2><p class="mt-1 text-sm text-muted-foreground">Create durable storage for this Resource.</p></div><div class="grid gap-4 sm:grid-cols-2"><FormField label="Name"><Input bind:value={volume.name} required /></FormField><FormField label="Driver"><Input bind:value={volume.driver} required /></FormField><FormField label="Server"><select bind:value={volume.serverId} class={selectClass}>{#each options.servers as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><label class="grid gap-1 text-xs sm:col-span-2">Configuration JSON<textarea class={textareaClass} bind:value={volume.configurationText}></textarea></label></div><div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (volumeDialogOpen = false)}>Cancel</Button><Button type="submit">Create volume</Button></div></form>
+      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createVolume() }}>
+        <Dialog.Header><Dialog.Title>Add volume</Dialog.Title><Dialog.Description>Create durable storage for this Resource.</Dialog.Description></Dialog.Header>
+        <div class="grid gap-4 sm:grid-cols-2"><FormField label="Name"><Input bind:value={volume.name} required /></FormField><FormField label="Driver"><Input bind:value={volume.driver} required /></FormField><FormField label="Server"><NativeSelect.Root bind:value={volume.serverId} class="w-full">{#each options.servers as value}<NativeSelect.Option value={value.id}>{value.name}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField><div class="sm:col-span-2"><FormField label="Configuration JSON" error={jsonError}><Textarea bind:value={volume.configurationText} class="min-h-28 font-mono" /></FormField></div></div>
+        <Dialog.Footer><Button type="button" variant="outline" disabled={dialogAction === 'volume'} onclick={() => (volumeDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'volume'} aria-busy={dialogAction === 'volume'}>{#if dialogAction === 'volume'}<Spinner />{/if}Create volume</Button></Dialog.Footer>
+      </form>
     </Dialog.Content>
   </Dialog.Root>
 
   <Dialog.Root bind:open={mountDialogOpen}>
     <Dialog.Content class="sm:max-w-xl">
-    <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createMount() }}><div><h2 class="text-lg font-semibold">Add mount</h2><p class="mt-1 text-sm text-muted-foreground">Attach a Resource volume to an installation.</p></div><div class="grid gap-4 sm:grid-cols-2"><FormField label="Mount path"><Input bind:value={mount.mountPath} required /></FormField><FormField label="Volume"><select bind:value={mount.resourceVolumeId} class={selectClass}>{#each resource.volumes as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Installation"><select bind:value={mount.resourceInstallationId} class={selectClass}>{#each resource.installations as value}<option value={value.id}>{value.containerName}</option>{/each}</select></FormField><label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={mount.readOnly} /> Read only</label></div><div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (mountDialogOpen = false)}>Cancel</Button><Button type="submit">Create mount</Button></div></form>
+      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createMount() }}>
+        <Dialog.Header><Dialog.Title>Add mount</Dialog.Title><Dialog.Description>Attach a Resource volume to an installation.</Dialog.Description></Dialog.Header>
+        <div class="grid gap-4 sm:grid-cols-2"><FormField label="Mount path"><Input bind:value={mount.mountPath} required /></FormField><FormField label="Volume"><NativeSelect.Root bind:value={mount.resourceVolumeId} class="w-full">{#each resource.volumes as value}<NativeSelect.Option value={value.id}>{value.name}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField><FormField label="Installation"><NativeSelect.Root bind:value={mount.resourceInstallationId} class="w-full">{#each resource.installations as value}<NativeSelect.Option value={value.id}>{value.containerName}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField><label class="flex items-center gap-2 self-end text-xs"><Checkbox bind:checked={mount.readOnly} /> Read only</label></div>
+        <Dialog.Footer><Button type="button" variant="outline" disabled={dialogAction === 'mount'} onclick={() => (mountDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'mount'} aria-busy={dialogAction === 'mount'}>{#if dialogAction === 'mount'}<Spinner />{/if}Create mount</Button></Dialog.Footer>
+      </form>
     </Dialog.Content>
   </Dialog.Root>
 
   <Dialog.Root bind:open={healthDialogOpen}>
     <Dialog.Content class="sm:max-w-2xl">
-    <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createHealth() }}><div><h2 class="text-lg font-semibold">Add health check</h2><p class="mt-1 text-sm text-muted-foreground">Define how DeployCrate should evaluate this Resource.</p></div><div class="grid gap-4 sm:grid-cols-2"><FormField label="Name"><Input bind:value={health.name} required /></FormField><FormField label="Kind"><select bind:value={health.kind} class={selectClass}>{#each definition.healthCheckKinds as value}<option value={value}>{value}</option>{/each}</select></FormField><FormField label="Endpoint"><select bind:value={health.resourceEndpointId} class={selectClass}><option value="">None</option>{#each resource.endpoints as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Credential"><select bind:value={health.resourceCredentialId} class={selectClass}><option value="">None</option>{#each resource.credentials as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Interval seconds"><Input type="number" bind:value={health.intervalSeconds} min="1" /></FormField><FormField label="Timeout seconds"><Input type="number" bind:value={health.timeoutSeconds} min="1" /></FormField><FormField label="Failure threshold"><Input type="number" bind:value={health.failureThreshold} min="1" /></FormField><FormField label="Success threshold"><Input type="number" bind:value={health.successThreshold} min="1" /></FormField><label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={health.enabled} /> Enabled</label><label class="grid gap-1 text-xs sm:col-span-2">Configuration JSON<textarea class={textareaClass} bind:value={health.configurationText}></textarea></label></div><div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={() => (healthDialogOpen = false)}>Cancel</Button><Button type="submit">Create health check</Button></div></form>
+      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createHealth() }}>
+        <Dialog.Header><Dialog.Title>Add health check</Dialog.Title><Dialog.Description>Define how DeployCrate should evaluate this Resource.</Dialog.Description></Dialog.Header>
+        <div class="grid gap-4 sm:grid-cols-2"><FormField label="Name"><Input bind:value={health.name} required /></FormField><FormField label="Kind"><NativeSelect.Root bind:value={health.kind} class="w-full">{#each definition.healthCheckKinds as value}<NativeSelect.Option value={value}>{value}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField><FormField label="Endpoint"><NativeSelect.Root bind:value={health.resourceEndpointId} class="w-full"><NativeSelect.Option value="">None</NativeSelect.Option>{#each resource.endpoints as value}<NativeSelect.Option value={value.id}>{value.name}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField><FormField label="Credential"><NativeSelect.Root bind:value={health.resourceCredentialId} class="w-full"><NativeSelect.Option value="">None</NativeSelect.Option>{#each resource.credentials as value}<NativeSelect.Option value={value.id}>{value.name}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField><FormField label="Interval seconds"><Input type="number" bind:value={health.intervalSeconds} min="1" /></FormField><FormField label="Timeout seconds"><Input type="number" bind:value={health.timeoutSeconds} min="1" /></FormField><FormField label="Failure threshold"><Input type="number" bind:value={health.failureThreshold} min="1" /></FormField><FormField label="Success threshold"><Input type="number" bind:value={health.successThreshold} min="1" /></FormField><label class="flex items-center gap-2 text-xs"><Checkbox bind:checked={health.enabled} /> Enabled</label><div class="sm:col-span-2"><FormField label="Configuration JSON" error={jsonError}><Textarea bind:value={health.configurationText} class="min-h-28 font-mono" /></FormField></div></div>
+        <Dialog.Footer><Button type="button" variant="outline" disabled={dialogAction === 'health'} onclick={() => (healthDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'health'} aria-busy={dialogAction === 'health'}>{#if dialogAction === 'health'}<Spinner />{/if}Create health check</Button></Dialog.Footer>
+      </form>
     </Dialog.Content>
   </Dialog.Root>
 </DashboardLayout>

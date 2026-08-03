@@ -3,7 +3,12 @@
 
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
+  import * as Empty from '@/Components/ui/empty'
   import { Input } from '@/Components/ui/input'
+  import * as NativeSelect from '@/Components/ui/native-select'
+  import { Spinner } from '@/Components/ui/spinner'
+  import * as Table from '@/Components/ui/table'
+  import StatusBadge from '@/Components/StatusBadge.svelte'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
@@ -47,20 +52,12 @@
   const firstItem = $derived(pagination.totalCount === 0 ? 0 : (pagination.page - 1) * pagination.pageSize + 1)
   const lastItem = $derived(Math.min(pagination.page * pagination.pageSize, pagination.totalCount))
   const hasFilters = $derived(Boolean(filters.search || filters.state))
+  let refreshing = $state(false)
 
   function timestamp(value: string | null) {
     if (!value) return 'Not yet'
     const date = new Date(value)
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
-  }
-
-  function stateClass(state: JobState) {
-    if (state === 'completed') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-    if (state === 'running') return 'border-sky-500/30 bg-sky-500/10 text-sky-400'
-    if (state === 'available') return 'border-cyan-500/30 bg-cyan-500/10 text-cyan-400'
-    if (state === 'scheduled' || state === 'pending') return 'border-amber-500/30 bg-amber-500/10 text-amber-400'
-    if (state === 'retryable') return 'border-orange-500/30 bg-orange-500/10 text-orange-400'
-    return 'border-red-500/30 bg-red-500/10 text-red-400'
   }
 
   function pageHref(page: number) {
@@ -76,6 +73,11 @@
     const search = String(form.get('search') ?? '').trim()
     const state = String(form.get('state') ?? '')
     router.get(routes.systemTasks(), { search: search || undefined, state: state || undefined }, { replace: true })
+  }
+
+  function refresh() {
+    refreshing = true
+    router.reload({ only: ['items', 'pagination', 'stats'], onFinish: () => (refreshing = false) })
   }
 
   $effect(() => {
@@ -100,7 +102,7 @@
           Inspect River queue execution, including scheduled work, active tasks, retries, and failures.
         </p>
       </div>
-      <Button variant="outline" onclick={() => router.reload({ only: ['items', 'pagination', 'stats'] })}>Refresh</Button>
+      <Button variant="outline" disabled={refreshing} aria-busy={refreshing} onclick={refresh}>{#if refreshing}<Spinner />{/if}Refresh</Button>
     </header>
 
     <section aria-label="Queue totals" class="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -131,34 +133,38 @@
       <Card.Content class="space-y-5">
         <form class="grid gap-3 sm:grid-cols-[minmax(0,1fr)_12rem_auto_auto]" onsubmit={applyFilters}>
           <Input name="search" value={filters.search} placeholder="Search by ID, kind, or queue" aria-label="Search System Tasks" />
-          <select name="state" value={filters.state} class="h-8 border border-input bg-background px-2.5 text-xs" aria-label="Filter by state">
-            <option value="">All states</option>
-            {#each jobStates as state}<option value={state}>{state}</option>{/each}
-          </select>
+          <NativeSelect.Root class="w-full" name="state" value={filters.state} aria-label="Filter by state">
+            <NativeSelect.Option value="">All states</NativeSelect.Option>
+            {#each jobStates as state}<NativeSelect.Option value={state}>{state}</NativeSelect.Option>{/each}
+          </NativeSelect.Root>
           <Button type="submit">Filter</Button>
           {#if hasFilters}<Button href={routes.systemTasks()} variant="ghost">Clear</Button>{/if}
         </form>
 
-        <div class="overflow-x-auto border border-border">
-          <table class="w-full min-w-[760px] text-left text-sm">
-            <thead class="border-b border-border bg-muted/30 text-xs text-muted-foreground">
-              <tr><th class="px-4 py-3 font-medium">Task</th><th class="px-4 py-3 font-medium">State</th><th class="px-4 py-3 font-medium">Queue</th><th class="px-4 py-3 font-medium">Attempts</th><th class="px-4 py-3 font-medium">Last activity</th></tr>
-            </thead>
-            <tbody class="divide-y divide-border">
+        {#if items.length}
+          <div class="overflow-x-auto border border-border">
+            <Table.Root class="min-w-[760px]">
+              <Table.Header class="bg-muted/30">
+                <Table.Row><Table.Head>Task</Table.Head><Table.Head>State</Table.Head><Table.Head>Queue</Table.Head><Table.Head>Attempts</Table.Head><Table.Head>Last activity</Table.Head></Table.Row>
+              </Table.Header>
+              <Table.Body>
               {#each items as item (item.id)}
-                <tr class="hover:bg-muted/20">
-                  <td class="px-4 py-3"><Link class="font-medium text-primary hover:underline" href={routes.systemTask(item.id)}>{item.kind}</Link><p class="mt-1 font-mono text-[11px] text-muted-foreground">#{item.id}</p></td>
-                  <td class="px-4 py-3"><span class={`inline-flex border px-2 py-0.5 text-xs capitalize ${stateClass(item.state)}`}>{item.state}</span></td>
-                  <td class="px-4 py-3 font-mono text-xs">{item.queue}</td>
-                  <td class="px-4 py-3 tabular-nums">{item.attempt} / {item.maxAttempts}</td>
-                  <td class="px-4 py-3 text-muted-foreground">{timestamp(item.finalizedAt ?? item.attemptedAt ?? item.createdAt)}</td>
-                </tr>
-              {:else}
-                <tr><td colspan="5" class="px-4 py-10 text-center text-muted-foreground">No tasks to display.</td></tr>
+                <Table.Row>
+                  <Table.Cell><Link class="font-medium text-primary hover:underline" href={routes.systemTask(item.id)}>{item.kind}</Link><p class="mt-1 font-mono text-[11px] text-muted-foreground">#{item.id}</p></Table.Cell>
+                  <Table.Cell><StatusBadge status={item.state} /></Table.Cell>
+                  <Table.Cell class="font-mono text-xs">{item.queue}</Table.Cell>
+                  <Table.Cell class="tabular-nums">{item.attempt} / {item.maxAttempts}</Table.Cell>
+                  <Table.Cell class="text-muted-foreground">{timestamp(item.finalizedAt ?? item.attemptedAt ?? item.createdAt)}</Table.Cell>
+                </Table.Row>
               {/each}
-            </tbody>
-          </table>
-        </div>
+              </Table.Body>
+            </Table.Root>
+          </div>
+        {:else}
+          <Empty.Root class="border border-dashed border-border py-10">
+            <Empty.Header><Empty.Title>No tasks to display</Empty.Title><Empty.Description>{hasFilters ? 'Try changing or clearing the filters.' : 'Tasks will appear here when background work is enqueued.'}</Empty.Description></Empty.Header>
+          </Empty.Root>
+        {/if}
 
         {#if pagination.totalPages > 1}
           <div class="flex items-center justify-between gap-3">

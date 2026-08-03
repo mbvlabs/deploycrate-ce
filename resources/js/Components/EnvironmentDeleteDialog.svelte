@@ -1,9 +1,11 @@
 <script lang="ts">
   import { router } from '@inertiajs/svelte'
 
+  import * as AlertDialog from '@/Components/ui/alert-dialog'
   import { Button } from '@/Components/ui/button'
-  import * as Dialog from '@/Components/ui/dialog'
+  import * as Field from '@/Components/ui/field'
   import { Input } from '@/Components/ui/input'
+  import { Spinner } from '@/Components/ui/spinner'
   import { routes } from '@/routes'
 
   let {
@@ -47,27 +49,32 @@
   }
 </script>
 
-<Dialog.Root {open} onOpenChange={setOpen}>
-  <Dialog.Trigger>
+<AlertDialog.Root {open} onOpenChange={setOpen}>
+  <AlertDialog.Trigger>
     {#snippet child({ props })}
       <Button {...props} variant="destructive">Delete environment</Button>
     {/snippet}
-  </Dialog.Trigger>
-  <Dialog.Content showCloseButton={!processing}>
+  </AlertDialog.Trigger>
+  <AlertDialog.Content>
     <form class="grid gap-4" onsubmit={destroy}>
-      <Dialog.Header>
-        <Dialog.Title>Permanently delete {environmentName}?</Dialog.Title>
-        <Dialog.Description>This removes the Environment, its builds, deployments, releases, secrets, routes, containers, network, and background jobs. This cannot be undone.</Dialog.Description>
-      </Dialog.Header>
-      <label class="grid gap-2 text-xs">
-        Type <span class="font-mono text-foreground">{environmentName}</span> to confirm
+      <AlertDialog.Header>
+        <AlertDialog.Title>Permanently delete {environmentName}?</AlertDialog.Title>
+        <AlertDialog.Description>This removes the Environment, its builds, deployments, releases, secrets, routes, containers, network, and background jobs. This cannot be undone.</AlertDialog.Description>
+      </AlertDialog.Header>
+      <Field.Field data-invalid={Boolean(requestError)}>
+        <Field.Label class="w-full flex-col items-start">
+          <span>Type <span class="font-mono text-foreground">{environmentName}</span> to confirm</span>
         <Input bind:value={confirmation} autocomplete="off" autofocus disabled={processing} />
-      </label>
-      {#if requestError}<p class="whitespace-pre-wrap border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive" role="alert">{requestError}</p>{/if}
-      <Dialog.Footer>
+        </Field.Label>
+        {#if requestError}<Field.Error class="whitespace-pre-wrap border border-destructive/50 bg-destructive/10 p-3">{requestError}</Field.Error>{/if}
+      </Field.Field>
+      <AlertDialog.Footer>
         <Button type="button" variant="outline" disabled={processing} onclick={() => setOpen(false)}>Cancel</Button>
-        <Button type="submit" variant="destructive" disabled={!confirmed || processing}>{processing ? 'Deleting...' : 'Delete permanently'}</Button>
-      </Dialog.Footer>
+        <Button type="submit" variant="destructive" disabled={!confirmed || processing} aria-busy={processing}>
+          {#if processing}<Spinner />{/if}
+          Delete permanently
+        </Button>
+      </AlertDialog.Footer>
     </form>
-  </Dialog.Content>
-</Dialog.Root>
+  </AlertDialog.Content>
+</AlertDialog.Root>

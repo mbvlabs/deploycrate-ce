@@ -3,6 +3,8 @@
   import { Link } from '@inertiajs/svelte'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
+  import * as Empty from '@/Components/ui/empty'
+  import StatusBadge from '@/Components/StatusBadge.svelte'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
@@ -19,13 +21,13 @@
       <Button>{#snippet child({ props })}<Link {...props} href={routes.applicationNew()}>New application</Link>{/snippet}</Button>
     </header>
     {#if applications.length === 0}
-      <Card.Root><Card.Content class="grid place-items-center gap-3 py-14 text-center"><AppWindowIcon class="size-8 text-muted-foreground" /><p class="text-sm text-muted-foreground">No applications have been configured.</p></Card.Content></Card.Root>
+      <Card.Root><Card.Content><Empty.Root class="py-14"><Empty.Header><Empty.Media variant="icon"><AppWindowIcon /></Empty.Media><Empty.Title>No applications yet</Empty.Title><Empty.Description>Create an application to configure its source, Environments, and deployment targets.</Empty.Description></Empty.Header><Empty.Content><Button>{#snippet child({ props })}<Link {...props} href={routes.applicationNew()}>New application</Link>{/snippet}</Button></Empty.Content></Empty.Root></Card.Content></Card.Root>
     {:else}
       <div class="grid gap-4 md:grid-cols-2">
         {#each applications as application (application.id)}
           <Card.Root>
             <Card.Header><Card.Title>{application.name}</Card.Title><Card.Description>{application.slug}</Card.Description></Card.Header>
-            <Card.Content class="space-y-3">{#each application.environments as environment (environment.id)}<div class="flex items-start justify-between gap-4 border border-border p-3"><div><p class="text-sm font-medium">{environment.environmentName}</p><p class="mt-1 font-mono text-xs text-muted-foreground">{environment.repositoryFullName} · {environment.reference}</p></div><span class:text-success={environment.sourceHealthy} class:text-destructive={!environment.sourceHealthy} class="text-xs">{environment.sourceHealthy ? 'Ready' : 'Degraded'}</span></div>{/each}</Card.Content>
+            <Card.Content class="space-y-3">{#each application.environments as environment (environment.id)}<div class="flex items-start justify-between gap-4 border border-border p-3"><div class="min-w-0"><p class="text-sm font-medium">{environment.environmentName}</p><p class="mt-1 truncate font-mono text-xs text-muted-foreground">{environment.repositoryFullName || 'Source pending'} · {environment.reference || 'Reference pending'}</p></div><StatusBadge status={environment.sourceHealthy ? 'ready' : 'degraded'} /></div>{/each}</Card.Content>
             <Card.Footer class="border-t border-border"><Button size="sm" variant="outline">{#snippet child({ props })}<Link {...props} href={routes.applicationShow(application.id)}>Open</Link>{/snippet}</Button></Card.Footer>
           </Card.Root>
         {/each}

@@ -1,6 +1,9 @@
 <script lang="ts">
   import { Link } from '@inertiajs/svelte'
   import * as Card from '@/Components/ui/card'
+  import * as Empty from '@/Components/ui/empty'
+  import * as Table from '@/Components/ui/table'
+  import StatusBadge from '@/Components/StatusBadge.svelte'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
@@ -35,25 +38,23 @@
     <Card.Root>
       <Card.Content class="p-0">
         {#if resources.length === 0}
-          <p class="p-6 text-sm text-muted-foreground">No active system resources were found.</p>
+          <Empty.Root class="py-12"><Empty.Header><Empty.Title>No active system Resources</Empty.Title><Empty.Description>Durable infrastructure services will appear here when the system creates them.</Empty.Description></Empty.Header></Empty.Root>
         {:else}
           <div class="overflow-x-auto">
-            <table class="w-full text-left text-sm">
-              <thead class="border-b border-border bg-muted/30 text-xs text-muted-foreground">
-                <tr><th class="px-5 py-3">Resource</th><th class="px-5 py-3">Type</th><th class="px-5 py-3">Engine</th><th class="px-5 py-3">Origin</th><th class="px-5 py-3">Health</th></tr>
-              </thead>
-              <tbody>
+            <Table.Root>
+              <Table.Header class="bg-muted/30">
+                <Table.Row><Table.Head>Resource</Table.Head><Table.Head>Type</Table.Head><Table.Head>Engine</Table.Head><Table.Head>Origin</Table.Head><Table.Head>Health</Table.Head></Table.Row>
+              </Table.Header>
+              <Table.Body>
                 {#each resources as resource (resource.id)}
-                  <tr class="border-b border-border last:border-0">
-                    <td class="px-5 py-4"><Link class="font-medium text-primary hover:underline" href={routes.systemResource(resource.id)}>{resource.name}</Link></td>
-                    <td class="px-5 py-4">{label(resource.resourceType)}</td>
-                    <td class="px-5 py-4">{label(resource.engine)}</td>
-                    <td class="px-5 py-4 font-mono text-xs">{endpoint(resource.originAddress, resource.originPort)}</td>
-                    <td class="px-5 py-4">{label(resource.health)}</td>
-                  </tr>
+                  <Table.Row>
+                    <Table.Cell><Link class="font-medium text-primary hover:underline" href={routes.systemResource(resource.id)}>{resource.name}</Link></Table.Cell>
+                    <Table.Cell>{label(resource.resourceType)}</Table.Cell><Table.Cell>{label(resource.engine)}</Table.Cell>
+                    <Table.Cell class="font-mono text-xs">{endpoint(resource.originAddress, resource.originPort)}</Table.Cell><Table.Cell><StatusBadge status={resource.health} /></Table.Cell>
+                  </Table.Row>
                 {/each}
-              </tbody>
-            </table>
+              </Table.Body>
+            </Table.Root>
           </div>
         {/if}
       </Card.Content>

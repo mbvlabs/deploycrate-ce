@@ -1,6 +1,7 @@
 <script lang="ts">
+  import * as AlertDialog from '@/Components/ui/alert-dialog'
   import { Button } from '@/Components/ui/button'
-  import * as Dialog from '@/Components/ui/dialog'
+  import { Spinner } from '@/Components/ui/spinner'
 
   let {
     open = $bindable(false),
@@ -23,18 +24,19 @@
   } = $props()
 </script>
 
-<Dialog.Root bind:open>
-  <Dialog.Content showCloseButton={!processing}>
-    <Dialog.Header>
-      <Dialog.Title>{title}</Dialog.Title>
-      <Dialog.Description>{description}</Dialog.Description>
-    </Dialog.Header>
+<AlertDialog.Root {open} onOpenChange={(next) => { if (!processing) open = next }}>
+  <AlertDialog.Content>
+    <AlertDialog.Header>
+      <AlertDialog.Title>{title}</AlertDialog.Title>
+      <AlertDialog.Description>{description}</AlertDialog.Description>
+    </AlertDialog.Header>
     {#if error}<p class="border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive" role="alert">{error}</p>{/if}
-    <Dialog.Footer>
-      <Button type="button" variant="outline" disabled={processing} onclick={() => (open = false)}>Cancel</Button>
-      <Button type="button" variant={destructive ? 'destructive' : 'default'} disabled={processing} onclick={onconfirm}>
-        {processing ? `${confirmLabel}...` : confirmLabel}
+    <AlertDialog.Footer>
+      <AlertDialog.Cancel disabled={processing}>Cancel</AlertDialog.Cancel>
+      <Button type="button" variant={destructive ? 'destructive' : 'default'} disabled={processing} aria-busy={processing} onclick={onconfirm}>
+        {#if processing}<Spinner />{/if}
+        {confirmLabel}
       </Button>
-    </Dialog.Footer>
-  </Dialog.Content>
-</Dialog.Root>
+    </AlertDialog.Footer>
+  </AlertDialog.Content>
+</AlertDialog.Root>

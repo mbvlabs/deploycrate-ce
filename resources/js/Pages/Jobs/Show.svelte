@@ -2,9 +2,13 @@
   import { router } from '@inertiajs/svelte'
 
   import { Button } from '@/Components/ui/button'
+  import * as ButtonGroup from '@/Components/ui/button-group'
   import * as Card from '@/Components/ui/card'
+  import * as ScrollArea from '@/Components/ui/scroll-area'
+  import { Spinner } from '@/Components/ui/spinner'
   import ConfirmActionDialog from '@/Components/ConfirmActionDialog.svelte'
   import JsonCode from '@/Components/JsonCode.svelte'
+  import StatusBadge from '@/Components/StatusBadge.svelte'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
@@ -45,15 +49,6 @@
     return Number.isNaN(date.getTime()) ? value : date.toLocaleString()
   }
 
-  function stateClass(state: string) {
-    if (state === 'completed') return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-400'
-    if (state === 'running') return 'border-sky-500/30 bg-sky-500/10 text-sky-400'
-    if (state === 'available') return 'border-cyan-500/30 bg-cyan-500/10 text-cyan-400'
-    if (state === 'scheduled' || state === 'pending') return 'border-amber-500/30 bg-amber-500/10 text-amber-400'
-    if (state === 'retryable') return 'border-orange-500/30 bg-orange-500/10 text-orange-400'
-    return 'border-red-500/30 bg-red-500/10 text-red-400'
-  }
-
   function askForAction(action: NonNullable<typeof pendingAction>) {
     pendingAction = action
     actionDialogOpen = true
@@ -87,15 +82,17 @@
     <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div class="min-w-0">
         <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">System Tasks</p>
-        <div class="mt-3 flex flex-wrap items-center gap-3"><h1 class="break-all text-3xl font-semibold tracking-tight">{item.kind}</h1><span class={`inline-flex border px-2 py-0.5 text-xs capitalize ${stateClass(item.state)}`}>{item.state}</span></div>
+        <div class="mt-3 flex flex-wrap items-center gap-3"><h1 class="break-all text-3xl font-semibold tracking-tight">{item.kind}</h1><StatusBadge status={item.state} /></div>
         <p class="mt-3 font-mono text-xs text-muted-foreground">Task #{item.id}{isActive ? ' · live updates every three seconds' : ''}</p>
       </div>
-      <div class="flex flex-wrap gap-2">
+      <div class="flex flex-wrap gap-2" aria-label="Task actions">
         <Button href={routes.systemTasks()} variant="outline">Back to tasks</Button>
-        {#if item.canRun}<Button disabled={Boolean(activeAction)} onclick={() => askForAction({ action: 'run', url: routes.systemTaskRun(item.id), title: 'Run task now?', description: 'Make this task immediately available to a background worker.', confirmLabel: 'Run task', destructive: false, method: 'post' })}>{activeAction === 'run' ? 'Starting...' : 'Run now'}</Button>{/if}
+        <ButtonGroup.Root>
+        {#if item.canRun}<Button disabled={Boolean(activeAction)} aria-busy={activeAction === 'run'} onclick={() => askForAction({ action: 'run', url: routes.systemTaskRun(item.id), title: 'Run task now?', description: 'Make this task immediately available to a background worker.', confirmLabel: 'Run task', destructive: false, method: 'post' })}>{#if activeAction === 'run'}<Spinner />{/if}Run now</Button>{/if}
         {#if item.canRestart}<Button variant="outline" disabled={Boolean(activeAction)} onclick={() => askForAction({ action: 'restart', url: routes.systemTaskRetry(item.id), title: 'Restart task?', description: 'Restart this task and retain its existing attempt history.', confirmLabel: 'Restart task', destructive: false, method: 'post' })}>{activeAction === 'restart' ? 'Restarting...' : 'Restart'}</Button>{/if}
         {#if item.canCancel}<Button variant="outline" disabled={Boolean(activeAction)} onclick={() => askForAction({ action: 'cancel', url: routes.systemTaskCancel(item.id), title: 'Cancel task?', description: 'A running worker will receive a cancellation signal.', confirmLabel: 'Cancel task', destructive: true, method: 'post' })}>{activeAction === 'cancel' ? 'Cancelling...' : 'Cancel'}</Button>{/if}
         {#if item.canDelete}<Button variant="destructive" disabled={Boolean(activeAction)} onclick={() => askForAction({ action: 'delete', url: routes.systemTaskDestroy(item.id), title: 'Permanently delete task?', description: 'This removes the task and all of its attempt history. This cannot be undone.', confirmLabel: 'Delete task', destructive: true, method: 'delete' })}>{activeAction === 'delete' ? 'Deleting...' : 'Delete'}</Button>{/if}
+        </ButtonGroup.Root>
         <Button variant="outline" disabled={Boolean(activeAction)} onclick={() => router.reload({ only: ['item'] })}>Refresh</Button>
       </div>
     </header>
@@ -129,7 +126,7 @@
     <section class="grid gap-4 xl:grid-cols-2">
       <Card.Root><Card.Header><Card.Title>Arguments</Card.Title><Card.Description>The JSON payload passed to the worker.</Card.Description></Card.Header><Card.Content><JsonCode value={item.args} /></Card.Content></Card.Root>
       <Card.Root><Card.Header><Card.Title>Metadata</Card.Title><Card.Description>River metadata recorded for this System Task.</Card.Description></Card.Header><Card.Content><JsonCode value={item.metadata} /></Card.Content></Card.Root>
-      <Card.Root class="xl:col-span-2"><Card.Header><Card.Title>Attempt errors</Card.Title><Card.Description>{item.errors.length ? `${item.errors.length} failed attempt${item.errors.length === 1 ? '' : 's'} recorded.` : 'No failures have been recorded.'}</Card.Description></Card.Header><Card.Content><JsonCode value={item.errors} /></Card.Content></Card.Root>
+      <Card.Root class="xl:col-span-2"><Card.Header><Card.Title>Attempt errors</Card.Title><Card.Description>{item.errors.length ? `${item.errors.length} failed attempt${item.errors.length === 1 ? '' : 's'} recorded.` : 'No failures have been recorded.'}</Card.Description></Card.Header><Card.Content><ScrollArea.Root class="max-h-[32rem]"><JsonCode value={item.errors} /></ScrollArea.Root></Card.Content></Card.Root>
     </section>
 
     <Card.Root>

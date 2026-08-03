@@ -1,15 +1,20 @@
 <script lang="ts">
+  import EyeIcon from '@lucide/svelte/icons/eye'
+  import EyeOffIcon from '@lucide/svelte/icons/eye-off'
   import { Link, useForm } from '@inertiajs/svelte'
 
   import AuthCard from '@/Components/Auth/AuthCard.svelte'
   import { Button } from '@/Components/ui/button'
   import { Input } from '@/Components/ui/input'
+  import * as InputGroup from '@/Components/ui/input-group'
   import { Label } from '@/Components/ui/label'
+  import { Spinner } from '@/Components/ui/spinner'
   import Layout from '@/Layouts/Layout.svelte'
   import { routes } from '@/routes'
 
   let { errors = {} }: { errors?: Record<string, string> } = $props()
   const form = useForm({ email: '', password: '' })
+  let showPassword = $state(false)
 
   function submit(event: SubmitEvent) {
     event.preventDefault()
@@ -43,19 +48,19 @@
           <Label for="password">Password</Label>
           <Link class="text-xs text-primary underline-offset-4 hover:underline" href={routes.passwordNew()}>Forgot password?</Link>
         </div>
-        <Input
-          id="password"
-          bind:value={$form.password}
-          type="password"
-          autocomplete="current-password"
-          aria-invalid={errors.password ? 'true' : undefined}
-          aria-describedby={errors.password ? 'password-error' : undefined}
-          required
-        />
+        <InputGroup.Root>
+          <InputGroup.Input id="password" bind:value={$form.password} type={showPassword ? 'text' : 'password'} autocomplete="current-password" aria-invalid={errors.password ? 'true' : undefined} aria-describedby={errors.password ? 'password-error' : undefined} required />
+          <InputGroup.Addon align="inline-end">
+            <InputGroup.Button size="icon-xs" aria-label={showPassword ? 'Hide password' : 'Show password'} onclick={() => (showPassword = !showPassword)}>
+              {#if showPassword}<EyeOffIcon />{:else}<EyeIcon />{/if}
+            </InputGroup.Button>
+          </InputGroup.Addon>
+        </InputGroup.Root>
         {#if errors.password}<p id="password-error" class="text-xs font-medium text-destructive">{errors.password}</p>{/if}
       </div>
-      <Button type="submit" size="lg" disabled={$form.processing} class="w-full">
-        {$form.processing ? 'Signing in...' : 'Sign in'}
+      <Button type="submit" size="lg" disabled={$form.processing} aria-busy={$form.processing} class="w-full">
+        {#if $form.processing}<Spinner />{/if}
+        Sign in
       </Button>
     </form>
   </AuthCard>

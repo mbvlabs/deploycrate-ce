@@ -4,6 +4,8 @@
 
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
+  import * as Empty from '@/Components/ui/empty'
+  import StatusBadge from '@/Components/StatusBadge.svelte'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
@@ -37,26 +39,20 @@
     </header>
 
     {#if environments.length === 0}
-      <Card.Root>
-        <Card.Content class="grid place-items-center gap-4 py-14 text-center">
-          <BoxesIcon class="size-8 text-muted-foreground" />
-          <div><p class="font-medium">No Environments yet</p><p class="mt-1 text-sm text-muted-foreground">Create an Application with its Production and optional Staging Environment.</p></div>
-          <Button>{#snippet child({ props })}<Link {...props} href={routes.applicationNew()}>New application</Link>{/snippet}</Button>
-        </Card.Content>
-      </Card.Root>
+      <Card.Root><Card.Content><Empty.Root class="py-14"><Empty.Header><Empty.Media variant="icon"><BoxesIcon /></Empty.Media><Empty.Title>No Environments yet</Empty.Title><Empty.Description>Create an Application with its Production and optional Staging Environment.</Empty.Description></Empty.Header><Empty.Content><Button>{#snippet child({ props })}<Link {...props} href={routes.applicationNew()}>New application</Link>{/snippet}</Button></Empty.Content></Empty.Root></Card.Content></Card.Root>
     {:else}
       <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {#each environments as environment (environment.id)}
           <Card.Root>
             <Card.Header>
-              <Card.Action><span class="text-xs text-success">Ready</span></Card.Action>
+              <Card.Action><StatusBadge status={environment.latestBuildStatus || 'pending'} label={environment.latestBuildStatus ? `Build ${environment.latestBuildStatus}` : 'Build pending'} /></Card.Action>
               <Card.Title>{environment.name}</Card.Title>
               <Card.Description>{environment.applicationName} · {environment.kind}</Card.Description>
             </Card.Header>
             <Card.Content class="space-y-2 text-xs">
               <p class="font-mono">{environment.repository || 'Source pending'}</p>
               <p class="font-mono text-muted-foreground">{environment.reference || 'Reference pending'}</p>
-              <p class="text-muted-foreground">{environment.domain || 'Domain not configured'}{environment.latestBuildStatus ? ` · Build ${environment.latestBuildStatus}` : ''}</p>
+              <p class="text-muted-foreground">{environment.domain || 'Domain not configured'}</p>
             </Card.Content>
             <Card.Footer class="border-t border-border">
               <Button size="sm" variant="outline">

@@ -7,7 +7,13 @@
   import FormField from '@/Components/FormField.svelte'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
+  import { Checkbox } from '@/Components/ui/checkbox'
+  import * as Empty from '@/Components/ui/empty'
   import { Input } from '@/Components/ui/input'
+  import * as NativeSelect from '@/Components/ui/native-select'
+  import { Spinner } from '@/Components/ui/spinner'
+  import * as Table from '@/Components/ui/table'
+  import StatusBadge from '@/Components/StatusBadge.svelte'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
@@ -34,7 +40,6 @@
     options: { domains: DomainOption[]; targets: TargetOption[]; releases: ReleaseOption[]; instances: InstanceOption[] }
   } = $props()
 
-  const selectClass = 'h-9 w-full border border-input bg-background px-3 text-sm'
   const form = useForm<RouteInput>(() => {
     const domain = options.domains[0]
     return {
@@ -204,24 +209,24 @@
           <Card.Header><Card.Title>Create route</Card.Title><Card.Description>Select one Environment domain and the running instances that should receive its traffic.</Card.Description></Card.Header>
           <Card.Content class="grid gap-5 sm:grid-cols-2">
             <FormField label="Domain">
-              <select value={$form.environmentDomainId} onchange={(event) => selectCreateDomain(event.currentTarget.value)} class={selectClass} required>
-                {#each options.domains as domain}<option value={domain.id}>{domain.hostname} · {domain.applicationName} / {domain.environmentName}</option>{/each}
-              </select>
+              <NativeSelect.Root class="w-full" value={$form.environmentDomainId} onchange={(event) => selectCreateDomain(event.currentTarget.value)} required>
+                {#each options.domains as domain}<NativeSelect.Option value={domain.id}>{domain.hostname} · {domain.applicationName} / {domain.environmentName}</NativeSelect.Option>{/each}
+              </NativeSelect.Root>
             </FormField>
             <FormField label="Caddy route ID"><Input bind:value={$form.externalId} required placeholder="deploycrate_route_example_com" /></FormField>
             <FormField label="Target">
-              <select value={$form.environmentTargetId} onchange={(event) => selectCreateTarget(event.currentTarget.value)} class={selectClass} required>{#each createTargets as target}<option value={target.id}>{target.serverName}</option>{/each}</select>
+              <NativeSelect.Root class="w-full" value={$form.environmentTargetId} onchange={(event) => selectCreateTarget(event.currentTarget.value)} required>{#each createTargets as target}<NativeSelect.Option value={target.id}>{target.serverName}</NativeSelect.Option>{/each}</NativeSelect.Root>
             </FormField>
             <FormField label="Active release">
-              <select bind:value={$form.releaseId} class={selectClass} required>{#each createReleases as release}<option value={release.id}>{release.label}</option>{/each}</select>
+              <NativeSelect.Root class="w-full" bind:value={$form.releaseId} required>{#each createReleases as release}<NativeSelect.Option value={release.id}>{release.label}</NativeSelect.Option>{/each}</NativeSelect.Root>
             </FormField>
             <div class="sm:col-span-2">
               <p class="mb-2 text-xs font-medium">Backends and weights</p>
               <div class="divide-y divide-border border border-border">
                 {#each createInstances as instance}
                   <div class="grid grid-cols-[auto_1fr_7rem] items-center gap-3 p-3">
-                    <input type="checkbox" checked={backendSelected($form, instance.id)} onchange={(event) => toggleBackend($form, instance.id, event.currentTarget.checked)} />
-                    <div><p class="font-mono text-xs">{instance.externalId}</p><p class="text-xs text-muted-foreground">{instance.address} · {instance.slot} · {instance.state}</p></div>
+                    <Checkbox checked={backendSelected($form, instance.id)} onCheckedChange={(checked) => toggleBackend($form, instance.id, checked)} aria-label={`Use ${instance.externalId} as a backend`} />
+                    <div><p class="font-mono text-xs">{instance.externalId}</p><div class="mt-1 flex flex-wrap items-center gap-2"><span class="text-xs text-muted-foreground">{instance.address} · {instance.slot}</span><StatusBadge status={instance.state} /></div></div>
                     <Input type="number" min="0" max="100" disabled={!backendSelected($form, instance.id)} value={backendWeight($form, instance.id)} oninput={(event) => setBackendWeight($form, instance.id, Number(event.currentTarget.value))} />
                   </div>
                 {:else}<p class="p-4 text-sm text-muted-foreground">No active instances are available on this target.</p>{/each}
@@ -229,42 +234,42 @@
               <p class="mt-2 text-xs text-muted-foreground">Selected weights must total 100.</p>
             </div>
           </Card.Content>
-          <Card.Footer class="justify-end gap-2 border-t border-border"><Button type="button" variant="outline" onclick={() => showCreate = false}>Cancel</Button><Button type="submit" disabled={$form.processing || $form.backends.length === 0}>Create and apply</Button></Card.Footer>
+          <Card.Footer class="justify-end gap-2 border-t border-border"><Button type="button" variant="outline" onclick={() => showCreate = false}>Cancel</Button><Button type="submit" disabled={$form.processing || $form.backends.length === 0} aria-busy={$form.processing}>{#if $form.processing}<Spinner />{/if}Create and apply</Button></Card.Footer>
         </Card.Root>
       </form>
     {/if}
 
     {#if caddyRoutes.length === 0}
-      <Card.Root><Card.Content class="grid place-items-center gap-3 py-14 text-center"><RouteIcon class="size-8 text-muted-foreground" /><p class="text-sm text-muted-foreground">No Caddy routes are registered in PostgreSQL.</p></Card.Content></Card.Root>
+      <Empty.Root class="border border-dashed border-border py-14"><Empty.Header><Empty.Media><RouteIcon /></Empty.Media><Empty.Title>No Caddy routes</Empty.Title><Empty.Description>Create a route to send an Environment domain to its active release.</Empty.Description></Empty.Header><Empty.Content><Button onclick={() => showCreate = true}><PlusIcon />New route</Button></Empty.Content></Empty.Root>
     {:else}
       <div class="space-y-4">
         {#each caddyRoutes as route (route.id)}
           <Card.Root>
             <Card.Header>
-              <Card.Action><span class:text-success={route.state === 'applied'} class:text-destructive={route.state !== 'applied'} class="text-xs uppercase tracking-wider">{route.state.replaceAll('_', ' ')}</span></Card.Action>
+              <Card.Action><StatusBadge status={route.state} /></Card.Action>
               <Card.Title>{route.hostname}</Card.Title>
               <Card.Description>{route.applicationName} / {route.environmentName} · {route.serverName}</Card.Description>
             </Card.Header>
             {#if editingID === route.id && editDraft}
               <Card.Content class="grid gap-5 sm:grid-cols-2">
-                <FormField label="Domain"><select bind:value={editDraft.environmentDomainId} class={selectClass}>{#each options.domains as domain}<option value={domain.id}>{domain.hostname} · {domain.applicationName} / {domain.environmentName}</option>{/each}</select></FormField>
+                <FormField label="Domain"><NativeSelect.Root class="w-full" bind:value={editDraft.environmentDomainId}>{#each options.domains as domain}<NativeSelect.Option value={domain.id}>{domain.hostname} · {domain.applicationName} / {domain.environmentName}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
                 <FormField label="Caddy route ID"><Input bind:value={editDraft.externalId} readonly /></FormField>
-                <FormField label="Target"><select value={editDraft.environmentTargetId} onchange={(event) => selectEditTarget(event.currentTarget.value)} class={selectClass}>{#each editTargets as target}<option value={target.id}>{target.serverName}</option>{/each}</select></FormField>
-                <FormField label="Active release"><select bind:value={editDraft.releaseId} class={selectClass}>{#each editReleases as release}<option value={release.id}>{release.label}</option>{/each}</select></FormField>
+                <FormField label="Target"><NativeSelect.Root class="w-full" value={editDraft.environmentTargetId} onchange={(event) => selectEditTarget(event.currentTarget.value)}>{#each editTargets as target}<NativeSelect.Option value={target.id}>{target.serverName}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
+                <FormField label="Active release"><NativeSelect.Root class="w-full" bind:value={editDraft.releaseId}>{#each editReleases as release}<NativeSelect.Option value={release.id}>{release.label}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
                 <div class="sm:col-span-2">
                   <p class="mb-2 text-xs font-medium">Backends and weights</p>
                   <div class="divide-y divide-border border border-border">
                     {#each editInstances as instance}
                       <div class="grid grid-cols-[auto_1fr_7rem] items-center gap-3 p-3">
-                        <input type="checkbox" checked={backendSelected(editDraft, instance.id)} onchange={(event) => editDraft && toggleBackend(editDraft, instance.id, event.currentTarget.checked)} />
-                        <div><p class="font-mono text-xs">{instance.externalId}</p><p class="text-xs text-muted-foreground">{instance.address} · {instance.slot} · {instance.state}</p></div>
+                        <Checkbox checked={backendSelected(editDraft, instance.id)} onCheckedChange={(checked) => editDraft && toggleBackend(editDraft, instance.id, checked)} aria-label={`Use ${instance.externalId} as a backend`} />
+                        <div><p class="font-mono text-xs">{instance.externalId}</p><div class="mt-1 flex flex-wrap items-center gap-2"><span class="text-xs text-muted-foreground">{instance.address} · {instance.slot}</span><StatusBadge status={instance.state} /></div></div>
                         <Input type="number" min="0" max="100" disabled={!backendSelected(editDraft, instance.id)} value={backendWeight(editDraft, instance.id)} oninput={(event) => editDraft && setBackendWeight(editDraft, instance.id, Number(event.currentTarget.value))} />
                       </div>
                     {/each}
                   </div>
                 </div>
               </Card.Content>
-              <Card.Footer class="justify-end gap-2 border-t border-border"><Button variant="outline" onclick={() => { editingID = ''; editDraft = null }}>Cancel</Button><Button onclick={saveEdit} disabled={editProcessing || editDraft.backends.length === 0}>Save and apply</Button></Card.Footer>
+              <Card.Footer class="justify-end gap-2 border-t border-border"><Button variant="outline" onclick={() => { editingID = ''; editDraft = null }}>Cancel</Button><Button onclick={saveEdit} disabled={editProcessing || editDraft.backends.length === 0} aria-busy={editProcessing}>{#if editProcessing}<Spinner />{/if}Save and apply</Button></Card.Footer>
             {:else}
               <Card.Content class="space-y-5">
                 <div class="grid gap-4 text-xs sm:grid-cols-2 lg:grid-cols-4">
@@ -274,7 +279,7 @@
                   <div><p class="uppercase tracking-wider text-muted-foreground">Last applied</p><p class="mt-1">{formatTime(route.appliedAt)}</p></div>
                 </div>
                 <div class="overflow-x-auto border border-border">
-                  <table class="w-full text-left text-xs"><thead class="bg-muted/40 text-muted-foreground"><tr><th class="px-3 py-2 font-medium">Instance</th><th class="px-3 py-2 font-medium">Address</th><th class="px-3 py-2 font-medium">State</th><th class="px-3 py-2 text-right font-medium">Weight</th></tr></thead><tbody class="divide-y divide-border">{#each route.backends as backend}<tr><td class="px-3 py-2 font-mono">{backend.externalId}</td><td class="px-3 py-2 font-mono">{backend.address}</td><td class="px-3 py-2">{backend.state}</td><td class="px-3 py-2 text-right tabular-nums">{backend.weight}</td></tr>{/each}</tbody></table>
+                  <Table.Root><Table.Header class="bg-muted/40"><Table.Row><Table.Head>Instance</Table.Head><Table.Head>Address</Table.Head><Table.Head>State</Table.Head><Table.Head class="text-right">Weight</Table.Head></Table.Row></Table.Header><Table.Body>{#each route.backends as backend}<Table.Row><Table.Cell class="font-mono text-xs">{backend.externalId}</Table.Cell><Table.Cell class="font-mono text-xs">{backend.address}</Table.Cell><Table.Cell><StatusBadge status={backend.state} /></Table.Cell><Table.Cell class="text-right tabular-nums">{backend.weight}</Table.Cell></Table.Row>{/each}</Table.Body></Table.Root>
                 </div>
               </Card.Content>
               <Card.Footer class="justify-end gap-2 border-t border-border"><Button size="sm" variant="outline" onclick={() => beginEdit(route)}>Edit</Button><Button size="sm" variant="destructive" onclick={() => { deleteTarget = route; deleteDialogOpen = true }}>Delete</Button></Card.Footer>

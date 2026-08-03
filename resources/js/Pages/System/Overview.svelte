@@ -2,10 +2,13 @@
   import { Link } from '@inertiajs/svelte'
 
   import * as Accordion from '@/Components/ui/accordion'
+  import * as Alert from '@/Components/ui/alert'
   import { Button } from '@/Components/ui/button'
+  import * as Empty from '@/Components/ui/empty'
   import { Separator } from '@/Components/ui/separator'
   import UsageHistory from '@/Components/System/UsageHistory.svelte'
   import UsageDonut from '@/Components/System/UsageDonut.svelte'
+  import StatusBadge from '@/Components/StatusBadge.svelte'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
@@ -212,7 +215,7 @@
               <p class="text-sm font-semibold">Network</p>
               <p class="mt-1 font-normal text-muted-foreground">WireGuard network and public route</p>
             </div>
-            <span class="capitalize text-muted-foreground">{stateLabel(system.networkState)}</span>
+            <StatusBadge status={system.networkState} />
           </div>
         </Accordion.Trigger>
         <Accordion.Content class="border-t border-border py-5">
@@ -231,7 +234,7 @@
             </div>
             <div>
               <dt class="text-muted-foreground">Route state</dt>
-              <dd class="mt-1 text-sm capitalize">{stateLabel(system.routeState)}</dd>
+              <dd class="mt-1"><StatusBadge status={system.routeState} /></dd>
             </div>
             <div class="sm:col-span-2 xl:col-span-4">
               <dt class="text-muted-foreground">Caddy route</dt>
@@ -248,9 +251,7 @@
               <p class="text-sm font-semibold">Runtime</p>
               <p class="mt-1 font-normal text-muted-foreground">System identity, host, service, and health</p>
             </div>
-            <span class={health.ok ? 'text-success' : 'text-destructive'}>
-              {health.ok ? 'Healthy' : 'Attention required'}
-            </span>
+            <StatusBadge status={health.ok ? 'healthy' : 'unhealthy'} label={health.ok ? 'Healthy' : 'Attention required'} />
           </div>
         </Accordion.Trigger>
         <Accordion.Content class="border-t border-border py-5">
@@ -288,7 +289,7 @@
                 </div>
                 <div>
                   <dt class="text-muted-foreground">Server state</dt>
-                  <dd class="mt-1 text-sm capitalize">{stateLabel(system.serverStatus)}</dd>
+                  <dd class="mt-1"><StatusBadge status={system.serverStatus} /></dd>
                 </div>
                 <div>
                   <dt class="text-muted-foreground">Address</dt>
@@ -336,9 +337,7 @@
                   <div class="border border-border/70 bg-muted/20 p-3">
                     <div class="flex items-start justify-between gap-4">
                       <p class="text-sm font-medium">{checkLabel(check.name)}</p>
-                      <span class={check.ok ? 'text-success' : 'text-destructive'}>
-                        {check.ok ? 'Passed' : 'Failed'}
-                      </span>
+                      <StatusBadge status={check.ok ? 'healthy' : 'failed'} label={check.ok ? 'Passed' : 'Failed'} />
                     </div>
                     <p class="mt-1 break-words text-xs leading-5 text-muted-foreground">{check.detail}</p>
                   </div>
@@ -438,7 +437,7 @@
               {/each}
             </div>
           {:else}
-            <p class="text-sm text-muted-foreground">No active resources are bound to the system environment.</p>
+            <Empty.Root class="py-8"><Empty.Header><Empty.Title>No active Resources</Empty.Title><Empty.Description>Resources bound to the system Environment will appear here.</Empty.Description></Empty.Header></Empty.Root>
           {/if}
         </Accordion.Content>
       </Accordion.Item>
@@ -465,9 +464,7 @@
                       <p class="text-sm font-medium capitalize">{backup.targetType}</p>
                       <p class="mt-1 font-mono text-xs text-muted-foreground">{backup.schedule}</p>
                     </div>
-                    <span class={backup.lastStatus === 'failed' || backup.lastStatus === 'verification_failed' ? 'capitalize text-destructive' : 'capitalize text-muted-foreground'}>
-                      {backup.activeOrRetrying ? 'Active or retrying' : stateLabel(backup.lastStatus)}
-                    </span>
+                    <StatusBadge status={backup.activeOrRetrying ? 'running' : backup.lastStatus} label={backup.activeOrRetrying ? 'Active or retrying' : undefined} />
                   </div>
                   <dl class="mt-4 grid gap-4 sm:grid-cols-2">
                     <div>
@@ -492,13 +489,13 @@
                     </div>
                   </dl>
                   {#if backup.lastError}
-                    <p class="mt-4 break-words text-xs leading-5 text-destructive">{backup.lastError}</p>
+                    <Alert.Root variant="destructive" class="mt-4"><Alert.Title>Backup error</Alert.Title><Alert.Description>{backup.lastError}</Alert.Description></Alert.Root>
                   {/if}
                 </div>
               {/each}
             </div>
           {:else}
-            <p class="text-sm text-muted-foreground">Backups were not configured during bootstrap.</p>
+            <Empty.Root class="py-8"><Empty.Header><Empty.Title>No backup policies</Empty.Title><Empty.Description>Backups were not configured during bootstrap.</Empty.Description></Empty.Header></Empty.Root>
           {/if}
         </Accordion.Content>
       </Accordion.Item>
@@ -510,7 +507,7 @@
               <p class="text-sm font-semibold">Deployments</p>
               <p class="mt-1 font-normal text-muted-foreground">Active release, deployment, and systemd slot</p>
             </div>
-            <span class="capitalize text-muted-foreground">{stateLabel(system.deploymentStatus)}</span>
+            <StatusBadge status={system.deploymentStatus} />
           </div>
         </Accordion.Trigger>
         <Accordion.Content class="border-t border-border py-5">
@@ -521,7 +518,7 @@
             </div>
             <div>
               <dt class="text-muted-foreground">Deployment status</dt>
-              <dd class="mt-1 text-sm capitalize">{stateLabel(system.deploymentStatus)}</dd>
+              <dd class="mt-1"><StatusBadge status={system.deploymentStatus} /></dd>
             </div>
             <div>
               <dt class="text-muted-foreground">Current step</dt>
@@ -537,7 +534,7 @@
             </div>
             <div>
               <dt class="text-muted-foreground">Instance state</dt>
-              <dd class="mt-1 text-sm capitalize">{stateLabel(system.activeState)}</dd>
+              <dd class="mt-1"><StatusBadge status={system.activeState} /></dd>
             </div>
             <div>
               <dt class="text-muted-foreground">Service</dt>

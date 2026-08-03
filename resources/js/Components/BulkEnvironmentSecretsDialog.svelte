@@ -1,6 +1,9 @@
 <script lang="ts">
+  import * as Alert from '@/Components/ui/alert'
   import { Button } from '@/Components/ui/button'
   import * as Dialog from '@/Components/ui/dialog'
+  import * as Field from '@/Components/ui/field'
+  import { Textarea } from '@/Components/ui/textarea'
 
   type Secret = { key: string; value: string }
 
@@ -59,6 +62,7 @@
     }
 
     errors = nextErrors
+    if (parsed.length === 0 && errors.length === 0) errors = ['Paste at least one secret to import.']
     if (errors.length > 0) return
     onImport(parsed)
     close()
@@ -68,10 +72,23 @@
 <Dialog.Root bind:open>
   <Dialog.Content class="sm:max-w-2xl">
     <form class="space-y-5" onsubmit={submit}>
-      <div><h2 class="text-lg font-semibold">Import Environment secrets</h2><p class="mt-1 text-sm text-muted-foreground">Paste one secret per line using KEY=VALUE. Values may contain additional equals signs.</p></div>
-      <label class="grid gap-2 text-xs">Secrets<textarea class="min-h-64 w-full border border-input bg-background px-3 py-2 font-mono text-xs" bind:value={text} placeholder={'DATABASE_URL=postgres://...\nAPI_TOKEN=...'} autocomplete="off" spellcheck="false"></textarea></label>
-      {#if errors.length > 0}<div class="border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive">{#each errors as error}<p>{error}</p>{/each}</div>{/if}
-      <div class="flex justify-end gap-2"><Button type="button" variant="outline" onclick={close}>Cancel</Button><Button type="submit">Import secrets</Button></div>
+      <Dialog.Header>
+        <Dialog.Title>Import Environment secrets</Dialog.Title>
+        <Dialog.Description>Paste one secret per line using KEY=VALUE. Values may contain additional equals signs.</Dialog.Description>
+      </Dialog.Header>
+      <Field.Field data-invalid={errors.length > 0}>
+        <Field.Label class="w-full flex-col items-start">
+          <span>Secrets</span>
+          <Textarea class="min-h-64 font-mono" bind:value={text} placeholder={'DATABASE_URL=postgres://...\nAPI_TOKEN=...'} autocomplete="off" spellcheck="false" />
+        </Field.Label>
+      </Field.Field>
+      {#if errors.length > 0}
+        <Alert.Root variant="destructive" role="alert">
+          <Alert.Title>Import could not continue</Alert.Title>
+          <Alert.Description>{#each errors as error}<p>{error}</p>{/each}</Alert.Description>
+        </Alert.Root>
+      {/if}
+      <Dialog.Footer><Button type="button" variant="outline" onclick={close}>Cancel</Button><Button type="submit">Import secrets</Button></Dialog.Footer>
     </form>
   </Dialog.Content>
 </Dialog.Root>

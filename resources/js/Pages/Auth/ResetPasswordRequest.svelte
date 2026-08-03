@@ -5,6 +5,7 @@
   import { Button } from '@/Components/ui/button'
   import { Input } from '@/Components/ui/input'
   import { Label } from '@/Components/ui/label'
+  import { Spinner } from '@/Components/ui/spinner'
   import Layout from '@/Layouts/Layout.svelte'
   import { routes } from '@/routes'
 
@@ -38,8 +39,9 @@
         />
         {#if errors.email}<p id="email-error" class="text-xs font-medium text-destructive">{errors.email}</p>{/if}
       </div>
-      <Button type="submit" size="lg" disabled={$form.processing} class="w-full">
-        {$form.processing ? 'Sending code...' : 'Send reset code'}
+      <Button type="submit" size="lg" disabled={$form.processing} aria-busy={$form.processing} class="w-full">
+        {#if $form.processing}<Spinner />{/if}
+        Send reset code
       </Button>
     </form>
 

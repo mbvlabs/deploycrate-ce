@@ -4,6 +4,7 @@
   import ServerIcon from '@lucide/svelte/icons/server'
   import ShieldCheckIcon from '@lucide/svelte/icons/shield-check'
 
+  import StatusBadge from '@/Components/StatusBadge.svelte'
   import * as Card from '@/Components/ui/card'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
 
@@ -37,10 +38,7 @@
         <Card.Root>
           <Card.Header>
             <Card.Action>
-              <span class="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-success">
-                <span class="size-1.5 bg-success"></span>
-                Ready
-              </span>
+              <StatusBadge status="ready" />
             </Card.Action>
             <span class="mb-2 grid size-8 place-items-center border border-primary/40 bg-primary/10 text-primary">
               <Icon class="size-4" />

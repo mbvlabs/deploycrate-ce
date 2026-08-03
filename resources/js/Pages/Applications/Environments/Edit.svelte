@@ -6,6 +6,8 @@
   import EnvironmentDeleteDialog from '@/Components/EnvironmentDeleteDialog.svelte'
   import FormField from '@/Components/FormField.svelte'
   import { Input } from '@/Components/ui/input'
+  import * as NativeSelect from '@/Components/ui/native-select'
+  import { Spinner } from '@/Components/ui/spinner'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
@@ -80,12 +82,12 @@
     <Card.Root>
       <Card.Header><Card.Title>Resources</Card.Title><Card.Description>Replace the active Resource connections and their managed Environment variables.</Card.Description></Card.Header>
       <Card.Content class="space-y-4">
-        <div class="flex gap-2"><select bind:value={selectedResource} class="h-9 flex-1 border border-input bg-background px-3 text-sm"><option value="">Select a Resource</option>{#each availableResources as option}<option value={`${option.id}:${option.endpointId}:${option.credentialId ?? ''}`}>{option.name} · {option.engine}{option.database ? ` · ${option.database}` : ''} · {option.endpoint} · {option.credential || 'without credentials'}</option>{/each}</select><Button type="button" variant="outline" onclick={addResource}>Attach</Button></div>
+        <div class="flex flex-col gap-2 sm:flex-row"><NativeSelect.Root bind:value={selectedResource} class="w-full flex-1"><NativeSelect.Option value="">Select a Resource</NativeSelect.Option>{#each availableResources as option}<NativeSelect.Option value={`${option.id}:${option.endpointId}:${option.credentialId ?? ''}`}>{option.name} · {option.engine}{option.database ? ` · ${option.database}` : ''} · {option.endpoint} · {option.credential || 'without credentials'}</NativeSelect.Option>{/each}</NativeSelect.Root><Button type="button" variant="outline" disabled={!selectedResource} onclick={addResource}>Attach</Button></div>
         {#each $form.resources as resource, index}
           <div class="grid gap-3 border border-border p-4 sm:grid-cols-2">
             <FormField label="Alias" error={$form.errors[`resources.${index}.alias`]}><Input bind:value={resource.alias} /></FormField>
             {#if resource.database}<FormField label="Database"><Input bind:value={resource.database} readonly /></FormField>{/if}
-            {#if attachedResourceOption(resource)?.supportsConnectionUrl}<FormField label="Connection format" error={$form.errors[`resources.${index}.credentialProjection`]}><select bind:value={resource.credentialProjection} class="h-9 w-full border border-input bg-background px-3 text-sm"><option value="connection_url">Connection URL</option><option value="individual_parts">Individual parts</option></select></FormField>{/if}
+            {#if attachedResourceOption(resource)?.supportsConnectionUrl}<FormField label="Connection format" error={$form.errors[`resources.${index}.credentialProjection`]}><NativeSelect.Root bind:value={resource.credentialProjection} class="w-full"><NativeSelect.Option value="connection_url">Connection URL</NativeSelect.Option><NativeSelect.Option value="individual_parts">Individual parts</NativeSelect.Option></NativeSelect.Root></FormField>{/if}
             <div class="border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">{resource.credentialProjection === 'connection_url' ? `${resource.alias.trim().toUpperCase() || 'RESOURCE'}_URL` : ['HOST', 'PORT', 'PROTOCOL', 'TLS_MODE', ...(resource.database ? ['DATABASE'] : []), ...(attachedResourceOption(resource)?.credentialId ? ['USER', ...(attachedResourceOption(resource)?.credentialFields ?? []).map((field) => field.toUpperCase())] : [])].map((suffix) => `${resource.alias.trim().toUpperCase() || 'RESOURCE'}_${suffix}`).join(', ')}</div>
             <Button type="button" variant="ghost" onclick={() => $form.resources = $form.resources.filter((_, itemIndex) => itemIndex !== index)}>Remove</Button>
           </div>
@@ -98,6 +100,6 @@
       <Card.Content class="grid gap-4 sm:grid-cols-2"><div class="border border-border p-4"><p class="font-medium">GitHub and Buildpacks</p><p class="mt-1 text-sm text-muted-foreground">{environment.repository} at {environment.reference}, context {environment.contextPath}</p><Button class="mt-4" type="button" variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentSourceEdit(environment.applicationId, environment.environment.id)}>Edit source</Link>{/snippet}</Button></div><div class="border border-border p-4"><p class="font-medium">Environment secrets</p><p class="mt-1 text-sm text-muted-foreground">Add, rotate, and delete write-only values from the Environment page.</p><Button class="mt-4" type="button" variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentShow(environment.applicationId, environment.environment.id)}>Manage secrets</Link>{/snippet}</Button></div></Card.Content>
     </Card.Root>
 
-    <div class="flex justify-end"><Button type="submit" disabled={$form.processing}>{$form.processing ? 'Saving...' : 'Save and deploy'}</Button></div>
+    <div class="flex justify-end"><Button type="submit" disabled={$form.processing} aria-busy={$form.processing}>{#if $form.processing}<Spinner />{/if}Save and deploy</Button></div>
   </form>
 </DashboardLayout>

@@ -6,6 +6,7 @@
   import { Button } from '@/Components/ui/button'
   import { Input } from '@/Components/ui/input'
   import { Label } from '@/Components/ui/label'
+  import { Spinner } from '@/Components/ui/spinner'
   import Layout from '@/Layouts/Layout.svelte'
   import { routes } from '@/routes'
 
@@ -62,8 +63,9 @@
         />
         {#if errors.confirmPassword}<p id="confirm-password-error" class="text-xs font-medium text-destructive">{errors.confirmPassword}</p>{/if}
       </div>
-      <Button type="submit" size="lg" disabled={$form.processing} class="w-full">
-        {$form.processing ? 'Updating password...' : 'Update password'}
+      <Button type="submit" size="lg" disabled={$form.processing} aria-busy={$form.processing} class="w-full">
+        {#if $form.processing}<Spinner />{/if}
+        Update password
       </Button>
     </form>
   </AuthCard>

@@ -2,14 +2,17 @@
   import AlertTriangleIcon from '@lucide/svelte/icons/triangle-alert'
   import CheckCircleIcon from '@lucide/svelte/icons/circle-check'
   import DownloadIcon from '@lucide/svelte/icons/download'
-  import LoaderCircleIcon from '@lucide/svelte/icons/loader-circle'
-  import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw'
   import { router } from '@inertiajs/svelte'
 
   import * as Alert from '@/Components/ui/alert'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
+  import * as Empty from '@/Components/ui/empty'
+  import { Progress } from '@/Components/ui/progress'
+  import * as ScrollArea from '@/Components/ui/scroll-area'
   import { Separator } from '@/Components/ui/separator'
+  import { Spinner } from '@/Components/ui/spinner'
+  import StatusBadge from '@/Components/StatusBadge.svelte'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
@@ -54,6 +57,13 @@
   const running = $derived(update.state === 'queued' || update.state === 'in_progress')
   const canUpdate = $derived(!running)
   const updateEvents = $derived(update.events ?? [])
+  const updateProgress = $derived.by(() => {
+    if (update.state === 'succeeded' || update.state === 'failed') return 100
+    if (update.state === 'queued') return 10
+    const steps = ['download', 'verify', 'install', 'start', 'health', 'cutover', 'cleanup']
+    const index = steps.findIndex((step) => update.currentStep.toLowerCase().includes(step))
+    return index < 0 ? 40 : Math.round(((index + 1) / steps.length) * 90)
+  })
 
   $effect(() => {
     if (!running) return
@@ -164,8 +174,9 @@
         </Card.Header>
         <Card.Content class="space-y-5">
           <div class="border border-border bg-muted/30 p-4">
-            <p class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Installed</p>
+            <div class="flex items-center justify-between gap-3"><p class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Installed</p><StatusBadge status={update.state} /></div>
             <p class="mt-2 font-mono text-lg font-semibold">{versionLabel(currentVersion)}</p>
+            {#if running}<div class="mt-4 space-y-2"><div class="flex justify-between gap-3 text-xs"><span class="capitalize">{stepLabel(update.currentStep)}</span><span>{updateProgress}%</span></div><Progress value={updateProgress} aria-label="System update progress" /></div>{/if}
           </div>
         </Card.Content>
         <Card.Footer class="justify-between gap-4 border-t border-border">
@@ -176,9 +187,9 @@
               Download and install the latest development build.
             {/if}
           </div>
-          <Button onclick={startUpdate} disabled={!canUpdate || starting}>
+          <Button onclick={startUpdate} disabled={!canUpdate || starting} aria-busy={running || starting}>
             {#if running || starting}
-              <LoaderCircleIcon class="animate-spin" />
+              <Spinner />
               Updating
             {:else}
               <DownloadIcon />
@@ -192,10 +203,7 @@
         <Card.Header>
           <Card.Action>
             {#if running}
-              <span class="inline-flex items-center gap-1.5 text-[10px] uppercase tracking-[0.14em] text-primary">
-                <RefreshCwIcon class="size-3 animate-spin" />
-                {reconnecting ? 'Reconnecting' : 'Live'}
-              </span>
+              <StatusBadge status={reconnecting ? 'reconnecting' : 'running'} label={reconnecting ? 'Reconnecting' : 'Live'} />
             {/if}
           </Card.Action>
           <Card.Title>Update activity</Card.Title>
@@ -203,9 +211,9 @@
         </Card.Header>
         <Card.Content>
           {#if updateEvents.length === 0}
-            <p class="text-sm text-muted-foreground">No update has been started on this installation.</p>
+            <Empty.Root class="py-8"><Empty.Header><Empty.Title>No update activity</Empty.Title><Empty.Description>Deployment and cutover events will appear after an update starts.</Empty.Description></Empty.Header></Empty.Root>
           {:else}
-            <ol class="space-y-0">
+            <ScrollArea.Root class="max-h-[30rem]"><ol class="space-y-0 pr-3">
               {#each [...updateEvents].reverse() as event, index (event.id)}
                 <li class="grid grid-cols-[0.75rem_1fr] gap-3">
                   <div class="flex flex-col items-center">
@@ -218,7 +226,7 @@
                   </div>
                 </li>
               {/each}
-            </ol>
+            </ol></ScrollArea.Root>
           {/if}
         </Card.Content>
         {#if update.activeInstanceBefore || update.activeInstance}

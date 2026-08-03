@@ -2,16 +2,25 @@
   import BoxesIcon from '@lucide/svelte/icons/boxes'
   import { router, useForm } from '@inertiajs/svelte'
 
+  import ConfirmActionDialog from '@/Components/ConfirmActionDialog.svelte'
+  import FormField from '@/Components/FormField.svelte'
+  import StatusBadge from '@/Components/StatusBadge.svelte'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
-  import FormField from '@/Components/FormField.svelte'
+  import * as Empty from '@/Components/ui/empty'
   import { Input } from '@/Components/ui/input'
+  import * as NativeSelect from '@/Components/ui/native-select'
+  import { Spinner } from '@/Components/ui/spinner'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
   type Registry = { id: string; name: string; provider: string; endpoint: string; username: string; credentialName: string; managed: boolean; createdAt: string }
   let { auth, registries }: { auth: { email: string }; registries: Registry[] } = $props()
   let preset = $state('docker_hub')
+  let archiveTarget = $state<Registry | null>(null)
+  let archiveDialogOpen = $state(false)
+  let archiveProcessing = $state(false)
+  let archiveError = $state('')
   const form = useForm(() => ({ name: 'Docker Hub', endpoint: 'docker.io', username: '', accessToken: '' }))
 
   function selectPreset() {
@@ -27,6 +36,23 @@
   function submit(event: SubmitEvent) {
     event.preventDefault()
 		$form.post(routes.registryResourceCreate(), { onSuccess: () => $form.reset() })
+  }
+
+  function askToArchive(registry: Registry) {
+    archiveTarget = registry
+    archiveError = ''
+    archiveDialogOpen = true
+  }
+
+  function archive() {
+    if (!archiveTarget || archiveProcessing) return
+    archiveProcessing = true
+    archiveError = ''
+    router.delete(routes.registryResourceDestroy(archiveTarget.id), {
+      onSuccess: () => { archiveDialogOpen = false; archiveTarget = null },
+      onError: (errors) => (archiveError = Object.values(errors).map(String).join('\n') || 'The registry could not be archived.'),
+      onFinish: () => (archiveProcessing = false),
+    })
   }
 </script>
 
@@ -45,13 +71,13 @@
       <Card.Content>
         <form class="grid gap-5 sm:grid-cols-2" onsubmit={submit}>
           <FormField label="Registry type">
-            <select bind:value={preset} onchange={selectPreset} class="h-9 w-full border border-input bg-background px-3 text-sm"><option value="docker_hub">Docker Hub</option><option value="custom">Custom OCI registry</option></select>
+            <NativeSelect.Root bind:value={preset} onchange={selectPreset} class="w-full"><NativeSelect.Option value="docker_hub">Docker Hub</NativeSelect.Option><NativeSelect.Option value="custom">Custom OCI registry</NativeSelect.Option></NativeSelect.Root>
           </FormField>
           <FormField label="Display name" error={$form.errors.name}><Input bind:value={$form.name} required /></FormField>
           <FormField label="Registry endpoint" error={$form.errors.endpoint}><Input bind:value={$form.endpoint} placeholder="ghcr.io" readonly={preset === 'docker_hub'} required /></FormField>
           <FormField label="Username" error={$form.errors.username}><Input bind:value={$form.username} autocomplete="username" required /></FormField>
           <FormField label="Access token" error={$form.errors.accessToken}><Input type="password" bind:value={$form.accessToken} autocomplete="new-password" required /></FormField>
-          <div class="flex items-end"><Button type="submit" disabled={$form.processing}>Connect registry</Button></div>
+          <div class="flex items-end"><Button type="submit" disabled={$form.processing} aria-busy={$form.processing}>{#if $form.processing}<Spinner />{/if}Connect registry</Button></div>
         </form>
       </Card.Content>
     </Card.Root>
@@ -59,18 +85,19 @@
     <section class="space-y-4">
       <div><h2 class="text-xl font-semibold">Available registries</h2><p class="mt-1 text-sm text-muted-foreground">These destinations are selectable when creating or editing an Application source.</p></div>
       {#if registries.length === 0}
-        <Card.Root><Card.Content class="grid place-items-center gap-3 py-12 text-center"><BoxesIcon class="size-7 text-muted-foreground" /><p class="text-sm text-muted-foreground">No Registry Resources are available.</p></Card.Content></Card.Root>
+        <Empty.Root class="border border-border"><Empty.Header><Empty.Media variant="icon"><BoxesIcon /></Empty.Media><Empty.Title>No Registry Resources</Empty.Title><Empty.Description>Connect an external OCI registry to publish and deploy Application images.</Empty.Description></Empty.Header></Empty.Root>
       {:else}
         <div class="grid gap-4 md:grid-cols-2">
           {#each registries as registry (registry.id)}
             <Card.Root>
-              <Card.Header><Card.Action><span class="text-xs" class:text-success={registry.managed}>{registry.managed ? 'Managed' : 'External'}</span></Card.Action><Card.Title>{registry.name}</Card.Title><Card.Description>{registry.endpoint}</Card.Description></Card.Header>
+              <Card.Header><Card.Action><StatusBadge status={registry.managed ? 'managed' : 'external'} /></Card.Action><Card.Title>{registry.name}</Card.Title><Card.Description>{registry.endpoint}</Card.Description></Card.Header>
               <Card.Content class="grid gap-3 text-sm sm:grid-cols-2"><div><p class="text-xs text-muted-foreground">Protocol</p><p class="mt-1">OCI Distribution</p></div><div><p class="text-xs text-muted-foreground">Username</p><p class="mt-1 font-mono">{registry.username}</p></div></Card.Content>
-				{#if !registry.managed}<Card.Footer class="border-t border-border"><Button size="sm" variant="destructive" onclick={() => router.delete(routes.registryResourceDestroy(registry.id))}>Archive</Button></Card.Footer>{/if}
+					{#if !registry.managed}<Card.Footer class="border-t border-border"><Button size="sm" variant="destructive" onclick={() => askToArchive(registry)}>Archive</Button></Card.Footer>{/if}
             </Card.Root>
           {/each}
         </div>
       {/if}
     </section>
   </div>
+  <ConfirmActionDialog bind:open={archiveDialogOpen} title={`Archive ${archiveTarget?.name ?? 'registry'}?`} description="This registry will no longer be available for new builds or deployments." confirmLabel="Archive registry" destructive processing={archiveProcessing} error={archiveError} onconfirm={archive} />
 </DashboardLayout>

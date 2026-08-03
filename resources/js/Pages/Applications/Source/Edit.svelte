@@ -5,6 +5,9 @@
   import * as Card from '@/Components/ui/card'
   import FormField from '@/Components/FormField.svelte'
   import { Input } from '@/Components/ui/input'
+  import { Checkbox } from '@/Components/ui/checkbox'
+  import * as NativeSelect from '@/Components/ui/native-select'
+  import { Spinner } from '@/Components/ui/spinner'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   type Repository = { id: string; githubInstallationId: string; fullName: string }
   type Registry = { id: string; name: string; endpoint: string }
@@ -25,21 +28,21 @@
   <form class="mx-auto max-w-3xl" onsubmit={submit}>
     <Card.Root><Card.Header><Card.Title>Edit deployment source</Card.Title><Card.Description>Choose a GitHub Buildpacks build or an existing image from a connected registry.</Card.Description></Card.Header>
       <Card.Content class="grid gap-5 sm:grid-cols-2">
-        <FormField label="Source type"><select bind:value={$form.sourceType} class="h-9 border border-input bg-background px-3 text-sm"><option value="buildpacks">GitHub with Buildpacks</option><option value="image">Registry image</option></select></FormField>
-        <FormField label="Registry Resource"><select bind:value={$form.registryResourceId} class="h-9 border border-input bg-background px-3 text-sm">{#each options.registries as registry}<option value={registry.id}>{registry.name} · {registry.endpoint}</option>{/each}</select></FormField>
+        <FormField label="Source type"><NativeSelect.Root bind:value={$form.sourceType} class="w-full"><NativeSelect.Option value="buildpacks">GitHub with Buildpacks</NativeSelect.Option><NativeSelect.Option value="image">Registry image</NativeSelect.Option></NativeSelect.Root></FormField>
+        <FormField label="Registry Resource"><NativeSelect.Root bind:value={$form.registryResourceId} class="w-full">{#each options.registries as registry}<NativeSelect.Option value={registry.id}>{registry.name} · {registry.endpoint}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
         {#if $form.sourceType === 'buildpacks'}
-          <FormField label="GitHub account"><select bind:value={$form.githubInstallationId} class="h-9 border border-input bg-background px-3 text-sm">{#each options.installations as installation}<option value={installation.id}>{installation.accountLogin}</option>{/each}</select></FormField>
-          <FormField label="Repository"><select bind:value={$form.githubRepositoryId} class="h-9 border border-input bg-background px-3 text-sm">{#each repositories as repository}<option value={repository.id}>{repository.fullName}</option>{/each}</select></FormField>
+          <FormField label="GitHub account"><NativeSelect.Root bind:value={$form.githubInstallationId} class="w-full">{#each options.installations as installation}<NativeSelect.Option value={installation.id}>{installation.accountLogin}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
+          <FormField label="Repository"><NativeSelect.Root bind:value={$form.githubRepositoryId} class="w-full">{#each repositories as repository}<NativeSelect.Option value={repository.id}>{repository.fullName}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
           <FormField label="Branch or full ref"><Input bind:value={$form.reference} required /></FormField><FormField label="Build context"><Input bind:value={$form.contextPath} required /></FormField>
-          <FormField label="Build Server"><select bind:value={$form.buildServerId} class="h-9 border border-input bg-background px-3 text-sm" required>{#each options.buildServers as server}<option value={server.id}>{server.name} · {server.kind === 'worker' ? server.address : 'Control plane'}</option>{/each}</select></FormField>
+          <FormField label="Build Server"><NativeSelect.Root bind:value={$form.buildServerId} class="w-full" required>{#each options.buildServers as server}<NativeSelect.Option value={server.id}>{server.name} · {server.kind === 'worker' ? server.address : 'Control plane'}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
           <FormField label="Output image repository"><Input bind:value={$form.imageRepository} required /></FormField>
-          <label class="flex gap-3 border border-border p-4"><input class="mt-1" type="checkbox" bind:checked={buildFrontendAssets} /><span><span class="font-medium">Build Node frontend assets</span><span class="mt-1 block text-xs text-muted-foreground">Build frontend assets before the Go Buildpacks build.</span></span></label>
-          <label class="flex items-center gap-2 text-sm"><input type="checkbox" bind:checked={$form.autoBuild} /> Build automatically</label>
+          <label class="flex gap-3 border border-border p-4"><Checkbox class="mt-1" bind:checked={buildFrontendAssets} /><span><span class="font-medium">Build Node frontend assets</span><span class="mt-1 block text-xs text-muted-foreground">Build frontend assets before the Go Buildpacks build.</span></span></label>
+          <label class="flex items-center gap-2 text-sm"><Checkbox bind:checked={$form.autoBuild} /> Build automatically</label>
         {:else}
           <FormField label="Image repository"><Input bind:value={$form.imageRepository} placeholder="team/application" required /></FormField>
           <FormField label="Default tag or digest"><Input bind:value={$form.reference} placeholder="latest" required /></FormField>
           <div class="border border-border bg-muted/20 p-4 sm:col-span-2"><p class="text-sm">DeployCrate resolves this reference to an immutable digest for each Release.</p></div>
         {/if}
-      </Card.Content><Card.Footer class="justify-between border-t border-border"><Button variant="outline">{#snippet child({ props })}<Link {...props} href={returnUrl}>Cancel</Link>{/snippet}</Button><Button type="submit" disabled={$form.processing}>Save source</Button></Card.Footer></Card.Root>
+      </Card.Content><Card.Footer class="justify-between border-t border-border"><Button variant="outline">{#snippet child({ props })}<Link {...props} href={returnUrl}>Cancel</Link>{/snippet}</Button><Button type="submit" disabled={$form.processing} aria-busy={$form.processing}>{#if $form.processing}<Spinner />{/if}Save source</Button></Card.Footer></Card.Root>
   </form>
 </DashboardLayout>

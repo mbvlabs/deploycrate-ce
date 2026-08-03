@@ -3,13 +3,16 @@
   import { untrack } from 'svelte'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
+  import * as Collapsible from '@/Components/ui/collapsible'
   import * as Dialog from '@/Components/ui/dialog'
   import ConfirmActionDialog from '@/Components/ConfirmActionDialog.svelte'
   import DataField from '@/Components/DataField.svelte'
   import EnvironmentDeleteDialog from '@/Components/EnvironmentDeleteDialog.svelte'
+  import StatusBadge from '@/Components/StatusBadge.svelte'
   import TelemetryDonut from '@/Components/Applications/Environments/TelemetryDonut.svelte'
   import TelemetryHistory from '@/Components/Applications/Environments/TelemetryHistory.svelte'
   import { Input } from '@/Components/ui/input'
+  import { Spinner } from '@/Components/ui/spinner'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
@@ -66,7 +69,11 @@
   let apiToken = $state('')
   let apiTokenError = $state('')
   let apiTokenDialogOpen = $state(false)
+  let apiTokenConfirmOpen = $state(false)
   let apiTokenProcessing = $state(false)
+  let deploymentCreationProcessing = $state(false)
+  let secretCreationProcessing = $state(false)
+  let deploymentRetrying = $state('')
   let liveBuilds = $state<Build[] | null>(null)
   let liveDeployments = $state<Deployment[] | null>(null)
   let buildLogs = $state<Record<string, BuildLog[]>>({})
@@ -83,6 +90,7 @@
   let environmentLogConnectionError = $state('')
   let environmentLogsPaused = $state(false)
   let followingEnvironmentLogs = $state(true)
+  let workloadLogsOpen = $state(true)
   let environmentLogViewport: HTMLDivElement
   let activeReleaseDeployment = $state('')
   let activeBuildAction = $state('')
@@ -93,6 +101,8 @@
   let rotatedSecretValue = $state('')
   let secretActionProcessing = $state(false)
   let secretActionError = $state('')
+  let archiveSecretDialogOpen = $state(false)
+  let archivingSecret = $state<Secret | null>(null)
   const loadingBuilds = new Set<string>()
   const loadingDeployments = new Set<string>()
   const builds = $derived(liveBuilds ?? environment.builds)
@@ -119,7 +129,15 @@
   const stepLabel = (value: string) => value ? value.replaceAll('_', ' ') : 'waiting for worker'
   const deploymentStep = (deployment: Deployment) => deployment.active ? 'serving' : deployment.status === 'succeeded' ? 'superseded' : deployment.currentStep || 'queued'
   const secretStatusLabel = (secret: Secret) => secret.status === 'pending_removal' ? 'Pending removal' : secret.status[0].toUpperCase() + secret.status.slice(1)
-  function createSecret() { router.post(routes.environmentSecretsCreate(environment.applicationId, environment.environment.id), { key, value }, { onSuccess: () => { key = ''; value = '' } }) }
+  function createSecret() {
+    if (!key.trim() || !value || secretCreationProcessing) return
+    secretCreationProcessing = true
+    router.post(routes.environmentSecretsCreate(environment.applicationId, environment.environment.id), { key, value }, {
+      preserveScroll: true,
+      onSuccess: () => { key = ''; value = '' },
+      onFinish: () => (secretCreationProcessing = false),
+    })
+  }
   function askToRotate(secret: Secret) {
     rotatingSecret = secret
     rotatedSecretValue = ''
@@ -142,6 +160,8 @@
     })
   }
   function buildAndDeploy() {
+    if (deploymentCreationProcessing) return
+    deploymentCreationProcessing = true
     router.post(routes.environmentDeploymentsCreate(environment.applicationId, environment.environment.id), environment.sourceType === 'image' ? { reference: imageReference } : {}, {
       onSuccess: () => {
         liveBuilds = null
@@ -149,6 +169,7 @@
         buildLogCursors = {}
         expandedBuildId = ''
       },
+      onFinish: () => (deploymentCreationProcessing = false),
     })
   }
   async function rotateAPIToken() {
@@ -161,6 +182,7 @@
       const payload = await response.json() as { token?: string; error?: string }
       if (!response.ok || !payload.token) throw new Error(payload.error || 'API token could not be created')
       apiToken = payload.token
+      apiTokenConfirmOpen = false
       apiTokenDialogOpen = true
       router.reload({ only: ['environment'], preserveScroll: true })
     } catch (error) {
@@ -180,6 +202,30 @@
         expandedDeploymentId = ''
       },
       onFinish: () => (activeReleaseDeployment = ''),
+    })
+  }
+  function askToArchiveSecret(secret: Secret) {
+    archivingSecret = secret
+    secretActionError = ''
+    archiveSecretDialogOpen = true
+  }
+  function archiveSecret() {
+    if (!archivingSecret || secretActionProcessing) return
+    secretActionProcessing = true
+    secretActionError = ''
+    router.delete(routes.environmentSecretDestroy(environment.applicationId, environment.environment.id, archivingSecret.id), {
+      preserveScroll: true,
+      onSuccess: () => (archiveSecretDialogOpen = false),
+      onError: (errors) => (secretActionError = Object.values(errors).map(String).join('\n') || 'The secret could not be archived.'),
+      onFinish: () => (secretActionProcessing = false),
+    })
+  }
+  function retryDeployment(deploymentId: string) {
+    if (deploymentRetrying) return
+    deploymentRetrying = deploymentId
+    router.post(routes.environmentDeploymentRetry(environment.applicationId, environment.environment.id, deploymentId), {}, {
+      preserveScroll: true,
+      onFinish: () => (deploymentRetrying = ''),
     })
   }
   function askForBuildAction(action: 'start' | 'stop' | 'retry', build: Build) {
@@ -431,19 +477,19 @@
 <svelte:head><title>{environment.environment.name}</title></svelte:head>
 <DashboardLayout email={auth.email}>
   <div class="space-y-8">
-    <header class="flex items-end justify-between gap-4">
+    <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div><p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">{environment.applicationName} · {environment.environment.kind}</p><h1 class="mt-3 text-3xl font-semibold">{environment.environment.name}</h1></div>
-      <div class="flex flex-wrap gap-2"><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentEdit(environment.applicationId, environment.environment.id)}>Edit environment</Link>{/snippet}</Button><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentSourceEdit(environment.applicationId, environment.environment.id)}>Edit source</Link>{/snippet}</Button>{#if environment.sourceType === 'buildpacks'}<Button onclick={buildAndDeploy}>Build & deploy</Button>{/if}<EnvironmentDeleteDialog applicationId={environment.applicationId} environmentId={environment.environment.id} environmentName={environment.environment.name} /></div>
+      <div class="flex flex-wrap gap-2"><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentEdit(environment.applicationId, environment.environment.id)}>Edit environment</Link>{/snippet}</Button><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentSourceEdit(environment.applicationId, environment.environment.id)}>Edit source</Link>{/snippet}</Button>{#if environment.sourceType === 'buildpacks'}<Button disabled={deploymentCreationProcessing || !environment.deployability.deployable} aria-busy={deploymentCreationProcessing} onclick={buildAndDeploy}>{#if deploymentCreationProcessing}<Spinner />{/if}Build & deploy</Button>{/if}<EnvironmentDeleteDialog applicationId={environment.applicationId} environmentId={environment.environment.id} environmentName={environment.environment.name} /></div>
     </header>
 
-    <Card.Root><Card.Header><Card.Action><span class:text-success={environment.deployability.deployable} class:text-destructive={!environment.deployability.deployable}>{environment.deployability.deployable ? 'Ready' : 'Blocked'}</span></Card.Action><Card.Title>Desired state</Card.Title></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><DataField label="Repository" value={environment.repository} /><DataField label="Reference" value={environment.reference} /><DataField label="Build context" value={environment.contextPath} /><DataField label="Domain" value={environment.domain} /><DataField label="Runtime Server targets" value={environment.runtimeServers.join(', ')} /><DataField label="Registry" value={environment.registryName} /><DataField label="Registry endpoint" value={environment.registryEndpoint} />{#if !environment.deployability.deployable}<DataField label="Missing" value={environment.deployability.missing.join(', ')} />{/if}</Card.Content></Card.Root>
+    <Card.Root><Card.Header><Card.Action><StatusBadge status={environment.deployability.deployable ? 'ready' : 'blocked'} /></Card.Action><Card.Title>Desired state</Card.Title></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><DataField label="Repository" value={environment.repository} /><DataField label="Reference" value={environment.reference} /><DataField label="Build context" value={environment.contextPath} /><DataField label="Domain" value={environment.domain} /><DataField label="Runtime Server targets" value={environment.runtimeServers.join(', ')} /><DataField label="Registry" value={environment.registryName} /><DataField label="Registry endpoint" value={environment.registryEndpoint} />{#if !environment.deployability.deployable}<DataField label="Missing" value={environment.deployability.missing.join(', ')} />{/if}</Card.Content></Card.Root>
 
     {#if environment.sourceType === 'image'}
-      <Card.Root><Card.Header><Card.Title>Deploy image version</Card.Title><Card.Description>Use the configured reference or override it with another tag or sha256 digest.</Card.Description></Card.Header><Card.Content class="flex flex-col gap-3 sm:flex-row"><Input bind:value={imageReference} placeholder="latest" /><Button onclick={buildAndDeploy}>Resolve & deploy</Button></Card.Content></Card.Root>
+      <Card.Root><Card.Header><Card.Title>Deploy image version</Card.Title><Card.Description>Use the configured reference or override it with another tag or sha256 digest.</Card.Description></Card.Header><Card.Content class="flex flex-col gap-3 sm:flex-row"><Input bind:value={imageReference} placeholder="latest" /><Button disabled={deploymentCreationProcessing || !imageReference.trim() || !environment.deployability.deployable} aria-busy={deploymentCreationProcessing} onclick={buildAndDeploy}>{#if deploymentCreationProcessing}<Spinner />{/if}Resolve & deploy</Button></Card.Content></Card.Root>
     {/if}
 
     {#if environment.sourceType === 'image'}
-      <Card.Root><Card.Header><Card.Action><Button size="sm" variant="outline" disabled={apiTokenProcessing} onclick={rotateAPIToken}>{apiTokenProcessing ? 'Creating...' : environment.apiTokenPrefix ? 'Rotate token' : 'Create token'}</Button></Card.Action><Card.Title>Deployment API</Card.Title><Card.Description>Environment-scoped bearer token for image deployments. A replacement token invalidates the previous token immediately.</Card.Description></Card.Header><Card.Content class="space-y-2 text-sm"><p class="font-mono">POST /api/environments/{environment.environment.id}/deployments</p><p class="text-xs text-muted-foreground">JSON: {`{"reference":"1.2.3"}`} · Token: {environment.apiTokenPrefix ? `${environment.apiTokenPrefix}...` : 'Not configured'}</p>{#if apiTokenError}<p class="text-xs text-destructive">{apiTokenError}</p>{/if}</Card.Content></Card.Root>
+      <Card.Root><Card.Header><Card.Action><Button size="sm" variant="outline" disabled={apiTokenProcessing} onclick={() => (apiTokenConfirmOpen = true)}>{#if apiTokenProcessing}<Spinner />{/if}{environment.apiTokenPrefix ? 'Rotate token' : 'Create token'}</Button></Card.Action><Card.Title>Deployment API</Card.Title><Card.Description>Environment-scoped bearer token for image deployments. A replacement token invalidates the previous token immediately.</Card.Description></Card.Header><Card.Content class="space-y-2 text-sm"><p class="font-mono">POST /api/environments/{environment.environment.id}/deployments</p><p class="text-xs text-muted-foreground">JSON: {`{"reference":"1.2.3"}`} · Token: {environment.apiTokenPrefix ? `${environment.apiTokenPrefix}...` : 'Not configured'}</p>{#if apiTokenError}<p class="text-xs text-destructive">{apiTokenError}</p>{/if}</Card.Content></Card.Root>
     {/if}
 
     <section aria-labelledby="workload-telemetry-heading" class="space-y-4">
@@ -456,7 +502,7 @@
           <div class="text-left text-xs sm:text-right">
             <p class="font-medium">Instance {short(activeTelemetry.instance)}</p>
             <p class="mt-1 font-mono text-[11px] text-muted-foreground">Deployment {short(activeTelemetry.deployment)} · Release {short(activeTelemetry.release)}</p>
-            <p class={`mt-1 ${activeTelemetry.available ? 'text-success' : 'text-warning'}`}>{activeTelemetry.available ? `Observed ${stamp(activeTelemetry.observedAt)}` : 'Stale'}</p>
+            <div class="mt-1"><StatusBadge status={activeTelemetry.available ? 'healthy' : 'stale'} label={activeTelemetry.available ? `Observed ${stamp(activeTelemetry.observedAt)}` : 'Stale'} /></div>
           </div>
         {/if}
       </div>
@@ -494,12 +540,14 @@
       {/if}
     </section>
 
+    <Collapsible.Root bind:open={workloadLogsOpen}>
     <Card.Root>
       <Card.Header>
-        <Card.Action><Button size="sm" variant="outline" onclick={() => (environmentLogsPaused = !environmentLogsPaused)}>{environmentLogsPaused ? 'Resume' : 'Pause'}</Button></Card.Action>
+        <Card.Action><div class="flex gap-2"><Button size="sm" variant="outline" onclick={() => (workloadLogsOpen = !workloadLogsOpen)} aria-expanded={workloadLogsOpen}>{workloadLogsOpen ? 'Hide logs' : 'Show logs'}</Button><Button size="sm" variant="outline" disabled={!workloadLogsOpen} onclick={() => (environmentLogsPaused = !environmentLogsPaused)}>{environmentLogsPaused ? 'Resume' : 'Pause'}</Button></div></Card.Action>
         <Card.Title>Workload logs</Card.Title>
         <Card.Description>Live stdout and stderr from this Environment's containers. ClickHouse retains logs for seven days.</Card.Description>
       </Card.Header>
+      <Collapsible.Content>
       <Card.Content>
         {#if environmentLogConnectionError}<p class="mb-3 text-xs text-warning">{environmentLogConnectionError}</p>{/if}
         <div
@@ -520,11 +568,13 @@
           {/each}
         </div>
       </Card.Content>
+      </Collapsible.Content>
     </Card.Root>
+    </Collapsible.Root>
 
     <Card.Root><Card.Header><Card.Title>Resources</Card.Title><Card.Description>Explicit connections available to this Environment.</Card.Description></Card.Header><Card.Content class="space-y-2">{#each environment.resources as resource}<div class="grid gap-1 border border-border p-3 sm:grid-cols-3"><span class="font-mono text-sm">{resource.alias}</span><span>{resource.name}</span><span class="text-muted-foreground">{resource.engine}</span></div>{:else}<p class="text-sm text-muted-foreground">No Resources selected.</p>{/each}</Card.Content></Card.Root>
 
-    <Card.Root><Card.Header><Card.Title>Environment variables</Card.Title><Card.Description>Secret status compares the desired value fingerprint with the revision running in the serving container.</Card.Description></Card.Header><Card.Content class="space-y-3">{#each environment.variables as variable}<div class="grid gap-1 border border-border p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]"><p class="font-mono text-sm">{variable.key}</p><p class="break-all font-mono text-sm">{variable.value}</p><p class="text-xs text-muted-foreground">{variable.source}</p></div>{/each}{#each environment.secrets as secret}<div class="flex items-center justify-between gap-4 border border-border p-3"><div><div class="flex flex-wrap items-center gap-2"><p class="font-mono text-sm">{secret.key}</p><span class:text-success={secret.status === 'deployed'} class:text-warning={secret.status === 'deploying' || secret.status === 'pending' || secret.status === 'pending_removal'} class:text-destructive={secret.status === 'failed'} class="border border-border px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wider">{secretStatusLabel(secret)}</span></div><p class="font-mono text-sm">••••••••</p><p class="text-xs text-muted-foreground">{secret.digestPrefix} · {secret.sourceType}</p></div>{#if secret.desired && secret.sourceType === 'user'}<div class="flex gap-2"><Button size="sm" variant="outline" onclick={() => askToRotate(secret)}>Rotate</Button><Button size="sm" variant="destructive" onclick={() => router.delete(routes.environmentSecretDestroy(environment.applicationId, environment.environment.id, secret.id))}>Archive</Button></div>{/if}</div>{/each}{#if environment.variables.length === 0 && environment.secrets.length === 0}<p class="text-sm text-muted-foreground">No Environment variables configured.</p>{/if}<div class="grid gap-3 border-t border-border pt-4 sm:grid-cols-[1fr_2fr_auto]"><Input bind:value={key} placeholder="SECRET_KEY" autocomplete="off" /><Input type="password" bind:value={value} placeholder="Write-only value" autocomplete="new-password" /><Button onclick={createSecret}>Add secret</Button></div></Card.Content></Card.Root>
+    <Card.Root><Card.Header><Card.Title>Environment variables</Card.Title><Card.Description>Secret status compares the desired value fingerprint with the revision running in the serving container.</Card.Description></Card.Header><Card.Content class="space-y-3">{#each environment.variables as variable}<div class="grid gap-1 border border-border p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]"><p class="font-mono text-sm">{variable.key}</p><p class="break-all font-mono text-sm">{variable.value}</p><p class="text-xs text-muted-foreground">{variable.source}</p></div>{/each}{#each environment.secrets as secret}<div class="flex flex-col gap-4 border border-border p-3 sm:flex-row sm:items-center sm:justify-between"><div><div class="flex flex-wrap items-center gap-2"><p class="font-mono text-sm">{secret.key}</p><StatusBadge status={secret.status} label={secretStatusLabel(secret)} /></div><p class="font-mono text-sm">••••••••</p><p class="text-xs text-muted-foreground">{secret.digestPrefix} · {secret.sourceType}</p></div>{#if secret.desired && secret.sourceType === 'user'}<div class="flex gap-2"><Button size="sm" variant="outline" disabled={secretActionProcessing} onclick={() => askToRotate(secret)}>Rotate</Button><Button size="sm" variant="destructive" disabled={secretActionProcessing} onclick={() => askToArchiveSecret(secret)}>Archive</Button></div>{/if}</div>{/each}{#if environment.variables.length === 0 && environment.secrets.length === 0}<p class="border border-dashed border-border p-4 text-sm text-muted-foreground">No Environment variables configured.</p>{/if}<div class="grid gap-3 border-t border-border pt-4 sm:grid-cols-[1fr_2fr_auto]"><Input bind:value={key} placeholder="SECRET_KEY" autocomplete="off" /><Input type="password" bind:value={value} placeholder="Write-only value" autocomplete="new-password" /><Button disabled={!key.trim() || !value || secretCreationProcessing} aria-busy={secretCreationProcessing} onclick={createSecret}>{#if secretCreationProcessing}<Spinner />{/if}Add secret</Button></div></Card.Content></Card.Root>
 
     <div class="grid gap-8 xl:grid-cols-2">
       <Card.Root>
@@ -534,15 +584,15 @@
           {#each builds as build}
             <div class="border border-border text-sm">
               <div class="flex items-start gap-2 p-3">
-                <button type="button" class="min-w-0 flex-1 text-left" onclick={() => toggleBuildLogs(build.id)}>
-                  <div class="flex justify-between gap-3"><span class="font-mono">{short(build.sourceRevision)}</span><span>{build.status}</span></div>
+                <Button type="button" variant="ghost" class="h-auto min-w-0 flex-1 flex-col items-stretch p-0 text-left whitespace-normal hover:bg-transparent" onclick={() => toggleBuildLogs(build.id)} aria-expanded={expandedBuildId === build.id}>
+                  <div class="flex justify-between gap-3"><span class="font-mono">{short(build.sourceRevision)}</span><StatusBadge status={build.status} /></div>
                   <p class="mt-1 text-xs text-muted-foreground">{stamp(build.createdAt)} · {stepLabel(build.currentStep)}</p>
                   <p class="mt-1 break-all font-mono text-[11px] text-muted-foreground">{build.registryEndpoint || 'Registry unavailable'}{build.jobId ? ` · Job #${build.jobId} · ${build.jobState}` : ''}</p>
-                </button>
+                </Button>
                 <div class="flex shrink-0 flex-wrap justify-end gap-1">
-                  {#if build.status === 'pending' || (build.status === 'running' && ['scheduled', 'retryable', 'pending'].includes(build.jobState))}<Button size="xs" disabled={Boolean(activeBuildAction)} onclick={() => askForBuildAction('start', build)}>{activeBuildAction === `start:${build.id}` ? 'Starting...' : 'Run now'}</Button>{/if}
-                  {#if build.status === 'pending' || build.status === 'running'}<Button size="xs" variant="outline" disabled={Boolean(activeBuildAction)} onclick={() => askForBuildAction('stop', build)}>{activeBuildAction === `stop:${build.id}` ? 'Stopping...' : 'Stop'}</Button>{/if}
-                  {#if build.status === 'failed' || build.status === 'cancelled'}<Button size="xs" variant="outline" disabled={Boolean(activeBuildAction)} onclick={() => askForBuildAction('retry', build)}>{activeBuildAction === `retry:${build.id}` ? 'Retrying...' : 'Retry'}</Button>{/if}
+                  {#if build.status === 'pending' || (build.status === 'running' && ['scheduled', 'retryable', 'pending'].includes(build.jobState))}<Button size="xs" disabled={Boolean(activeBuildAction)} onclick={() => askForBuildAction('start', build)}>{#if activeBuildAction === `start:${build.id}`}<Spinner />{/if}Run now</Button>{/if}
+                  {#if build.status === 'pending' || build.status === 'running'}<Button size="xs" variant="outline" disabled={Boolean(activeBuildAction)} onclick={() => askForBuildAction('stop', build)}>{#if activeBuildAction === `stop:${build.id}`}<Spinner />{/if}Stop</Button>{/if}
+                  {#if build.status === 'failed' || build.status === 'cancelled'}<Button size="xs" variant="outline" disabled={Boolean(activeBuildAction)} onclick={() => askForBuildAction('retry', build)}>{#if activeBuildAction === `retry:${build.id}`}<Spinner />{/if}Retry</Button>{/if}
                 </div>
               </div>
               {#if expandedBuildId === build.id}
@@ -571,7 +621,7 @@
             <div class="border border-border p-3 text-sm">
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0"><p class="font-mono">{short(release.sourceRevision)}</p><p class="mt-1 text-xs text-muted-foreground">{stamp(release.createdAt)}</p></div>
-                <Button size="sm" variant="outline" disabled={Boolean(activeReleaseDeployment)} onclick={() => redeployRelease(release.id)}>{activeReleaseDeployment === release.id ? 'Queueing...' : 'Redeploy'}</Button>
+                <Button size="sm" variant="outline" disabled={Boolean(activeReleaseDeployment)} aria-busy={activeReleaseDeployment === release.id} onclick={() => redeployRelease(release.id)}>{#if activeReleaseDeployment === release.id}<Spinner />{/if}Redeploy</Button>
               </div>
               <p class="mt-2 break-all font-mono text-xs text-muted-foreground">{release.artifactReference}</p>
             </div>
@@ -587,12 +637,12 @@
         {#each deployments as deployment}
           <div class="border border-border text-sm">
             <div class="flex items-start justify-between gap-4 p-3">
-              <button type="button" class="min-w-0 flex-1 text-left" onclick={() => toggleDeploymentEvents(deployment.id)} aria-expanded={expandedDeploymentId === deployment.id}>
-                <p><span class="font-mono">{short(deployment.id)}</span> · {deployment.status} · {deploymentStep(deployment)}</p>
+              <Button type="button" variant="ghost" class="h-auto min-w-0 flex-1 flex-col items-stretch p-0 text-left whitespace-normal hover:bg-transparent" onclick={() => toggleDeploymentEvents(deployment.id)} aria-expanded={expandedDeploymentId === deployment.id}>
+                <div class="flex flex-wrap items-center gap-2"><span class="font-mono">{short(deployment.id)}</span><StatusBadge status={deployment.status} /><StatusBadge status={deploymentStep(deployment)} /></div>
                 <p class="mt-1 text-xs text-muted-foreground">{stamp(deployment.createdAt)} · Release {short(deployment.releaseId)} · {expandedDeploymentId === deployment.id ? 'Hide timeline' : 'Show timeline'}</p>
                 {#if deployment.error}<p class="mt-2 text-xs text-destructive">{deployment.error}</p>{/if}
-              </button>
-              {#if deployment.status === 'failed'}<Button size="sm" variant="outline" onclick={() => router.post(routes.environmentDeploymentRetry(environment.applicationId, environment.environment.id, deployment.id))}>Retry</Button>{/if}
+              </Button>
+              {#if deployment.status === 'failed'}<Button size="sm" variant="outline" disabled={Boolean(deploymentRetrying)} aria-busy={deploymentRetrying === deployment.id} onclick={() => retryDeployment(deployment.id)}>{#if deploymentRetrying === deployment.id}<Spinner />{/if}Retry</Button>{/if}
             </div>
             {#if expandedDeploymentId === deployment.id}
               <div class="border-t border-border bg-muted/20 p-3">
@@ -616,7 +666,7 @@
       </Card.Content>
     </Card.Root>
 
-    <Card.Root><Card.Header><Card.Title>Active instance</Card.Title></Card.Header><Card.Content>{#if activeInstance}<div class="grid gap-1 border border-border p-3 text-sm sm:grid-cols-4"><span class="font-mono">{short(activeInstance.id)}</span><span>{activeInstance.state}</span><span>{activeInstance.slot}</span><span class="text-muted-foreground">{activeInstance.ports?.http ? `${activeInstance.ports.host || '127.0.0.1'}:${activeInstance.ports.http}` : 'No observed port'}</span></div>{:else}<p class="text-sm text-muted-foreground">No active Instance yet.</p>{/if}</Card.Content></Card.Root>
+    <Card.Root><Card.Header><Card.Title>Active instance</Card.Title></Card.Header><Card.Content>{#if activeInstance}<div class="grid items-center gap-2 border border-border p-3 text-sm sm:grid-cols-4"><span class="font-mono">{short(activeInstance.id)}</span><StatusBadge status={activeInstance.state} /><span>{activeInstance.slot}</span><span class="text-muted-foreground">{activeInstance.ports?.http ? `${activeInstance.ports.host || '127.0.0.1'}:${activeInstance.ports.http}` : 'No observed port'}</span></div>{:else}<p class="border border-dashed border-border p-4 text-sm text-muted-foreground">No active Instance yet.</p>{/if}</Card.Content></Card.Root>
   </div>
 
   <ConfirmActionDialog
@@ -633,13 +683,35 @@
     onconfirm={confirmBuildAction}
   />
 
+  <ConfirmActionDialog
+    bind:open={archiveSecretDialogOpen}
+    title="Archive secret?"
+    description={`Archive ${archivingSecret?.key ?? 'this secret'} from the desired Environment configuration. The change takes effect on the next deployment.`}
+    confirmLabel="Archive secret"
+    destructive
+    processing={secretActionProcessing}
+    error={secretActionError}
+    onconfirm={archiveSecret}
+  />
+
+  <ConfirmActionDialog
+    bind:open={apiTokenConfirmOpen}
+    title={environment.apiTokenPrefix ? 'Rotate deployment API token?' : 'Create deployment API token?'}
+    description={environment.apiTokenPrefix ? 'The current token will stop working immediately. You will only be able to copy the replacement once.' : 'You will only be able to copy the new token once.'}
+    confirmLabel={environment.apiTokenPrefix ? 'Rotate token' : 'Create token'}
+    destructive={Boolean(environment.apiTokenPrefix)}
+    processing={apiTokenProcessing}
+    error={apiTokenError}
+    onconfirm={rotateAPIToken}
+  />
+
   <Dialog.Root bind:open={rotateDialogOpen}>
     <Dialog.Content showCloseButton={!secretActionProcessing}>
       <form class="grid gap-4" onsubmit={rotateSecret}>
         <Dialog.Header><Dialog.Title>Rotate {rotatingSecret?.key ?? 'secret'}</Dialog.Title><Dialog.Description>Enter the replacement value. It remains visible while typing and takes effect on the next deployment.</Dialog.Description></Dialog.Header>
         <Input type="text" bind:value={rotatedSecretValue} autocomplete="off" autofocus required disabled={secretActionProcessing} />
         {#if secretActionError}<p class="whitespace-pre-wrap border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive" role="alert">{secretActionError}</p>{/if}
-        <Dialog.Footer><Button type="button" variant="outline" disabled={secretActionProcessing} onclick={() => (rotateDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={!rotatedSecretValue || secretActionProcessing}>{secretActionProcessing ? 'Rotating...' : 'Rotate secret'}</Button></Dialog.Footer>
+        <Dialog.Footer><Button type="button" variant="outline" disabled={secretActionProcessing} onclick={() => (rotateDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={!rotatedSecretValue || secretActionProcessing}>{#if secretActionProcessing}<Spinner />{/if}Rotate secret</Button></Dialog.Footer>
       </form>
     </Dialog.Content>
   </Dialog.Root>

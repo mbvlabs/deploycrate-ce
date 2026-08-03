@@ -1,8 +1,12 @@
 <script lang="ts">
+  import * as Alert from '@/Components/ui/alert'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
+  import * as Empty from '@/Components/ui/empty'
+  import * as ScrollArea from '@/Components/ui/scroll-area'
   import { Separator } from '@/Components/ui/separator'
   import JsonCode from '@/Components/JsonCode.svelte'
+  import StatusBadge from '@/Components/StatusBadge.svelte'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
 
   type DeploymentEvent = {
@@ -80,11 +84,7 @@
     </section>
 
     {#if deployments.length === 0}
-      <Card.Root>
-        <Card.Content class="pt-6">
-          <p class="text-sm text-muted-foreground">No deployments have been recorded for the system environment.</p>
-        </Card.Content>
-      </Card.Root>
+      <Empty.Root class="border border-dashed border-border py-14"><Empty.Header><Empty.Title>No system deployments</Empty.Title><Empty.Description>Deployment history will appear after the first system release is installed.</Empty.Description></Empty.Header></Empty.Root>
     {:else}
       <div class="grid gap-4 lg:grid-cols-5 lg:items-start">
         <Card.Root class="lg:sticky lg:top-20 lg:col-span-2">
@@ -92,7 +92,7 @@
             <Card.Title>History</Card.Title>
             <Card.Description>{deployments.length} deployment{deployments.length === 1 ? '' : 's'}, newest first.</Card.Description>
           </Card.Header>
-          <Card.Content class="grid gap-2">
+          <Card.Content><ScrollArea.Root class="max-h-[70vh]"><div class="grid gap-2 pr-3">
             {#each deployments as option (option.id)}
               <Button
                 variant={selectedDeployment?.id === option.id ? 'secondary' : 'ghost'}
@@ -102,14 +102,14 @@
                 <span class="grid w-full gap-1">
                   <span class="flex items-center justify-between gap-2">
                     <span class="font-semibold">{versionLabel(option.releaseVersion)}</span>
-                    {#if option.active}<span class="text-success">Serving</span>{/if}
+                    {#if option.active}<StatusBadge status="serving" />{/if}
                   </span>
-                  <span class="capitalize text-muted-foreground">{stateLabel(option.status)}</span>
+                  <span><StatusBadge status={option.status} /></span>
                   <span class="text-muted-foreground">{timestamp(option.createdAt)}</span>
                 </span>
               </Button>
             {/each}
-          </Card.Content>
+          </div></ScrollArea.Root></Card.Content>
         </Card.Root>
 
         {#each selectedDeployment ? [selectedDeployment] : [] as deployment (deployment.id)}
@@ -118,9 +118,7 @@
               <Card.Title>{versionLabel(deployment.releaseVersion)}</Card.Title>
               <Card.Description>{deployment.changeSummary}</Card.Description>
               <Card.Action>
-                <span class={deployment.active ? 'text-success' : 'capitalize text-muted-foreground'}>
-                  {deployment.active ? 'Serving' : stateLabel(deployment.status)}
-                </span>
+                <StatusBadge status={deployment.active ? 'serving' : deployment.status} />
               </Card.Action>
             </Card.Header>
             <Card.Content>
@@ -138,7 +136,7 @@
                         </div>
                         <div>
                           <dt class="text-muted-foreground">Status</dt>
-                          <dd class="mt-1 text-sm capitalize">{stateLabel(deployment.status)}</dd>
+                          <dd class="mt-1"><StatusBadge status={deployment.status} /></dd>
                         </div>
                         <div>
                           <dt class="text-muted-foreground">Current step</dt>
@@ -161,10 +159,7 @@
                           <dd class="mt-1 text-sm">{timestamp(deployment.finishedAt)}</dd>
                         </div>
                         {#if deployment.error}
-                          <div class="sm:col-span-2 xl:col-span-4">
-                            <dt class="text-destructive">Error</dt>
-                            <dd class="mt-1 break-words text-sm text-destructive">{deployment.error}</dd>
-                          </div>
+                          <div class="sm:col-span-2 xl:col-span-4"><Alert.Root variant="destructive"><Alert.Title>Deployment failed</Alert.Title><Alert.Description>{deployment.error}</Alert.Description></Alert.Root></div>
                         {/if}
                       </dl>
                     </section>
@@ -220,7 +215,7 @@
                         </div>
                         <div>
                           <dt class="text-muted-foreground">Status</dt>
-                          <dd class="mt-1 text-sm capitalize">{stateLabel(deployment.changeStatus)}</dd>
+                          <dd class="mt-1"><StatusBadge status={deployment.changeStatus} /></dd>
                         </div>
                         <div>
                           <dt class="text-muted-foreground">Requested</dt>
@@ -253,7 +248,7 @@
                           </div>
                           <div>
                             <dt class="text-muted-foreground">State</dt>
-                            <dd class="mt-1 text-sm capitalize">{stateLabel(deployment.instanceState)}</dd>
+                            <dd class="mt-1"><StatusBadge status={deployment.instanceState} /></dd>
                           </div>
                           <div>
                             <dt class="text-muted-foreground">Service</dt>
@@ -303,7 +298,7 @@
                                     #{event.sequence} · {stateLabel(event.eventType)}{event.step ? ` · ${stateLabel(event.step)}` : ''}
                                   </p>
                                 </div>
-                                <p class="text-xs text-muted-foreground">{timestamp(event.occurredAt)}</p>
+                                <div class="flex items-center gap-2"><StatusBadge status={event.status} /><p class="text-xs text-muted-foreground">{timestamp(event.occurredAt)}</p></div>
                               </div>
                               {#if event.error}<p class="mt-3 text-sm text-destructive">{event.error}</p>{/if}
                               {#if hasJSONFields(event.metadata)}

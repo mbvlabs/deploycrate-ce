@@ -1,7 +1,9 @@
 <script lang="ts">
   import CloudIcon from '@lucide/svelte/icons/cloud'
 
+  import StatusBadge from '@/Components/StatusBadge.svelte'
   import * as Card from '@/Components/ui/card'
+  import * as Empty from '@/Components/ui/empty'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
 
   type Destination = {
@@ -35,13 +37,13 @@
     </header>
 
     {#if destinations.length === 0}
-      <Card.Root><Card.Content class="grid place-items-center gap-3 py-12 text-center"><CloudIcon class="size-7 text-muted-foreground" /><p class="text-sm text-muted-foreground">No active, verified Object Storage destination is available.</p></Card.Content></Card.Root>
+      <Empty.Root class="border border-border"><Empty.Header><Empty.Media variant="icon"><CloudIcon /></Empty.Media><Empty.Title>No verified Object Storage</Empty.Title><Empty.Description>Complete bootstrap with an Object Storage destination before enabling Resource backup policies.</Empty.Description></Empty.Header></Empty.Root>
     {:else}
       <div class="grid gap-4 md:grid-cols-2">
         {#each destinations as destination (destination.id)}
           <Card.Root>
             <Card.Header>
-              <Card.Action><span class="text-xs text-success">Verified</span></Card.Action>
+              <Card.Action><StatusBadge status="verified" /></Card.Action>
               <Card.Title>{destination.name}</Card.Title>
               <Card.Description>{destination.provider.toUpperCase()} backup destination</Card.Description>
             </Card.Header>
