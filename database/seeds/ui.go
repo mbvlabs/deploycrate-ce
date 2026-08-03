@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"deploycrate-ce/internal/storage"
+	"deploycrate-ce/models"
 	"deploycrate-ce/models/factories"
 )
 
@@ -391,12 +392,156 @@ func UI(ctx context.Context, exec storage.Executor) error {
 		return fmt.Errorf("attach build worker to staging network: %w", err)
 	}
 
+	repository, err := factories.CreateResource(ctx, exec,
+		factories.WithResourcesName("Fake DeployCrate CE Registry"),
+		factories.WithResourcesSlug("fake-deploycrate-ce-registry"),
+		factories.WithResourcesResourceType(models.ResourceTypeService),
+		factories.WithResourcesConfiguration(json.RawMessage(`{"engine":"registry"}`)),
+		factories.WithResourcesSharingScope(models.ResourceSharingGlobal),
+		factories.WithResourcesSystemManaged(true),
+		factories.WithResourcesArchivedAt(sql.NullTime{}),
+	)
+	if err != nil {
+		return fmt.Errorf("create fake repository Resource: %w", err)
+	}
+	if _, err := factories.CreateRegistryResource(ctx, exec, repository.ID); err != nil {
+		return fmt.Errorf("create fake repository Registry backing: %w", err)
+	}
+
+	repositoryInstallation, err := factories.CreateResourceInstallation(
+		ctx,
+		exec,
+		repository.ID,
+		edgePrimary.ID,
+		nil,
+		factories.WithResourceInstallationsImageReference(
+			"registry@sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33",
+		),
+		factories.WithResourceInstallationsImageDigest(sql.NullString{
+			String: "sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33",
+			Valid:  true,
+		}),
+		factories.WithResourceInstallationsContainerName("fake-deploycrate-ce-registry"),
+		factories.WithResourceInstallationsRestartPolicy("unless-stopped"),
+		factories.WithResourceInstallationsConfiguration(
+			json.RawMessage(`{"portMappings":[{"hostPort":5000,"containerPort":5000,"protocol":"tcp"}]}`),
+		),
+		factories.WithResourceInstallationsArchivedAt(sql.NullTime{}),
+	)
+	if err != nil {
+		return fmt.Errorf("create fake repository installation: %w", err)
+	}
+
+	repositoryVolume, err := factories.CreateResourceVolume(
+		ctx,
+		exec,
+		repository.ID,
+		edgePrimary.ID,
+		factories.WithResourceVolumesName("Fake registry data"),
+		factories.WithResourceVolumesDriver("docker"),
+		factories.WithResourceVolumesConfiguration(
+			json.RawMessage(`{"volume":"fake-deploycrate-ce-registry"}`),
+		),
+		factories.WithResourceVolumesArchivedAt(sql.NullTime{}),
+	)
+	if err != nil {
+		return fmt.Errorf("create fake repository volume: %w", err)
+	}
+	if _, err := factories.CreateResourceVolumeMount(
+		ctx,
+		exec,
+		repositoryVolume.ID,
+		repositoryInstallation.ID,
+		factories.WithResourceVolumeMountsMountPath("/var/lib/registry"),
+		factories.WithResourceVolumeMountsReadOnly(false),
+		factories.WithResourceVolumeMountsArchivedAt(sql.NullTime{}),
+	); err != nil {
+		return fmt.Errorf("mount fake repository volume: %w", err)
+	}
+
+	repositoryEndpoint, err := factories.CreateResourceEndpoint(
+		ctx,
+		exec,
+		repository.ID,
+		nil,
+		factories.WithResourceEndpointsName("Registry API"),
+		factories.WithResourceEndpointsRole("primary"),
+		factories.WithResourceEndpointsAddress("127.0.0.1"),
+		factories.WithResourceEndpointsPort(5000),
+		factories.WithResourceEndpointsProtocol("http"),
+		factories.WithResourceEndpointsTlsMode("disable"),
+		factories.WithResourceEndpointsSettings(json.RawMessage(`{"health_path":"/v2/"}`)),
+		factories.WithResourceEndpointsArchivedAt(sql.NullTime{}),
+	)
+	if err != nil {
+		return fmt.Errorf("create fake repository endpoint: %w", err)
+	}
+	if _, err := factories.CreateResourceCredential(
+		ctx,
+		exec,
+		repository.ID,
+		factories.WithResourceCredentialsName("Registry publisher"),
+		factories.WithResourceCredentialsUsername(
+			sql.NullString{String: "deploycrate", Valid: true},
+		),
+		factories.WithResourceCredentialsMetadata(
+			json.RawMessage(`{"schema_version":1,"roles":["push","pull"],"basic_auth_hash":"fake-bcrypt-hash"}`),
+		),
+		factories.WithResourceCredentialsEncPayload([]byte("encrypted-fake-registry-password")),
+		factories.WithResourceCredentialsDigest([]byte("fake-registry-password-digest")),
+		factories.WithResourceCredentialsArchivedAt(sql.NullTime{}),
+	); err != nil {
+		return fmt.Errorf("create fake repository credential: %w", err)
+	}
+
+	repositoryHealthCheck, err := factories.CreateResourceHealthCheck(
+		ctx,
+		exec,
+		repository.ID,
+		&repositoryEndpoint.ID,
+		nil,
+		factories.WithResourceHealthChecksName("Registry API"),
+		factories.WithResourceHealthChecksKind("http"),
+		factories.WithResourceHealthChecksConfiguration(
+			json.RawMessage(`{"path":"/v2/","expected_status":200}`),
+		),
+		factories.WithResourceHealthChecksIntervalSeconds(15),
+		factories.WithResourceHealthChecksTimeoutSeconds(3),
+		factories.WithResourceHealthChecksFailureThreshold(3),
+		factories.WithResourceHealthChecksSuccessThreshold(1),
+		factories.WithResourceHealthChecksEnabled(true),
+		factories.WithResourceHealthChecksArchivedAt(sql.NullTime{}),
+	)
+	if err != nil {
+		return fmt.Errorf("create fake repository health check: %w", err)
+	}
+	if _, err := factories.CreateResourceHealthCheckStatus(
+		ctx,
+		exec,
+		repositoryHealthCheck.ID,
+		factories.WithResourceHealthCheckStatusesState("healthy"),
+		factories.WithResourceHealthCheckStatusesStatusCode(
+			sql.NullInt32{Int32: 200, Valid: true},
+		),
+		factories.WithResourceHealthCheckStatusesLatencyMs(
+			sql.NullInt32{Int32: 18, Valid: true},
+		),
+		factories.WithResourceHealthCheckStatusesMessage(sql.NullString{}),
+		factories.WithResourceHealthCheckStatusesConsecutiveSuccesses(12),
+		factories.WithResourceHealthCheckStatusesConsecutiveFailures(0),
+		factories.WithResourceHealthCheckStatusesDetails(json.RawMessage(`{}`)),
+		factories.WithResourceHealthCheckStatusesObservedAt(now),
+		factories.WithResourceHealthCheckStatusesExpiresAt(now.Add(24*time.Hour)),
+	); err != nil {
+		return fmt.Errorf("create fake repository health check status: %w", err)
+	}
+
 	if err := ensureSystemApplication(ctx, exec, now); err != nil {
 		return err
 	}
 
 	fmt.Println(
-		"Created UI seed data: 4 servers, 4 networks, and the DeployCrate CE system topology",
+		"Created UI seed data: 4 servers, 4 networks, a fake repository, and the DeployCrate CE system topology",
 	)
 
 	return nil

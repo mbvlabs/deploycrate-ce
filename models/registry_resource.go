@@ -60,11 +60,11 @@ func (registryResource) Create(ctx context.Context, db storage.Executor, data Cr
 	if err := validation.Validate(&entity); err != nil {
 		return RegistryResourceEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	var kind string
-	if err := db.NewSelect().TableExpr("resources").Column("kind").Where("id = ?", entity.ResourceID).Where("archived_at IS NULL").Scan(ctx, &kind); err != nil {
+	var engine string
+	if err := db.NewSelect().TableExpr("resources").ColumnExpr("configuration ->> 'engine'").Where("id = ?", entity.ResourceID).Where("archived_at IS NULL").Scan(ctx, &engine); err != nil {
 		return RegistryResourceEntity{}, err
 	}
-	if kind != "registry" {
+	if engine != "registry" {
 		return RegistryResourceEntity{}, errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "resourceId", Code: "kind", Message: "Registry backing requires a Registry Resource"}})
 	}
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
