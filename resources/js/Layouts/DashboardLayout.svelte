@@ -1,7 +1,6 @@
 <script lang="ts">
   import AppWindowIcon from '@lucide/svelte/icons/app-window'
   import ActivityIcon from '@lucide/svelte/icons/activity'
-  import BoxesIcon from '@lucide/svelte/icons/boxes'
   import ChevronDownIcon from '@lucide/svelte/icons/chevron-down'
   import CloudIcon from '@lucide/svelte/icons/cloud'
   import DatabaseIcon from '@lucide/svelte/icons/database'
@@ -42,7 +41,9 @@
     if (path.startsWith(routes.nodes())) return [{ label: 'Nodes', href: routes.nodes() }, ...(path === routes.nodes() ? [] : [{ label: leaf }])]
     if (path.startsWith(routes.networks())) return [{ label: 'Networks' }]
     if (path.startsWith(routes.caddyRoutes())) return [{ label: 'Infrastructure' }, { label: 'Caddy Routes' }]
-    if (path.startsWith(routes.registryResources())) return [{ label: 'Connections' }, { label: 'Registries' }]
+    if (path.startsWith(routes.registryResources())) return path === routes.registryResources()
+      ? [{ label: 'Connections' }, { label: 'Image Registry' }]
+      : [{ label: 'Connections' }, { label: 'Image Registry', href: routes.registryResources() }, { label: 'Details' }]
     if (path.startsWith(routes.objectStorage())) return [{ label: 'Connections' }, { label: 'Object Storage' }]
     if (path.startsWith(routes.gitHubConnection())) return [{ label: 'Connections' }, { label: 'GitHub' }]
     if (path.startsWith(routes.systemTelemetry())) return [{ label: 'System', href: routes.systemOverview() }, { label: 'Telemetry' }]
@@ -98,13 +99,8 @@
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.applications()) && !environmentPage} tooltipContent="Applications">
-                {#snippet child({ props })}<Link {...props} href={routes.applications()} aria-current={$page.url.startsWith(routes.applications()) && !environmentPage ? 'page' : undefined}><AppWindowIcon /><span>Applications</span></Link>{/snippet}
-              </Sidebar.MenuButton>
-            </Sidebar.MenuItem>
-            <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive={environmentPage} tooltipContent="Environments">
-                {#snippet child({ props })}<Link {...props} href={routes.environments()} aria-current={environmentPage ? 'page' : undefined}><BoxesIcon /><span>Environments</span></Link>{/snippet}
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.applications())} tooltipContent="Applications">
+                {#snippet child({ props })}<Link {...props} href={routes.applications()} aria-current={$page.url.startsWith(routes.applications()) ? 'page' : undefined}><AppWindowIcon /><span>Applications</span></Link>{/snippet}
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>
@@ -154,8 +150,8 @@
         <Sidebar.GroupContent>
           <Sidebar.Menu>
             <Sidebar.MenuItem>
-				<Sidebar.MenuButton isActive={$page.url.startsWith(routes.registryResources())} tooltipContent="Registry Resources">
-					{#snippet child({ props })}<Link {...props} href={routes.registryResources()} aria-current={$page.url.startsWith(routes.registryResources()) ? 'page' : undefined}><KeyRoundIcon /><span>Registry Resources</span></Link>{/snippet}
+				<Sidebar.MenuButton isActive={$page.url.startsWith(routes.registryResources())} tooltipContent="Image Registry">
+					{#snippet child({ props })}<Link {...props} href={routes.registryResources()} aria-current={$page.url.startsWith(routes.registryResources()) ? 'page' : undefined}><KeyRoundIcon /><span>Image Registry</span></Link>{/snippet}
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>

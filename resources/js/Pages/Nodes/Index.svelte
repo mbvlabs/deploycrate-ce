@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Link } from '@inertiajs/svelte'
+  import PageHeader from '@/Components/PageHeader.svelte'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
   import * as Empty from '@/Components/ui/empty'
@@ -16,14 +17,9 @@
 
 <DashboardLayout email={auth.email}>
   <div class="space-y-8">
-    <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-      <div>
-        <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">Infrastructure</p>
-        <h1 class="mt-3 text-3xl font-semibold">Nodes</h1>
-        <p class="mt-3 max-w-2xl text-sm text-muted-foreground">Worker servers enrolled into the private WireGuard network.</p>
-      </div>
-      <Button href={routes.nodeNew()}>Add node</Button>
-    </header>
+    <PageHeader eyebrow="Infrastructure" title="Nodes" description="Worker servers enrolled into the private WireGuard network.">
+      {#snippet actions()}<Button>{#snippet child({ props })}<Link {...props} href={routes.nodeNew()}>Add node</Link>{/snippet}</Button>{/snippet}
+    </PageHeader>
 
     <Card.Root>
       <Card.Header><Card.Title>Managed nodes</Card.Title><Card.Description>{nodes.length} worker node{nodes.length === 1 ? '' : 's'} registered.</Card.Description></Card.Header>
@@ -40,7 +36,7 @@
         {:else}
           <Empty.Root class="border border-dashed border-border py-12">
             <Empty.Header><Empty.Title>No worker nodes</Empty.Title><Empty.Description>Add a Debian 13 VPS to run builds, applications, or managed Resources.</Empty.Description></Empty.Header>
-            <Empty.Content><Button href={routes.nodeNew()}>Add node</Button></Empty.Content>
+            <Empty.Content><Button>{#snippet child({ props })}<Link {...props} href={routes.nodeNew()}>Add node</Link>{/snippet}</Button></Empty.Content>
           </Empty.Root>
         {/if}
       </Card.Content>

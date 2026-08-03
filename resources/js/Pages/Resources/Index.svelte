@@ -1,5 +1,7 @@
 <script lang="ts">
   import DatabaseIcon from '@lucide/svelte/icons/database'
+  import { Link } from '@inertiajs/svelte'
+  import PageHeader from '@/Components/PageHeader.svelte'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
   import * as Empty from '@/Components/ui/empty'
@@ -14,20 +16,26 @@
 <svelte:head><title>Resources</title></svelte:head>
 <DashboardLayout email={auth.email}>
   <div class="space-y-8">
-    <header class="flex flex-wrap items-end justify-between gap-4">
-      <div><p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">Resources</p><h1 class="mt-3 text-3xl font-semibold">Infrastructure connections</h1><p class="mt-2 max-w-2xl text-sm text-muted-foreground">Manage Resource identity, desired placement, encrypted credentials, storage, and health configuration.</p></div>
-      <Button href={routes.resourceNew()}>New Resource</Button>
-    </header>
+    <PageHeader eyebrow="Resources" title="Infrastructure connections" description="Manage resource identity, desired placement, encrypted credentials, storage, and health configuration.">
+      {#snippet actions()}<Button>{#snippet child({ props })}<Link {...props} href={routes.resourceNew()}>New resource</Link>{/snippet}</Button>{/snippet}
+    </PageHeader>
 
     {#if resources.length === 0}
-      <Empty.Root class="border border-dashed border-border py-14"><Empty.Header><Empty.Media variant="icon"><DatabaseIcon /></Empty.Media><Empty.Title>No Resources yet</Empty.Title><Empty.Description>Deploy a database, cache, or service and manage its access from one place.</Empty.Description></Empty.Header><Empty.Content><Button href={routes.resourceNew()}>New Resource</Button></Empty.Content></Empty.Root>
+      <Empty.Root class="border border-dashed border-border py-14"><Empty.Header><Empty.Media variant="icon"><DatabaseIcon /></Empty.Media><Empty.Title>No resources yet</Empty.Title><Empty.Description>Deploy a database, cache, or service and manage its access from one place.</Empty.Description></Empty.Header><Empty.Content><Button>{#snippet child({ props })}<Link {...props} href={routes.resourceNew()}>New resource</Link>{/snippet}</Button></Empty.Content></Empty.Root>
     {:else}
-      <div class="grid gap-4 md:grid-cols-2">
+      <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {#each resources as resource (resource.id)}
-          <Card.Root>
-            <Card.Header><Card.Action><StatusBadge status={resource.health} /></Card.Action><Card.Title>{resource.name}</Card.Title><Card.Description>{resource.resourceType === 'database' ? `${resource.databaseCount} ${resource.databaseCount === 1 ? 'Database' : 'Databases'} · ` : ''}{resource.connectionCount === 0 ? 'Unattached' : `${resource.connectionCount} Connected ${resource.connectionCount === 1 ? 'Environment' : 'Environments'}`}</Card.Description></Card.Header>
-            <Card.Content class="grid grid-cols-2 gap-4 text-xs sm:grid-cols-4"><div><p class="text-muted-foreground">Engine</p><p class="mt-1 font-medium">{resource.engine}</p></div><div><p class="text-muted-foreground">Runtime</p><p class="mt-1">Docker</p></div><div><p class="text-muted-foreground">Installations</p><p class="mt-1">{resource.installationCount}</p></div><div><p class="text-muted-foreground">Endpoints</p><p class="mt-1">{resource.endpointCount}</p></div></Card.Content>
-            <Card.Footer class="flex-col items-start justify-between gap-3 border-t border-border sm:flex-row sm:items-center"><span class="text-xs capitalize text-muted-foreground">{resource.resourceType} · {resource.sharingScope}{resource.sharingScope === 'global' ? '' : ` · ${resource.grantCount} grants`}</span><Button class="w-full sm:w-auto" href={routes.resourceShow(resource.id)} size="sm" variant="outline">Open</Button></Card.Footer>
+          <Card.Root class="h-full">
+            <Card.Header><Card.Action><StatusBadge status={resource.health || 'unknown'} /></Card.Action><Card.Title>{resource.name}</Card.Title><Card.Description>{resource.resourceType === 'database' ? `${resource.databaseCount} ${resource.databaseCount === 1 ? 'database' : 'databases'} · ` : ''}{resource.connectionCount === 0 ? 'Unattached' : `${resource.connectionCount} connected ${resource.connectionCount === 1 ? 'environment' : 'environments'}`}</Card.Description></Card.Header>
+            <Card.Content>
+              <dl class="grid grid-cols-2 gap-x-6 gap-y-4 text-xs">
+                <div><dt class="text-muted-foreground">Engine</dt><dd class="mt-1 font-medium capitalize">{resource.engine}</dd></div>
+                <div><dt class="text-muted-foreground">Scope</dt><dd class="mt-1 font-medium capitalize">{resource.sharingScope}{resource.sharingScope === 'global' ? '' : ` · ${resource.grantCount} grants`}</dd></div>
+                <div><dt class="text-muted-foreground">Installations</dt><dd class="mt-1 font-medium">{resource.installationCount}</dd></div>
+                <div><dt class="text-muted-foreground">Endpoints</dt><dd class="mt-1 font-medium">{resource.endpointCount}</dd></div>
+              </dl>
+            </Card.Content>
+            <Card.Footer class="mt-auto justify-end"><Button class="w-full sm:w-auto" size="sm" variant="outline">{#snippet child({ props })}<Link {...props} href={routes.resourceShow(resource.id)}>Open resource</Link>{/snippet}</Button></Card.Footer>
           </Card.Root>
         {/each}
       </div>
