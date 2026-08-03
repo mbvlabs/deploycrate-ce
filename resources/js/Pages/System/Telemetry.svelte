@@ -456,12 +456,11 @@
           {#if platform.length}
             <div class="overflow-x-auto">
               <Table.Root class="min-w-[900px] text-xs">
-                <Table.Header class="border-y border-border bg-muted/30"><Table.Row><Table.Head>Service</Table.Head><Table.Head>State</Table.Head><Table.Head>CPU</Table.Head><Table.Head>Memory</Table.Head><Table.Head>Disk read / write</Table.Head><Table.Head>Network</Table.Head><Table.Head>Tasks</Table.Head></Table.Row></Table.Header>
+                <Table.Header class="border-y border-border bg-muted/30"><Table.Row><Table.Head>Service</Table.Head><Table.Head>CPU</Table.Head><Table.Head>Memory</Table.Head><Table.Head>Disk read / write</Table.Head><Table.Head>Network</Table.Head><Table.Head>Tasks</Table.Head></Table.Row></Table.Header>
                 <Table.Body>
                   {#each platform as row (`${row.component}:${row.installation}`)}
                     <Table.Row>
-                      <Table.Cell><p class="font-medium text-sm">{label(row.component)}</p>{#if row.installation}<p class="mt-1 font-mono text-[11px] text-muted-foreground">Installation {short(row.installation)}</p>{/if}</Table.Cell>
-                      <Table.Cell><StatusBadge status={row.available ? 'healthy' : 'stale'} label={row.available ? `Observed ${stamp(row.observedAt)}` : 'Stale'} /></Table.Cell>
+                      <Table.Cell><div class="flex items-center gap-2"><p class="font-medium text-sm">{label(row.component)}</p>{#if !row.available}<StatusBadge status="stale" label="Stale" />{/if}</div>{#if row.installation}<p class="mt-1 font-mono text-[11px] text-muted-foreground">Installation {short(row.installation)}</p>{/if}</Table.Cell>
                       <Table.Cell>{current(row, row.cpuAvailable, formatCores(row.cpuCores))}</Table.Cell><Table.Cell>{current(row, row.memoryAvailable, formatBytes(row.memoryBytes))}</Table.Cell>
                       <Table.Cell>{current(row, row.diskReadAvailable, formatRate(row.diskReadBytesPerSecond))} / {current(row, row.diskWriteAvailable, formatRate(row.diskWriteBytesPerSecond))}</Table.Cell>
                       <Table.Cell class="text-muted-foreground">Not collected</Table.Cell><Table.Cell>{current(row, row.tasksAvailable, formatCount(row.tasks))}</Table.Cell>
@@ -480,12 +479,11 @@
           {#if systemContainers.length}
             <div class="overflow-x-auto">
               <Table.Root class="min-w-[1180px] text-xs">
-                <Table.Header class="border-y border-border bg-muted/30"><Table.Row><Table.Head>Service</Table.Head><Table.Head>State</Table.Head><Table.Head>CPU</Table.Head><Table.Head>Memory</Table.Head><Table.Head>Disk read / write</Table.Head><Table.Head>Network receive / transmit</Table.Head><Table.Head>Tasks</Table.Head><Table.Head>Throttling / OOM</Table.Head></Table.Row></Table.Header>
+                <Table.Header class="border-y border-border bg-muted/30"><Table.Row><Table.Head>Service</Table.Head><Table.Head>CPU</Table.Head><Table.Head>Memory</Table.Head><Table.Head>Disk read / write</Table.Head><Table.Head>Network receive / transmit</Table.Head><Table.Head>Tasks</Table.Head><Table.Head>Throttling / OOM</Table.Head></Table.Row></Table.Header>
                 <Table.Body>
                   {#each systemContainers as row (`${row.component}:${row.resource}:${row.installation}`)}
                     <Table.Row>
-                      <Table.Cell><p class="font-medium text-sm">{systemContainerName(row)}</p><p class="mt-1 font-mono text-[11px] text-muted-foreground">{systemContainerIdentity(row)}</p></Table.Cell>
-                      <Table.Cell><StatusBadge status={row.available ? 'healthy' : 'stale'} label={row.available ? `Observed ${stamp(row.observedAt)}` : 'Stale'} /></Table.Cell>
+                      <Table.Cell><div class="flex items-center gap-2"><p class="font-medium text-sm">{systemContainerName(row)}</p>{#if !row.available}<StatusBadge status="stale" label="Stale" />{/if}</div><p class="mt-1 font-mono text-[11px] text-muted-foreground">{systemContainerIdentity(row)}</p></Table.Cell>
                       <Table.Cell>{current(row, row.cpuAvailable, formatCores(row.cpuCores))}</Table.Cell><Table.Cell>{current(row, row.memoryAvailable, formatBytes(row.memoryBytes))}</Table.Cell>
                       <Table.Cell>{current(row, row.diskReadAvailable, formatRate(row.diskReadBytesPerSecond))} / {current(row, row.diskWriteAvailable, formatRate(row.diskWriteBytesPerSecond))}</Table.Cell>
                       <Table.Cell>{current(row, row.networkReceiveAvailable, formatRate(row.networkReceiveBytesPerSecond))} / {current(row, row.networkTransmitAvailable, formatRate(row.networkTransmitBytesPerSecond))}</Table.Cell>

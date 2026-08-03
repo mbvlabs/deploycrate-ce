@@ -46,17 +46,17 @@ type TraceSpan struct {
 func (client Client) ApplicationTelemetry(ctx context.Context, service, namespace string) (ApplicationTelemetry, error) {
 	const requestQuery = `
 SELECT
-  toString(toUnixTimestamp64Milli(max(last_time))) AS observed_at_milliseconds,
+  toString(toInt64(toUnixTimestamp(max(last_time))) * 1000) AS observed_at_milliseconds,
   dateDiff('millisecond', min(first_time), max(last_time)) / 1000.0 AS window_seconds,
-  sum(requests) AS requests,
-  sumIf(requests, status >= 400 AND status < 500) AS client_errors,
-  sumIf(requests, status >= 500) AS server_errors,
-  sum(duration_sum) AS duration_sum
+  sum(request_delta) AS request_count,
+  sumIf(request_delta, status >= 400 AND status < 500) AS client_errors,
+  sumIf(request_delta, status >= 500) AS server_errors,
+  sum(duration_delta) AS duration_total
 FROM
 (
   SELECT
-    greatest(toFloat64(argMax(Count, TimeUnix)) - toFloat64(argMin(Count, TimeUnix)), 0) AS requests,
-    greatest(argMax(Sum, TimeUnix) - argMin(Sum, TimeUnix), 0) AS duration_sum,
+    greatest(toFloat64(argMax(Count, TimeUnix)) - toFloat64(argMin(Count, TimeUnix)), 0) AS request_delta,
+    greatest(argMax(Sum, TimeUnix) - argMin(Sum, TimeUnix), 0) AS duration_delta,
     toUInt16OrZero(argMax(Attributes['http.response.status_code'], TimeUnix)) AS status,
     min(TimeUnix) AS first_time,
     max(TimeUnix) AS last_time
@@ -72,10 +72,10 @@ FORMAT JSONEachRow`
 	type requestRow struct {
 		ObservedAtMilliseconds string  `json:"observed_at_milliseconds"`
 		WindowSeconds          float64 `json:"window_seconds"`
-		Requests               float64 `json:"requests"`
+		Requests               float64 `json:"request_count"`
 		ClientErrors           float64 `json:"client_errors"`
 		ServerErrors           float64 `json:"server_errors"`
-		DurationSum            float64 `json:"duration_sum"`
+		DurationSum            float64 `json:"duration_total"`
 	}
 	parameters := map[string]string{"service": service, "namespace": namespace}
 	requestRows, err := queryJSONRows[requestRow](ctx, client, requestQuery, parameters)
@@ -84,11 +84,11 @@ FORMAT JSONEachRow`
 	}
 
 	const runtimeQuery = `
-SELECT metric, sum(value) AS value, toString(toUnixTimestamp64Milli(max(observed_at))) AS observed_at_milliseconds
+SELECT metric, sum(series_value) AS metric_value, toString(toInt64(toUnixTimestamp(max(observed_at))) * 1000) AS observed_at_milliseconds
 FROM
 (
   SELECT MetricName AS metric, ResourceAttributes['service.instance.id'] AS instance, cityHash64(Attributes) AS attributes,
-    argMax(Value, TimeUnix) AS value, max(TimeUnix) AS observed_at
+    argMax(Value, TimeUnix) AS series_value, max(TimeUnix) AS observed_at
   FROM
   (
     SELECT ResourceAttributes, MetricName, Attributes, TimeUnix, Value FROM otel_metrics_gauge
@@ -104,7 +104,7 @@ GROUP BY metric
 FORMAT JSONEachRow`
 	type runtimeRow struct {
 		Metric                 string  `json:"metric"`
-		Value                  float64 `json:"value"`
+		Value                  float64 `json:"metric_value"`
 		ObservedAtMilliseconds string  `json:"observed_at_milliseconds"`
 	}
 	runtimeRows, err := queryJSONRows[runtimeRow](ctx, client, runtimeQuery, parameters)

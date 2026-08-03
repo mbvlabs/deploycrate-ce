@@ -43,7 +43,9 @@
     const buckets = Array.from({ length: bucketCount }, (_, index) => ({
       start: start + (index * duration),
       end: start + ((index + 1) * duration),
-      x: left + (index / (bucketCount - 1)) * (right - left),
+      xStart: left + (index / bucketCount) * (right - left),
+      x: left + ((index + 0.5) / bucketCount) * (right - left),
+      xEnd: left + ((index + 1) / bucketCount) * (right - left),
     }))
     const chartSeries = series.map((item, seriesIndex) => {
       const samples = item.points
@@ -65,17 +67,28 @@
   })
 
   const yFor = (value: number) => bottom - (Math.max(0, value) / chart.maximum) * (bottom - top)
-  const pathFor = (values: Array<number | null>) => values.map((value, index) => (
-    value === null
-      ? ''
-      : `${index === 0 || values[index - 1] === null ? 'M' : 'L'} ${chart.buckets[index].x.toFixed(1)} ${yFor(value).toFixed(1)}`
-  )).filter(Boolean).join(' ')
+  const pathFor = (values: Array<number | null>) => {
+    const commands: string[] = []
+    let previousAvailable = false
+    values.forEach((value, index) => {
+      if (value === null) {
+        previousAvailable = false
+        return
+      }
+      const bucket = chart.buckets[index]
+      const y = yFor(value).toFixed(1)
+      commands.push(`${previousAvailable ? 'L' : 'M'} ${bucket.xStart.toFixed(1)} ${y}`)
+      commands.push(`L ${bucket.xEnd.toFixed(1)} ${y}`)
+      previousAvailable = true
+    })
+    return commands.join(' ')
+  }
   const bucketLabel = (index: number) => `${rangeFormatter.format(chart.buckets[index].start)} to ${rangeFormatter.format(chart.buckets[index].end)}`
 
   const hover = (event: PointerEvent) => {
     const bounds = (event.currentTarget as SVGSVGElement).getBoundingClientRect()
     const x = ((event.clientX - bounds.left) / bounds.width) * 800
-    hoveredIndex = Math.min(bucketCount - 1, Math.max(0, Math.round(((x - left) / (right - left)) * (bucketCount - 1))))
+    hoveredIndex = Math.min(bucketCount - 1, Math.max(0, Math.floor(((x - left) / (right - left)) * bucketCount)))
   }
 </script>
 
@@ -110,7 +123,7 @@
         {/each}
 
         {#each chart.series as item}
-          <path d={pathFor(item.values)} fill="none" stroke={item.color} stroke-width="2.5" vector-effect="non-scaling-stroke" />
+          <path d={pathFor(item.values)} fill="none" stroke={item.color} stroke-width="3" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
           {#each item.values as value, index}
             {#if value !== null}
               <circle cx={chart.buckets[index].x} cy={yFor(value)} r="3" fill={item.color} />
