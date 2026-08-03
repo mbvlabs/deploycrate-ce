@@ -362,7 +362,7 @@ func (service *DeploymentExecution) composeEnvironment(ctx context.Context, scop
 			return nil, nil, errors.New("Environment Resource connection is unavailable or mismatched")
 		}
 		resource, err := models.Resource.Find(ctx, service.db.Executor(), connection.ResourceID)
-		if err != nil || resource.ArchivedAt.Valid || resource.Kind != resourceState.Kind {
+		if err != nil || resource.ArchivedAt.Valid || resource.Engine() != resourceState.Kind {
 			return nil, nil, errors.New("Environment Resource is unavailable or mismatched")
 		}
 		endpoint, err := models.ResourceEndpoint.Find(ctx, service.db.Executor(), connection.ResourceEndpointID)
@@ -379,15 +379,19 @@ func (service *DeploymentExecution) composeEnvironment(ctx context.Context, scop
 			}
 		}
 		var projected *dockerEndpoint
-		if endpoint.ResourceInstallationID != nil {
-			installation, err := models.ResourceInstallation.Find(ctx, service.db.Executor(), *endpoint.ResourceInstallationID)
-			if err != nil || installation.ArchivedAt.Valid || installation.ResourceID != resource.ID || installation.ServerID != scope.Target.ServerID {
-				return nil, nil, errors.New("Docker Resource installation is unavailable or not colocated with the Environment target")
+		var installation models.ResourceInstallationEntity
+		installationErr := service.db.Executor().NewSelect().Model(&installation).
+			Where("resource_id = ?", resource.ID).
+			Where("archived_at IS NULL").
+			OrderExpr("created_at").Limit(1).Scan(ctx)
+		if installationErr == nil {
+			if installation.ServerID != scope.Target.ServerID {
+				return nil, nil, errors.New("managed Resource is not installed on the Environment runtime Server")
 			}
 			var configuration struct {
 				PortMappings []models.ResourceInstallationPortMapping `json:"portMappings"`
 			}
-			definition, supported := models.FindResourceKind(resource.Kind)
+			definition, supported := models.FindResourceEngine(resource.Engine())
 			if json.Unmarshal(installation.Configuration, &configuration) != nil || len(configuration.PortMappings) != 1 || !supported {
 				return nil, nil, errors.New("Docker Resource installation port mapping is invalid")
 			}
@@ -411,6 +415,8 @@ func (service *DeploymentExecution) composeEnvironment(ctx context.Context, scop
 			default:
 				return nil, nil, errors.New("Docker Resource credential projection is unsupported")
 			}
+		} else if !errors.Is(installationErr, sql.ErrNoRows) {
+			return nil, nil, installationErr
 		}
 		for key, value := range resourceState.Variables {
 			if projected != nil {

@@ -17,7 +17,6 @@ CREATE TABLE resource_health_checks (
     archived_at TIMESTAMPTZ,
 
     resource_id UUID NOT NULL REFERENCES resources (id) ON DELETE RESTRICT,
-    resource_installation_id UUID REFERENCES resource_installations (id) ON DELETE RESTRICT,
     resource_endpoint_id UUID REFERENCES resource_endpoints (id) ON DELETE RESTRICT,
     resource_credential_id UUID REFERENCES resource_credentials (id) ON DELETE RESTRICT
 );

@@ -10,8 +10,8 @@ import (
 type systemResourceIndexProp struct {
 	ID            string `json:"id"`
 	Name          string `json:"name"`
-	Category      string `json:"category"`
-	Kind          string `json:"kind"`
+	ResourceType  string `json:"resourceType"`
+	Engine        string `json:"engine"`
 	SharingScope  string `json:"sharingScope"`
 	OriginAddress string `json:"originAddress"`
 	OriginPort    int32  `json:"originPort"`
@@ -22,7 +22,7 @@ func systemResourceIndexProps(items []models.SystemResourceIndexItem) []systemRe
 	props := make([]systemResourceIndexProp, 0, len(items))
 	for _, item := range items {
 		props = append(props, systemResourceIndexProp{
-			ID: item.ID, Name: item.Name, Category: item.Category, Kind: item.Kind,
+			ID: item.ID, Name: item.Name, ResourceType: item.ResourceType, Engine: item.Engine,
 			SharingScope: item.SharingScope, OriginAddress: item.OriginAddress,
 			OriginPort: item.OriginPort, Health: item.Health,
 		})
@@ -54,7 +54,6 @@ type systemResourceEndpointProp struct {
 	Protocol         string          `json:"protocol"`
 	TLSMode          string          `json:"tlsMode"`
 	Settings         json.RawMessage `json:"settings"`
-	InstallationID   string          `json:"installationId"`
 	PrivateNetworkID string          `json:"privateNetworkId"`
 }
 
@@ -64,7 +63,6 @@ type systemResourceCredentialProp struct {
 	Username            string          `json:"username"`
 	Metadata            json.RawMessage `json:"metadata"`
 	HasEncryptedPayload bool            `json:"hasEncryptedPayload"`
-	InstallationID      string          `json:"installationId"`
 }
 
 type systemResourceInstallationProp struct {
@@ -147,8 +145,8 @@ type systemResourceDetailProp struct {
 	CreatedAt        time.Time                         `json:"createdAt"`
 	UpdatedAt        time.Time                         `json:"updatedAt"`
 	Name             string                            `json:"name"`
-	Category         string                            `json:"category"`
-	Kind             string                            `json:"kind"`
+	ResourceType     string                            `json:"resourceType"`
+	Engine           string                            `json:"engine"`
 	SharingScope     string                            `json:"sharingScope"`
 	Bindings         []systemResourceBindingProp       `json:"bindings"`
 	Endpoints        []systemResourceEndpointProp      `json:"endpoints"`
@@ -164,7 +162,7 @@ type systemResourceDetailProp struct {
 func systemResourceDetailProps(detail models.SystemResourceDetail) systemResourceDetailProp {
 	prop := systemResourceDetailProp{
 		ID: detail.ID, CreatedAt: detail.CreatedAt, UpdatedAt: detail.UpdatedAt,
-		Name: detail.Name, Category: detail.Category, Kind: detail.Kind,
+		Name: detail.Name, ResourceType: detail.ResourceType, Engine: detail.Engine,
 		SharingScope:     detail.SharingScope,
 		Bindings:         make([]systemResourceBindingProp, 0, len(detail.Bindings)),
 		Endpoints:        make([]systemResourceEndpointProp, 0, len(detail.Endpoints)),
@@ -180,10 +178,10 @@ func systemResourceDetailProps(detail models.SystemResourceDetail) systemResourc
 		prop.Bindings = append(prop.Bindings, systemResourceBindingProp{ID: item.ID, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, Alias: item.Alias, Configuration: item.Configuration, EnvironmentID: item.EnvironmentID, EnvironmentName: item.EnvironmentName, EnvironmentKind: item.EnvironmentKind, EndpointID: item.EndpointID, CredentialID: item.CredentialID})
 	}
 	for _, item := range detail.Endpoints {
-		prop.Endpoints = append(prop.Endpoints, systemResourceEndpointProp{ID: item.ID, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, Name: item.Name, Role: item.Role, Address: item.Address, Port: item.Port, Protocol: item.Protocol, TLSMode: item.TLSMode, Settings: item.Settings, InstallationID: item.InstallationID, PrivateNetworkID: item.PrivateNetworkID})
+		prop.Endpoints = append(prop.Endpoints, systemResourceEndpointProp{ID: item.ID, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, Name: item.Name, Role: item.Role, Address: item.Address, Port: item.Port, Protocol: item.Protocol, TLSMode: item.TLSMode, Settings: item.Settings, PrivateNetworkID: item.PrivateNetworkID})
 	}
 	for _, item := range detail.Credentials {
-		prop.Credentials = append(prop.Credentials, systemResourceCredentialProp{ID: item.ID, Name: item.Name, Username: item.Username, Metadata: item.Metadata, HasEncryptedPayload: item.HasEncryptedPayload, InstallationID: item.InstallationID})
+		prop.Credentials = append(prop.Credentials, systemResourceCredentialProp{ID: item.ID, Name: item.Name, Username: item.Username, Metadata: item.Metadata, HasEncryptedPayload: item.HasEncryptedPayload})
 	}
 	for _, item := range detail.Installations {
 		prop.Installations = append(prop.Installations, systemResourceInstallationProp{ID: item.ID, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, ImageReference: item.ImageReference, ImageDigest: item.ImageDigest, ContainerName: item.ContainerName, RestartPolicy: item.RestartPolicy, Configuration: item.Configuration, ServerID: item.ServerID, ServerName: item.ServerName, ServerAddress: item.ServerAddress, State: item.State, ServiceState: item.ServiceState, Health: item.Health, HealthReason: item.HealthReason, ObservedAt: item.ObservedAt})

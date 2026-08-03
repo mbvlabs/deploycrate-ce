@@ -29,13 +29,15 @@ type EnvironmentResourceEntity struct {
 }
 
 type EnvironmentResourceConnection struct {
-	ResourceKind     string          `bun:"resource_kind"`
-	Address          string          `bun:"address"`
-	Port             int32           `bun:"port"`
-	Protocol         string          `bun:"protocol"`
-	TLSMode          string          `bun:"tls_mode"`
-	Settings         json.RawMessage `bun:"settings"`
-	CredentialSource string          `bun:"credential_source"`
+	ResourceType     ResourceTypeEnum `bun:"resource_type"`
+	Engine           string           `bun:"engine"`
+	ResourceConfig   json.RawMessage  `bun:"resource_configuration"`
+	Address          string           `bun:"address"`
+	Port             int32            `bun:"port"`
+	Protocol         string           `bun:"protocol"`
+	TLSMode          string           `bun:"tls_mode"`
+	Settings         json.RawMessage  `bun:"settings"`
+	CredentialSource string           `bun:"credential_source"`
 }
 
 func (e *EnvironmentResourceEntity) Validate() error {
@@ -79,7 +81,7 @@ func (er environmentResource) FindConnectionByApplicationAndAlias(
 	var connection EnvironmentResourceConnection
 	if err := db.NewSelect().
 		TableExpr("environment_resources AS binding").
-		ColumnExpr("resource.kind AS resource_kind").
+		ColumnExpr("resource.resource_type, resource.configuration ->> 'engine' AS engine, resource.configuration AS resource_configuration").
 		ColumnExpr("endpoint.address AS address").
 		ColumnExpr("endpoint.port AS port").
 		ColumnExpr("endpoint.protocol AS protocol").

@@ -142,66 +142,11 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		return fmt.Errorf("create DeployCrate CE target network: %w", err)
 	}
 
-	cluster, err := models.DatabaseCluster.Create(ctx, exec, models.CreateDatabaseClusterData{
-		Name: "DeployCrate CE PostgreSQL", Slug: "deploycrate-ce-postgresql",
-		Engine: models.DatabaseEnginePostgreSQL, EngineVersion: "17",
-		ManagementMode:            models.ResourceManagementManaged.String(),
-		DesiredInstallationMethod: sql.NullString{String: models.DatabaseInstallDocker, Valid: true},
-		Topology:                  json.RawMessage(`{"primary_count":1,"replica_count":0}`), MaintenancePolicy: json.RawMessage(`{}`),
-	})
-	if err != nil {
-		return fmt.Errorf("create DeployCrate CE Database Cluster: %w", err)
-	}
-	node, err := models.DatabaseClusterNode.Create(ctx, exec, models.CreateDatabaseClusterNodeData{
-		Name: "primary", Role: "primary", DesiredState: "running", DatabaseClusterID: cluster.ID, ServerID: server.ID,
-	})
-	if err != nil {
-		return fmt.Errorf("create DeployCrate CE Database Cluster Node: %w", err)
-	}
-	nodeStorage, err := models.DatabaseNodeStorage.Create(ctx, exec, models.CreateDatabaseNodeStorageData{
-		Name: "PostgreSQL data", Driver: "docker", ExternalID: sql.NullString{String: "deploycrate-ce-postgres", Valid: true},
-		DataPath: "/var/lib/postgresql/data", Configuration: json.RawMessage(`{"volume":"deploycrate-ce-postgres"}`),
-		DatabaseClusterNodeID: node.ID, ServerID: server.ID,
-	})
-	if err != nil {
-		return fmt.Errorf("create DeployCrate CE Database Node storage: %w", err)
-	}
-	nodeInstallation, err := models.DatabaseNodeInstallation.Create(ctx, exec, models.CreateDatabaseNodeInstallationData{
-		InstallationMethod: models.DatabaseInstallDocker, DesiredState: "running", ObservedState: "running",
-		InstalledVersion: sql.NullString{String: "17", Valid: true}, ServiceState: "running", Health: "healthy",
-		ObservedAt: appliedAt, ExternalRuntimeID: sql.NullString{String: "deploycrate-ce-postgres", Valid: true},
-		DatabaseClusterNodeID: node.ID, ServerID: server.ID, DatabaseNodeStorageID: nodeStorage.ID,
-	})
-	if err != nil {
-		return fmt.Errorf("create DeployCrate CE Database Node Installation: %w", err)
-	}
-	if _, err := models.DockerDatabaseInstallation.Create(ctx, exec, models.CreateDockerDatabaseNodeInstallationData{
-		DatabaseNodeInstallationID: nodeInstallation.ID, ImageReference: "postgres:17-alpine",
-		ContainerName: "deploycrate-ce-postgres", RestartPolicy: "unless-stopped",
-		PortMappings:  json.RawMessage(`[{"hostPort":5432,"containerPort":5432,"protocol":"tcp"}]`),
-		Configuration: json.RawMessage(`{"mount_path":"/var/lib/postgresql/data"}`),
-	}); err != nil {
-		return fmt.Errorf("create DeployCrate CE Docker Database Node Installation: %w", err)
-	}
-	clusterEndpoint, err := models.DatabaseClusterEndpoint.Create(ctx, exec, models.CreateDatabaseClusterEndpointData{
-		Name: "Primary PostgreSQL", Role: "primary", Address: "127.0.0.1", Port: 5432,
-		Protocol: "postgresql", TLSMode: "disable", DesiredState: "available", ObservedState: "available",
-		Settings: json.RawMessage(`{}`), DatabaseClusterID: cluster.ID,
-	})
-	if err != nil {
-		return fmt.Errorf("create DeployCrate CE Database Cluster endpoint: %w", err)
-	}
-	_, err = models.Database.Create(ctx, exec, models.CreateDatabaseData{
-		Name: "deploycrate", Settings: json.RawMessage(`{}`), DesiredState: "provisioned",
-		ObservedState: "provisioned", DatabaseClusterID: cluster.ID,
-	})
-	if err != nil {
-		return fmt.Errorf("create DeployCrate CE Database: %w", err)
-	}
 	resource, err := factories.CreateResource(ctx, exec,
 		factories.WithResourcesName("DeployCrate CE PostgreSQL"),
 		factories.WithResourcesSlug("deploycrate-ce-postgresql"),
-		factories.WithResourcesKind("postgresql"),
+		factories.WithResourcesResourceType(models.ResourceTypeDatabase),
+		factories.WithResourcesConfiguration(json.RawMessage(`{"engine":"postgresql","engine_version":"17","databases":[{"name":"deploycrate"}]}`)),
 		factories.WithResourcesSharingScope(models.ResourceSharingEnvironment),
 		factories.WithResourcesSystemManaged(true),
 		factories.WithResourcesArchivedAt(sql.NullTime{}),
@@ -209,10 +154,33 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	if err != nil {
 		return fmt.Errorf("create DeployCrate CE Database Resource: %w", err)
 	}
-	if _, err := models.DatabaseResource.Create(ctx, exec, resource.ID, cluster.ID); err != nil {
-		return fmt.Errorf("create DeployCrate CE Database Resource backing: %w", err)
+	installation, err := factories.CreateResourceInstallation(ctx, exec, resource.ID, server.ID, nil,
+		factories.WithResourceInstallationsImageReference("postgres:17-alpine"),
+		factories.WithResourceInstallationsImageDigest(sql.NullString{}),
+		factories.WithResourceInstallationsContainerName("deploycrate-ce-postgres"),
+		factories.WithResourceInstallationsRestartPolicy("unless-stopped"),
+		factories.WithResourceInstallationsConfiguration(json.RawMessage(`{"ports":[{"hostPort":5432,"containerPort":5432,"protocol":"tcp"}]}`)),
+		factories.WithResourceInstallationsArchivedAt(sql.NullTime{}),
+	)
+	if err != nil {
+		return fmt.Errorf("create DeployCrate CE PostgreSQL installation: %w", err)
 	}
-	endpoint, err := factories.CreateResourceEndpoint(ctx, exec, resource.ID, nil, &network.ID,
+	volume, err := factories.CreateResourceVolume(ctx, exec, resource.ID, server.ID,
+		factories.WithResourceVolumesName("PostgreSQL data"),
+		factories.WithResourceVolumesDriver("docker"),
+		factories.WithResourceVolumesConfiguration(json.RawMessage(`{"volume":"deploycrate-ce-postgres"}`)),
+		factories.WithResourceVolumesArchivedAt(sql.NullTime{}),
+	)
+	if err != nil {
+		return fmt.Errorf("create DeployCrate CE PostgreSQL volume: %w", err)
+	}
+	if _, err := factories.CreateResourceVolumeMount(ctx, exec, volume.ID, installation.ID,
+		factories.WithResourceVolumeMountsMountPath("/var/lib/postgresql/data"),
+		factories.WithResourceVolumeMountsArchivedAt(sql.NullTime{}),
+	); err != nil {
+		return fmt.Errorf("mount DeployCrate CE PostgreSQL volume: %w", err)
+	}
+	endpoint, err := factories.CreateResourceEndpoint(ctx, exec, resource.ID, &network.ID,
 		factories.WithResourceEndpointsName("Primary PostgreSQL"), factories.WithResourceEndpointsRole("primary"),
 		factories.WithResourceEndpointsAddress("127.0.0.1"), factories.WithResourceEndpointsPort(5432),
 		factories.WithResourceEndpointsProtocol("postgresql"), factories.WithResourceEndpointsTlsMode("disable"),
@@ -222,18 +190,7 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	if err != nil {
 		return fmt.Errorf("create DeployCrate CE Database Resource endpoint: %w", err)
 	}
-	if _, err := models.DatabaseResourceEndpoint.Create(ctx, exec, endpoint.ID, clusterEndpoint.ID); err != nil {
-		return fmt.Errorf("link DeployCrate CE Database Resource endpoint: %w", err)
-	}
-	wireGuardClusterEndpoint, err := models.DatabaseClusterEndpoint.Create(ctx, exec, models.CreateDatabaseClusterEndpointData{
-		Name: "WireGuard PostgreSQL", Role: "wireguard", Address: "10.99.0.1", Port: 5432,
-		Protocol: "postgresql", TLSMode: "disable", DesiredState: "available", ObservedState: "available",
-		Settings: json.RawMessage(`{}`), DatabaseClusterID: cluster.ID, PrivateNetworkID: &network.ID,
-	})
-	if err != nil {
-		return fmt.Errorf("create DeployCrate CE WireGuard Database Cluster endpoint: %w", err)
-	}
-	wireGuardEndpoint, err := factories.CreateResourceEndpoint(ctx, exec, resource.ID, nil, &network.ID,
+	_, err = factories.CreateResourceEndpoint(ctx, exec, resource.ID, &network.ID,
 		factories.WithResourceEndpointsName("WireGuard PostgreSQL"), factories.WithResourceEndpointsRole("wireguard"),
 		factories.WithResourceEndpointsAddress("10.99.0.1"), factories.WithResourceEndpointsPort(5432),
 		factories.WithResourceEndpointsProtocol("postgresql"), factories.WithResourceEndpointsTlsMode("disable"),
@@ -242,9 +199,6 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	)
 	if err != nil {
 		return fmt.Errorf("create DeployCrate CE WireGuard Database Resource endpoint: %w", err)
-	}
-	if _, err := models.DatabaseResourceEndpoint.Create(ctx, exec, wireGuardEndpoint.ID, wireGuardClusterEndpoint.ID); err != nil {
-		return fmt.Errorf("link DeployCrate CE WireGuard Database Resource endpoint: %w", err)
 	}
 	if _, err := models.ResourceEnvironmentGrant.Create(ctx, exec, resource.ID, environment.ID); err != nil {
 		return fmt.Errorf("grant DeployCrate CE Database Resource: %w", err)
@@ -268,7 +222,8 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	clickHouse, err := factories.CreateResource(ctx, exec,
 		factories.WithResourcesName("DeployCrate CE ClickHouse"),
 		factories.WithResourcesSlug("deploycrate-ce-clickhouse"),
-		factories.WithResourcesKind("clickhouse"),
+		factories.WithResourcesResourceType(models.ResourceTypeDatabase),
+		factories.WithResourcesConfiguration(json.RawMessage(`{"engine":"clickhouse","engine_version":"25.8.28.1","databases":[{"name":"deploycrate"}]}`)),
 		factories.WithResourcesSharingScope(models.ResourceSharingEnvironment),
 		factories.WithResourcesSystemManaged(true),
 		factories.WithResourcesArchivedAt(sql.NullTime{}),
@@ -276,7 +231,7 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	if err != nil {
 		return fmt.Errorf("create DeployCrate CE ClickHouse resource: %w", err)
 	}
-	clickHouseInstallation, err := factories.CreateResourceInstallation(
+	_, err = factories.CreateResourceInstallation(
 		ctx,
 		exec,
 		clickHouse.ID,
@@ -302,7 +257,6 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		ctx,
 		exec,
 		clickHouse.ID,
-		&clickHouseInstallation.ID,
 		&network.ID,
 		factories.WithResourceEndpointsName("ClickHouse HTTP"),
 		factories.WithResourceEndpointsRole("primary"),

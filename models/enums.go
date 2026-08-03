@@ -2,27 +2,28 @@ package models
 
 import "errors"
 
-type ResourceManagementModeEnum string
+type ResourceTypeEnum string
 
 const (
-	ResourceManagementManaged  ResourceManagementModeEnum = "managed"
-	ResourceManagementExternal ResourceManagementModeEnum = "external"
+	ResourceTypeDatabase ResourceTypeEnum = "database"
+	ResourceTypeCache    ResourceTypeEnum = "cache"
+	ResourceTypeService  ResourceTypeEnum = "service"
 )
 
-func (mode ResourceManagementModeEnum) IsValid() bool {
-	return mode == ResourceManagementManaged || mode == ResourceManagementExternal
+func (resourceType ResourceTypeEnum) IsValid() bool {
+	return resourceType == ResourceTypeDatabase || resourceType == ResourceTypeCache || resourceType == ResourceTypeService
 }
 
-func (mode ResourceManagementModeEnum) String() string {
-	return string(mode)
+func (resourceType ResourceTypeEnum) String() string {
+	return string(resourceType)
 }
 
-func ParseResourceManagementModeEnum(value string) (ResourceManagementModeEnum, error) {
-	mode := ResourceManagementModeEnum(value)
-	if !mode.IsValid() {
-		return "", errors.New("invalid Resource management mode")
+func ParseResourceTypeEnum(value string) (ResourceTypeEnum, error) {
+	resourceType := ResourceTypeEnum(value)
+	if !resourceType.IsValid() {
+		return "", errors.New("invalid Resource type")
 	}
-	return mode, nil
+	return resourceType, nil
 }
 
 type ResourceSharingScopeEnum string

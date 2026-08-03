@@ -49,7 +49,7 @@ type ResourcePrivateAccessResult struct {
 
 func (service *ResourcePrivateAccess) requireOrdinaryManagedResource(ctx context.Context, resourceID uuid.UUID) error {
 	count, err := service.db.Executor().NewSelect().TableExpr("resources").Where("id = ?", resourceID).
-		Where("management_mode = 'managed'").Where("system_managed = FALSE").Where("archived_at IS NULL").Count(ctx)
+		Where("system_managed = FALSE").Where("archived_at IS NULL").Count(ctx)
 	if err != nil {
 		return err
 	}
@@ -93,81 +93,7 @@ func (service *ResourcePrivateAccess) Enable(ctx context.Context, resourceID, pr
 	if err != nil {
 		return models.ResourceEndpointEntity{}, err
 	}
-	if resource.ManagementMode != models.ResourceManagementManaged {
-		return models.ResourceEndpointEntity{}, errors.Join(models.ErrDomainValidation, errors.New("private access is available only for managed Resources"))
-	}
-	privateEndpoints, err := tx.NewSelect().TableExpr("resource_endpoints").
-		Where("resource_id = ?", resourceID).
-		Where("private_network_id IS NOT NULL").
-		Where("archived_at IS NULL").
-		Count(ctx)
-	if err != nil {
-		return models.ResourceEndpointEntity{}, err
-	}
-	if privateEndpoints != 0 {
-		return models.ResourceEndpointEntity{}, errors.Join(models.ErrDomainValidation, errors.New("managed Resource already has private access configured"))
-	}
-
-	var origin models.ResourceEndpointEntity
-	err = tx.NewSelect().Model(&origin).
-		Where("resource_id = ?", resourceID).
-		Where("role = 'primary'").
-		Where("private_network_id IS NULL").
-		Where("archived_at IS NULL").
-		Scan(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return models.ResourceEndpointEntity{}, errors.Join(models.ErrDomainValidation, errors.New("managed Resource has no primary runtime origin"))
-	}
-	if err != nil {
-		return models.ResourceEndpointEntity{}, err
-	}
-	if origin.ResourceInstallationID == nil {
-		endpoint, err := service.enableDatabasePrivateAccess(ctx, tx, resource, privateNetworkID)
-		if err != nil {
-			return models.ResourceEndpointEntity{}, err
-		}
-		if err := tx.Commit(); err != nil {
-			return models.ResourceEndpointEntity{}, err
-		}
-		return endpoint, nil
-	}
-
-	var attachment struct {
-		Address       string          `bun:"address"`
-		Configuration json.RawMessage `bun:"configuration"`
-	}
-	err = tx.NewSelect().TableExpr("server_networks AS attachment").
-		ColumnExpr("COALESCE(attachment.configuration ->> 'address', '') AS address, installation.configuration AS configuration").
-		Join("JOIN resource_installations AS installation ON installation.server_id = attachment.server_id AND installation.id = ? AND installation.archived_at IS NULL", *origin.ResourceInstallationID).
-		Join("JOIN private_networks AS network ON network.id = attachment.private_network_id AND network.archived_at IS NULL").
-		Where("attachment.private_network_id = ?", privateNetworkID).
-		Where("attachment.driver = 'wireguard'").
-		Where("attachment.removed_at IS NULL").
-		Limit(1).
-		Scan(ctx, &attachment)
-	if errors.Is(err, sql.ErrNoRows) || strings.TrimSpace(attachment.Address) == "" {
-		return models.ResourceEndpointEntity{}, errors.Join(models.ErrDomainValidation, errors.New("installation Server has no active WireGuard attachment for this private network"))
-	}
-	if err != nil {
-		return models.ResourceEndpointEntity{}, err
-	}
-	if strings.TrimSpace(attachment.Address) != WireGuardPrivateAddress {
-		return models.ResourceEndpointEntity{}, errors.Join(models.ErrDomainValidation, errors.New("private network attachment does not use the DeployCrate WireGuard listener address"))
-	}
-	mapping, err := primaryPortMapping(attachment.Configuration)
-	if err != nil {
-		return models.ResourceEndpointEntity{}, err
-	}
-	if mapping.Protocol != "tcp" || mapping.HostPort != origin.Port {
-		return models.ResourceEndpointEntity{}, errors.Join(models.ErrDomainValidation, errors.New("private access requires the primary origin to use its single TCP Docker port mapping"))
-	}
-
-	endpoint, err := models.ResourceEndpoint.Create(ctx, tx, models.CreateResourceEndpointData{
-		Name: "Private access", Role: origin.Role, Address: strings.TrimSpace(attachment.Address),
-		Port: origin.Port, Protocol: origin.Protocol, TlsMode: origin.TlsMode,
-		Settings: json.RawMessage(`{}`), ResourceID: resourceID,
-		ResourceInstallationID: origin.ResourceInstallationID, PrivateNetworkID: &privateNetworkID,
-	})
+	endpoint, err := createManagedResourcePrivateEndpoint(ctx, tx, resourceID, privateNetworkID)
 	if err != nil {
 		return models.ResourceEndpointEntity{}, err
 	}
@@ -177,69 +103,71 @@ func (service *ResourcePrivateAccess) Enable(ctx context.Context, resourceID, pr
 	return endpoint, nil
 }
 
-func (service *ResourcePrivateAccess) enableDatabasePrivateAccess(
-	ctx context.Context,
-	tx storage.Executor,
-	resource models.ResourceEntity,
-	privateNetworkID uuid.UUID,
-) (models.ResourceEndpointEntity, error) {
-	producers := make([]struct {
-		OriginName        string          `bun:"origin_name"`
-		OriginSettings    json.RawMessage `bun:"origin_settings"`
-		OriginPort        int32           `bun:"origin_port"`
-		OriginProtocol    string          `bun:"origin_protocol"`
-		OriginTLSMode     string          `bun:"origin_tls_mode"`
-		ClusterEndpointID uuid.UUID       `bun:"cluster_endpoint_id"`
-		Address           string          `bun:"address"`
-		Port              int32           `bun:"port"`
-		Protocol          string          `bun:"protocol"`
-		TLSMode           string          `bun:"tls_mode"`
-		ServerID          uuid.UUID       `bun:"server_id"`
-		AttachmentAddress string          `bun:"attachment_address"`
-	}, 0)
-	err := tx.NewSelect().TableExpr("database_resources AS backing").
-		ColumnExpr("origin.name AS origin_name, origin.settings AS origin_settings, origin.port AS origin_port, origin.protocol AS origin_protocol, origin.tls_mode AS origin_tls_mode").
-		ColumnExpr("cluster_endpoint.id AS cluster_endpoint_id, cluster_endpoint.address, cluster_endpoint.port, cluster_endpoint.protocol, cluster_endpoint.tls_mode").
-		ColumnExpr("installation.server_id, COALESCE(attachment.configuration ->> 'address', '') AS attachment_address").
-		Join("JOIN database_clusters AS cluster ON cluster.id = backing.database_cluster_id AND cluster.archived_at IS NULL").
-		Join("JOIN resource_endpoints AS origin ON origin.resource_id = backing.resource_id AND origin.role = 'primary' AND origin.private_network_id IS NULL AND origin.archived_at IS NULL").
-		Join("JOIN database_resource_endpoints AS origin_link ON origin_link.resource_endpoint_id = origin.id").
-		Join("JOIN database_cluster_endpoints AS origin_cluster_endpoint ON origin_cluster_endpoint.id = origin_link.database_cluster_endpoint_id AND origin_cluster_endpoint.database_cluster_id = cluster.id AND origin_cluster_endpoint.archived_at IS NULL").
-		Join("JOIN database_cluster_endpoints AS cluster_endpoint ON cluster_endpoint.database_cluster_id = cluster.id AND cluster_endpoint.private_network_id = ? AND cluster_endpoint.archived_at IS NULL", privateNetworkID).
-		Join("JOIN database_cluster_nodes AS node ON node.database_cluster_id = cluster.id AND node.role = 'primary' AND node.archived_at IS NULL").
-		Join("JOIN database_node_installations AS installation ON installation.database_cluster_node_id = node.id AND installation.archived_at IS NULL").
-		Join("JOIN server_networks AS attachment ON attachment.server_id = installation.server_id AND attachment.private_network_id = cluster_endpoint.private_network_id AND attachment.driver = 'wireguard' AND attachment.removed_at IS NULL").
-		Where("backing.resource_id = ?", resource.ID).OrderExpr("origin.created_at").Scan(ctx, &producers)
-	if err == nil && len(producers) == 0 {
-		return models.ResourceEndpointEntity{}, errors.Join(models.ErrDomainValidation, errors.New("Database Cluster primary Node cannot reach the selected private Cluster Endpoint"))
+func createManagedResourcePrivateEndpoint(ctx context.Context, db storage.Executor, resourceID, privateNetworkID uuid.UUID) (models.ResourceEndpointEntity, error) {
+	privateEndpoints, err := db.NewSelect().TableExpr("resource_endpoints").
+		Where("resource_id = ?", resourceID).
+		Where("private_network_id IS NOT NULL").
+		Where("archived_at IS NULL").
+		Count(ctx)
+	if err != nil {
+		return models.ResourceEndpointEntity{}, err
+	}
+	if privateEndpoints != 0 {
+		return models.ResourceEndpointEntity{}, domainError("privateNetworkId", "unique", "managed Resource already has private access configured")
+	}
+
+	var origin models.ResourceEndpointEntity
+	err = db.NewSelect().Model(&origin).
+		Where("resource_id = ?", resourceID).
+		Where("role = 'primary'").
+		Where("private_network_id IS NULL").
+		Where("archived_at IS NULL").
+		Scan(ctx)
+	if errors.Is(err, sql.ErrNoRows) {
+		return models.ResourceEndpointEntity{}, domainError("privateNetworkId", "topology", "managed Resource has no primary runtime origin")
 	}
 	if err != nil {
 		return models.ResourceEndpointEntity{}, err
 	}
-	var first models.ResourceEndpointEntity
-	for _, producer := range producers {
-		if strings.TrimSpace(producer.AttachmentAddress) != WireGuardPrivateAddress || strings.TrimSpace(producer.Address) != WireGuardPrivateAddress {
-			return models.ResourceEndpointEntity{}, errors.Join(models.ErrDomainValidation, errors.New("Database Cluster private endpoint must use the DeployCrate WireGuard listener address"))
-		}
-		if producer.Port != producer.OriginPort || producer.Protocol != producer.OriginProtocol || producer.TLSMode != producer.OriginTLSMode {
-			return models.ResourceEndpointEntity{}, errors.Join(models.ErrDomainValidation, errors.New("Database Cluster private endpoint does not preserve the published origin protocol and port"))
-		}
-		endpoint, err := models.ResourceEndpoint.Create(ctx, tx, models.CreateResourceEndpointData{
-			Name: producer.OriginName + " private", Role: "wireguard", Address: producer.Address, Port: producer.Port,
-			Protocol: producer.Protocol, TlsMode: producer.TLSMode, Settings: producer.OriginSettings,
-			ResourceID: resource.ID, PrivateNetworkID: &privateNetworkID,
-		})
-		if err != nil {
-			return models.ResourceEndpointEntity{}, err
-		}
-		if _, err := models.DatabaseResourceEndpoint.Create(ctx, tx, endpoint.ID, producer.ClusterEndpointID); err != nil {
-			return models.ResourceEndpointEntity{}, err
-		}
-		if first.ID == uuid.Nil {
-			first = endpoint
-		}
+	var attachment struct {
+		Address       string          `bun:"address"`
+		Configuration json.RawMessage `bun:"configuration"`
 	}
-	return first, nil
+	err = db.NewSelect().TableExpr("server_networks AS attachment").
+		ColumnExpr("COALESCE(attachment.configuration ->> 'address', '') AS address, installation.configuration AS configuration").
+		Join("JOIN resource_installations AS installation ON installation.server_id = attachment.server_id AND installation.resource_id = ? AND installation.archived_at IS NULL", resourceID).
+		Join("JOIN private_networks AS network ON network.id = attachment.private_network_id AND network.archived_at IS NULL").
+		Where("attachment.private_network_id = ?", privateNetworkID).
+		Where("attachment.driver = 'wireguard'").
+		Where("attachment.removed_at IS NULL").
+		Limit(1).
+		Scan(ctx, &attachment)
+	if errors.Is(err, sql.ErrNoRows) || strings.TrimSpace(attachment.Address) == "" {
+		return models.ResourceEndpointEntity{}, domainError("privateNetworkId", "topology", "installation Server has no active WireGuard attachment for this private network")
+	}
+	if err != nil {
+		return models.ResourceEndpointEntity{}, err
+	}
+	if strings.TrimSpace(attachment.Address) != WireGuardPrivateAddress {
+		return models.ResourceEndpointEntity{}, domainError("privateNetworkId", "topology", "private network attachment does not use the DeployCrate WireGuard listener address")
+	}
+	mapping, err := primaryPortMapping(attachment.Configuration)
+	if err != nil {
+		return models.ResourceEndpointEntity{}, err
+	}
+	if mapping.Protocol != "tcp" || mapping.HostPort != origin.Port {
+		return models.ResourceEndpointEntity{}, domainError("privateNetworkId", "topology", "private access requires the primary origin to use its single TCP Docker port mapping")
+	}
+
+	endpoint, err := models.ResourceEndpoint.Create(ctx, db, models.CreateResourceEndpointData{
+		Name: "Private access", Role: "wireguard", Address: strings.TrimSpace(attachment.Address),
+		Port: origin.Port, Protocol: origin.Protocol, TlsMode: origin.TlsMode,
+		Settings: json.RawMessage(`{}`), ResourceID: resourceID, PrivateNetworkID: &privateNetworkID,
+	})
+	if err != nil {
+		return models.ResourceEndpointEntity{}, err
+	}
+	return endpoint, nil
 }
 
 func (service *ResourcePrivateAccess) Disable(ctx context.Context, resourceID uuid.UUID) error {

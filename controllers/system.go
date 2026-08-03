@@ -202,15 +202,14 @@ func (s System) Resource(etx *echo.Context) error {
 }
 
 type systemResourceEndpointPayload struct {
-	Name                   string          `json:"name"`
-	Role                   string          `json:"role"`
-	Address                string          `json:"address"`
-	Port                   int32           `json:"port"`
-	Protocol               string          `json:"protocol"`
-	TLSMode                string          `json:"tlsMode"`
-	Settings               json.RawMessage `json:"settings"`
-	ResourceInstallationID string          `json:"resourceInstallationId"`
-	PrivateNetworkID       string          `json:"privateNetworkId"`
+	Name             string          `json:"name"`
+	Role             string          `json:"role"`
+	Address          string          `json:"address"`
+	Port             int32           `json:"port"`
+	Protocol         string          `json:"protocol"`
+	TLSMode          string          `json:"tlsMode"`
+	Settings         json.RawMessage `json:"settings"`
+	PrivateNetworkID string          `json:"privateNetworkId"`
 }
 
 func (s System) CreateResourceEndpoint(etx *echo.Context) error {
@@ -219,11 +218,7 @@ func (s System) CreateResourceEndpoint(etx *echo.Context) error {
 	if err == nil {
 		err = etx.Bind(&payload)
 	}
-	var installationID *uuid.UUID
 	var networkID *uuid.UUID
-	if err == nil {
-		installationID, err = optionalUUID(payload.ResourceInstallationID)
-	}
 	if err == nil {
 		networkID, err = optionalUUID(payload.PrivateNetworkID)
 	}
@@ -243,8 +238,7 @@ func (s System) CreateResourceEndpoint(etx *echo.Context) error {
 				models.CreateResourceEndpointData{
 					Name: payload.Name, Role: payload.Role, Address: payload.Address,
 					Port: payload.Port, Protocol: payload.Protocol, TlsMode: payload.TLSMode,
-					Settings: payload.Settings, ResourceID: resourceID,
-					ResourceInstallationID: installationID, PrivateNetworkID: networkID,
+					Settings: payload.Settings, ResourceID: resourceID, PrivateNetworkID: networkID,
 				},
 			); txErr != nil {
 				return txErr

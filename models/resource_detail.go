@@ -9,27 +9,25 @@ import (
 )
 
 type ResourceListFilters struct {
-	Search         string
-	Kind           string
-	Category       string
-	ManagementMode string
-	SharingScope   string
+	Search       string
+	ResourceType string
+	Engine       string
+	SharingScope string
 }
 
 type ResourceListItem struct {
-	ID                uuid.UUID                  `bun:"id"`
-	Name              string                     `bun:"name"`
-	Slug              string                     `bun:"slug"`
-	Category          string                     `bun:"category"`
-	Kind              string                     `bun:"kind"`
-	DatabaseCount     int                        `bun:"database_count"`
-	ManagementMode    ResourceManagementModeEnum `bun:"management_mode"`
-	SharingScope      ResourceSharingScopeEnum   `bun:"sharing_scope"`
-	ConnectionCount   int                        `bun:"connection_count"`
-	GrantCount        int                        `bun:"grant_count"`
-	InstallationCount int                        `bun:"installation_count"`
-	EndpointCount     int                        `bun:"endpoint_count"`
-	Health            string                     `bun:"health"`
+	ID                uuid.UUID                `bun:"id"`
+	Name              string                   `bun:"name"`
+	Slug              string                   `bun:"slug"`
+	ResourceType      ResourceTypeEnum         `bun:"resource_type"`
+	Engine            string                   `bun:"engine"`
+	DatabaseCount     int                      `bun:"database_count"`
+	SharingScope      ResourceSharingScopeEnum `bun:"sharing_scope"`
+	ConnectionCount   int                      `bun:"connection_count"`
+	GrantCount        int                      `bun:"grant_count"`
+	InstallationCount int                      `bun:"installation_count"`
+	EndpointCount     int                      `bun:"endpoint_count"`
+	Health            string                   `bun:"health"`
 }
 
 type ResourceInstallationDetail struct {
@@ -78,8 +76,7 @@ type ResourceDetails struct {
 	Volumes           []ResourceVolumeDetail
 	Mounts            []ResourceMountDetail
 	HealthChecks      []ResourceHealthCheckDetail
-	DatabaseBacking   *ResourceDatabaseBackingDetail
-	Databases         []ResourceDatabaseDetail
+	Databases         []ResourceDatabaseDefinition
 }
 
 type ResourceEnvironmentGrantDetail struct {
@@ -95,18 +92,6 @@ type ResourceApplicationGrantDetail struct {
 	ApplicationName string `bun:"application_name"`
 }
 
-type ResourceDatabaseBackingDetail struct {
-	ClusterID uuid.UUID `bun:"cluster_id"`
-	Engine    string    `bun:"engine"`
-}
-
-type ResourceDatabaseDetail struct {
-	ID            uuid.UUID `bun:"id"`
-	Name          string    `bun:"name"`
-	DesiredState  string    `bun:"desired_state"`
-	ObservedState string    `bun:"observed_state"`
-}
-
 type ResourceBackupEligibility struct {
 	Eligible       bool
 	Reason         string
@@ -114,12 +99,11 @@ type ResourceBackupEligibility struct {
 }
 
 type ResourceBackupDetails struct {
-	DatabaseID   uuid.UUID
 	DatabaseName string
 	Eligibility  ResourceBackupEligibility
 	Policy       *BackupPolicyEntity
 	History      []DatabaseBackupHistory
-	Restores     []DatabaseRestoreHistory
+	Restores     []ResourceRestoreHistory
 }
 
 type ResourceBackupCatalog struct {
@@ -141,7 +125,7 @@ type ResourceConnectionDetail struct {
 	ApplicationSlug     string          `bun:"application_slug"`
 	ApplicationArchived bool            `bun:"application_archived"`
 	EndpointName        string          `bun:"endpoint_name"`
-	EndpointSettings    json.RawMessage `bun:"endpoint_settings"`
+	CredentialMetadata  json.RawMessage `bun:"credential_metadata"`
 	CredentialName      string          `bun:"credential_name"`
 }
 
@@ -182,7 +166,8 @@ type ResourceRegistryCredentialOption struct {
 }
 
 type ResourceFormOptions struct {
-	Kinds               []ResourceKindDefinition
+	Engines             []ResourceEngineDefinition
+	ResourceTypes       []ResourceTypeEnum
 	Environments        []ResourceEnvironmentOption
 	Servers             []ResourceServerOption
 	PrivateNetworks     []ResourceNetworkOption

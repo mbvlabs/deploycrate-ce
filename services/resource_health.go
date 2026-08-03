@@ -89,12 +89,12 @@ func (service *ResourceHealth) observe(ctx context.Context, check models.DueReso
 		if consecutiveFailures >= check.FailureThreshold {
 			state = "unhealthy"
 		}
-		message = safeResourceHealthError(check.ResourceKind, probeErr)
+		message = safeResourceHealthError(check.ResourceEngine, probeErr)
 	}
 
 	details, err := json.Marshal(map[string]any{
-		"resource_kind": check.ResourceKind,
-		"check_kind":    check.Kind,
+		"resource_engine": check.ResourceEngine,
+		"check_kind":      check.Kind,
 	})
 	if err != nil {
 		return fmt.Errorf("encode Resource health details: %w", err)
@@ -126,9 +126,8 @@ func (service *ResourceHealth) observe(ctx context.Context, check models.DueReso
 		"resource_health_check_id", check.ID,
 		"resource_id", check.ResourceID,
 		"resource_name", check.ResourceName,
-		"resource_installation_id", check.ResourceInstallationID,
 		"resource_endpoint_id", check.ResourceEndpointID,
-		"resource_kind", check.ResourceKind,
+		"resource_engine", check.ResourceEngine,
 		"state", status.State,
 		"latency_ms", status.LatencyMs.Int32,
 		"consecutive_successes", status.ConsecutiveSuccesses,
@@ -164,10 +163,7 @@ func (service *ResourceHealth) probe(
 		if !check.CredentialUsername.Valid || strings.TrimSpace(check.CredentialUsername.String) == "" || password == "" {
 			return "", errors.New("the PostgreSQL health check credential is unavailable")
 		}
-		database := strings.TrimSpace(settings.Database)
-		if database == "" {
-			database = strings.TrimSpace(check.ResourceDatabaseName)
-		}
+		database := strings.TrimSpace(check.CredentialDatabaseName)
 		if err := service.postgres.Check(ctx, postgresqlclient.Connection{
 			Host: check.EndpointAddress, Port: check.EndpointPort,
 			Username: check.CredentialUsername.String, Password: password,
@@ -245,7 +241,7 @@ func safeResourceHealthError(kind string, err error) string {
 	if len(runes) > 500 {
 		message = string(runes[:500])
 	}
-	definition, ok := models.FindResourceKind(kind)
+	definition, ok := models.FindResourceEngine(kind)
 	if !ok {
 		return "Resource health probe failed: " + message
 	}

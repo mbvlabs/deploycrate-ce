@@ -30,42 +30,39 @@ type DatabaseBackupPolicyInput struct {
 }
 
 func (service *DatabaseBackups) DetailsForResource(ctx context.Context, resourceID uuid.UUID) (models.ResourceBackupCatalog, error) {
+	resource, err := models.Resource.Find(ctx, service.db.Executor(), resourceID)
+	if err != nil {
+		return models.ResourceBackupCatalog{}, err
+	}
 	destinations, err := models.BackupDestination.ActiveSummaries(ctx, service.db.Executor())
 	if err != nil {
 		return models.ResourceBackupCatalog{}, err
 	}
-	databases := make([]models.DatabaseEntity, 0)
-	if err := service.db.Executor().NewSelect().Model(&databases).
-		Join("JOIN database_resources AS backing ON backing.database_cluster_id = database.database_cluster_id").
-		Where("backing.resource_id = ?", resourceID).Where("database.archived_at IS NULL").OrderExpr("database.name").Scan(ctx); err != nil {
-		return models.ResourceBackupCatalog{}, err
-	}
-	details := make([]models.ResourceBackupDetails, 0, len(databases))
-	for _, database := range databases {
-		eligibility, err := service.eligibility(ctx, service.db.Executor(), database.ID)
-		if err != nil {
-			return models.ResourceBackupCatalog{}, err
+	details := make([]models.ResourceBackupDetails, 0, len(resource.Databases()))
+	for _, database := range resource.Databases() {
+		eligibility, eligibilityErr := service.eligibility(ctx, service.db.Executor(), resource, database.Name)
+		if eligibilityErr != nil {
+			return models.ResourceBackupCatalog{}, eligibilityErr
 		}
 		var policy models.BackupPolicyEntity
-		policyErr := service.db.Executor().NewSelect().Model(&policy).Where("database_id = ?", database.ID).Where("target_type = 'database'").Where("archived_at IS NULL").Limit(1).Scan(ctx)
-		var policyPointer *models.BackupPolicyEntity
+		policyErr := service.db.Executor().NewSelect().Model(&policy).
+			Where("resource_id = ?", resourceID).Where("target_type = 'resource'").
+			Where("target ->> 'database' = ?", database.Name).Where("archived_at IS NULL").Limit(1).Scan(ctx)
+		var activePolicy *models.BackupPolicyEntity
 		if policyErr == nil {
-			policyPointer = &policy
+			activePolicy = &policy
 		} else if !errors.Is(policyErr, sql.ErrNoRows) {
 			return models.ResourceBackupCatalog{}, policyErr
 		}
-		history, err := models.Backup.RecentForDatabase(ctx, service.db.Executor(), database.ID, 10)
-		if err != nil {
-			return models.ResourceBackupCatalog{}, err
+		history, historyErr := models.Backup.RecentForResourceDatabase(ctx, service.db.Executor(), resourceID, database.Name, 10)
+		if historyErr != nil {
+			return models.ResourceBackupCatalog{}, historyErr
 		}
-		restores, err := models.DatabaseRestore.RecentForDatabase(ctx, service.db.Executor(), database.ID, 10)
-		if err != nil {
-			return models.ResourceBackupCatalog{}, err
+		restores, restoreErr := models.ResourceRestore.RecentForResourceDatabase(ctx, service.db.Executor(), resourceID, database.Name, 10)
+		if restoreErr != nil {
+			return models.ResourceBackupCatalog{}, restoreErr
 		}
-		details = append(details, models.ResourceBackupDetails{
-			DatabaseID: database.ID, DatabaseName: database.Name, Eligibility: eligibility,
-			Policy: policyPointer, History: history, Restores: restores,
-		})
+		details = append(details, models.ResourceBackupDetails{DatabaseName: database.Name, Eligibility: eligibility, Policy: activePolicy, History: history, Restores: restores})
 	}
 	return models.ResourceBackupCatalog{Destinations: destinations, Databases: details}, nil
 }
@@ -74,21 +71,17 @@ func (service *DatabaseBackups) Destinations(ctx context.Context) ([]models.Back
 	return models.BackupDestination.ActiveSummaries(ctx, service.db.Executor())
 }
 
-func (service *DatabaseBackups) CreateForResource(ctx context.Context, resourceID, databaseID uuid.UUID, input DatabaseBackupPolicyInput) (models.BackupPolicyEntity, error) {
-	database, err := service.databaseForResource(ctx, service.db.Executor(), resourceID, databaseID)
-	if err != nil {
-		return models.BackupPolicyEntity{}, err
-	}
-	return service.Create(ctx, database.ID, input)
-}
-
-func (service *DatabaseBackups) Create(ctx context.Context, databaseID uuid.UUID, input DatabaseBackupPolicyInput) (models.BackupPolicyEntity, error) {
+func (service *DatabaseBackups) CreateForResource(ctx context.Context, resourceID uuid.UUID, databaseName string, input DatabaseBackupPolicyInput) (models.BackupPolicyEntity, error) {
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return models.BackupPolicyEntity{}, err
 	}
 	defer tx.Rollback()
-	eligibility, err := service.eligibility(ctx, tx, databaseID)
+	resource, err := models.Resource.Find(ctx, tx, resourceID)
+	if err != nil || resource.ArchivedAt.Valid || !resourceHasDatabase(resource, databaseName) {
+		return models.BackupPolicyEntity{}, models.ErrNotFound
+	}
+	eligibility, err := service.eligibility(ctx, tx, resource, databaseName)
 	if err != nil {
 		return models.BackupPolicyEntity{}, err
 	}
@@ -96,10 +89,6 @@ func (service *DatabaseBackups) Create(ctx context.Context, databaseID uuid.UUID
 		return models.BackupPolicyEntity{}, domainError("backup", "ineligible", eligibility.Reason)
 	}
 	if err := service.validateDestination(ctx, tx, input.BackupDestinationID); err != nil {
-		return models.BackupPolicyEntity{}, err
-	}
-	database, err := models.Database.Find(ctx, tx, databaseID)
-	if err != nil {
 		return models.BackupPolicyEntity{}, err
 	}
 	now := time.Now().UTC()
@@ -111,12 +100,18 @@ func (service *DatabaseBackups) Create(ctx context.Context, databaseID uuid.UUID
 	if err != nil {
 		return models.BackupPolicyEntity{}, err
 	}
-	policy, err := models.BackupPolicy.Create(ctx, tx, models.CreateBackupPolicyData{Name: database.Name + " PostgreSQL", Schedule: input.Schedule, Strategy: "logical", Driver: "postgresql", Format: "tar.age", Retention: retention, Verification: json.RawMessage(`{"every_backup":true,"pg_restore_list":true}`), Settings: json.RawMessage(`{}`), ActivatedAt: sql.NullTime{Time: now, Valid: true}, TargetType: "database", DatabaseID: &databaseID, NextRunAt: nextRunAt, BackupDestinationID: input.BackupDestinationID})
+	target, _ := json.Marshal(map[string]string{"database": databaseName})
+	policy, err := models.BackupPolicy.Create(ctx, tx, models.CreateBackupPolicyData{
+		Name: databaseName + " PostgreSQL", Schedule: input.Schedule, Strategy: "logical", Driver: "postgresql", Format: "tar.age",
+		Retention: retention, Verification: json.RawMessage(`{"every_backup":true,"pg_restore_list":true}`), Settings: json.RawMessage(`{}`),
+		ActivatedAt: sql.NullTime{Time: now, Valid: true}, TargetType: "resource", Target: target, ResourceID: &resourceID,
+		NextRunAt: nextRunAt, BackupDestinationID: input.BackupDestinationID,
+	})
 	if err != nil {
 		return models.BackupPolicyEntity{}, err
 	}
 	if err := service.scheduler.InsertScheduleTx(ctx, tx, policy.ID, nextRunAt); err != nil {
-		return models.BackupPolicyEntity{}, fmt.Errorf("insert first Database backup schedule: %w", err)
+		return models.BackupPolicyEntity{}, fmt.Errorf("insert first Resource backup schedule: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
 		return models.BackupPolicyEntity{}, err
@@ -124,36 +119,31 @@ func (service *DatabaseBackups) Create(ctx context.Context, databaseID uuid.UUID
 	return policy, nil
 }
 
-func (service *DatabaseBackups) UpdateForResource(ctx context.Context, resourceID, databaseID, policyID uuid.UUID, input DatabaseBackupPolicyInput) (models.BackupPolicyEntity, error) {
-	databaseID, err := service.policyDatabaseForResource(ctx, resourceID, databaseID, policyID)
-	if err != nil {
-		return models.BackupPolicyEntity{}, err
-	}
-	return service.Update(ctx, databaseID, policyID, input)
-}
-
-func (service *DatabaseBackups) Update(ctx context.Context, databaseID, policyID uuid.UUID, input DatabaseBackupPolicyInput) (models.BackupPolicyEntity, error) {
+func (service *DatabaseBackups) UpdateForResource(ctx context.Context, resourceID uuid.UUID, databaseName string, policyID uuid.UUID, input DatabaseBackupPolicyInput) (models.BackupPolicyEntity, error) {
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return models.BackupPolicyEntity{}, err
 	}
 	defer tx.Rollback()
-	policy, err := service.loadPolicy(ctx, tx, databaseID, policyID)
+	policy, err := service.loadPolicy(ctx, tx, resourceID, databaseName, policyID)
 	if err != nil {
 		return models.BackupPolicyEntity{}, err
 	}
-	eligibility, err := service.eligibility(ctx, tx, databaseID)
+	resource, err := models.Resource.Find(ctx, tx, resourceID)
 	if err != nil {
 		return models.BackupPolicyEntity{}, err
 	}
-	if !eligibility.Eligible {
+	eligibility, err := service.eligibility(ctx, tx, resource, databaseName)
+	if err != nil || !eligibility.Eligible {
+		if err != nil {
+			return models.BackupPolicyEntity{}, err
+		}
 		return models.BackupPolicyEntity{}, domainError("backup", "ineligible", eligibility.Reason)
 	}
 	if err := service.validateDestination(ctx, tx, input.BackupDestinationID); err != nil {
 		return models.BackupPolicyEntity{}, err
 	}
-	now := time.Now().UTC()
-	nextRunAt, err := models.NextBackupRun(input.Schedule, now)
+	nextRunAt, err := models.NextBackupRun(input.Schedule, time.Now().UTC())
 	if err != nil {
 		return models.BackupPolicyEntity{}, domainError("schedule", "invalid", "Schedule must be a five-field cron expression")
 	}
@@ -161,7 +151,13 @@ func (service *DatabaseBackups) Update(ctx context.Context, databaseID, policyID
 	if err != nil {
 		return models.BackupPolicyEntity{}, err
 	}
-	updated, err := models.BackupPolicy.Update(ctx, tx, models.UpdateBackupPolicyData{ID: policy.ID, Name: policy.Name, Schedule: input.Schedule, Strategy: policy.Strategy, Driver: policy.Driver, Retention: retention, Format: policy.Format, Verification: policy.Verification, Settings: policy.Settings, ArchivedAt: policy.ArchivedAt, ActivatedAt: policy.ActivatedAt, TargetType: policy.TargetType, DatabaseID: policy.DatabaseID, NextRunAt: nextRunAt, LastScheduledAt: policy.LastScheduledAt, BackupDestinationID: input.BackupDestinationID})
+	updated, err := models.BackupPolicy.Update(ctx, tx, models.UpdateBackupPolicyData{
+		ID: policy.ID, Name: policy.Name, Schedule: input.Schedule, Strategy: policy.Strategy, Driver: policy.Driver,
+		Retention: retention, Format: policy.Format, Verification: policy.Verification, Settings: policy.Settings,
+		ArchivedAt: policy.ArchivedAt, ActivatedAt: policy.ActivatedAt, TargetType: policy.TargetType, Target: policy.Target,
+		ResourceID: policy.ResourceID, NextRunAt: nextRunAt, LastScheduledAt: policy.LastScheduledAt,
+		BackupDestinationID: input.BackupDestinationID,
+	})
 	if err != nil {
 		return models.BackupPolicyEntity{}, err
 	}
@@ -176,55 +172,13 @@ func (service *DatabaseBackups) Update(ctx context.Context, databaseID, policyID
 	return updated, nil
 }
 
-func (service *DatabaseBackups) SetStateForResource(ctx context.Context, resourceID, databaseID, policyID uuid.UUID, action string) error {
-	databaseID, err := service.policyDatabaseForResource(ctx, resourceID, databaseID, policyID)
-	if err != nil {
-		return err
-	}
-	return service.setState(ctx, databaseID, policyID, action)
-}
-func (service *DatabaseBackups) ManualForResource(ctx context.Context, resourceID, databaseID, policyID uuid.UUID) (uuid.UUID, error) {
-	databaseID, err := service.policyDatabaseForResource(ctx, resourceID, databaseID, policyID)
-	if err != nil {
-		return uuid.Nil, err
-	}
-	policy, err := models.BackupPolicy.Find(ctx, service.db.Executor(), policyID)
-	if err != nil || policy.DatabaseID == nil || *policy.DatabaseID != databaseID || policy.ArchivedAt.Valid {
-		return uuid.Nil, models.ErrNotFound
-	}
-	return service.scheduler.Manual(ctx, policyID)
-}
-
-func (service *DatabaseBackups) databaseForResource(ctx context.Context, db storage.Executor, resourceID, databaseID uuid.UUID) (models.DatabaseEntity, error) {
-	var database models.DatabaseEntity
-	err := db.NewSelect().Model(&database).
-		Join("JOIN database_resources AS backing ON backing.database_cluster_id = database.database_cluster_id").
-		Where("database.id = ?", databaseID).Where("backing.resource_id = ?", resourceID).Where("database.archived_at IS NULL").Scan(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return models.DatabaseEntity{}, models.ErrNotFound
-	}
-	return database, err
-}
-
-func (service *DatabaseBackups) policyDatabaseForResource(ctx context.Context, resourceID, databaseID, policyID uuid.UUID) (uuid.UUID, error) {
-	var scopedDatabaseID uuid.UUID
-	err := service.db.Executor().NewSelect().TableExpr("backup_policies AS policy").ColumnExpr("database.id").
-		Join("JOIN databases AS database ON database.id = policy.database_id AND database.archived_at IS NULL").
-		Join("JOIN database_resources AS backing ON backing.database_cluster_id = database.database_cluster_id AND backing.resource_id = ?", resourceID).
-		Where("database.id = ?", databaseID).Where("policy.id = ?", policyID).Where("policy.archived_at IS NULL").Scan(ctx, &scopedDatabaseID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return uuid.Nil, models.ErrNotFound
-	}
-	return scopedDatabaseID, err
-}
-
-func (service *DatabaseBackups) setState(ctx context.Context, databaseID, policyID uuid.UUID, action string) error {
+func (service *DatabaseBackups) SetStateForResource(ctx context.Context, resourceID uuid.UUID, databaseName string, policyID uuid.UUID, action string) error {
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	policy, err := service.loadPolicy(ctx, tx, databaseID, policyID)
+	policy, err := service.loadPolicy(ctx, tx, resourceID, databaseName, policyID)
 	if err != nil {
 		return err
 	}
@@ -233,28 +187,24 @@ func (service *DatabaseBackups) setState(ctx context.Context, databaseID, policy
 	case "pause":
 		policy.ActivatedAt = sql.NullTime{}
 	case "resume":
-		eligibility, eligibilityErr := service.eligibility(ctx, tx, databaseID)
-		if eligibilityErr != nil {
-			return eligibilityErr
-		}
-		if !eligibility.Eligible {
-			return domainError("backup", "ineligible", eligibility.Reason)
-		}
-		if err := service.validateDestination(ctx, tx, policy.BackupDestinationID); err != nil {
-			return err
-		}
 		policy.ActivatedAt = sql.NullTime{Time: now, Valid: true}
 		policy.NextRunAt, err = models.NextBackupRun(policy.Schedule, now)
-		if err != nil {
-			return err
-		}
 	case "archive":
 		policy.ActivatedAt = sql.NullTime{}
 		policy.ArchivedAt = sql.NullTime{Time: now, Valid: true}
 	default:
-		return errors.New("unsupported Database backup policy state change")
+		return errors.New("unsupported Resource backup policy state change")
 	}
-	updated, err := models.BackupPolicy.Update(ctx, tx, models.UpdateBackupPolicyData{ID: policy.ID, Name: policy.Name, Schedule: policy.Schedule, Strategy: policy.Strategy, Driver: policy.Driver, Retention: policy.Retention, Format: policy.Format, Verification: policy.Verification, Settings: policy.Settings, ArchivedAt: policy.ArchivedAt, ActivatedAt: policy.ActivatedAt, TargetType: policy.TargetType, DatabaseID: policy.DatabaseID, NextRunAt: policy.NextRunAt, LastScheduledAt: policy.LastScheduledAt, BackupDestinationID: policy.BackupDestinationID})
+	if err != nil {
+		return err
+	}
+	updated, err := models.BackupPolicy.Update(ctx, tx, models.UpdateBackupPolicyData{
+		ID: policy.ID, Name: policy.Name, Schedule: policy.Schedule, Strategy: policy.Strategy, Driver: policy.Driver,
+		Retention: policy.Retention, Format: policy.Format, Verification: policy.Verification, Settings: policy.Settings,
+		ArchivedAt: policy.ArchivedAt, ActivatedAt: policy.ActivatedAt, TargetType: policy.TargetType, Target: policy.Target,
+		ResourceID: policy.ResourceID, NextRunAt: policy.NextRunAt, LastScheduledAt: policy.LastScheduledAt,
+		BackupDestinationID: policy.BackupDestinationID,
+	})
 	if err != nil {
 		return err
 	}
@@ -266,13 +216,22 @@ func (service *DatabaseBackups) setState(ctx context.Context, databaseID, policy
 	return tx.Commit()
 }
 
-func (service *DatabaseBackups) loadPolicy(ctx context.Context, db storage.Executor, databaseID, policyID uuid.UUID) (models.BackupPolicyEntity, error) {
+func (service *DatabaseBackups) ManualForResource(ctx context.Context, resourceID uuid.UUID, databaseName string, policyID uuid.UUID) (uuid.UUID, error) {
+	policy, err := service.loadPolicy(ctx, service.db.Executor(), resourceID, databaseName, policyID)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	return service.scheduler.Manual(ctx, policy.ID)
+}
+
+func (service *DatabaseBackups) loadPolicy(ctx context.Context, db storage.Executor, resourceID uuid.UUID, databaseName string, policyID uuid.UUID) (models.BackupPolicyEntity, error) {
 	policy, err := models.BackupPolicy.FindForUpdate(ctx, db, policyID)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && (policy.DatabaseID == nil || *policy.DatabaseID != databaseID || policy.TargetType != "database" || policy.ArchivedAt.Valid) {
+	if errors.Is(err, sql.ErrNoRows) || err == nil && (policy.ResourceID == nil || *policy.ResourceID != resourceID || policy.TargetType != "resource" || resourceCredentialMetadataDatabase(policy.Target) != databaseName || policy.ArchivedAt.Valid) {
 		return models.BackupPolicyEntity{}, models.ErrNotFound
 	}
 	return policy, err
 }
+
 func (service *DatabaseBackups) validateDestination(ctx context.Context, db storage.Executor, destinationID uuid.UUID) error {
 	count, err := db.NewSelect().TableExpr("backup_destinations AS destination").Join("JOIN credentials AS credential ON credential.id = destination.credential_id").Where("destination.id = ?", destinationID).Where("destination.archived_at IS NULL").Where("credential.archived_at IS NULL").Where("credential.verified_at IS NOT NULL").Where("credential.provider = 'backup_' || destination.provider").Count(ctx)
 	if err != nil {
@@ -281,35 +240,29 @@ func (service *DatabaseBackups) validateDestination(ctx context.Context, db stor
 	return requireChild(count, "backupDestinationId", "Choose an active, verified Object Storage destination")
 }
 
-func (service *DatabaseBackups) eligibility(ctx context.Context, db storage.Executor, databaseID uuid.UUID) (models.ResourceBackupEligibility, error) {
-	var target struct {
-		DatabaseID                                 uuid.UUID
-		Engine, ManagementMode, InstallationMethod string
-		NodeID, InstallationID                     uuid.UUID
-		ServerID                                   uuid.UUID
-		AdministratorCount                         int
-	}
-	err := db.NewSelect().TableExpr("databases AS database").ColumnExpr("database.id AS database_id, cluster.engine, cluster.management_mode, COALESCE(installation.installation_method, '') AS installation_method").ColumnExpr("installation.server_id, node.id AS node_id, installation.id AS installation_id").ColumnExpr("(SELECT count(*) FROM database_cluster_credentials credential WHERE credential.database_cluster_id = cluster.id AND credential.role = 'administrator' AND credential.archived_at IS NULL) AS administrator_count").Join("JOIN database_clusters AS cluster ON cluster.id = database.database_cluster_id AND cluster.archived_at IS NULL").Join("LEFT JOIN database_cluster_nodes AS node ON node.database_cluster_id = cluster.id AND node.role = 'primary' AND node.archived_at IS NULL").Join("LEFT JOIN database_node_installations AS installation ON installation.database_cluster_node_id = node.id AND installation.archived_at IS NULL").Where("database.id = ?", databaseID).Where("database.archived_at IS NULL").Scan(ctx, &target)
-	if errors.Is(err, sql.ErrNoRows) {
-		return models.ResourceBackupEligibility{}, models.ErrNotFound
-	}
-	if err != nil {
-		return models.ResourceBackupEligibility{}, err
-	}
+func (service *DatabaseBackups) eligibility(ctx context.Context, db storage.Executor, resource models.ResourceEntity, databaseName string) (models.ResourceBackupEligibility, error) {
 	ineligible := func(reason string) (models.ResourceBackupEligibility, error) {
 		return models.ResourceBackupEligibility{Reason: reason}, nil
 	}
-	if target.Engine != "postgresql" {
-		return ineligible("Logical backups currently support PostgreSQL Databases only.")
+	if resource.Engine() != "postgresql" || !resourceHasDatabase(resource, databaseName) {
+		return ineligible("Logical backups currently support configured PostgreSQL databases only.")
 	}
-	if target.ManagementMode != "managed" || target.InstallationMethod != "docker" {
-		return ineligible("This Database does not currently have an executable managed Docker primary Node.")
+	var installation models.ResourceInstallationEntity
+	if err := db.NewSelect().Model(&installation).Where("resource_id = ?", resource.ID).Where("archived_at IS NULL").Limit(1).Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ineligible("This Resource has no active Docker installation.")
+		}
+		return models.ResourceBackupEligibility{}, err
 	}
-	if _, err := models.RequireServerCapability(ctx, db, target.ServerID, models.ServerCapabilityDatabase); err != nil {
-		return ineligible("The active primary Node is not an available Database-capable Server.")
+	if _, err := models.RequireServerCapability(ctx, db, installation.ServerID, models.ServerCapabilityResource); err != nil {
+		return ineligible("The Resource installation is not on an available Resource-capable Server.")
 	}
-	if target.AdministratorCount != 1 {
-		return ineligible("Exactly one active Database Cluster administrator credential is required.")
+	administrators, err := db.NewSelect().TableExpr("resource_credentials").Where("resource_id = ?", resource.ID).Where("metadata ->> 'purpose' = 'administrator'").Where("archived_at IS NULL").Count(ctx)
+	if err != nil {
+		return models.ResourceBackupEligibility{}, err
+	}
+	if administrators != 1 {
+		return ineligible("Exactly one active Resource administrator credential is required.")
 	}
 	destinations, err := models.BackupDestination.ActiveSummaries(ctx, db)
 	if err != nil {
@@ -318,7 +271,7 @@ func (service *DatabaseBackups) eligibility(ctx context.Context, db storage.Exec
 	if len(destinations) == 0 {
 		return ineligible("No active, verified Object Storage destination is available.")
 	}
-	return models.ResourceBackupEligibility{Eligible: true, InstallationID: &target.InstallationID}, nil
+	return models.ResourceBackupEligibility{Eligible: true, InstallationID: &installation.ID}, nil
 }
 
 func databaseBackupRetention(input DatabaseBackupPolicyInput) (json.RawMessage, error) {

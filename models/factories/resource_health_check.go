@@ -21,22 +21,21 @@ type ResourceHealthCheckFactory struct {
 
 type ResourceHealthCheckOption func(*ResourceHealthCheckFactory)
 
-func BuildResourceHealthCheck(resourceID uuid.UUID, resourceInstallationID *uuid.UUID, resourceEndpointID *uuid.UUID, resourceCredentialID *uuid.UUID, opts ...ResourceHealthCheckOption) models.ResourceHealthCheckEntity {
+func BuildResourceHealthCheck(resourceID uuid.UUID, resourceEndpointID *uuid.UUID, resourceCredentialID *uuid.UUID, opts ...ResourceHealthCheckOption) models.ResourceHealthCheckEntity {
 	f := &ResourceHealthCheckFactory{
 		ResourceHealthCheckEntity: models.ResourceHealthCheckEntity{
-			Name:                   faker.Word(),
-			Kind:                   faker.Word(),
-			Configuration:          json.RawMessage{},
-			IntervalSeconds:        randomInt(1, 1000, 100),
-			TimeoutSeconds:         randomInt(1, 1000, 100),
-			FailureThreshold:       randomInt(1, 1000, 100),
-			SuccessThreshold:       randomInt(1, 1000, 100),
-			Enabled:                randomBool(),
-			ArchivedAt:             sql.NullTime{Time: time.Now(), Valid: true},
-			ResourceID:             resourceID,
-			ResourceInstallationID: resourceInstallationID,
-			ResourceEndpointID:     resourceEndpointID,
-			ResourceCredentialID:   resourceCredentialID,
+			Name:                 faker.Word(),
+			Kind:                 faker.Word(),
+			Configuration:        json.RawMessage{},
+			IntervalSeconds:      randomInt(1, 1000, 100),
+			TimeoutSeconds:       randomInt(1, 1000, 100),
+			FailureThreshold:     randomInt(1, 1000, 100),
+			SuccessThreshold:     randomInt(1, 1000, 100),
+			Enabled:              randomBool(),
+			ArchivedAt:           sql.NullTime{Time: time.Now(), Valid: true},
+			ResourceID:           resourceID,
+			ResourceEndpointID:   resourceEndpointID,
+			ResourceCredentialID: resourceCredentialID,
 		},
 	}
 
@@ -47,26 +46,25 @@ func BuildResourceHealthCheck(resourceID uuid.UUID, resourceInstallationID *uuid
 	return f.ResourceHealthCheckEntity
 }
 
-func CreateResourceHealthCheck(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, resourceInstallationID *uuid.UUID, resourceEndpointID *uuid.UUID, resourceCredentialID *uuid.UUID, opts ...ResourceHealthCheckOption) (models.ResourceHealthCheckEntity, error) {
-	built := BuildResourceHealthCheck(resourceID, resourceInstallationID, resourceEndpointID, resourceCredentialID, opts...)
+func CreateResourceHealthCheck(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, resourceEndpointID *uuid.UUID, resourceCredentialID *uuid.UUID, opts ...ResourceHealthCheckOption) (models.ResourceHealthCheckEntity, error) {
+	built := BuildResourceHealthCheck(resourceID, resourceEndpointID, resourceCredentialID, opts...)
 
 	entity := models.ResourceHealthCheckEntity{
-		ID:                     uuid.New(),
-		CreatedAt:              time.Now(),
-		UpdatedAt:              time.Now(),
-		Name:                   built.Name,
-		Kind:                   built.Kind,
-		Configuration:          built.Configuration,
-		IntervalSeconds:        built.IntervalSeconds,
-		TimeoutSeconds:         built.TimeoutSeconds,
-		FailureThreshold:       built.FailureThreshold,
-		SuccessThreshold:       built.SuccessThreshold,
-		Enabled:                built.Enabled,
-		ArchivedAt:             built.ArchivedAt,
-		ResourceID:             built.ResourceID,
-		ResourceInstallationID: built.ResourceInstallationID,
-		ResourceEndpointID:     built.ResourceEndpointID,
-		ResourceCredentialID:   built.ResourceCredentialID,
+		ID:                   uuid.New(),
+		CreatedAt:            time.Now(),
+		UpdatedAt:            time.Now(),
+		Name:                 built.Name,
+		Kind:                 built.Kind,
+		Configuration:        built.Configuration,
+		IntervalSeconds:      built.IntervalSeconds,
+		TimeoutSeconds:       built.TimeoutSeconds,
+		FailureThreshold:     built.FailureThreshold,
+		SuccessThreshold:     built.SuccessThreshold,
+		Enabled:              built.Enabled,
+		ArchivedAt:           built.ArchivedAt,
+		ResourceID:           built.ResourceID,
+		ResourceEndpointID:   built.ResourceEndpointID,
+		ResourceCredentialID: built.ResourceCredentialID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -76,11 +74,11 @@ func CreateResourceHealthCheck(ctx context.Context, exec storage.Executor, resou
 	return entity, nil
 }
 
-func CreateResourceHealthChecks(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, resourceInstallationID *uuid.UUID, resourceEndpointID *uuid.UUID, resourceCredentialID *uuid.UUID, count int, opts ...ResourceHealthCheckOption) ([]models.ResourceHealthCheckEntity, error) {
+func CreateResourceHealthChecks(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, resourceEndpointID *uuid.UUID, resourceCredentialID *uuid.UUID, count int, opts ...ResourceHealthCheckOption) ([]models.ResourceHealthCheckEntity, error) {
 	resourcehealthchecks := make([]models.ResourceHealthCheckEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateResourceHealthCheck(ctx, exec, resourceID, resourceInstallationID, resourceEndpointID, resourceCredentialID, opts...)
+		entity, err := CreateResourceHealthCheck(ctx, exec, resourceID, resourceEndpointID, resourceCredentialID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resourcehealthcheck %d: %w", i+1, err)
 		}
@@ -147,12 +145,6 @@ func WithResourceHealthChecksArchivedAt(value sql.NullTime) ResourceHealthCheckO
 func WithResourceHealthChecksResourceID(value uuid.UUID) ResourceHealthCheckOption {
 	return func(f *ResourceHealthCheckFactory) {
 		f.ResourceHealthCheckEntity.ResourceID = value
-	}
-}
-
-func WithResourceHealthChecksResourceInstallationID(value *uuid.UUID) ResourceHealthCheckOption {
-	return func(f *ResourceHealthCheckFactory) {
-		f.ResourceHealthCheckEntity.ResourceInstallationID = value
 	}
 }
 

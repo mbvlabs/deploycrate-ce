@@ -42,8 +42,8 @@
   type SystemResource = {
     id: string
     name: string
-    category: string
-    kind: string
+    resourceType: string
+    engine: string
     sharingScope: string
     bindingAlias: string
     credentialSource: string
@@ -370,14 +370,14 @@
                       <p class="mt-1 font-mono text-xs text-muted-foreground">{resource.bindingAlias}</p>
                     </div>
                     <span class="text-xs capitalize text-muted-foreground">
-                      {resource.external ? 'External' : 'Local'} · {resource.kind}
+                      {resource.external ? 'External' : 'Local'} · {resource.engine}
                     </span>
                   </div>
 
                   <dl class="mt-5 grid gap-x-8 gap-y-5 sm:grid-cols-2 xl:grid-cols-4">
                     <div>
-                      <dt class="text-muted-foreground">Category</dt>
-                      <dd class="mt-1 text-sm capitalize">{resource.category}</dd>
+                      <dt class="text-muted-foreground">Resource type</dt>
+                      <dd class="mt-1 text-sm capitalize">{resource.resourceType}</dd>
                     </div>
                     <div>
                       <dt class="text-muted-foreground">Sharing scope</dt>

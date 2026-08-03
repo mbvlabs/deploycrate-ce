@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
+	"encoding/json"
 	"fmt"
 	"github.com/go-faker/faker/v4"
 	"time"
@@ -21,13 +22,13 @@ type ResourceOption func(*ResourceFactory)
 func BuildResource(opts ...ResourceOption) models.ResourceEntity {
 	f := &ResourceFactory{
 		ResourceEntity: models.ResourceEntity{
-			Name:           faker.Word(),
-			Slug:           faker.Word(),
-			Kind:           "postgresql",
-			ManagementMode: models.ResourceManagementManaged,
-			SharingScope:   models.ResourceSharingEnvironment,
-			SystemManaged:  false,
-			ArchivedAt:     sql.NullTime{Time: time.Now(), Valid: true},
+			Name:          faker.Word(),
+			Slug:          faker.Word(),
+			ResourceType:  models.ResourceTypeDatabase,
+			Configuration: json.RawMessage(`{"engine":"postgresql"}`),
+			SharingScope:  models.ResourceSharingEnvironment,
+			SystemManaged: false,
+			ArchivedAt:    sql.NullTime{Time: time.Now(), Valid: true},
 		},
 	}
 
@@ -42,13 +43,13 @@ func CreateResource(ctx context.Context, exec storage.Executor, opts ...Resource
 	built := BuildResource(opts...)
 
 	entity, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
-		Name:           built.Name,
-		Slug:           built.Slug,
-		Kind:           built.Kind,
-		ManagementMode: built.ManagementMode,
-		SharingScope:   built.SharingScope,
-		SystemManaged:  built.SystemManaged,
-		ArchivedAt:     built.ArchivedAt,
+		Name:          built.Name,
+		Slug:          built.Slug,
+		ResourceType:  built.ResourceType,
+		Configuration: built.Configuration,
+		SharingScope:  built.SharingScope,
+		SystemManaged: built.SystemManaged,
+		ArchivedAt:    built.ArchivedAt,
 	})
 	if err != nil {
 		return models.ResourceEntity{}, err
@@ -83,15 +84,15 @@ func WithResourcesSlug(value string) ResourceOption {
 	}
 }
 
-func WithResourcesKind(value string) ResourceOption {
+func WithResourcesResourceType(value models.ResourceTypeEnum) ResourceOption {
 	return func(f *ResourceFactory) {
-		f.ResourceEntity.Kind = value
+		f.ResourceEntity.ResourceType = value
 	}
 }
 
-func WithResourcesManagementMode(value models.ResourceManagementModeEnum) ResourceOption {
+func WithResourcesConfiguration(value json.RawMessage) ResourceOption {
 	return func(f *ResourceFactory) {
-		f.ResourceEntity.ManagementMode = value
+		f.ResourceEntity.Configuration = value
 	}
 }
 

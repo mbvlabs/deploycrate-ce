@@ -2,148 +2,73 @@
   import { Link, router, useForm } from '@inertiajs/svelte'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
-  import ConfirmActionDialog from '@/Components/ConfirmActionDialog.svelte'
   import FormField from '@/Components/FormField.svelte'
   import { Input } from '@/Components/ui/input'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
+  import { slugify } from '@/lib/slug'
   import { routes } from '@/routes'
 
-  type CredentialField = { name: string; label: string; required: boolean; secret: boolean }
-  type Kind = { kind: string; label: string; category: string; protocols: string[]; endpointRoles: string[]; tlsModes: string[]; credentialFields: CredentialField[]; healthCheckKinds: string[]; defaultPort: number }
-  type PrivateNetwork = { id: string; name: string; serverIds: string[]; serverAddresses: Record<string, string> }
+  type Engine = { engine: string; label: string; resourceType: 'database' | 'cache' | 'service' }
   type EnvironmentOption = { id: string; name: string; kind: string; applicationId: string; applicationName: string }
   type ApplicationOption = { id: string; name: string }
-  type Options = { kinds: Kind[]; environments: EnvironmentOption[]; servers: Array<{ id: string; name: string; address: string }>; privateNetworks: PrivateNetwork[]; registryCredentials: Array<{ id: string; name: string }> }
+  type Options = { engines: Engine[]; environments: EnvironmentOption[] }
   let { auth, resource, options, errors = {} }: { auth: { email: string }; resource: any; options: Options; errors?: Record<string, string> } = $props()
 
-	const identity = useForm(() => ({ name: resource.name, slug: resource.slug, kind: resource.kind, managementMode: resource.managementMode, sharingScope: resource.sharingScope }))
-  const definition = $derived(options.kinds.find((kind) => kind.kind === $identity.kind) ?? options.kinds[0])
+  const identity = useForm(() => ({ name: resource.name, slug: resource.slug, engine: resource.engine, engineVersion: resource.configuration?.engine_version ?? '', sharingScope: resource.sharingScope }))
+  const definition = $derived(options.engines.find((engine) => engine.engine === $identity.engine) ?? options.engines[0])
   const selectClass = 'h-9 w-full border border-input bg-background px-3 text-sm aria-invalid:border-destructive'
-  const textareaClass = 'min-h-24 w-full border border-input bg-background px-3 py-2 font-mono text-xs'
-  let jsonError = $state('')
-  let endpointDrafts = $state(initialEndpointDrafts())
-  let credentialDrafts = $state(initialCredentialDrafts())
-  let installationDrafts = $state(initialInstallationDrafts())
-  let volumeDrafts = $state(initialVolumeDrafts())
-  let mountDrafts = $state(initialMountDrafts())
-  let healthDrafts = $state(initialHealthDrafts())
-  let archiveDialogOpen = $state(false)
-  let archiveTarget = $state<{ path: string; label: string } | null>(null)
-  let archiveProcessing = $state(false)
   let selectedEnvironmentId = $state('')
   let selectedApplicationId = $state('')
+  let slugCustomized = $state(resource.slug !== slugify(resource.name))
 
-  function initialEndpointDrafts() { return Object.fromEntries(resource.endpoints.map((item: any) => [item.id, { ...item, privateNetworkId: item.privateNetworkId ?? '' }])) }
-  function initialCredentialDrafts() { return Object.fromEntries(resource.credentials.map((item: any) => [item.id, { ...item, secretValues: {}, rotate: false }])) }
-  function initialInstallationDrafts() { return Object.fromEntries(resource.installations.map((item: any) => [item.id, { ...item, hostPort: item.configuration?.portMappings?.[0]?.hostPort ?? definition.defaultPort, registryCredentialId: item.registryCredentialId ?? '' }])) }
-  function initialVolumeDrafts() { return Object.fromEntries(resource.volumes.map((item: any) => [item.id, { ...item, configurationText: JSON.stringify(item.configuration ?? {}, null, 2) }])) }
-  function initialMountDrafts() { return Object.fromEntries(resource.mounts.map((item: any) => [item.id, { ...item }])) }
-  function initialHealthDrafts() { return Object.fromEntries(resource.healthChecks.map((item: any) => [item.id, { ...item, configurationText: JSON.stringify(item.configuration ?? {}, null, 2), resourceEndpointId: item.resourceEndpointId ?? '', resourceCredentialId: item.resourceCredentialId ?? '' }])) }
+  function updateName(name: string) {
+    $identity.name = name
+    if (!slugCustomized) $identity.slug = slugify(name)
+  }
 
-  function editRoute(value: string) { return `${value}?returnTo=edit` }
-  function json(value: string) { try { jsonError = ''; return JSON.parse(value || '{}') } catch { jsonError = 'Configuration and metadata must contain valid JSON.'; throw new Error(jsonError) } }
-  function submit(action: () => void) { try { action() } catch {} }
-  function saveIdentity(event: SubmitEvent) { event.preventDefault(); $identity.patch(routes.resourceUpdate(resource.id)) }
-  function saveEndpoint(id: string) { const value = endpointDrafts[id]; router.patch(editRoute(routes.resourceEndpointUpdate(resource.id, id)), { ...value, settings: value.settings ?? {}, resourceInstallationId: resource.managementMode === 'managed' ? resource.installations[0]?.id ?? '' : '' }) }
-  function endpointNetworkOptions(id: string) { const current = endpointDrafts[id].privateNetworkId; const serverId = resource.installations[0]?.serverId; if (resource.managementMode !== 'managed' || !serverId) return options.privateNetworks; return options.privateNetworks.filter((network) => network.serverIds.includes(serverId) && (Boolean(network.serverAddresses[serverId]) || network.id === current)) }
-  function chooseEndpointNetwork(id: string, networkId: string) { const value = endpointDrafts[id]; value.privateNetworkId = networkId; if (resource.managementMode !== 'managed') { if (!networkId) value.address = '127.0.0.1'; return } const selected = options.privateNetworks.find((network) => network.id === networkId); const serverId = resource.installations[0]?.serverId; value.address = selected && serverId ? selected.serverAddresses[serverId] ?? value.address : '127.0.0.1' }
-  function saveCredential(id: string) { const value = credentialDrafts[id]; router.patch(editRoute(routes.resourceCredentialUpdate(resource.id, id)), { ...value, metadata: value.metadata ?? {} }) }
-  function saveInstallation(id: string) { const value = installationDrafts[id]; router.patch(editRoute(routes.resourceInstallationUpdate(resource.id, id)), { ...value, configuration: value.configuration ?? {}, portMappings: [{ hostPort: value.hostPort, containerPort: definition.defaultPort, protocol: 'tcp' }] }) }
-  function saveVolume(id: string) { const value = volumeDrafts[id]; submit(() => router.patch(editRoute(routes.resourceVolumeUpdate(resource.id, id)), { ...value, configuration: json(value.configurationText) })) }
-  function saveMount(id: string) { router.patch(editRoute(routes.resourceMountUpdate(resource.id, id)), mountDrafts[id]) }
-  function saveHealth(id: string) { const value = healthDrafts[id]; submit(() => router.patch(editRoute(routes.resourceHealthCheckUpdate(resource.id, id)), { ...value, configuration: json(value.configurationText) })) }
+  function updateSlug(slug: string) {
+    $identity.slug = slug
+    slugCustomized = true
+  }
+
+  function saveIdentity(event: SubmitEvent) {
+    event.preventDefault()
+    const configuration = { ...resource.configuration, engine: $identity.engine }
+    if ($identity.engineVersion) configuration.engine_version = $identity.engineVersion
+    else delete configuration.engine_version
+    $identity.transform((values) => ({ name: values.name, slug: values.slug, resourceType: definition.resourceType, configuration, sharingScope: values.sharingScope })).patch(routes.resourceUpdate(resource.id))
+  }
+
   function availableEnvironments() { const granted = new Set(resource.environmentGrants.map((grant: any) => grant.environmentId)); return options.environments.filter((environment) => !granted.has(environment.id)) }
   function applications() { const values = new Map<string, ApplicationOption>(); for (const environment of options.environments) values.set(environment.applicationId, { id: environment.applicationId, name: environment.applicationName }); return [...values.values()].sort((left, right) => left.name.localeCompare(right.name)) }
   function availableApplications() { const granted = new Set(resource.applicationGrants.map((grant: any) => grant.applicationId)); return applications().filter((application) => !granted.has(application.id)) }
-  function grantEnvironment() { if (!selectedEnvironmentId) return; router.post(editRoute(routes.resourceEnvironmentGrantCreate(resource.id, selectedEnvironmentId)), {}, { preserveScroll: true, onSuccess: () => selectedEnvironmentId = '' }) }
-  function revokeEnvironment(environmentId: string) { router.delete(editRoute(routes.resourceEnvironmentGrantDestroy(resource.id, environmentId)), { preserveScroll: true }) }
-  function grantApplication() { if (!selectedApplicationId) return; router.post(editRoute(routes.resourceApplicationGrantCreate(resource.id, selectedApplicationId)), {}, { preserveScroll: true, onSuccess: () => selectedApplicationId = '' }) }
-  function revokeApplication(applicationId: string) { router.delete(editRoute(routes.resourceApplicationGrantDestroy(resource.id, applicationId)), { preserveScroll: true }) }
-  function archive(path: string, label: string) {
-    archiveTarget = { path, label }
-    archiveDialogOpen = true
-  }
-  function confirmArchive() {
-    if (!archiveTarget) return
-    archiveProcessing = true
-    router.delete(editRoute(archiveTarget.path), {
-      preserveScroll: true,
-      onSuccess: () => (archiveDialogOpen = false),
-      onFinish: () => (archiveProcessing = false),
-    })
-  }
+  function grantEnvironment() { if (!selectedEnvironmentId) return; router.post(`${routes.resourceEnvironmentGrantCreate(resource.id, selectedEnvironmentId)}?returnTo=edit`, {}, { preserveScroll: true, onSuccess: () => selectedEnvironmentId = '' }) }
+  function revokeEnvironment(environmentId: string) { router.delete(`${routes.resourceEnvironmentGrantDestroy(resource.id, environmentId)}?returnTo=edit`, { preserveScroll: true }) }
+  function grantApplication() { if (!selectedApplicationId) return; router.post(`${routes.resourceApplicationGrantCreate(resource.id, selectedApplicationId)}?returnTo=edit`, {}, { preserveScroll: true, onSuccess: () => selectedApplicationId = '' }) }
+  function revokeApplication(applicationId: string) { router.delete(`${routes.resourceApplicationGrantDestroy(resource.id, applicationId)}?returnTo=edit`, { preserveScroll: true }) }
 </script>
 
 <svelte:head><title>Edit {resource.name}</title></svelte:head>
 <DashboardLayout email={auth.email}>
   <div class="mx-auto max-w-5xl space-y-8">
-    <header class="flex flex-wrap items-end justify-between gap-4"><div><p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">Resource configuration</p><h1 class="mt-3 text-3xl font-semibold">Edit {resource.name}</h1><p class="mt-2 max-w-2xl text-sm text-muted-foreground">Edit the complete desired Resource configuration. Runtime observations remain read-only on the Resource page.</p></div><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.resourceShow(resource.id)}>Done editing</Link>{/snippet}</Button></header>
+    <header class="flex flex-wrap items-end justify-between gap-4"><div><p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">Resource configuration</p><h1 class="mt-3 text-3xl font-semibold">Edit {resource.name}</h1><p class="mt-2 max-w-2xl text-sm text-muted-foreground">Edit Resource identity and selection policy. Docker runtime and endpoint operations are available on the Resource page.</p></div><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.resourceShow(resource.id)}>Done editing</Link>{/snippet}</Button></header>
 
-    {#if jsonError}<div class="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{jsonError}</div>{/if}
-    {#if Object.keys(errors).length > 0}<div class="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive" role="alert"><p class="font-medium">The changes could not be saved.</p><ul class="mt-2 list-disc pl-5">{#each Object.entries(errors) as [field, message]}<li>{field}: {message}</li>{/each}</ul></div>{/if}
+    {#if Object.keys(errors).length > 0}<div class="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"><p class="font-medium">The changes could not be saved.</p><ul class="mt-2 list-disc pl-5">{#each Object.entries(errors) as [field, message]}<li>{field}: {message}</li>{/each}</ul></div>{/if}
 
     <form onsubmit={saveIdentity}>
-		<Card.Root><Card.Header><Card.Title>Identity and policy</Card.Title><Card.Description>Resource identity and selection policy remain separate from typed infrastructure backing.</Card.Description></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2"><FormField label="Name" error={errors.name}><Input bind:value={$identity.name} required /></FormField><FormField label="Slug" error={errors.slug}><Input bind:value={$identity.slug} required /></FormField><FormField label="Kind" error={errors.kind}><select bind:value={$identity.kind} class={selectClass} required>{#each options.kinds as kind}<option value={kind.kind}>{kind.label}</option>{/each}</select></FormField><FormField label="Management mode" error={errors.managementMode}><select bind:value={$identity.managementMode} class={selectClass}><option value="managed">Managed</option><option value="external">External</option></select></FormField><FormField label="Sharing scope" error={errors.sharingScope}><select bind:value={$identity.sharingScope} class={selectClass}><option value="environment">Environment policy</option><option value="application">Application policy</option><option value="global">Global policy</option></select></FormField></Card.Content><Card.Footer class="border-t border-border"><Button type="submit" disabled={$identity.processing}>Save identity</Button></Card.Footer></Card.Root>
+      <Card.Root><Card.Header><Card.Title>Identity and engine</Card.Title><Card.Description>The slug follows the name until you customize it. The Resource type is derived from the selected engine.</Card.Description></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2"><FormField label="Name" error={errors.name}><Input value={$identity.name} oninput={(event) => updateName(event.currentTarget.value)} required /></FormField><FormField label="Slug" error={errors.slug}><Input value={$identity.slug} oninput={(event) => updateSlug(event.currentTarget.value)} required /></FormField><FormField label="Engine" error={errors['configuration.engine']}><select bind:value={$identity.engine} class={selectClass} required>{#each options.engines as engine}<option value={engine.engine}>{engine.label} · {engine.resourceType}</option>{/each}</select></FormField><FormField label="Engine version" error={errors['configuration.engine_version']}><Input bind:value={$identity.engineVersion} placeholder="Optional" /></FormField><FormField label="Sharing scope" error={errors.sharingScope}><select bind:value={$identity.sharingScope} class={selectClass}><option value="environment">Environment policy</option><option value="application">Application policy</option><option value="global">Global policy</option></select></FormField></Card.Content><Card.Footer class="border-t border-border"><Button type="submit" disabled={$identity.processing}>Save Resource</Button></Card.Footer></Card.Root>
     </form>
 
-    <Card.Root>
-      <Card.Header><Card.Title>Selection grants</Card.Title><Card.Description>Choose which consumers may select this Resource. Existing connections must be removed before their grant can be revoked.</Card.Description></Card.Header>
-      <Card.Content class="space-y-5">
-        {#if resource.sharingScope === 'global'}
-          <p class="text-sm text-muted-foreground">Global Resources are selectable by every Environment and do not use explicit grants.</p>
-        {:else if resource.sharingScope === 'environment'}
-          <div class="flex flex-col gap-2 sm:flex-row"><select bind:value={selectedEnvironmentId} class={selectClass}><option value="">Select an Environment</option>{#each availableEnvironments() as environment}<option value={environment.id}>{environment.applicationName} · {environment.name} ({environment.kind})</option>{/each}</select><Button type="button" disabled={!selectedEnvironmentId} onclick={grantEnvironment}>Grant access</Button></div>
-          {#if resource.environmentGrants.length === 0}<p class="text-sm text-muted-foreground">No Environments currently have access.</p>{/if}
-          <div class="divide-y divide-border border border-border">{#each resource.environmentGrants as grant}<div class="flex items-center justify-between gap-3 p-3"><div><p class="text-sm font-medium">{grant.applicationName} · {grant.environmentName}</p><p class="text-xs text-muted-foreground">{grant.environmentKind}</p></div><Button type="button" size="sm" variant="destructive" onclick={() => revokeEnvironment(grant.environmentId)}>Revoke</Button></div>{/each}</div>
-        {:else if resource.sharingScope === 'application'}
-          <div class="flex flex-col gap-2 sm:flex-row"><select bind:value={selectedApplicationId} class={selectClass}><option value="">Select an Application</option>{#each availableApplications() as application}<option value={application.id}>{application.name}</option>{/each}</select><Button type="button" disabled={!selectedApplicationId} onclick={grantApplication}>Grant access</Button></div>
-          {#if resource.applicationGrants.length === 0}<p class="text-sm text-muted-foreground">No Applications currently have access.</p>{/if}
-          <div class="divide-y divide-border border border-border">{#each resource.applicationGrants as grant}<div class="flex items-center justify-between gap-3 p-3"><p class="text-sm font-medium">{grant.applicationName}</p><Button type="button" size="sm" variant="destructive" onclick={() => revokeApplication(grant.applicationId)}>Revoke</Button></div>{/each}</div>
-        {/if}
-      </Card.Content>
-    </Card.Root>
-
-    <Card.Root>
-      <Card.Header><Card.Title>Docker installations</Card.Title><Card.Description>Configure the container artifact, placement, and private-mesh publication. The Resource kind owns the container port.</Card.Description></Card.Header>
-      <Card.Content class="space-y-6">
-        {#if resource.installations.length === 0}<p class="text-sm text-muted-foreground">No installations to edit. Add one from the Resource page.</p>{/if}
-        {#each resource.installations as item}
-          <section class="space-y-4 border border-border p-4"><div class="flex items-center justify-between gap-3"><div><div class="flex items-center gap-2"><h3 class="font-medium">{item.containerName}</h3><span class="border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider">Docker</span></div><p class="mt-1 text-xs text-muted-foreground">{item.serverName}</p></div></div><div class="grid gap-4 sm:grid-cols-2"><FormField label="Server"><select bind:value={installationDrafts[item.id].serverId} class={selectClass}>{#each options.servers as value}<option value={value.id}>{value.name} · {value.address}</option>{/each}</select></FormField><FormField label="Image reference"><Input bind:value={installationDrafts[item.id].imageReference} /></FormField><FormField label="Container name"><Input bind:value={installationDrafts[item.id].containerName} /></FormField><FormField label="Image digest"><Input bind:value={installationDrafts[item.id].imageDigest} /></FormField><FormField label="Restart policy"><select bind:value={installationDrafts[item.id].restartPolicy} class={selectClass}><option value="no">No restart</option><option value="always">Always</option><option value="on-failure">On failure</option><option value="unless-stopped">Unless stopped</option></select></FormField><FormField label="Registry credential"><select bind:value={installationDrafts[item.id].registryCredentialId} class={selectClass}><option value="">None</option>{#each options.registryCredentials as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Published host port" error={errors['portMappings.0.hostPort']}><Input type="number" min="1" max="65535" bind:value={installationDrafts[item.id].hostPort} /></FormField><div class="border border-border bg-muted/20 px-3 py-2"><p class="text-[10px] uppercase tracking-wider text-muted-foreground">Container port</p><p class="mt-1 font-mono text-sm">{definition.label} default: {definition.defaultPort}/tcp</p></div><div class="col-span-full border border-border bg-muted/20 px-3 py-3"><p class="text-[10px] uppercase tracking-wider text-muted-foreground">Docker port mapping</p><p class="mt-1 font-mono text-sm">Selected Server:{installationDrafts[item.id].hostPort} → {definition.label} container:{definition.defaultPort}/tcp</p><p class="mt-2 text-xs text-muted-foreground">Worker ports bind only to that Server's private WireGuard address.</p></div></div><Button size="sm" onclick={() => saveInstallation(item.id)}>Save installation</Button></section>
-        {/each}
-      </Card.Content>
-    </Card.Root>
-
-    <Card.Root>
-      <Card.Header><Card.Title>Endpoints</Card.Title><Card.Description>{resource.managementMode === 'managed' ? 'Managed endpoints are derived from the installation and private-access workflows.' : 'Edit connection addresses for this external Resource.'}</Card.Description></Card.Header>
-      <Card.Content class="space-y-6">{#if resource.endpoints.length === 0}<p class="text-sm text-muted-foreground">No endpoints configured.</p>{/if}{#each resource.endpoints as item}<section class="space-y-4 border border-border p-4">{#if resource.managementMode === 'managed'}<div class="grid gap-4 sm:grid-cols-2"><div><p class="text-xs text-muted-foreground">{item.privateNetworkId ? 'Private access' : 'Runtime origin'}</p><p class="mt-1 font-medium">{item.name}</p></div><div><p class="text-xs text-muted-foreground">Address</p><p class="mt-1 font-mono text-sm">{item.address}:{item.port}</p></div><div><p class="text-xs text-muted-foreground">Installation</p><p class="mt-1 text-sm">{resource.installations[0]?.containerName}</p></div><div><p class="text-xs text-muted-foreground">Protocol</p><p class="mt-1 text-sm">{item.protocol}</p></div></div>{:else}<div class="flex items-center justify-between"><h3 class="font-medium">{item.name}</h3><Button size="sm" variant="destructive" onclick={() => archive(routes.resourceEndpointDestroy(resource.id, item.id), 'endpoint')}>Archive</Button></div><div class="grid gap-4 sm:grid-cols-2"><FormField label="Name"><Input bind:value={endpointDrafts[item.id].name} /></FormField><FormField label="Address"><Input bind:value={endpointDrafts[item.id].address} /></FormField><FormField label="Role"><select bind:value={endpointDrafts[item.id].role} class={selectClass}>{#each definition.endpointRoles as value}<option value={value}>{value}</option>{/each}</select></FormField><FormField label="Protocol"><select bind:value={endpointDrafts[item.id].protocol} class={selectClass}>{#each definition.protocols as value}<option value={value}>{value}</option>{/each}</select></FormField><FormField label="Port"><Input type="number" bind:value={endpointDrafts[item.id].port} min="1" max="65535" /></FormField><FormField label="TLS"><select bind:value={endpointDrafts[item.id].tlsMode} class={selectClass}>{#each definition.tlsModes as value}<option value={value}>{value}</option>{/each}</select></FormField></div><Button size="sm" onclick={() => saveEndpoint(item.id)}>Save endpoint</Button>{/if}</section>{/each}</Card.Content>
-    </Card.Root>
-
-    <Card.Root>
-      <Card.Header><Card.Title>Credentials</Card.Title><Card.Description>Rotate encrypted passwords. Credential scope is fixed by its administrator or application role.</Card.Description></Card.Header>
-      <Card.Content class="space-y-6">{#if resource.credentials.length === 0}<p class="text-sm text-muted-foreground">No credentials to edit.</p>{/if}{#each resource.credentials as item}<section class="space-y-4 border border-border p-4"><div class="flex items-center justify-between"><div><h3 class="font-medium">{item.resourceInstallationId ? 'Resource administrator' : item.name}</h3><p class="mt-1 text-xs text-muted-foreground">{item.username} · {item.resourceInstallationId ? 'Installation-specific' : 'Application user'}</p></div>{#if !item.resourceInstallationId}<Button size="sm" variant="destructive" onclick={() => archive(routes.resourceCredentialDestroy(resource.id, item.id), 'credential')}>Archive</Button>{/if}</div><div class="grid gap-4 sm:grid-cols-2"><FormField label="Display name"><Input bind:value={credentialDrafts[item.id].name} readonly={Boolean(item.resourceInstallationId)} /></FormField><FormField label="Username"><Input bind:value={credentialDrafts[item.id].username} readonly={Boolean(item.resourceInstallationId)} /></FormField><label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={credentialDrafts[item.id].rotate} /> Rotate password</label>{#if credentialDrafts[item.id].rotate}{#each definition.credentialFields as field}<FormField label={`New ${field.label}`}><Input type={field.secret ? 'password' : 'text'} value={credentialDrafts[item.id].secretValues[field.name] ?? ''} oninput={(event) => credentialDrafts[item.id].secretValues[field.name] = event.currentTarget.value} required={field.required} autocomplete="new-password" /></FormField>{/each}{/if}</div><Button size="sm" onclick={() => saveCredential(item.id)}>{credentialDrafts[item.id].rotate ? 'Rotate credential' : 'Save credential'}</Button></section>{/each}</Card.Content>
-    </Card.Root>
-
-    <Card.Root>
-      <Card.Header><Card.Title>Storage</Card.Title><Card.Description>Edit durable volumes and their installation mounts.</Card.Description></Card.Header>
-      <Card.Content class="space-y-6">
-        {#if resource.volumes.length === 0}<p class="text-sm text-muted-foreground">No volumes to edit.</p>{/if}
-        {#each resource.volumes as item}<section class="space-y-4 border border-border p-4"><div class="flex items-center justify-between"><h3 class="font-medium">Volume: {item.name}</h3><Button size="sm" variant="destructive" onclick={() => archive(routes.resourceVolumeDestroy(resource.id, item.id), 'volume')}>Archive</Button></div><div class="grid gap-4 sm:grid-cols-2"><FormField label="Name"><Input bind:value={volumeDrafts[item.id].name} /></FormField><FormField label="Driver"><Input bind:value={volumeDrafts[item.id].driver} /></FormField><FormField label="Server"><select bind:value={volumeDrafts[item.id].serverId} class={selectClass}>{#each options.servers as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><label class="grid gap-1 text-xs sm:col-span-2">Configuration JSON<textarea class={textareaClass} bind:value={volumeDrafts[item.id].configurationText}></textarea></label></div><Button size="sm" onclick={() => saveVolume(item.id)}>Save volume</Button></section>{/each}
-        {#each resource.mounts as item}<section class="space-y-4 border border-border p-4"><div class="flex items-center justify-between"><h3 class="font-medium">Mount: {item.mountPath}</h3><Button size="sm" variant="destructive" onclick={() => archive(routes.resourceMountDestroy(resource.id, item.id), 'mount')}>Archive</Button></div><div class="grid gap-4 sm:grid-cols-2"><FormField label="Mount path"><Input bind:value={mountDrafts[item.id].mountPath} /></FormField><FormField label="Volume"><select bind:value={mountDrafts[item.id].resourceVolumeId} class={selectClass}>{#each resource.volumes as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Installation"><select bind:value={mountDrafts[item.id].resourceInstallationId} class={selectClass}>{#each resource.installations as value}<option value={value.id}>{value.containerName}</option>{/each}</select></FormField><label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={mountDrafts[item.id].readOnly} /> Read only</label></div><Button size="sm" onclick={() => saveMount(item.id)}>Save mount</Button></section>{/each}
-      </Card.Content>
-    </Card.Root>
-
-    <Card.Root>
-      <Card.Header><Card.Title>Health checks</Card.Title><Card.Description>Edit desired health-check behavior. Observed results are shown on the Resource page.</Card.Description></Card.Header>
-      <Card.Content class="space-y-6">{#if resource.healthChecks.length === 0}<p class="text-sm text-muted-foreground">No health checks to edit.</p>{/if}{#each resource.healthChecks as item}<section class="space-y-4 border border-border p-4"><div class="flex items-center justify-between"><h3 class="font-medium">{item.name}</h3><Button size="sm" variant="destructive" onclick={() => archive(routes.resourceHealthCheckDestroy(resource.id, item.id), 'health check')}>Archive</Button></div><div class="grid gap-4 sm:grid-cols-2"><FormField label="Name"><Input bind:value={healthDrafts[item.id].name} /></FormField><FormField label="Kind"><select bind:value={healthDrafts[item.id].kind} class={selectClass}>{#each definition.healthCheckKinds as value}<option value={value}>{value}</option>{/each}</select></FormField>{#if resource.installations.length > 0}<FormField label="Installation"><select bind:value={healthDrafts[item.id].resourceInstallationId} class={selectClass}>{#each resource.installations as value}<option value={value.id}>{value.containerName}</option>{/each}</select></FormField>{/if}<FormField label="Endpoint"><select bind:value={healthDrafts[item.id].resourceEndpointId} class={selectClass}><option value="">None</option>{#each resource.endpoints as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Credential"><select bind:value={healthDrafts[item.id].resourceCredentialId} class={selectClass}><option value="">None</option>{#each resource.credentials as value}<option value={value.id}>{value.name}</option>{/each}</select></FormField><FormField label="Interval seconds"><Input type="number" bind:value={healthDrafts[item.id].intervalSeconds} min="1" /></FormField><FormField label="Timeout seconds"><Input type="number" bind:value={healthDrafts[item.id].timeoutSeconds} min="1" /></FormField><FormField label="Failure threshold"><Input type="number" bind:value={healthDrafts[item.id].failureThreshold} min="1" /></FormField><FormField label="Success threshold"><Input type="number" bind:value={healthDrafts[item.id].successThreshold} min="1" /></FormField><label class="flex items-center gap-2 text-xs"><input type="checkbox" bind:checked={healthDrafts[item.id].enabled} /> Enabled</label><label class="grid gap-1 text-xs sm:col-span-2">Configuration JSON<textarea class={textareaClass} bind:value={healthDrafts[item.id].configurationText}></textarea></label></div><Button size="sm" onclick={() => saveHealth(item.id)}>Save health check</Button></section>{/each}</Card.Content>
-    </Card.Root>
+    <Card.Root><Card.Header><Card.Title>Selection grants</Card.Title><Card.Description>Choose which consumers may select this Resource and one of its application credentials.</Card.Description></Card.Header><Card.Content class="space-y-5">
+      {#if $identity.sharingScope === 'global'}
+        <p class="text-sm text-muted-foreground">Global Resources are selectable by every Environment.</p>
+      {:else if $identity.sharingScope === 'environment'}
+        <div class="flex flex-col gap-2 sm:flex-row"><select bind:value={selectedEnvironmentId} class={selectClass}><option value="">Select an Environment</option>{#each availableEnvironments() as environment}<option value={environment.id}>{environment.applicationName} · {environment.name} ({environment.kind})</option>{/each}</select><Button type="button" disabled={!selectedEnvironmentId} onclick={grantEnvironment}>Grant access</Button></div>
+        <div class="divide-y divide-border border border-border">{#each resource.environmentGrants as grant}<div class="flex items-center justify-between gap-3 p-3"><div><p class="text-sm font-medium">{grant.applicationName} · {grant.environmentName}</p><p class="text-xs text-muted-foreground">{grant.environmentKind}</p></div><Button type="button" size="sm" variant="destructive" onclick={() => revokeEnvironment(grant.environmentId)}>Revoke</Button></div>{:else}<p class="p-3 text-sm text-muted-foreground">No Environment grants.</p>{/each}</div>
+      {:else}
+        <div class="flex flex-col gap-2 sm:flex-row"><select bind:value={selectedApplicationId} class={selectClass}><option value="">Select an Application</option>{#each availableApplications() as application}<option value={application.id}>{application.name}</option>{/each}</select><Button type="button" disabled={!selectedApplicationId} onclick={grantApplication}>Grant access</Button></div>
+        <div class="divide-y divide-border border border-border">{#each resource.applicationGrants as grant}<div class="flex items-center justify-between gap-3 p-3"><p class="text-sm font-medium">{grant.applicationName}</p><Button type="button" size="sm" variant="destructive" onclick={() => revokeApplication(grant.applicationId)}>Revoke</Button></div>{:else}<p class="p-3 text-sm text-muted-foreground">No Application grants.</p>{/each}</div>
+      {/if}
+    </Card.Content></Card.Root>
   </div>
-  <ConfirmActionDialog
-    bind:open={archiveDialogOpen}
-    title={`Archive ${archiveTarget?.label ?? 'item'}?`}
-    description={`Archive this ${archiveTarget?.label ?? 'item'} and remove it from active Resource configuration.`}
-    confirmLabel="Archive"
-    destructive
-    processing={archiveProcessing}
-    onconfirm={confirmArchive}
-  />
 </DashboardLayout>

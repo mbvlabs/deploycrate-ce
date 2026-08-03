@@ -379,17 +379,17 @@ func (service *ApplicationSetup) updateSource(
 
 func validateRegistrySelection(ctx context.Context, db storage.Executor, resourceID uuid.UUID) error {
 	var selection struct {
-		Kind            string `bun:"kind"`
+		Engine          string `bun:"engine"`
 		EndpointCount   int    `bun:"endpoint_count"`
 		CredentialCount int    `bun:"credential_count"`
 	}
 	err := db.NewSelect().TableExpr("registry_resources AS registry").
-		ColumnExpr("resource.kind").
+		ColumnExpr("resource.configuration ->> 'engine' AS engine").
 		ColumnExpr("(SELECT count(*) FROM resource_endpoints endpoint WHERE endpoint.resource_id = resource.id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL) AS endpoint_count").
 		ColumnExpr("(SELECT count(*) FROM resource_credentials credential WHERE credential.resource_id = resource.id AND credential.archived_at IS NULL) AS credential_count").
 		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.archived_at IS NULL").
 		Where("registry.resource_id = ?", resourceID).Scan(ctx, &selection)
-	if err != nil || selection.Kind != "registry" || selection.EndpointCount != 1 || selection.CredentialCount != 1 {
+	if err != nil || selection.Engine != "registry" || selection.EndpointCount != 1 || selection.CredentialCount != 1 {
 		return errors.Join(models.ErrDomainValidation, errors.New("Registry Resource is unavailable or does not have one active endpoint and access credential"))
 	}
 	return nil

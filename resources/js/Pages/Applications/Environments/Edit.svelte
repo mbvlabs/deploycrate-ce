@@ -10,7 +10,7 @@
   import { routes } from '@/routes'
 
   type ResourceInput = { resourceId: string; endpointId: string; credentialId?: string; alias: string; database: string; credentialProjection: 'connection_url' | 'individual_parts' }
-  type ResourceOption = { id: string; name: string; kind: string; database: string; endpointId: string; endpoint: string; credentialId?: string; credential: string; serverId?: string }
+  type ResourceOption = { id: string; name: string; engine: string; database: string; endpointId: string; endpoint: string; credentialId?: string; credential: string; serverId?: string }
   type Configuration = { name: string; slug: string; kind: string; hostname: string; containerPort: number; healthPath: string; bpGoTargets: string; resources: ResourceInput[]; serverId: string; serverName: string }
   type Environment = { applicationId: string; applicationName: string; environment: { id: string; name: string; kind: string }; repository: string; reference: string; contextPath: string }
 

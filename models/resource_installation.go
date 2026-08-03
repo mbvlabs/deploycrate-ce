@@ -89,6 +89,7 @@ func (ri resourceInstallation) Find(
 }
 
 type CreateResourceInstallationData struct {
+	ID                   uuid.UUID
 	ImageReference       string
 	ImageDigest          sql.NullString
 	ContainerName        string
@@ -106,7 +107,7 @@ func (ri resourceInstallation) Create(
 	data CreateResourceInstallationData,
 ) (ResourceInstallationEntity, error) {
 	entity := ResourceInstallationEntity{
-		ID:                   uuid.New(),
+		ID:                   data.ID,
 		CreatedAt:            time.Now(),
 		UpdatedAt:            time.Now(),
 		ImageReference:       data.ImageReference,
@@ -118,6 +119,9 @@ func (ri resourceInstallation) Create(
 		ResourceID:           data.ResourceID,
 		ServerID:             data.ServerID,
 		RegistryCredentialID: data.RegistryCredentialID,
+	}
+	if entity.ID == uuid.Nil {
+		entity.ID = uuid.New()
 	}
 
 	if err := validation.Validate(&entity); err != nil {

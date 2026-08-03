@@ -19,21 +19,20 @@ import (
 )
 
 type ResourceEndpointEntity struct {
-	bun.BaseModel          `bun:"table:resource_endpoints,alias:resource_endpoints"`
-	ID                     uuid.UUID       `bun:"id,pk,type:uuid"`
-	CreatedAt              time.Time       `bun:"created_at"`
-	UpdatedAt              time.Time       `bun:"updated_at"`
-	Name                   string          `bun:"name"`
-	Role                   string          `bun:"role"`
-	Address                string          `bun:"address"`
-	Port                   int32           `bun:"port"`
-	Protocol               string          `bun:"protocol"`
-	TlsMode                string          `bun:"tls_mode"`
-	Settings               json.RawMessage `bun:"settings,type:jsonb"`
-	ArchivedAt             sql.NullTime    `bun:"archived_at"`
-	ResourceID             uuid.UUID       `bun:"resource_id,type:uuid"`
-	ResourceInstallationID *uuid.UUID      `bun:"resource_installation_id,type:uuid"`
-	PrivateNetworkID       *uuid.UUID      `bun:"private_network_id,type:uuid"`
+	bun.BaseModel    `bun:"table:resource_endpoints,alias:resource_endpoints"`
+	ID               uuid.UUID       `bun:"id,pk,type:uuid"`
+	CreatedAt        time.Time       `bun:"created_at"`
+	UpdatedAt        time.Time       `bun:"updated_at"`
+	Name             string          `bun:"name"`
+	Role             string          `bun:"role"`
+	Address          string          `bun:"address"`
+	Port             int32           `bun:"port"`
+	Protocol         string          `bun:"protocol"`
+	TlsMode          string          `bun:"tls_mode"`
+	Settings         json.RawMessage `bun:"settings,type:jsonb"`
+	ArchivedAt       sql.NullTime    `bun:"archived_at"`
+	ResourceID       uuid.UUID       `bun:"resource_id,type:uuid"`
+	PrivateNetworkID *uuid.UUID      `bun:"private_network_id,type:uuid"`
 }
 
 func (e *ResourceEndpointEntity) Validate() error {
@@ -72,7 +71,7 @@ func (e *ResourceEndpointEntity) ValidateForKind(kind string) error {
 	if err := e.Validate(); err != nil {
 		return err
 	}
-	definition, ok := FindResourceKind(kind)
+	definition, ok := FindResourceEngine(kind)
 	if !ok {
 		return validation.ValidationErrors{{Field: "kind", Code: "unsupported", Message: "resource kind is not supported"}}
 	}
@@ -137,17 +136,16 @@ func (re resourceEndpoint) Find(
 }
 
 type CreateResourceEndpointData struct {
-	Name                   string
-	Role                   string
-	Address                string
-	Port                   int32
-	Protocol               string
-	TlsMode                string
-	Settings               json.RawMessage
-	ArchivedAt             sql.NullTime
-	ResourceID             uuid.UUID
-	ResourceInstallationID *uuid.UUID
-	PrivateNetworkID       *uuid.UUID
+	Name             string
+	Role             string
+	Address          string
+	Port             int32
+	Protocol         string
+	TlsMode          string
+	Settings         json.RawMessage
+	ArchivedAt       sql.NullTime
+	ResourceID       uuid.UUID
+	PrivateNetworkID *uuid.UUID
 }
 
 func (re resourceEndpoint) Create(
@@ -156,20 +154,19 @@ func (re resourceEndpoint) Create(
 	data CreateResourceEndpointData,
 ) (ResourceEndpointEntity, error) {
 	entity := ResourceEndpointEntity{
-		ID:                     uuid.New(),
-		CreatedAt:              time.Now(),
-		UpdatedAt:              time.Now(),
-		Name:                   data.Name,
-		Role:                   data.Role,
-		Address:                data.Address,
-		Port:                   data.Port,
-		Protocol:               data.Protocol,
-		TlsMode:                data.TlsMode,
-		Settings:               data.Settings,
-		ArchivedAt:             data.ArchivedAt,
-		ResourceID:             data.ResourceID,
-		ResourceInstallationID: data.ResourceInstallationID,
-		PrivateNetworkID:       data.PrivateNetworkID,
+		ID:               uuid.New(),
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
+		Name:             data.Name,
+		Role:             data.Role,
+		Address:          data.Address,
+		Port:             data.Port,
+		Protocol:         data.Protocol,
+		TlsMode:          data.TlsMode,
+		Settings:         data.Settings,
+		ArchivedAt:       data.ArchivedAt,
+		ResourceID:       data.ResourceID,
+		PrivateNetworkID: data.PrivateNetworkID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -192,11 +189,12 @@ func (re resourceEndpoint) CreateForSystemResource(
 	data CreateResourceEndpointData,
 ) (ResourceEndpointEntity, error) {
 	var resource struct {
-		Kind string `bun:"kind"`
+		ResourceType  ResourceTypeEnum `bun:"resource_type"`
+		Configuration json.RawMessage  `bun:"configuration"`
 	}
 	err := db.NewSelect().
 		TableExpr("resources AS resource").
-		ColumnExpr("resource.kind AS kind").
+		ColumnExpr("resource.resource_type, resource.configuration").
 		Where("resource.id = ?", data.ResourceID).
 		Where("resource.archived_at IS NULL").
 		Where("resource.system_managed = TRUE").
@@ -208,24 +206,13 @@ func (re resourceEndpoint) CreateForSystemResource(
 	if err != nil {
 		return ResourceEndpointEntity{}, err
 	}
-	if !resourceSupportsProtocol(resource.Kind, data.Protocol) {
+	var configuration ResourceConfiguration
+	_ = json.Unmarshal(resource.Configuration, &configuration)
+	if !resourceSupportsProtocol(configuration.Engine, data.Protocol) {
 		return ResourceEndpointEntity{}, errors.Join(
 			ErrDomainValidation,
-			validation.ValidationErrors{{Field: "protocol", Code: "unsupported", Message: fmt.Sprintf("protocol %q is not supported by %s", data.Protocol, resource.Kind)}},
+			validation.ValidationErrors{{Field: "protocol", Code: "unsupported", Message: fmt.Sprintf("protocol %q is not supported by %s", data.Protocol, configuration.Engine)}},
 		)
-	}
-	if data.ResourceInstallationID != nil {
-		count, countErr := db.NewSelect().TableExpr("resource_installations").
-			Where("id = ?", *data.ResourceInstallationID).
-			Where("resource_id = ?", data.ResourceID).
-			Where("archived_at IS NULL").
-			Count(ctx)
-		if countErr != nil {
-			return ResourceEndpointEntity{}, countErr
-		}
-		if count != 1 {
-			return ResourceEndpointEntity{}, errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "resourceInstallationId", Code: "mismatch", Message: "installation must belong to this resource"}})
-		}
 	}
 	if data.Role == "wireguard" {
 		if data.PrivateNetworkID == nil {
@@ -249,24 +236,23 @@ func (re resourceEndpoint) CreateForSystemResource(
 }
 
 func resourceSupportsProtocol(kind, protocol string) bool {
-	definition, ok := FindResourceKind(kind)
+	definition, ok := FindResourceEngine(kind)
 	return ok && definition.SupportsProtocol(protocol)
 }
 
 type UpdateResourceEndpointData struct {
-	ID                     uuid.UUID
-	UpdatedAt              time.Time
-	Name                   string
-	Role                   string
-	Address                string
-	Port                   int32
-	Protocol               string
-	TlsMode                string
-	Settings               json.RawMessage
-	ArchivedAt             sql.NullTime
-	ResourceID             uuid.UUID
-	ResourceInstallationID *uuid.UUID
-	PrivateNetworkID       *uuid.UUID
+	ID               uuid.UUID
+	UpdatedAt        time.Time
+	Name             string
+	Role             string
+	Address          string
+	Port             int32
+	Protocol         string
+	TlsMode          string
+	Settings         json.RawMessage
+	ArchivedAt       sql.NullTime
+	ResourceID       uuid.UUID
+	PrivateNetworkID *uuid.UUID
 }
 
 func (re resourceEndpoint) Update(
@@ -275,19 +261,18 @@ func (re resourceEndpoint) Update(
 	data UpdateResourceEndpointData,
 ) (ResourceEndpointEntity, error) {
 	entity := ResourceEndpointEntity{
-		ID:                     data.ID,
-		UpdatedAt:              time.Now(),
-		Name:                   data.Name,
-		Role:                   data.Role,
-		Address:                data.Address,
-		Port:                   data.Port,
-		Protocol:               data.Protocol,
-		TlsMode:                data.TlsMode,
-		Settings:               data.Settings,
-		ArchivedAt:             data.ArchivedAt,
-		ResourceID:             data.ResourceID,
-		ResourceInstallationID: data.ResourceInstallationID,
-		PrivateNetworkID:       data.PrivateNetworkID,
+		ID:               data.ID,
+		UpdatedAt:        time.Now(),
+		Name:             data.Name,
+		Role:             data.Role,
+		Address:          data.Address,
+		Port:             data.Port,
+		Protocol:         data.Protocol,
+		TlsMode:          data.TlsMode,
+		Settings:         data.Settings,
+		ArchivedAt:       data.ArchivedAt,
+		ResourceID:       data.ResourceID,
+		PrivateNetworkID: data.PrivateNetworkID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -309,7 +294,6 @@ func (re resourceEndpoint) Update(
 		Column("settings").
 		Column("archived_at").
 		Column("resource_id").
-		Column("resource_installation_id").
 		Column("private_network_id").
 		WherePK().
 		Returning("*").
@@ -400,20 +384,19 @@ func (re resourceEndpoint) Upsert(
 	data CreateResourceEndpointData,
 ) (ResourceEndpointEntity, error) {
 	entity := ResourceEndpointEntity{
-		ID:                     uuid.New(),
-		CreatedAt:              time.Now(),
-		UpdatedAt:              time.Now(),
-		Name:                   data.Name,
-		Role:                   data.Role,
-		Address:                data.Address,
-		Port:                   data.Port,
-		Protocol:               data.Protocol,
-		TlsMode:                data.TlsMode,
-		Settings:               data.Settings,
-		ArchivedAt:             data.ArchivedAt,
-		ResourceID:             data.ResourceID,
-		ResourceInstallationID: data.ResourceInstallationID,
-		PrivateNetworkID:       data.PrivateNetworkID,
+		ID:               uuid.New(),
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
+		Name:             data.Name,
+		Role:             data.Role,
+		Address:          data.Address,
+		Port:             data.Port,
+		Protocol:         data.Protocol,
+		TlsMode:          data.TlsMode,
+		Settings:         data.Settings,
+		ArchivedAt:       data.ArchivedAt,
+		ResourceID:       data.ResourceID,
+		PrivateNetworkID: data.PrivateNetworkID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -435,7 +418,6 @@ func (re resourceEndpoint) Upsert(
 		Set("settings = excluded.settings").
 		Set("archived_at = excluded.archived_at").
 		Set("resource_id = excluded.resource_id").
-		Set("resource_installation_id = excluded.resource_installation_id").
 		Set("private_network_id = excluded.private_network_id").
 		Returning("*").
 		Scan(ctx); err != nil {

@@ -27,39 +27,38 @@ const (
 )
 
 type BackupEntity struct {
-	bun.BaseModel              `bun:"table:backups,alias:backups"`
-	ID                         uuid.UUID       `bun:"id,pk,type:uuid"`
-	CreatedAt                  time.Time       `bun:"created_at"`
-	UpdatedAt                  time.Time       `bun:"updated_at"`
-	TargetType                 string          `bun:"target_type"`
-	TriggerType                string          `bun:"trigger_type"`
-	ScheduledAt                time.Time       `bun:"scheduled_at"`
-	Strategy                   string          `bun:"strategy"`
-	Driver                     string          `bun:"driver"`
-	Format                     string          `bun:"format"`
-	FormatVersion              string          `bun:"format_version"`
-	ArtifactReference          string          `bun:"artifact_reference"`
-	ProviderMetadata           json.RawMessage `bun:"provider_metadata,type:jsonb"`
-	Status                     string          `bun:"status"`
-	RequestedAt                time.Time       `bun:"requested_at"`
-	StartedAt                  sql.NullTime    `bun:"started_at"`
-	UploadedAt                 sql.NullTime    `bun:"uploaded_at"`
-	FinishedAt                 sql.NullTime    `bun:"finished_at"`
-	VerifiedAt                 sql.NullTime    `bun:"verified_at"`
-	PrunedAt                   sql.NullTime    `bun:"pruned_at"`
-	SizeBytes                  sql.NullInt64   `bun:"size_bytes"`
-	Digest                     []byte          `bun:"digest"`
-	ProducerVersion            string          `bun:"producer_version"`
-	Error                      sql.NullString  `bun:"error"`
-	ChangeID                   uuid.UUID       `bun:"change_id,type:uuid"`
-	ChangeTaskID               uuid.UUID       `bun:"change_task_id,type:uuid"`
-	BackupPolicyID             uuid.UUID       `bun:"backup_policy_id,type:uuid"`
-	ServerID                   *uuid.UUID      `bun:"server_id,type:uuid"`
-	DatabaseID                 *uuid.UUID      `bun:"database_id,type:uuid"`
-	DatabaseClusterID          *uuid.UUID      `bun:"database_cluster_id,type:uuid"`
-	DatabaseClusterNodeID      *uuid.UUID      `bun:"database_cluster_node_id,type:uuid"`
-	DatabaseNodeInstallationID *uuid.UUID      `bun:"database_node_installation_id,type:uuid"`
-	BackupDestinationID        uuid.UUID       `bun:"backup_destination_id,type:uuid"`
+	bun.BaseModel          `bun:"table:backups,alias:backups"`
+	ID                     uuid.UUID       `bun:"id,pk,type:uuid"`
+	CreatedAt              time.Time       `bun:"created_at"`
+	UpdatedAt              time.Time       `bun:"updated_at"`
+	TargetType             string          `bun:"target_type"`
+	Target                 json.RawMessage `bun:"target,type:jsonb"`
+	TriggerType            string          `bun:"trigger_type"`
+	ScheduledAt            time.Time       `bun:"scheduled_at"`
+	Strategy               string          `bun:"strategy"`
+	Driver                 string          `bun:"driver"`
+	Format                 string          `bun:"format"`
+	FormatVersion          string          `bun:"format_version"`
+	ArtifactReference      string          `bun:"artifact_reference"`
+	ProviderMetadata       json.RawMessage `bun:"provider_metadata,type:jsonb"`
+	Status                 string          `bun:"status"`
+	RequestedAt            time.Time       `bun:"requested_at"`
+	StartedAt              sql.NullTime    `bun:"started_at"`
+	UploadedAt             sql.NullTime    `bun:"uploaded_at"`
+	FinishedAt             sql.NullTime    `bun:"finished_at"`
+	VerifiedAt             sql.NullTime    `bun:"verified_at"`
+	PrunedAt               sql.NullTime    `bun:"pruned_at"`
+	SizeBytes              sql.NullInt64   `bun:"size_bytes"`
+	Digest                 []byte          `bun:"digest"`
+	ProducerVersion        string          `bun:"producer_version"`
+	Error                  sql.NullString  `bun:"error"`
+	ChangeID               uuid.UUID       `bun:"change_id,type:uuid"`
+	ChangeTaskID           uuid.UUID       `bun:"change_task_id,type:uuid"`
+	BackupPolicyID         uuid.UUID       `bun:"backup_policy_id,type:uuid"`
+	ServerID               *uuid.UUID      `bun:"server_id,type:uuid"`
+	ResourceID             *uuid.UUID      `bun:"resource_id,type:uuid"`
+	ResourceInstallationID *uuid.UUID      `bun:"resource_installation_id,type:uuid"`
+	BackupDestinationID    uuid.UUID       `bun:"backup_destination_id,type:uuid"`
 }
 
 func (entity *BackupEntity) Validate() error {
@@ -68,21 +67,21 @@ func (entity *BackupEntity) Validate() error {
 		builder.Add("id", "required", "backup ID is required")
 	}
 	if entity.TargetType == "server" {
-		if entity.ServerID == nil || *entity.ServerID == uuid.Nil || entity.DatabaseID != nil || entity.DatabaseClusterID != nil || entity.DatabaseClusterNodeID != nil || entity.DatabaseNodeInstallationID != nil {
+		if entity.ServerID == nil || *entity.ServerID == uuid.Nil || entity.ResourceID != nil || entity.ResourceInstallationID != nil {
 			builder.Add("target_type", "incoherent", "server backup scope is invalid")
 		}
-	} else if entity.TargetType == "database" {
-		if entity.ServerID != nil || entity.DatabaseID == nil || *entity.DatabaseID == uuid.Nil || entity.DatabaseClusterID == nil || *entity.DatabaseClusterID == uuid.Nil || (entity.DatabaseClusterNodeID == nil) != (entity.DatabaseNodeInstallationID == nil) {
-			builder.Add("target_type", "incoherent", "Database backup scope is invalid")
+	} else if entity.TargetType == "resource" {
+		if entity.ServerID != nil || entity.ResourceID == nil || *entity.ResourceID == uuid.Nil {
+			builder.Add("target_type", "incoherent", "Resource backup scope is invalid")
 		}
 	} else {
-		builder.Add("target_type", "unsupported", "backup target must be Server or Database")
+		builder.Add("target_type", "unsupported", "backup target must be Server or Resource")
 	}
 	if entity.TargetType == "server" &&
 		(entity.Strategy != "filesystem" || entity.Driver != "restic" || entity.Format != "restic") {
 		builder.Add("driver", "incompatible", "server backups require filesystem, restic, and restic")
 	}
-	if entity.TargetType == "database" &&
+	if entity.TargetType == "resource" &&
 		(entity.Strategy != "logical" || entity.Driver != "postgresql" || entity.Format != "tar.age") {
 		builder.Add("driver", "incompatible", "database backups require logical, postgresql, and tar.age")
 	}
@@ -100,6 +99,9 @@ func (entity *BackupEntity) Validate() error {
 	if !validJSONObject(entity.ProviderMetadata) {
 		builder.Add("provider_metadata", "invalid", "backup provider metadata must be a JSON object")
 	}
+	if !validJSONObject(entity.Target) {
+		builder.Add("target", "invalid", "backup target must be a JSON object")
+	}
 	if entity.Status == "" {
 		builder.Add("status", "required", "backup status is required")
 	}
@@ -111,28 +113,27 @@ func (entity *BackupEntity) Validate() error {
 }
 
 type CreateBackupData struct {
-	ID                         uuid.UUID
-	TargetType                 string
-	TriggerType                string
-	ScheduledAt                time.Time
-	Strategy                   string
-	Driver                     string
-	Format                     string
-	FormatVersion              string
-	ArtifactReference          string
-	ProviderMetadata           json.RawMessage
-	Status                     string
-	RequestedAt                time.Time
-	ProducerVersion            string
-	ChangeID                   uuid.UUID
-	ChangeTaskID               uuid.UUID
-	BackupPolicyID             uuid.UUID
-	ServerID                   *uuid.UUID
-	DatabaseID                 *uuid.UUID
-	DatabaseClusterID          *uuid.UUID
-	DatabaseClusterNodeID      *uuid.UUID
-	DatabaseNodeInstallationID *uuid.UUID
-	BackupDestinationID        uuid.UUID
+	ID                     uuid.UUID
+	TargetType             string
+	Target                 json.RawMessage
+	TriggerType            string
+	ScheduledAt            time.Time
+	Strategy               string
+	Driver                 string
+	Format                 string
+	FormatVersion          string
+	ArtifactReference      string
+	ProviderMetadata       json.RawMessage
+	Status                 string
+	RequestedAt            time.Time
+	ProducerVersion        string
+	ChangeID               uuid.UUID
+	ChangeTaskID           uuid.UUID
+	BackupPolicyID         uuid.UUID
+	ServerID               *uuid.UUID
+	ResourceID             *uuid.UUID
+	ResourceInstallationID *uuid.UUID
+	BackupDestinationID    uuid.UUID
 }
 
 func (backup) Create(
@@ -145,16 +146,15 @@ func (backup) Create(
 		data.ID = uuid.New()
 	}
 	entity := BackupEntity{
-		ID: data.ID, CreatedAt: now, UpdatedAt: now, TargetType: data.TargetType,
+		ID: data.ID, CreatedAt: now, UpdatedAt: now, TargetType: data.TargetType, Target: data.Target,
 		TriggerType: data.TriggerType, ScheduledAt: data.ScheduledAt, Strategy: data.Strategy,
 		Driver: data.Driver, Format: data.Format, FormatVersion: data.FormatVersion,
 		ArtifactReference: data.ArtifactReference, ProviderMetadata: data.ProviderMetadata,
 		Status: data.Status, RequestedAt: data.RequestedAt, ProducerVersion: data.ProducerVersion,
 		ChangeID: data.ChangeID, ChangeTaskID: data.ChangeTaskID,
-		BackupPolicyID: data.BackupPolicyID, ServerID: data.ServerID, DatabaseID: data.DatabaseID,
-		DatabaseClusterID: data.DatabaseClusterID, DatabaseClusterNodeID: data.DatabaseClusterNodeID,
-		DatabaseNodeInstallationID: data.DatabaseNodeInstallationID,
-		BackupDestinationID:        data.BackupDestinationID,
+		BackupPolicyID: data.BackupPolicyID, ServerID: data.ServerID, ResourceID: data.ResourceID,
+		ResourceInstallationID: data.ResourceInstallationID,
+		BackupDestinationID:    data.BackupDestinationID,
 	}
 	if err := validation.Validate(&entity); err != nil {
 		return BackupEntity{}, errors.Join(ErrDomainValidation, err)
@@ -177,40 +177,35 @@ func (backup) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (Back
 }
 
 type BackupExecutionScopeRecord struct {
-	Backup                     BackupEntity    `bun:"embed:backup_"`
-	PolicyRetention            json.RawMessage `bun:"policy_retention"`
-	PolicyVerification         json.RawMessage `bun:"policy_verification"`
-	PolicySettings             json.RawMessage `bun:"policy_settings"`
-	DestinationProvider        string          `bun:"destination_provider"`
-	DestinationEndpoint        string          `bun:"destination_endpoint"`
-	DestinationRegion          string          `bun:"destination_region"`
-	DestinationBucket          string          `bun:"destination_bucket"`
-	DestinationPrefix          string          `bun:"destination_prefix"`
-	DestinationPathStyle       bool            `bun:"destination_path_style"`
-	DestinationArchived        bool            `bun:"destination_archived"`
-	CredentialProvider         string          `bun:"credential_provider"`
-	CredentialPayload          []byte          `bun:"credential_payload"`
-	DestinationCredentialID    uuid.UUID       `bun:"destination_credential_id"`
-	CredentialArchived         bool            `bun:"credential_archived"`
-	CredentialVerified         bool            `bun:"credential_verified"`
-	DatabaseClusterID          *uuid.UUID      `bun:"database_cluster_id"`
-	DatabaseClusterNodeID      *uuid.UUID      `bun:"database_cluster_node_id"`
-	DatabaseNodeInstallationID *uuid.UUID      `bun:"database_node_installation_id"`
-	InstallationMethod         string          `bun:"installation_method"`
-	InstallationContainer      string          `bun:"installation_container"`
-	InstallationServerID       *uuid.UUID      `bun:"installation_server_id"`
-	InstallationServerIPv4     string          `bun:"installation_server_ipv4"`
-	InstallationArchived       bool            `bun:"installation_archived"`
-	DatabaseEngine             string          `bun:"database_engine"`
-	ClusterManagementMode      string          `bun:"cluster_management_mode"`
-	ResourceSystemManaged      bool            `bun:"resource_system_managed"`
-	DatabaseArchived           bool            `bun:"database_archived"`
-	ClusterArchived            bool            `bun:"cluster_archived"`
-	ResourceID                 *uuid.UUID      `bun:"resource_id"`
-	DatabaseName               string          `bun:"database_name"`
-	AdministratorUsername      string          `bun:"administrator_username"`
-	AdministratorPayload       []byte          `bun:"administrator_payload"`
-	AdministratorCount         int             `bun:"administrator_count"`
+	Backup                  BackupEntity    `bun:"embed:backup_"`
+	PolicyRetention         json.RawMessage `bun:"policy_retention"`
+	PolicyVerification      json.RawMessage `bun:"policy_verification"`
+	PolicySettings          json.RawMessage `bun:"policy_settings"`
+	DestinationProvider     string          `bun:"destination_provider"`
+	DestinationEndpoint     string          `bun:"destination_endpoint"`
+	DestinationRegion       string          `bun:"destination_region"`
+	DestinationBucket       string          `bun:"destination_bucket"`
+	DestinationPrefix       string          `bun:"destination_prefix"`
+	DestinationPathStyle    bool            `bun:"destination_path_style"`
+	DestinationArchived     bool            `bun:"destination_archived"`
+	CredentialProvider      string          `bun:"credential_provider"`
+	CredentialPayload       []byte          `bun:"credential_payload"`
+	DestinationCredentialID uuid.UUID       `bun:"destination_credential_id"`
+	CredentialArchived      bool            `bun:"credential_archived"`
+	CredentialVerified      bool            `bun:"credential_verified"`
+	ResourceInstallationID  *uuid.UUID      `bun:"resource_installation_id"`
+	InstallationContainer   string          `bun:"installation_container"`
+	InstallationServerID    *uuid.UUID      `bun:"installation_server_id"`
+	InstallationServerIPv4  string          `bun:"installation_server_ipv4"`
+	InstallationArchived    bool            `bun:"installation_archived"`
+	ResourceEngine          string          `bun:"resource_engine"`
+	ResourceSystemManaged   bool            `bun:"resource_system_managed"`
+	ResourceArchived        bool            `bun:"resource_archived"`
+	ResourceID              *uuid.UUID      `bun:"resource_id"`
+	DatabaseName            string          `bun:"database_name"`
+	AdministratorUsername   string          `bun:"administrator_username"`
+	AdministratorPayload    []byte          `bun:"administrator_payload"`
+	AdministratorCount      int             `bun:"administrator_count"`
 }
 
 func (backup) FindExecutionScope(
@@ -222,15 +217,14 @@ func (backup) FindExecutionScope(
 	if err := db.NewSelect().
 		TableExpr("backups AS backup").
 		ColumnExpr("backup.id AS backup_id, backup.created_at AS backup_created_at, backup.updated_at AS backup_updated_at").
-		ColumnExpr("backup.target_type AS backup_target_type, backup.trigger_type AS backup_trigger_type, backup.scheduled_at AS backup_scheduled_at").
+		ColumnExpr("backup.target_type AS backup_target_type, backup.target AS backup_target, backup.trigger_type AS backup_trigger_type, backup.scheduled_at AS backup_scheduled_at").
 		ColumnExpr("backup.strategy AS backup_strategy, backup.driver AS backup_driver, backup.format AS backup_format, backup.format_version AS backup_format_version").
 		ColumnExpr("backup.artifact_reference AS backup_artifact_reference, backup.provider_metadata AS backup_provider_metadata, backup.status AS backup_status").
 		ColumnExpr("backup.requested_at AS backup_requested_at, backup.started_at AS backup_started_at, backup.uploaded_at AS backup_uploaded_at").
 		ColumnExpr("backup.finished_at AS backup_finished_at, backup.verified_at AS backup_verified_at, backup.pruned_at AS backup_pruned_at").
 		ColumnExpr("backup.size_bytes AS backup_size_bytes, backup.digest AS backup_digest, backup.producer_version AS backup_producer_version, backup.error AS backup_error").
 		ColumnExpr("backup.change_id AS backup_change_id, backup.change_task_id AS backup_change_task_id, backup.backup_policy_id AS backup_backup_policy_id").
-		ColumnExpr("backup.server_id AS backup_server_id, backup.database_id AS backup_database_id, backup.database_cluster_id AS backup_database_cluster_id").
-		ColumnExpr("backup.database_cluster_node_id AS backup_database_cluster_node_id, backup.database_node_installation_id AS backup_database_node_installation_id").
+		ColumnExpr("backup.server_id AS backup_server_id, backup.resource_id AS backup_resource_id, backup.resource_installation_id AS backup_resource_installation_id").
 		ColumnExpr("backup.backup_destination_id AS backup_backup_destination_id").
 		ColumnExpr("policy.retention AS policy_retention, policy.verification AS policy_verification, policy.settings AS policy_settings").
 		ColumnExpr("destination.provider AS destination_provider, COALESCE(destination.endpoint, '') AS destination_endpoint").
@@ -239,26 +233,20 @@ func (backup) FindExecutionScope(
 		ColumnExpr("destination.archived_at IS NOT NULL AS destination_archived").
 		ColumnExpr("credential.id AS destination_credential_id, credential.provider AS credential_provider, credential.enc_payload AS credential_payload").
 		ColumnExpr("credential.archived_at IS NOT NULL AS credential_archived, credential.verified_at IS NOT NULL AS credential_verified").
-		ColumnExpr("cluster.id AS database_cluster_id, node.id AS database_cluster_node_id, installation.id AS database_node_installation_id").
-		ColumnExpr("COALESCE(installation.installation_method, '') AS installation_method, COALESCE(docker_installation.container_name, '') AS installation_container").
+		ColumnExpr("installation.id AS resource_installation_id, COALESCE(installation.container_name, '') AS installation_container").
 		ColumnExpr("installation.server_id AS installation_server_id, COALESCE(server.ipv4_address, '') AS installation_server_ipv4, installation.archived_at IS NOT NULL AS installation_archived").
-		ColumnExpr("COALESCE(cluster.engine, '') AS database_engine, COALESCE(cluster.management_mode, '') AS cluster_management_mode").
-		ColumnExpr("COALESCE(resource.system_managed, FALSE) AS resource_system_managed, database.archived_at IS NOT NULL AS database_archived, cluster.archived_at IS NOT NULL AS cluster_archived").
-		ColumnExpr("resource.id AS resource_id, COALESCE(database.name, '') AS database_name").
+		ColumnExpr("COALESCE(resource.configuration ->> 'engine', '') AS resource_engine").
+		ColumnExpr("COALESCE(resource.system_managed, FALSE) AS resource_system_managed, resource.archived_at IS NOT NULL AS resource_archived").
+		ColumnExpr("resource.id AS resource_id, COALESCE(backup.target ->> 'database', '') AS database_name").
 		ColumnExpr("COALESCE(administrator.username, '') AS administrator_username, administrator.enc_payload AS administrator_payload").
-		ColumnExpr("(SELECT count(*) FROM database_cluster_credentials AS candidate WHERE candidate.database_cluster_id = cluster.id AND candidate.role = 'administrator' AND candidate.archived_at IS NULL) AS administrator_count").
+		ColumnExpr("(SELECT count(*) FROM resource_credentials AS candidate WHERE candidate.resource_id = resource.id AND candidate.metadata ->> 'purpose' = 'administrator' AND candidate.archived_at IS NULL) AS administrator_count").
 		Join("JOIN backup_policies AS policy ON policy.id = backup.backup_policy_id").
 		Join("JOIN backup_destinations AS destination ON destination.id = backup.backup_destination_id").
 		Join("JOIN credentials AS credential ON credential.id = destination.credential_id").
-		Join("LEFT JOIN databases AS database ON database.id = backup.database_id").
-		Join("LEFT JOIN database_clusters AS cluster ON cluster.id = backup.database_cluster_id AND cluster.id = database.database_cluster_id").
-		Join("LEFT JOIN database_cluster_nodes AS node ON node.id = backup.database_cluster_node_id AND node.database_cluster_id = cluster.id").
-		Join("LEFT JOIN database_node_installations AS installation ON installation.id = backup.database_node_installation_id AND installation.database_cluster_node_id = node.id").
-		Join("LEFT JOIN docker_database_node_installations AS docker_installation ON docker_installation.database_node_installation_id = installation.id").
+		Join("LEFT JOIN resources AS resource ON resource.id = backup.resource_id").
+		Join("LEFT JOIN resource_installations AS installation ON installation.id = backup.resource_installation_id AND installation.resource_id = resource.id").
 		Join("LEFT JOIN servers AS server ON server.id = installation.server_id AND server.archived_at IS NULL").
-		Join("LEFT JOIN database_resources AS database_backing ON database_backing.database_cluster_id = database.database_cluster_id").
-		Join("LEFT JOIN resources AS resource ON resource.id = database_backing.resource_id").
-		Join("LEFT JOIN LATERAL (SELECT cluster_credential.username, cluster_credential.enc_payload FROM database_cluster_credentials AS cluster_credential WHERE cluster_credential.database_cluster_id = cluster.id AND cluster_credential.role = 'administrator' AND cluster_credential.archived_at IS NULL ORDER BY cluster_credential.created_at LIMIT 1) AS administrator ON TRUE").
+		Join("LEFT JOIN LATERAL (SELECT resource_credential.username, resource_credential.enc_payload FROM resource_credentials AS resource_credential WHERE resource_credential.resource_id = resource.id AND resource_credential.metadata ->> 'purpose' = 'administrator' AND resource_credential.archived_at IS NULL ORDER BY resource_credential.created_at LIMIT 1) AS administrator ON TRUE").
 		Where("backup.id = ?", id).
 		Scan(ctx, &row); err != nil {
 		return BackupExecutionScopeRecord{}, err
@@ -278,10 +266,11 @@ type DatabaseBackupHistory struct {
 	ArtifactReference string     `bun:"artifact_reference"`
 }
 
-func (backup) RecentForDatabase(
+func (backup) RecentForResourceDatabase(
 	ctx context.Context,
 	db storage.Executor,
-	databaseID uuid.UUID,
+	resourceID uuid.UUID,
+	databaseName string,
 	limit int,
 ) ([]DatabaseBackupHistory, error) {
 	if limit < 1 || limit > 50 {
@@ -291,7 +280,8 @@ func (backup) RecentForDatabase(
 	err := db.NewSelect().TableExpr("backups").
 		ColumnExpr("id, status, trigger_type, scheduled_at, finished_at, verified_at, size_bytes").
 		ColumnExpr("LEFT(COALESCE(error, ''), 800) AS error, artifact_reference").
-		Where("database_id = ?", databaseID).
+		Where("resource_id = ?", resourceID).
+		Where("target ->> 'database' = ?", databaseName).
 		OrderExpr("scheduled_at DESC").
 		Limit(limit).
 		Scan(ctx, &items)
@@ -308,7 +298,7 @@ func (backup) FindVerifiedByPolicy(
 		Model(&backups).
 		Where("backups.backup_policy_id = ?", policyID).
 		Where("backups.status = ?", BackupStatusVerified).
-		Where("NOT EXISTS (SELECT 1 FROM database_restores AS restore WHERE (restore.backup_id = backups.id OR restore.safety_backup_id = backups.id) AND restore.status IN ('pending', 'safety_backup', 'restoring'))").
+		Where("NOT EXISTS (SELECT 1 FROM resource_restores AS restore WHERE (restore.backup_id = backups.id OR restore.safety_backup_id = backups.id) AND restore.status IN ('pending', 'safety_backup', 'restoring'))").
 		OrderExpr("backups.scheduled_at DESC").
 		Scan(ctx, &backups); err != nil {
 		return nil, err

@@ -21,20 +21,19 @@ type ResourceEndpointFactory struct {
 
 type ResourceEndpointOption func(*ResourceEndpointFactory)
 
-func BuildResourceEndpoint(resourceID uuid.UUID, resourceInstallationID *uuid.UUID, privateNetworkID *uuid.UUID, opts ...ResourceEndpointOption) models.ResourceEndpointEntity {
+func BuildResourceEndpoint(resourceID uuid.UUID, privateNetworkID *uuid.UUID, opts ...ResourceEndpointOption) models.ResourceEndpointEntity {
 	f := &ResourceEndpointFactory{
 		ResourceEndpointEntity: models.ResourceEndpointEntity{
-			Name:                   faker.Word(),
-			Role:                   faker.Word(),
-			Address:                faker.Word(),
-			Port:                   randomInt(1, 1000, 100),
-			Protocol:               faker.Word(),
-			TlsMode:                faker.Word(),
-			Settings:               json.RawMessage{},
-			ArchivedAt:             sql.NullTime{Time: time.Now(), Valid: true},
-			ResourceID:             resourceID,
-			ResourceInstallationID: resourceInstallationID,
-			PrivateNetworkID:       privateNetworkID,
+			Name:             faker.Word(),
+			Role:             faker.Word(),
+			Address:          faker.Word(),
+			Port:             randomInt(1, 1000, 100),
+			Protocol:         faker.Word(),
+			TlsMode:          faker.Word(),
+			Settings:         json.RawMessage{},
+			ArchivedAt:       sql.NullTime{Time: time.Now(), Valid: true},
+			ResourceID:       resourceID,
+			PrivateNetworkID: privateNetworkID,
 		},
 	}
 
@@ -45,24 +44,23 @@ func BuildResourceEndpoint(resourceID uuid.UUID, resourceInstallationID *uuid.UU
 	return f.ResourceEndpointEntity
 }
 
-func CreateResourceEndpoint(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, resourceInstallationID *uuid.UUID, privateNetworkID *uuid.UUID, opts ...ResourceEndpointOption) (models.ResourceEndpointEntity, error) {
-	built := BuildResourceEndpoint(resourceID, resourceInstallationID, privateNetworkID, opts...)
+func CreateResourceEndpoint(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, privateNetworkID *uuid.UUID, opts ...ResourceEndpointOption) (models.ResourceEndpointEntity, error) {
+	built := BuildResourceEndpoint(resourceID, privateNetworkID, opts...)
 
 	entity := models.ResourceEndpointEntity{
-		ID:                     uuid.New(),
-		CreatedAt:              time.Now(),
-		UpdatedAt:              time.Now(),
-		Name:                   built.Name,
-		Role:                   built.Role,
-		Address:                built.Address,
-		Port:                   built.Port,
-		Protocol:               built.Protocol,
-		TlsMode:                built.TlsMode,
-		Settings:               built.Settings,
-		ArchivedAt:             built.ArchivedAt,
-		ResourceID:             built.ResourceID,
-		ResourceInstallationID: built.ResourceInstallationID,
-		PrivateNetworkID:       built.PrivateNetworkID,
+		ID:               uuid.New(),
+		CreatedAt:        time.Now(),
+		UpdatedAt:        time.Now(),
+		Name:             built.Name,
+		Role:             built.Role,
+		Address:          built.Address,
+		Port:             built.Port,
+		Protocol:         built.Protocol,
+		TlsMode:          built.TlsMode,
+		Settings:         built.Settings,
+		ArchivedAt:       built.ArchivedAt,
+		ResourceID:       built.ResourceID,
+		PrivateNetworkID: built.PrivateNetworkID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -72,11 +70,11 @@ func CreateResourceEndpoint(ctx context.Context, exec storage.Executor, resource
 	return entity, nil
 }
 
-func CreateResourceEndpoints(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, resourceInstallationID *uuid.UUID, privateNetworkID *uuid.UUID, count int, opts ...ResourceEndpointOption) ([]models.ResourceEndpointEntity, error) {
+func CreateResourceEndpoints(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, privateNetworkID *uuid.UUID, count int, opts ...ResourceEndpointOption) ([]models.ResourceEndpointEntity, error) {
 	resourceendpoints := make([]models.ResourceEndpointEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateResourceEndpoint(ctx, exec, resourceID, resourceInstallationID, privateNetworkID, opts...)
+		entity, err := CreateResourceEndpoint(ctx, exec, resourceID, privateNetworkID, opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resourceendpoint %d: %w", i+1, err)
 		}
@@ -137,12 +135,6 @@ func WithResourceEndpointsArchivedAt(value sql.NullTime) ResourceEndpointOption 
 func WithResourceEndpointsResourceID(value uuid.UUID) ResourceEndpointOption {
 	return func(f *ResourceEndpointFactory) {
 		f.ResourceEndpointEntity.ResourceID = value
-	}
-}
-
-func WithResourceEndpointsResourceInstallationID(value *uuid.UUID) ResourceEndpointOption {
-	return func(f *ResourceEndpointFactory) {
-		f.ResourceEndpointEntity.ResourceInstallationID = value
 	}
 }
 

@@ -18,27 +18,25 @@ import (
 )
 
 type MetricRollup struct {
-	BucketStart         time.Time `json:"bucket_start"`
-	ObservedAt          time.Time `json:"observed_at"`
-	Scope               string    `json:"scope"`
-	Component           string    `json:"component"`
-	Metric              string    `json:"metric"`
-	Average             float64   `json:"average"`
-	Maximum             float64   `json:"maximum"`
-	Last                float64   `json:"last"`
-	Server              string    `json:"server"`
-	Application         string    `json:"application"`
-	Environment         string    `json:"environment"`
-	Release             string    `json:"release"`
-	Deployment          string    `json:"deployment"`
-	Target              string    `json:"target"`
-	Instance            string    `json:"instance"`
-	Resource            string    `json:"resource"`
-	Installation        string    `json:"installation"`
-	DatabaseCluster     string    `json:"database_cluster"`
-	DatabaseClusterNode string    `json:"database_cluster_node"`
-	RuntimeID           string    `json:"runtime_id"`
-	ObservationID       string    `json:"observation_id"`
+	BucketStart   time.Time `json:"bucket_start"`
+	ObservedAt    time.Time `json:"observed_at"`
+	Scope         string    `json:"scope"`
+	Component     string    `json:"component"`
+	Metric        string    `json:"metric"`
+	Average       float64   `json:"average"`
+	Maximum       float64   `json:"maximum"`
+	Last          float64   `json:"last"`
+	Server        string    `json:"server"`
+	Application   string    `json:"application"`
+	Environment   string    `json:"environment"`
+	Release       string    `json:"release"`
+	Deployment    string    `json:"deployment"`
+	Target        string    `json:"target"`
+	Instance      string    `json:"instance"`
+	Resource      string    `json:"resource"`
+	Installation  string    `json:"installation"`
+	RuntimeID     string    `json:"runtime_id"`
+	ObservationID string    `json:"observation_id"`
 }
 
 type MetricRollupExport struct {
@@ -60,23 +58,21 @@ type MetricHistoryValue struct {
 }
 
 type AttributedMetricValue struct {
-	Scope               string
-	Component           string
-	Application         string
-	Environment         string
-	Release             string
-	Deployment          string
-	Target              string
-	Instance            string
-	Resource            string
-	Installation        string
-	DatabaseCluster     string
-	DatabaseClusterNode string
-	RuntimeID           string
-	Metric              string
-	Value               float64
-	ObservedAt          time.Time
-	BucketStart         time.Time
+	Scope        string
+	Component    string
+	Application  string
+	Environment  string
+	Release      string
+	Deployment   string
+	Target       string
+	Instance     string
+	Resource     string
+	Installation string
+	RuntimeID    string
+	Metric       string
+	Value        float64
+	ObservedAt   time.Time
+	BucketStart  time.Time
 }
 
 type LogCursor struct {
@@ -343,7 +339,7 @@ func (client Client) LatestAttributedMetricValues(
 	server string,
 	environment string,
 ) ([]AttributedMetricValue, error) {
-	const query = "SELECT scope, component, application, environment, release, deployment, target, instance, resource, installation, database_cluster, database_cluster_node, argMax(runtime_id, observed_at) AS runtime_id, metric, argMax(`last`, observed_at) AS value, toString(toUnixTimestamp64Milli(max(observed_at))) AS observed_at_milliseconds FROM metric_rollups WHERE scope = {scope:String} AND server = {server:String} AND ({environment:String} = '' OR environment = {environment:String}) GROUP BY scope, component, application, environment, release, deployment, target, instance, resource, installation, database_cluster, database_cluster_node, metric ORDER BY component, application, environment, instance, installation, metric FORMAT JSONEachRow"
+	const query = "SELECT scope, component, application, environment, release, deployment, target, instance, resource, installation, argMax(runtime_id, observed_at) AS runtime_id, metric, argMax(`last`, observed_at) AS value, toString(toUnixTimestamp64Milli(max(observed_at))) AS observed_at_milliseconds FROM metric_rollups WHERE scope = {scope:String} AND server = {server:String} AND ({environment:String} = '' OR environment = {environment:String}) GROUP BY scope, component, application, environment, release, deployment, target, instance, resource, installation, metric ORDER BY component, application, environment, instance, installation, metric FORMAT JSONEachRow"
 	return client.queryAttributedMetrics(ctx, query, scope, server, environment, time.Time{})
 }
 
@@ -354,7 +350,7 @@ func (client Client) AttributedMetricHistory(
 	environment string,
 	since time.Time,
 ) ([]AttributedMetricValue, error) {
-	const query = "SELECT bucket_start, scope, component, application, environment, release, deployment, target, instance, resource, installation, database_cluster, database_cluster_node, argMax(runtime_id, observed_at) AS runtime_id, metric, argMax(`last`, observed_at) AS value, toString(toUnixTimestamp64Milli(max(observed_at))) AS observed_at_milliseconds FROM metric_rollups WHERE scope = {scope:String} AND server = {server:String} AND ({environment:String} = '' OR environment = {environment:String}) AND bucket_start >= toDateTime({since_seconds:UInt32}) GROUP BY bucket_start, scope, component, application, environment, release, deployment, target, instance, resource, installation, database_cluster, database_cluster_node, metric ORDER BY bucket_start, component, application, environment, instance, installation, metric FORMAT JSONEachRow"
+	const query = "SELECT bucket_start, scope, component, application, environment, release, deployment, target, instance, resource, installation, argMax(runtime_id, observed_at) AS runtime_id, metric, argMax(`last`, observed_at) AS value, toString(toUnixTimestamp64Milli(max(observed_at))) AS observed_at_milliseconds FROM metric_rollups WHERE scope = {scope:String} AND server = {server:String} AND ({environment:String} = '' OR environment = {environment:String}) AND bucket_start >= toDateTime({since_seconds:UInt32}) GROUP BY bucket_start, scope, component, application, environment, release, deployment, target, instance, resource, installation, metric ORDER BY bucket_start, component, application, environment, instance, installation, metric FORMAT JSONEachRow"
 	return client.queryAttributedMetrics(ctx, query, scope, server, environment, since)
 }
 
@@ -414,8 +410,6 @@ func (client Client) queryAttributedMetrics(
 			Instance               string  `json:"instance"`
 			Resource               string  `json:"resource"`
 			Installation           string  `json:"installation"`
-			DatabaseCluster        string  `json:"database_cluster"`
-			DatabaseClusterNode    string  `json:"database_cluster_node"`
 			RuntimeID              string  `json:"runtime_id"`
 			Metric                 string  `json:"metric"`
 			Value                  float64 `json:"value"`
@@ -442,8 +436,7 @@ func (client Client) queryAttributedMetrics(
 			Scope: row.Scope, Component: row.Component, Application: row.Application,
 			Environment: row.Environment, Release: row.Release, Deployment: row.Deployment,
 			Target: row.Target, Instance: row.Instance, Resource: row.Resource,
-			Installation: row.Installation, DatabaseCluster: row.DatabaseCluster,
-			DatabaseClusterNode: row.DatabaseClusterNode, RuntimeID: row.RuntimeID, Metric: row.Metric,
+			Installation: row.Installation, RuntimeID: row.RuntimeID, Metric: row.Metric,
 			Value: row.Value, ObservedAt: time.UnixMilli(observedAtMilliseconds).UTC(),
 			BucketStart: bucketStart,
 		})
@@ -648,7 +641,7 @@ func (client Client) ExportMetricRollups(
 	query.Set("database", client.database)
 	query.Set(
 		"query",
-		"SELECT bucket_start, observed_at, scope, component, metric, average, maximum, `last`, server, application, environment, release, deployment, target, instance, resource, installation, database_cluster, database_cluster_node, runtime_id, observation_id FROM metric_rollups ORDER BY bucket_start, scope, metric, server, environment, component, instance, installation, runtime_id, observation_id FORMAT JSONEachRow",
+		"SELECT bucket_start, observed_at, scope, component, metric, average, maximum, `last`, server, application, environment, release, deployment, target, instance, resource, installation, runtime_id, observation_id FROM metric_rollups ORDER BY bucket_start, scope, metric, server, environment, component, instance, installation, runtime_id, observation_id FORMAT JSONEachRow",
 	)
 	endpoint.RawQuery = query.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), nil)

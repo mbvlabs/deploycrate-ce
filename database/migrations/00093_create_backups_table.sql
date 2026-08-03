@@ -23,6 +23,7 @@ CREATE TABLE backups (
     pruned_at TIMESTAMPTZ,
     error TEXT,
     target_type TEXT NOT NULL,
+    target JSONB NOT NULL,
     format_version TEXT NOT NULL,
     provider_metadata JSONB NOT NULL,
     producer_version TEXT NOT NULL,
@@ -30,10 +31,8 @@ CREATE TABLE backups (
     change_id UUID NOT NULL REFERENCES changes (id) ON DELETE RESTRICT,
     change_task_id UUID NOT NULL REFERENCES change_tasks (id) ON DELETE RESTRICT,
     backup_policy_id UUID NOT NULL REFERENCES backup_policies (id) ON DELETE RESTRICT,
-    database_id UUID REFERENCES databases (id) ON DELETE RESTRICT,
-    database_cluster_id UUID REFERENCES database_clusters (id) ON DELETE RESTRICT,
-    database_cluster_node_id UUID REFERENCES database_cluster_nodes (id) ON DELETE RESTRICT,
-    database_node_installation_id UUID REFERENCES database_node_installations (id) ON DELETE RESTRICT,
+    resource_id UUID REFERENCES resources (id) ON DELETE RESTRICT,
+    resource_installation_id UUID REFERENCES resource_installations (id) ON DELETE RESTRICT,
     backup_destination_id UUID NOT NULL REFERENCES backup_destinations (id) ON DELETE RESTRICT,
     server_id UUID REFERENCES servers (id) ON DELETE RESTRICT
 );

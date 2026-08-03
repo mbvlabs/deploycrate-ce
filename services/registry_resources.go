@@ -63,8 +63,8 @@ func (service *RegistryResources) List(ctx context.Context) ([]RegistryResourceS
 		ColumnExpr("resource.id, resource.name, resource.slug, registry.provider, resource.created_at").
 		ColumnExpr("CASE WHEN endpoint.port IN (80, 443) THEN endpoint.address ELSE endpoint.address || ':' || endpoint.port::text END AS endpoint").
 		ColumnExpr("credential.name AS credential_name, COALESCE(credential.username, '') AS username").
-		ColumnExpr("resource.management_mode = 'managed' AS managed").
-		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.kind = 'registry' AND resource.archived_at IS NULL").
+		ColumnExpr("resource.system_managed AS managed").
+		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.configuration ->> 'engine' = 'registry' AND resource.archived_at IS NULL").
 		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = resource.id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL").
 		Join("JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.archived_at IS NULL").
 		OrderExpr("resource.name ASC").Scan(ctx, &registries)
@@ -117,14 +117,14 @@ func (service *RegistryResources) CreateExternal(ctx context.Context, input Exte
 	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "registry-endpoint:"+input.Endpoint); err != nil {
 		return models.RegistryResourceEntity{}, err
 	}
-	count, err := tx.NewSelect().TableExpr("resource_endpoints AS endpoint").Join("JOIN resources AS resource ON resource.id = endpoint.resource_id AND resource.kind = 'registry' AND resource.archived_at IS NULL").Where("lower(endpoint.address) = lower(?)", host).Where("endpoint.port = ?", port).Where("endpoint.archived_at IS NULL").Count(ctx)
+	count, err := tx.NewSelect().TableExpr("resource_endpoints AS endpoint").Join("JOIN resources AS resource ON resource.id = endpoint.resource_id AND resource.configuration ->> 'engine' = 'registry' AND resource.archived_at IS NULL").Where("lower(endpoint.address) = lower(?)", host).Where("endpoint.port = ?", port).Where("endpoint.archived_at IS NULL").Count(ctx)
 	if err != nil {
 		return models.RegistryResourceEntity{}, err
 	}
 	if count > 0 {
 		return models.RegistryResourceEntity{}, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: "endpoint", Code: "taken", Message: "Registry endpoint is already connected"}})
 	}
-	resource, err := models.Resource.Create(ctx, tx, models.CreateResourceData{Name: input.Name, Slug: slug.Make(input.Name), Kind: "registry", ManagementMode: models.ResourceManagementExternal, SharingScope: models.ResourceSharingGlobal})
+	resource, err := models.Resource.Create(ctx, tx, models.CreateResourceData{Name: input.Name, Slug: slug.Make(input.Name), ResourceType: models.ResourceTypeService, Configuration: json.RawMessage(`{"engine":"registry"}`), SharingScope: models.ResourceSharingGlobal})
 	if err != nil {
 		return models.RegistryResourceEntity{}, err
 	}
@@ -149,7 +149,7 @@ func (service *RegistryResources) ArchiveExternal(ctx context.Context, resourceI
 	if err != nil {
 		return err
 	}
-	if resource.Kind != "registry" || resource.ManagementMode != models.ResourceManagementExternal {
+	if resource.Engine() != "registry" || resource.SystemManaged {
 		return errors.New("the DeployCrate-managed Registry cannot be archived here")
 	}
 	references, err := service.db.Executor().NewSelect().TableExpr("buildpack_configurations").Where("registry_resource_id = ?", resource.ID).Count(ctx)
@@ -172,7 +172,7 @@ func (service *RegistryResources) ArchiveExternal(ctx context.Context, resourceI
 		return err
 	}
 	resource.ArchivedAt = sql.NullTime{Time: now, Valid: true}
-	if _, err := models.Resource.Update(ctx, tx, models.UpdateResourceData{ID: resource.ID, Name: resource.Name, Slug: resource.Slug, Kind: resource.Kind, ManagementMode: resource.ManagementMode, SharingScope: resource.SharingScope, SystemManaged: resource.SystemManaged, ArchivedAt: resource.ArchivedAt}); err != nil {
+	if _, err := models.Resource.Update(ctx, tx, models.UpdateResourceData{ID: resource.ID, Name: resource.Name, Slug: resource.Slug, ResourceType: resource.ResourceType, Configuration: resource.Configuration, SharingScope: resource.SharingScope, SystemManaged: resource.SystemManaged, ArchivedAt: resource.ArchivedAt}); err != nil {
 		return err
 	}
 	return tx.Commit()

@@ -99,8 +99,8 @@ func (a application) FindSystemOverview(
 type SystemResourceOverview struct {
 	ID               string `json:"id" bun:"id"`
 	Name             string `json:"name" bun:"name"`
-	Category         string `json:"category" bun:"category"`
-	Kind             string `json:"kind" bun:"kind"`
+	ResourceType     string `json:"resourceType" bun:"resource_type"`
+	Engine           string `json:"engine" bun:"engine"`
 	SharingScope     string `json:"sharingScope" bun:"sharing_scope"`
 	BindingAlias     string `json:"bindingAlias" bun:"binding_alias"`
 	CredentialSource string `json:"credentialSource" bun:"credential_source"`
@@ -129,8 +129,8 @@ func (a application) FindSystemResources(
 		TableExpr("applications AS application").
 		ColumnExpr("resource.id::text AS id").
 		ColumnExpr("resource.name AS name").
-		ColumnExpr("CASE WHEN resource.kind IN ('postgresql', 'mysql', 'clickhouse') THEN 'database' WHEN resource.kind = 'registry' THEN 'artifact' ELSE 'endpoint' END AS category").
-		ColumnExpr("resource.kind AS kind").
+		ColumnExpr("resource.resource_type AS resource_type").
+		ColumnExpr("resource.configuration ->> 'engine' AS engine").
 		ColumnExpr("resource.sharing_scope AS sharing_scope").
 		ColumnExpr("binding.alias AS binding_alias").
 		ColumnExpr("COALESCE(binding.configuration ->> 'credential_source', '') AS credential_source").
@@ -152,7 +152,7 @@ func (a application) FindSystemResources(
 		Join("JOIN environment_resources AS binding ON binding.environment_id = environment.id AND binding.archived_at IS NULL").
 		Join("JOIN resources AS resource ON resource.id = binding.resource_id AND resource.archived_at IS NULL").
 		Join("JOIN resource_endpoints AS endpoint ON endpoint.id = binding.resource_endpoint_id AND endpoint.archived_at IS NULL").
-		Join("LEFT JOIN resource_installations AS installation ON installation.id = endpoint.resource_installation_id AND installation.archived_at IS NULL").
+		Join("LEFT JOIN resource_installations AS installation ON installation.resource_id = resource.id AND installation.archived_at IS NULL").
 		Where("application.slug = ?", SystemApplicationSlug).
 		OrderExpr("binding.created_at ASC").
 		Scan(ctx, &resources); err != nil {

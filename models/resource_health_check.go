@@ -15,31 +15,30 @@ import (
 )
 
 type ResourceHealthCheckEntity struct {
-	bun.BaseModel          `bun:"table:resource_health_checks,alias:resource_health_checks"`
-	ID                     uuid.UUID       `bun:"id,pk,type:uuid"`
-	CreatedAt              time.Time       `bun:"created_at"`
-	UpdatedAt              time.Time       `bun:"updated_at"`
-	Name                   string          `bun:"name"`
-	Kind                   string          `bun:"kind"`
-	Configuration          json.RawMessage `bun:"configuration,type:jsonb"`
-	IntervalSeconds        int32           `bun:"interval_seconds"`
-	TimeoutSeconds         int32           `bun:"timeout_seconds"`
-	FailureThreshold       int32           `bun:"failure_threshold"`
-	SuccessThreshold       int32           `bun:"success_threshold"`
-	Enabled                bool            `bun:"enabled"`
-	ArchivedAt             sql.NullTime    `bun:"archived_at"`
-	ResourceID             uuid.UUID       `bun:"resource_id,type:uuid"`
-	ResourceInstallationID *uuid.UUID      `bun:"resource_installation_id,type:uuid"`
-	ResourceEndpointID     *uuid.UUID      `bun:"resource_endpoint_id,type:uuid"`
-	ResourceCredentialID   *uuid.UUID      `bun:"resource_credential_id,type:uuid"`
+	bun.BaseModel        `bun:"table:resource_health_checks,alias:resource_health_checks"`
+	ID                   uuid.UUID       `bun:"id,pk,type:uuid"`
+	CreatedAt            time.Time       `bun:"created_at"`
+	UpdatedAt            time.Time       `bun:"updated_at"`
+	Name                 string          `bun:"name"`
+	Kind                 string          `bun:"kind"`
+	Configuration        json.RawMessage `bun:"configuration,type:jsonb"`
+	IntervalSeconds      int32           `bun:"interval_seconds"`
+	TimeoutSeconds       int32           `bun:"timeout_seconds"`
+	FailureThreshold     int32           `bun:"failure_threshold"`
+	SuccessThreshold     int32           `bun:"success_threshold"`
+	Enabled              bool            `bun:"enabled"`
+	ArchivedAt           sql.NullTime    `bun:"archived_at"`
+	ResourceID           uuid.UUID       `bun:"resource_id,type:uuid"`
+	ResourceEndpointID   *uuid.UUID      `bun:"resource_endpoint_id,type:uuid"`
+	ResourceCredentialID *uuid.UUID      `bun:"resource_credential_id,type:uuid"`
 }
 
 type DueResourceHealthCheck struct {
 	ResourceHealthCheckEntity
 	ResourceID                 uuid.UUID       `bun:"resource_id"`
 	ResourceName               string          `bun:"resource_name"`
-	ResourceKind               string          `bun:"resource_kind"`
-	ResourceDatabaseName       string          `bun:"resource_database_name"`
+	ResourceEngine             string          `bun:"resource_engine"`
+	CredentialDatabaseName     string          `bun:"credential_database_name"`
 	EndpointAddress            string          `bun:"endpoint_address"`
 	EndpointPort               int32           `bun:"endpoint_port"`
 	EndpointProtocol           string          `bun:"endpoint_protocol"`
@@ -89,7 +88,7 @@ func (e *ResourceHealthCheckEntity) ValidateForKind(resourceKind string) error {
 	if err := e.Validate(); err != nil {
 		return err
 	}
-	definition, ok := FindResourceKind(resourceKind)
+	definition, ok := FindResourceEngine(resourceKind)
 	if !ok || !definition.SupportsHealthCheck(e.Kind) {
 		return validation.ValidationErrors{{Field: "kind", Code: "unsupported", Message: "health check kind is not supported by this resource kind"}}
 	}
@@ -127,8 +126,8 @@ func (rhc resourceHealthCheck) DueApplicationChecks(
 		ColumnExpr("health_check.*").
 		ColumnExpr("resource.id AS resource_id").
 		ColumnExpr("resource.name AS resource_name").
-		ColumnExpr("resource.kind AS resource_kind").
-		ColumnExpr("COALESCE(endpoint.settings ->> 'database', '') AS resource_database_name").
+		ColumnExpr("COALESCE(resource.configuration ->> 'engine', '') AS resource_engine").
+		ColumnExpr("COALESCE(credential.metadata ->> 'database', '') AS credential_database_name").
 		ColumnExpr("COALESCE(endpoint.address, '') AS endpoint_address").
 		ColumnExpr("COALESCE(endpoint.port, 0) AS endpoint_port").
 		ColumnExpr("COALESCE(endpoint.protocol, '') AS endpoint_protocol").
@@ -142,12 +141,11 @@ func (rhc resourceHealthCheck) DueApplicationChecks(
 		ColumnExpr("COALESCE(status.consecutive_failures, 0) AS status_consecutive_failures").
 		ColumnExpr("status.expires_at AS status_expires_at").
 		Join("JOIN resources AS resource ON resource.id = health_check.resource_id AND resource.archived_at IS NULL").
-		Join("LEFT JOIN resource_installations AS installation ON installation.id = health_check.resource_installation_id AND installation.resource_id = resource.id AND installation.archived_at IS NULL").
 		Join("LEFT JOIN resource_endpoints AS endpoint ON endpoint.id = health_check.resource_endpoint_id AND endpoint.resource_id = resource.id AND endpoint.archived_at IS NULL").
 		Join("LEFT JOIN resource_credentials AS credential ON credential.id = health_check.resource_credential_id AND credential.resource_id = resource.id AND credential.archived_at IS NULL").
 		Join("LEFT JOIN resource_health_check_statuses AS status ON status.health_check_id = health_check.id").
-		Where("resource.kind IN ('postgresql', 'clickhouse')").
-		Where("health_check.kind = resource.kind").
+		Where("resource.resource_type = 'database'").
+		Where("health_check.kind = resource.configuration ->> 'engine'").
 		Where("health_check.enabled = TRUE").
 		Where("health_check.archived_at IS NULL").
 		Where("status.health_check_id IS NULL OR status.observed_at + health_check.interval_seconds * INTERVAL '1 second' <= ?", now).
@@ -158,19 +156,18 @@ func (rhc resourceHealthCheck) DueApplicationChecks(
 }
 
 type CreateResourceHealthCheckData struct {
-	Name                   string
-	Kind                   string
-	Configuration          json.RawMessage
-	IntervalSeconds        int32
-	TimeoutSeconds         int32
-	FailureThreshold       int32
-	SuccessThreshold       int32
-	Enabled                bool
-	ArchivedAt             sql.NullTime
-	ResourceID             uuid.UUID
-	ResourceInstallationID *uuid.UUID
-	ResourceEndpointID     *uuid.UUID
-	ResourceCredentialID   *uuid.UUID
+	Name                 string
+	Kind                 string
+	Configuration        json.RawMessage
+	IntervalSeconds      int32
+	TimeoutSeconds       int32
+	FailureThreshold     int32
+	SuccessThreshold     int32
+	Enabled              bool
+	ArchivedAt           sql.NullTime
+	ResourceID           uuid.UUID
+	ResourceEndpointID   *uuid.UUID
+	ResourceCredentialID *uuid.UUID
 }
 
 func (rhc resourceHealthCheck) Create(
@@ -179,22 +176,21 @@ func (rhc resourceHealthCheck) Create(
 	data CreateResourceHealthCheckData,
 ) (ResourceHealthCheckEntity, error) {
 	entity := ResourceHealthCheckEntity{
-		ID:                     uuid.New(),
-		CreatedAt:              time.Now(),
-		UpdatedAt:              time.Now(),
-		Name:                   data.Name,
-		Kind:                   data.Kind,
-		Configuration:          data.Configuration,
-		IntervalSeconds:        data.IntervalSeconds,
-		TimeoutSeconds:         data.TimeoutSeconds,
-		FailureThreshold:       data.FailureThreshold,
-		SuccessThreshold:       data.SuccessThreshold,
-		Enabled:                data.Enabled,
-		ArchivedAt:             data.ArchivedAt,
-		ResourceID:             data.ResourceID,
-		ResourceInstallationID: data.ResourceInstallationID,
-		ResourceEndpointID:     data.ResourceEndpointID,
-		ResourceCredentialID:   data.ResourceCredentialID,
+		ID:                   uuid.New(),
+		CreatedAt:            time.Now(),
+		UpdatedAt:            time.Now(),
+		Name:                 data.Name,
+		Kind:                 data.Kind,
+		Configuration:        data.Configuration,
+		IntervalSeconds:      data.IntervalSeconds,
+		TimeoutSeconds:       data.TimeoutSeconds,
+		FailureThreshold:     data.FailureThreshold,
+		SuccessThreshold:     data.SuccessThreshold,
+		Enabled:              data.Enabled,
+		ArchivedAt:           data.ArchivedAt,
+		ResourceID:           data.ResourceID,
+		ResourceEndpointID:   data.ResourceEndpointID,
+		ResourceCredentialID: data.ResourceCredentialID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -212,21 +208,20 @@ func (rhc resourceHealthCheck) Create(
 }
 
 type UpdateResourceHealthCheckData struct {
-	ID                     uuid.UUID
-	UpdatedAt              time.Time
-	Name                   string
-	Kind                   string
-	Configuration          json.RawMessage
-	IntervalSeconds        int32
-	TimeoutSeconds         int32
-	FailureThreshold       int32
-	SuccessThreshold       int32
-	Enabled                bool
-	ArchivedAt             sql.NullTime
-	ResourceID             uuid.UUID
-	ResourceInstallationID *uuid.UUID
-	ResourceEndpointID     *uuid.UUID
-	ResourceCredentialID   *uuid.UUID
+	ID                   uuid.UUID
+	UpdatedAt            time.Time
+	Name                 string
+	Kind                 string
+	Configuration        json.RawMessage
+	IntervalSeconds      int32
+	TimeoutSeconds       int32
+	FailureThreshold     int32
+	SuccessThreshold     int32
+	Enabled              bool
+	ArchivedAt           sql.NullTime
+	ResourceID           uuid.UUID
+	ResourceEndpointID   *uuid.UUID
+	ResourceCredentialID *uuid.UUID
 }
 
 func (rhc resourceHealthCheck) Update(
@@ -235,21 +230,20 @@ func (rhc resourceHealthCheck) Update(
 	data UpdateResourceHealthCheckData,
 ) (ResourceHealthCheckEntity, error) {
 	entity := ResourceHealthCheckEntity{
-		ID:                     data.ID,
-		UpdatedAt:              time.Now(),
-		Name:                   data.Name,
-		Kind:                   data.Kind,
-		Configuration:          data.Configuration,
-		IntervalSeconds:        data.IntervalSeconds,
-		TimeoutSeconds:         data.TimeoutSeconds,
-		FailureThreshold:       data.FailureThreshold,
-		SuccessThreshold:       data.SuccessThreshold,
-		Enabled:                data.Enabled,
-		ArchivedAt:             data.ArchivedAt,
-		ResourceID:             data.ResourceID,
-		ResourceInstallationID: data.ResourceInstallationID,
-		ResourceEndpointID:     data.ResourceEndpointID,
-		ResourceCredentialID:   data.ResourceCredentialID,
+		ID:                   data.ID,
+		UpdatedAt:            time.Now(),
+		Name:                 data.Name,
+		Kind:                 data.Kind,
+		Configuration:        data.Configuration,
+		IntervalSeconds:      data.IntervalSeconds,
+		TimeoutSeconds:       data.TimeoutSeconds,
+		FailureThreshold:     data.FailureThreshold,
+		SuccessThreshold:     data.SuccessThreshold,
+		Enabled:              data.Enabled,
+		ArchivedAt:           data.ArchivedAt,
+		ResourceID:           data.ResourceID,
+		ResourceEndpointID:   data.ResourceEndpointID,
+		ResourceCredentialID: data.ResourceCredentialID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -272,7 +266,6 @@ func (rhc resourceHealthCheck) Update(
 		Column("enabled").
 		Column("archived_at").
 		Column("resource_id").
-		Column("resource_installation_id").
 		Column("resource_endpoint_id").
 		Column("resource_credential_id").
 		WherePK().
@@ -368,22 +361,21 @@ func (rhc resourceHealthCheck) Upsert(
 	data CreateResourceHealthCheckData,
 ) (ResourceHealthCheckEntity, error) {
 	entity := ResourceHealthCheckEntity{
-		ID:                     uuid.New(),
-		CreatedAt:              time.Now(),
-		UpdatedAt:              time.Now(),
-		Name:                   data.Name,
-		Kind:                   data.Kind,
-		Configuration:          data.Configuration,
-		IntervalSeconds:        data.IntervalSeconds,
-		TimeoutSeconds:         data.TimeoutSeconds,
-		FailureThreshold:       data.FailureThreshold,
-		SuccessThreshold:       data.SuccessThreshold,
-		Enabled:                data.Enabled,
-		ArchivedAt:             data.ArchivedAt,
-		ResourceID:             data.ResourceID,
-		ResourceInstallationID: data.ResourceInstallationID,
-		ResourceEndpointID:     data.ResourceEndpointID,
-		ResourceCredentialID:   data.ResourceCredentialID,
+		ID:                   uuid.New(),
+		CreatedAt:            time.Now(),
+		UpdatedAt:            time.Now(),
+		Name:                 data.Name,
+		Kind:                 data.Kind,
+		Configuration:        data.Configuration,
+		IntervalSeconds:      data.IntervalSeconds,
+		TimeoutSeconds:       data.TimeoutSeconds,
+		FailureThreshold:     data.FailureThreshold,
+		SuccessThreshold:     data.SuccessThreshold,
+		Enabled:              data.Enabled,
+		ArchivedAt:           data.ArchivedAt,
+		ResourceID:           data.ResourceID,
+		ResourceEndpointID:   data.ResourceEndpointID,
+		ResourceCredentialID: data.ResourceCredentialID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -406,7 +398,6 @@ func (rhc resourceHealthCheck) Upsert(
 		Set("enabled = excluded.enabled").
 		Set("archived_at = excluded.archived_at").
 		Set("resource_id = excluded.resource_id").
-		Set("resource_installation_id = excluded.resource_installation_id").
 		Set("resource_endpoint_id = excluded.resource_endpoint_id").
 		Set("resource_credential_id = excluded.resource_credential_id").
 		Returning("*").

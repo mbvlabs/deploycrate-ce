@@ -55,18 +55,7 @@ type (
 	backupDestination            struct{}
 	backupPolicy                 struct{}
 	backup                       struct{}
-	databaseRestore              struct{}
-	databaseCluster              struct{}
-	databaseClusterCredential    struct{}
-	databaseClusterNode          struct{}
-	databaseNodeStorage          struct{}
-	databaseNodeInstallation     struct{}
-	dockerDatabaseInstallation   struct{}
-	nativeDatabaseInstallation   struct{}
-	databaseClusterEndpoint      struct{}
-	database                     struct{}
-	databaseResource             struct{}
-	databaseResourceEndpoint     struct{}
+	resourceRestore              struct{}
 	resourceEnvironmentGrant     struct{}
 	resourceApplicationGrant     struct{}
 	outboxEvent                  struct{}
@@ -135,18 +124,7 @@ var (
 	BackupDestination            backupDestination
 	BackupPolicy                 backupPolicy
 	Backup                       backup
-	DatabaseRestore              databaseRestore
-	DatabaseCluster              databaseCluster
-	DatabaseClusterCredential    databaseClusterCredential
-	DatabaseClusterNode          databaseClusterNode
-	DatabaseNodeStorage          databaseNodeStorage
-	DatabaseNodeInstallation     databaseNodeInstallation
-	DockerDatabaseInstallation   dockerDatabaseInstallation
-	NativeDatabaseInstallation   nativeDatabaseInstallation
-	DatabaseClusterEndpoint      databaseClusterEndpoint
-	Database                     database
-	DatabaseResource             databaseResource
-	DatabaseResourceEndpoint     databaseResourceEndpoint
+	ResourceRestore              resourceRestore
 	ResourceEnvironmentGrant     resourceEnvironmentGrant
 	ResourceApplicationGrant     resourceApplicationGrant
 	OutboxEvent                  outboxEvent

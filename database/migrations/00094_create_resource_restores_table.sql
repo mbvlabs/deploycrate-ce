@@ -1,6 +1,6 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE database_restores (
+CREATE TABLE resource_restores (
     id UUID NOT NULL PRIMARY KEY,
 
     created_at TIMESTAMPTZ NOT NULL,
@@ -14,16 +14,17 @@ CREATE TABLE database_restores (
     cutover_at TIMESTAMPTZ,
     rolled_back_at TIMESTAMPTZ,
     error TEXT,
+    target JSONB NOT NULL,
 
     change_id UUID NOT NULL REFERENCES changes (id) ON DELETE RESTRICT,
     change_task_id UUID NOT NULL REFERENCES change_tasks (id) ON DELETE RESTRICT,
     backup_id UUID NOT NULL REFERENCES backups (id) ON DELETE RESTRICT,
     safety_backup_id UUID REFERENCES backups (id) ON DELETE RESTRICT,
-    database_id UUID NOT NULL REFERENCES databases (id) ON DELETE RESTRICT
+    resource_id UUID NOT NULL REFERENCES resources (id) ON DELETE RESTRICT
 );
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-DROP TABLE database_restores;
+DROP TABLE resource_restores;
 -- +goose StatementEnd

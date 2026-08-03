@@ -8,8 +8,8 @@ CREATE TABLE resources (
 
     name TEXT NOT NULL,
     slug TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    management_mode TEXT NOT NULL,
+    resource_type TEXT NOT NULL,
+    configuration JSONB NOT NULL,
     sharing_scope TEXT NOT NULL,
     system_managed BOOLEAN NOT NULL,
     archived_at TIMESTAMPTZ

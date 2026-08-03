@@ -16,7 +16,6 @@ CREATE TABLE resource_endpoints (
     archived_at TIMESTAMPTZ,
 
     resource_id UUID NOT NULL REFERENCES resources (id) ON DELETE RESTRICT,
-    resource_installation_id UUID REFERENCES resource_installations (id) ON DELETE RESTRICT,
     private_network_id UUID REFERENCES private_networks (id) ON DELETE RESTRICT
 );
 -- +goose StatementEnd

@@ -9,7 +9,7 @@
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
-  type ResourceOption = { id: string; name: string; kind: string; database: string; endpointId: string; endpoint: string; credentialId?: string; credential: string; serverId?: string }
+  type ResourceOption = { id: string; name: string; engine: string; database: string; endpointId: string; endpoint: string; credentialId?: string; credential: string; serverId?: string }
   type ServerOption = { id: string; name: string; kind: string; address: string }
   type Overview = { applicationId: string; applicationName: string; environment: { id: string; name: string; kind: string }; repository: string; reference: string; contextPath: string }
   let { auth, environment, options, setupUrl, setupError = '' }: { auth: { email: string }; environment: Overview; options: { resources: ResourceOption[]; servers: ServerOption[] }; setupUrl: string; setupError?: string } = $props()

@@ -33,8 +33,9 @@ type BackupPolicyEntity struct {
 	ArchivedAt          BackupPolicyNullTime `bun:"archived_at"`
 	ActivatedAt         BackupPolicyNullTime `bun:"activated_at"`
 	TargetType          string               `bun:"target_type"`
+	Target              json.RawMessage      `bun:"target,type:jsonb"`
 	ServerID            *uuid.UUID           `bun:"server_id,type:uuid"`
-	DatabaseID          *uuid.UUID           `bun:"database_id,type:uuid"`
+	ResourceID          *uuid.UUID           `bun:"resource_id,type:uuid"`
 	NextRunAt           time.Time            `bun:"next_run_at"`
 	LastScheduledAt     BackupPolicyNullTime `bun:"last_scheduled_at"`
 	BackupDestinationID uuid.UUID            `bun:"backup_destination_id,type:uuid"`
@@ -53,21 +54,24 @@ func (e *BackupPolicyEntity) Validate() error {
 		builder.Add("schedule", "invalid", "backup policy schedule must be a five-field cron expression")
 	}
 	if e.TargetType == "server" {
-		if e.ServerID == nil || *e.ServerID == uuid.Nil || e.DatabaseID != nil {
+		if e.ServerID == nil || *e.ServerID == uuid.Nil || e.ResourceID != nil {
 			builder.Add("target_type", "incoherent", "server policies must target only one server")
 		}
 		if e.Strategy != "filesystem" || e.Driver != "restic" || e.Format != "restic" {
 			builder.Add("driver", "incompatible", "server policies require filesystem, restic, and restic")
 		}
-	} else if e.TargetType == "database" {
-		if e.ServerID != nil || e.DatabaseID == nil || *e.DatabaseID == uuid.Nil {
-			builder.Add("target_type", "incoherent", "database policies must target one Database")
+	} else if e.TargetType == "resource" {
+		if e.ServerID != nil || e.ResourceID == nil || *e.ResourceID == uuid.Nil {
+			builder.Add("target_type", "incoherent", "Resource policies must target one Resource")
 		}
 		if e.Strategy != "logical" || e.Driver != "postgresql" || e.Format != "tar.age" {
-			builder.Add("driver", "incompatible", "database policies require logical, postgresql, and tar.age")
+			builder.Add("driver", "incompatible", "PostgreSQL Resource policies require logical, postgresql, and tar.age")
 		}
 	} else {
-		builder.Add("target_type", "unsupported", "backup policy target must be server or database")
+		builder.Add("target_type", "unsupported", "backup policy target must be server or Resource")
+	}
+	if !validJSONObject(e.Target) {
+		builder.Add("target", "invalid", "backup target must be a JSON object")
 	}
 	if !validJSONObject(e.Retention) {
 		builder.Add("retention", "invalid", "backup retention must be a JSON object")
@@ -152,21 +156,20 @@ func NextBackupRun(expression string, after time.Time) (time.Time, error) {
 }
 
 type ScheduledBackupPolicy struct {
-	ID                         uuid.UUID  `bun:"id"`
-	Schedule                   string     `bun:"schedule"`
-	Strategy                   string     `bun:"strategy"`
-	Driver                     string     `bun:"driver"`
-	Format                     string     `bun:"format"`
-	TargetType                 string     `bun:"target_type"`
-	ServerID                   *uuid.UUID `bun:"server_id"`
-	DatabaseID                 *uuid.UUID `bun:"database_id"`
-	DatabaseClusterID          *uuid.UUID `bun:"database_cluster_id"`
-	DatabaseClusterNodeID      *uuid.UUID `bun:"database_cluster_node_id"`
-	DatabaseNodeInstallationID *uuid.UUID `bun:"database_node_installation_id"`
-	ExecutionServerID          *uuid.UUID `bun:"execution_server_id"`
-	BackupDestinationID        uuid.UUID  `bun:"backup_destination_id"`
-	NextRunAt                  time.Time  `bun:"next_run_at"`
-	EnvironmentID              uuid.UUID  `bun:"environment_id"`
+	ID                     uuid.UUID       `bun:"id"`
+	Schedule               string          `bun:"schedule"`
+	Strategy               string          `bun:"strategy"`
+	Driver                 string          `bun:"driver"`
+	Format                 string          `bun:"format"`
+	TargetType             string          `bun:"target_type"`
+	Target                 json.RawMessage `bun:"target"`
+	ServerID               *uuid.UUID      `bun:"server_id"`
+	ResourceID             *uuid.UUID      `bun:"resource_id"`
+	ResourceInstallationID *uuid.UUID      `bun:"resource_installation_id"`
+	ExecutionServerID      *uuid.UUID      `bun:"execution_server_id"`
+	BackupDestinationID    uuid.UUID       `bun:"backup_destination_id"`
+	NextRunAt              time.Time       `bun:"next_run_at"`
+	EnvironmentID          uuid.UUID       `bun:"environment_id"`
 }
 
 type BackupPolicySchedule struct {
@@ -195,15 +198,12 @@ func scheduledBackupPoliciesQuery(db storage.Executor) *bun.SelectQuery {
 	return db.NewSelect().
 		TableExpr("backup_policies AS policy").
 		ColumnExpr("policy.id, policy.schedule, policy.strategy, policy.driver, policy.format").
-		ColumnExpr("policy.target_type, policy.server_id, policy.database_id").
-		ColumnExpr("database.database_cluster_id, database_node.id AS database_cluster_node_id, database_installation.id AS database_node_installation_id").
-		ColumnExpr("database_installation.server_id AS execution_server_id").
+		ColumnExpr("policy.target_type, policy.target, policy.server_id, policy.resource_id").
+		ColumnExpr("resource_installation.id AS resource_installation_id, resource_installation.server_id AS execution_server_id").
 		ColumnExpr("policy.backup_destination_id, policy.next_run_at").
 		ColumnExpr("COALESCE(server_target.environment_id, system_environment.environment_id) AS environment_id").
 		Join("LEFT JOIN LATERAL (SELECT environment_id FROM environment_targets WHERE server_id = policy.server_id AND detached_at IS NULL ORDER BY attached_at DESC LIMIT 1) AS server_target ON TRUE").
-		Join("LEFT JOIN databases AS database ON database.id = policy.database_id AND database.archived_at IS NULL").
-		Join("LEFT JOIN database_cluster_nodes AS database_node ON database_node.database_cluster_id = database.database_cluster_id AND database_node.role = 'primary' AND database_node.archived_at IS NULL").
-		Join("LEFT JOIN database_node_installations AS database_installation ON database_installation.database_cluster_node_id = database_node.id AND database_installation.archived_at IS NULL").
+		Join("LEFT JOIN resource_installations AS resource_installation ON resource_installation.resource_id = policy.resource_id AND resource_installation.archived_at IS NULL").
 		Join("LEFT JOIN LATERAL (SELECT environment.id AS environment_id FROM environments AS environment JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL WHERE application.slug = ? AND environment.archived_at IS NULL ORDER BY environment.created_at LIMIT 1) AS system_environment ON TRUE", SystemApplicationSlug)
 }
 
@@ -335,8 +335,9 @@ type CreateBackupPolicyData struct {
 	ArchivedAt          sql.NullTime
 	ActivatedAt         sql.NullTime
 	TargetType          string
+	Target              json.RawMessage
 	ServerID            *uuid.UUID
-	DatabaseID          *uuid.UUID
+	ResourceID          *uuid.UUID
 	NextRunAt           time.Time
 	LastScheduledAt     sql.NullTime
 	BackupDestinationID uuid.UUID
@@ -362,8 +363,9 @@ func (bp backupPolicy) Create(
 		ArchivedAt:          data.ArchivedAt,
 		ActivatedAt:         data.ActivatedAt,
 		TargetType:          data.TargetType,
+		Target:              data.Target,
 		ServerID:            data.ServerID,
-		DatabaseID:          data.DatabaseID,
+		ResourceID:          data.ResourceID,
 		NextRunAt:           data.NextRunAt,
 		LastScheduledAt:     data.LastScheduledAt,
 		BackupDestinationID: data.BackupDestinationID,
@@ -372,8 +374,8 @@ func (bp backupPolicy) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return BackupPolicyEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if entity.TargetType == "database" && entity.DatabaseID != nil {
-		if err := ensureActiveUnique(ctx, db, "database-backup-policy:"+entity.DatabaseID.String(), entity.ID, db.NewSelect().Model((*BackupPolicyEntity)(nil)).Where("target_type = 'database'").Where("database_id = ?", *entity.DatabaseID), "databaseId", "the Database already has an active backup policy"); err != nil {
+	if entity.TargetType == "resource" && entity.ResourceID != nil {
+		if err := ensureActiveUnique(ctx, db, "resource-backup-policy:"+entity.ResourceID.String()+":"+string(entity.Target), entity.ID, db.NewSelect().Model((*BackupPolicyEntity)(nil)).Where("target_type = 'resource'").Where("resource_id = ?", *entity.ResourceID).Where("target = ?", entity.Target), "target", "the Resource target already has an active backup policy"); err != nil {
 			return BackupPolicyEntity{}, err
 		}
 	}
@@ -399,8 +401,9 @@ type UpdateBackupPolicyData struct {
 	ArchivedAt          sql.NullTime
 	ActivatedAt         sql.NullTime
 	TargetType          string
+	Target              json.RawMessage
 	ServerID            *uuid.UUID
-	DatabaseID          *uuid.UUID
+	ResourceID          *uuid.UUID
 	NextRunAt           time.Time
 	LastScheduledAt     sql.NullTime
 	BackupDestinationID uuid.UUID
@@ -425,8 +428,9 @@ func (bp backupPolicy) Update(
 		ArchivedAt:          data.ArchivedAt,
 		ActivatedAt:         data.ActivatedAt,
 		TargetType:          data.TargetType,
+		Target:              data.Target,
 		ServerID:            data.ServerID,
-		DatabaseID:          data.DatabaseID,
+		ResourceID:          data.ResourceID,
 		NextRunAt:           data.NextRunAt,
 		LastScheduledAt:     data.LastScheduledAt,
 		BackupDestinationID: data.BackupDestinationID,
@@ -435,8 +439,8 @@ func (bp backupPolicy) Update(
 	if err := validation.Validate(&entity); err != nil {
 		return BackupPolicyEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if entity.TargetType == "database" && entity.DatabaseID != nil {
-		if err := ensureActiveUnique(ctx, db, "database-backup-policy:"+entity.DatabaseID.String(), entity.ID, db.NewSelect().Model((*BackupPolicyEntity)(nil)).Where("target_type = 'database'").Where("database_id = ?", *entity.DatabaseID), "databaseId", "the Database already has an active backup policy"); err != nil {
+	if entity.TargetType == "resource" && entity.ResourceID != nil {
+		if err := ensureActiveUnique(ctx, db, "resource-backup-policy:"+entity.ResourceID.String()+":"+string(entity.Target), entity.ID, db.NewSelect().Model((*BackupPolicyEntity)(nil)).Where("target_type = 'resource'").Where("resource_id = ?", *entity.ResourceID).Where("target = ?", entity.Target), "target", "the Resource target already has an active backup policy"); err != nil {
 			return BackupPolicyEntity{}, err
 		}
 	}
@@ -455,8 +459,9 @@ func (bp backupPolicy) Update(
 		Column("archived_at").
 		Column("activated_at").
 		Column("target_type").
+		Column("target").
 		Column("server_id").
-		Column("database_id").
+		Column("resource_id").
 		Column("next_run_at").
 		Column("last_scheduled_at").
 		Column("backup_destination_id").
@@ -560,8 +565,9 @@ func (bp backupPolicy) Upsert(
 		ArchivedAt:          data.ArchivedAt,
 		ActivatedAt:         data.ActivatedAt,
 		TargetType:          data.TargetType,
+		Target:              data.Target,
 		ServerID:            data.ServerID,
-		DatabaseID:          data.DatabaseID,
+		ResourceID:          data.ResourceID,
 		NextRunAt:           data.NextRunAt,
 		LastScheduledAt:     data.LastScheduledAt,
 		BackupDestinationID: data.BackupDestinationID,
@@ -585,8 +591,9 @@ func (bp backupPolicy) Upsert(
 		Set("archived_at = excluded.archived_at").
 		Set("activated_at = excluded.activated_at").
 		Set("target_type = excluded.target_type").
+		Set("target = excluded.target").
 		Set("server_id = excluded.server_id").
-		Set("database_id = excluded.database_id").
+		Set("resource_id = excluded.resource_id").
 		Set("next_run_at = excluded.next_run_at").
 		Set("last_scheduled_at = excluded.last_scheduled_at").
 		Set("backup_destination_id = excluded.backup_destination_id").

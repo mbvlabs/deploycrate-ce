@@ -154,21 +154,6 @@ func RunHostCommand(arguments []string) error {
 			return errors.New("usage: host-resource-access container-(start|stop|restart|remove) INSTALLATION_ID CONTAINER_NAME")
 		}
 		return controlContainer(strings.TrimPrefix(arguments[0], "container-"), arguments[1], arguments[2])
-	case "native-database-install":
-		if len(arguments) != 1 {
-			return errors.New("usage: host-resource-access native-database-install")
-		}
-		return installNativeDatabase(os.Stdin)
-	case "native-database-inspect":
-		if len(arguments) != 4 {
-			return errors.New("usage: host-resource-access native-database-inspect INSTALLATION_ID PACKAGE_NAME SERVICE_NAME")
-		}
-		return printNativeDatabaseInspection(arguments[1], arguments[2], arguments[3])
-	case "native-database-start", "native-database-stop", "native-database-restart":
-		if len(arguments) != 3 {
-			return errors.New("usage: host-resource-access native-database-(start|stop|restart) INSTALLATION_ID SERVICE_NAME")
-		}
-		return controlNativeDatabase(strings.TrimPrefix(arguments[0], "native-database-"), arguments[1], arguments[2])
 	case "node-telemetry-target":
 		if len(arguments) != 3 {
 			return errors.New("usage: host-resource-access node-telemetry-target SERVER_ID PRIVATE_ADDRESS")

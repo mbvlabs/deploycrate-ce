@@ -38,78 +38,70 @@ type DatabaseRestoreInput struct {
 	ActorID      uuid.UUID
 }
 
-func (service *DatabaseRestoreWorkflow) RequestForResource(ctx context.Context, resourceID, databaseID uuid.UUID, input DatabaseRestoreInput) (models.DatabaseRestoreEntity, error) {
+func (service *DatabaseRestoreWorkflow) RequestForResource(ctx context.Context, resourceID uuid.UUID, databaseName string, input DatabaseRestoreInput) (models.ResourceRestoreEntity, error) {
 	resource, err := models.Resource.Find(ctx, service.db.Executor(), resourceID)
 	if err != nil {
-		return models.DatabaseRestoreEntity{}, err
+		return models.ResourceRestoreEntity{}, err
 	}
 	if strings.TrimSpace(input.Confirmation) != resource.Name {
-		return models.DatabaseRestoreEntity{}, domainError("confirmation", "mismatch", "Enter the Resource name exactly to confirm the restore")
+		return models.ResourceRestoreEntity{}, domainError("confirmation", "mismatch", "Enter the Resource name exactly to confirm the restore")
 	}
 	if resource.SystemManaged {
-		return models.DatabaseRestoreEntity{}, domainError("backupId", "system_managed", "The running control-plane Database cannot be restored from the application")
+		return models.ResourceRestoreEntity{}, domainError("backupId", "system_managed", "The running control-plane Database cannot be restored from the application")
 	}
 	backup, err := models.Backup.Find(ctx, service.db.Executor(), input.BackupID)
 	if err != nil {
-		return models.DatabaseRestoreEntity{}, err
+		return models.ResourceRestoreEntity{}, err
 	}
-	if backup.DatabaseID == nil {
-		return models.DatabaseRestoreEntity{}, domainError("backupId", "ineligible", "Choose a Database backup from this Resource")
+	if backup.ResourceID == nil || *backup.ResourceID != resourceID || resourceCredentialMetadataDatabase(backup.Target) != databaseName || !resourceHasDatabase(resource, databaseName) {
+		return models.ResourceRestoreEntity{}, domainError("backupId", "ineligible", "Choose a Database backup from this Resource")
 	}
-	allowed, err := service.db.Executor().NewSelect().TableExpr("databases AS database").
-		Join("JOIN database_resources AS backing ON backing.database_cluster_id = database.database_cluster_id").
-		Where("database.id = ?", databaseID).Where("backing.resource_id = ?", resourceID).Where("database.archived_at IS NULL").Exists(ctx)
-	if err != nil {
-		return models.DatabaseRestoreEntity{}, err
-	}
-	if !allowed || *backup.DatabaseID != databaseID {
-		return models.DatabaseRestoreEntity{}, models.ErrNotFound
-	}
-	return service.Request(ctx, databaseID, input)
+	return service.Request(ctx, resourceID, databaseName, input)
 }
 
-func (service *DatabaseRestoreWorkflow) Request(ctx context.Context, databaseID uuid.UUID, input DatabaseRestoreInput) (models.DatabaseRestoreEntity, error) {
+func (service *DatabaseRestoreWorkflow) Request(ctx context.Context, resourceID uuid.UUID, databaseName string, input DatabaseRestoreInput) (models.ResourceRestoreEntity, error) {
 	backup, err := models.Backup.Find(ctx, service.db.Executor(), input.BackupID)
 	if err != nil {
-		return models.DatabaseRestoreEntity{}, err
+		return models.ResourceRestoreEntity{}, err
 	}
-	if backup.Status != models.BackupStatusVerified || backup.DatabaseID == nil || *backup.DatabaseID != databaseID {
-		return models.DatabaseRestoreEntity{}, domainError("backupId", "ineligible", "Choose a verified backup from this Database")
+	if backup.Status != models.BackupStatusVerified || backup.ResourceID == nil || *backup.ResourceID != resourceID || resourceCredentialMetadataDatabase(backup.Target) != databaseName {
+		return models.ResourceRestoreEntity{}, domainError("backupId", "ineligible", "Choose a verified backup from this Database")
 	}
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
-		return models.DatabaseRestoreEntity{}, err
+		return models.ResourceRestoreEntity{}, err
 	}
 	defer tx.Rollback()
-	policy, err := activeDatabaseBackupPolicy(ctx, tx, databaseID)
+	policy, err := activeDatabaseBackupPolicy(ctx, tx, resourceID, databaseName)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return models.DatabaseRestoreEntity{}, domainError("backupId", "safety_backup_unavailable", "An active backup policy is required to create the mandatory safety backup")
+			return models.ResourceRestoreEntity{}, domainError("backupId", "safety_backup_unavailable", "An active backup policy is required to create the mandatory safety backup")
 		}
-		return models.DatabaseRestoreEntity{}, err
+		return models.ResourceRestoreEntity{}, err
 	}
 	sequence, err := models.Change.NextSequence(ctx, tx, policy.EnvironmentID)
 	if err != nil {
-		return models.DatabaseRestoreEntity{}, err
+		return models.ResourceRestoreEntity{}, err
 	}
 	now := time.Now().UTC()
 	change, err := models.Change.Create(ctx, tx, models.CreateChangeData{Sequence: sequence, Kind: "database_restore", TriggerType: "manual", ActorType: "user", ActorID: &input.ActorID, CorrelationID: uuid.New(), CorrectionContext: json.RawMessage(`{}`), Summary: "Restore Database from verified backup", Status: "pending", RequestedAt: now, CommittedAt: sql.NullTime{Time: now, Valid: true}, EnvironmentID: policy.EnvironmentID})
 	if err != nil {
-		return models.DatabaseRestoreEntity{}, err
+		return models.ResourceRestoreEntity{}, err
 	}
-	task, err := models.ChangeTask.Create(ctx, tx, models.CreateChangeTaskData{Kind: "database_restore", SubjectType: "database", SubjectID: databaseID, IdempotencyKey: "database-restore:" + databaseID.String() + ":" + input.BackupID.String(), Input: json.RawMessage(`{}`), Status: "pending", AvailableAt: now, ChangeID: change.ID, ServerID: policy.ExecutionServerID})
+	task, err := models.ChangeTask.Create(ctx, tx, models.CreateChangeTaskData{Kind: "resource_restore", SubjectType: "resource", SubjectID: resourceID, IdempotencyKey: "resource-restore:" + resourceID.String() + ":" + databaseName + ":" + input.BackupID.String(), Input: json.RawMessage(`{}`), Status: "pending", AvailableAt: now, ChangeID: change.ID, ServerID: policy.ExecutionServerID})
 	if err != nil {
-		return models.DatabaseRestoreEntity{}, err
+		return models.ResourceRestoreEntity{}, err
 	}
-	restore, err := models.DatabaseRestore.Create(ctx, tx, models.CreateDatabaseRestoreData{Status: models.DatabaseRestoreStatusPending, RequestedAt: now, ChangeID: change.ID, ChangeTaskID: task.ID, BackupID: input.BackupID, DatabaseID: databaseID})
+	target, _ := json.Marshal(map[string]string{"database": databaseName})
+	restore, err := models.ResourceRestore.Create(ctx, tx, models.CreateResourceRestoreData{Status: models.ResourceRestoreStatusPending, RequestedAt: now, Target: target, ChangeID: change.ID, ChangeTaskID: task.ID, BackupID: input.BackupID, ResourceID: resourceID})
 	if err != nil {
-		return models.DatabaseRestoreEntity{}, mapRestoreConflict(err)
+		return models.ResourceRestoreEntity{}, mapRestoreConflict(err)
 	}
 	if _, err := service.queue.InsertTx(ctx, tx.Tx, jobs.DatabaseRestorePrepareArgs{DatabaseRestoreID: restore.ID}, nil); err != nil {
-		return models.DatabaseRestoreEntity{}, err
+		return models.ResourceRestoreEntity{}, err
 	}
 	if err := tx.Commit(); err != nil {
-		return models.DatabaseRestoreEntity{}, err
+		return models.ResourceRestoreEntity{}, err
 	}
 	return restore, nil
 }
@@ -120,14 +112,14 @@ func (service *DatabaseRestoreWorkflow) Prepare(ctx context.Context, restoreID u
 		return err
 	}
 	defer tx.Rollback()
-	restore, err := models.DatabaseRestore.FindForUpdate(ctx, tx, restoreID)
+	restore, err := models.ResourceRestore.FindForUpdate(ctx, tx, restoreID)
 	if err != nil {
 		return err
 	}
-	if restore.Status != models.DatabaseRestoreStatusPending {
+	if restore.Status != models.ResourceRestoreStatusPending {
 		return nil
 	}
-	policy, err := activeDatabaseBackupPolicy(ctx, tx, restore.DatabaseID)
+	policy, err := activeDatabaseBackupPolicy(ctx, tx, restore.ResourceID, resourceCredentialMetadataDatabase(restore.Target))
 	if err != nil {
 		operationErr := fmt.Errorf("load safety backup policy: %w", err)
 		return errors.Join(operationErr, service.failTx(ctx, tx, restore, operationErr, false, nil))
@@ -137,21 +129,21 @@ func (service *DatabaseRestoreWorkflow) Prepare(ctx context.Context, restoreID u
 		operationErr := fmt.Errorf("create safety backup: %w", err)
 		return errors.Join(operationErr, service.failTx(ctx, tx, restore, operationErr, false, nil))
 	}
-	if err := models.DatabaseRestore.MarkSafetyBackup(ctx, tx, restore.ID, backupID, time.Now().UTC()); err != nil {
+	if err := models.ResourceRestore.MarkSafetyBackup(ctx, tx, restore.ID, backupID, time.Now().UTC()); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 func (service *DatabaseRestoreWorkflow) Apply(ctx context.Context, restoreID uuid.UUID) error {
-	restore, err := models.DatabaseRestore.Find(ctx, service.db.Executor(), restoreID)
+	restore, err := models.ResourceRestore.Find(ctx, service.db.Executor(), restoreID)
 	if err != nil {
 		return err
 	}
-	if restore.Status == models.DatabaseRestoreStatusCompleted || restore.Status == models.DatabaseRestoreStatusRolledBack || restore.Status == models.DatabaseRestoreStatusFailed {
+	if restore.Status == models.ResourceRestoreStatusCompleted || restore.Status == models.ResourceRestoreStatusRolledBack || restore.Status == models.ResourceRestoreStatusFailed {
 		return nil
 	}
-	if restore.Status != models.DatabaseRestoreStatusRestoring {
+	if restore.Status != models.ResourceRestoreStatusRestoring {
 		return fmt.Errorf("Database restore %s is not ready to apply", restoreID)
 	}
 	if err := models.Change.MarkRunning(ctx, service.db.Executor(), restore.ChangeID, time.Now().UTC()); err != nil {
@@ -164,10 +156,10 @@ func (service *DatabaseRestoreWorkflow) Apply(ctx context.Context, restoreID uui
 	if err != nil {
 		return service.fail(ctx, restore, err, DatabaseRestoreResult{})
 	}
-	if scope.Backup.Status != models.BackupStatusVerified || scope.Backup.DatabaseID == nil || *scope.Backup.DatabaseID != restore.DatabaseID {
+	if scope.Backup.Status != models.BackupStatusVerified || scope.Backup.ResourceID == nil || *scope.Backup.ResourceID != restore.ResourceID || resourceCredentialMetadataDatabase(scope.Backup.Target) != resourceCredentialMetadataDatabase(restore.Target) {
 		return service.fail(ctx, restore, errors.New("restore source is no longer a verified backup for the Database"), DatabaseRestoreResult{})
 	}
-	target, err := service.executor.postgreSQLTargetForDatabase(ctx, restore.DatabaseID)
+	target, err := service.executor.postgreSQLTargetForDatabase(ctx, restore.ResourceID, resourceCredentialMetadataDatabase(restore.Target))
 	if err != nil {
 		return service.fail(ctx, restore, err, DatabaseRestoreResult{})
 	}
@@ -192,7 +184,7 @@ func (service *DatabaseRestoreWorkflow) Apply(ctx context.Context, restoreID uui
 	}
 	defer tx.Rollback()
 	now := time.Now().UTC()
-	if err := models.DatabaseRestore.MarkCompleted(ctx, tx, restore.ID, *result.CutoverAt, now); err != nil {
+	if err := models.ResourceRestore.MarkCompleted(ctx, tx, restore.ID, *result.CutoverAt, now); err != nil {
 		return err
 	}
 	if err := models.ChangeTask.MarkCompleted(ctx, tx, restore.ChangeTaskID, now); err != nil {
@@ -204,7 +196,7 @@ func (service *DatabaseRestoreWorkflow) Apply(ctx context.Context, restoreID uui
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	slog.InfoContext(ctx, "Database restore completed", "database_restore_id", restore.ID, "database_id", restore.DatabaseID, "backup_id", restore.BackupID)
+	slog.InfoContext(ctx, "Resource database restore completed", "resource_restore_id", restore.ID, "resource_id", restore.ResourceID, "database", resourceCredentialMetadataDatabase(restore.Target), "backup_id", restore.BackupID)
 	return nil
 }
 
@@ -220,7 +212,7 @@ func (service *DatabaseRestoreWorkflow) backupCredential(scope BackupScope) (Bac
 	}
 	return credential, nil
 }
-func (service *DatabaseRestoreWorkflow) fail(ctx context.Context, restore models.DatabaseRestoreEntity, operationErr error, result DatabaseRestoreResult) error {
+func (service *DatabaseRestoreWorkflow) fail(ctx context.Context, restore models.ResourceRestoreEntity, operationErr error, result DatabaseRestoreResult) error {
 	persistContext, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 	defer cancel()
 	tx, err := service.db.BeginTx(persistContext, nil)
@@ -233,9 +225,9 @@ func (service *DatabaseRestoreWorkflow) fail(ctx context.Context, restore models
 	}
 	return operationErr
 }
-func (service *DatabaseRestoreWorkflow) failTx(ctx context.Context, tx bun.Tx, restore models.DatabaseRestoreEntity, operationErr error, rolledBack bool, cutoverAt *time.Time) error {
+func (service *DatabaseRestoreWorkflow) failTx(ctx context.Context, tx bun.Tx, restore models.ResourceRestoreEntity, operationErr error, rolledBack bool, cutoverAt *time.Time) error {
 	now := time.Now().UTC()
-	if err := models.DatabaseRestore.MarkFailed(ctx, tx, restore.ID, operationErr, rolledBack, cutoverAt, now); err != nil {
+	if err := models.ResourceRestore.MarkFailed(ctx, tx, restore.ID, operationErr, rolledBack, cutoverAt, now); err != nil {
 		return err
 	}
 	if err := models.ChangeTask.MarkFailed(ctx, tx, restore.ChangeTaskID, now); err != nil {
@@ -247,15 +239,15 @@ func (service *DatabaseRestoreWorkflow) failTx(ctx context.Context, tx bun.Tx, r
 	return tx.Commit()
 }
 
-func activeDatabaseBackupPolicy(ctx context.Context, db storage.Executor, databaseID uuid.UUID) (models.ScheduledBackupPolicy, error) {
+func activeDatabaseBackupPolicy(ctx context.Context, db storage.Executor, resourceID uuid.UUID, databaseName string) (models.ScheduledBackupPolicy, error) {
 	var policyID uuid.UUID
-	if err := db.NewSelect().TableExpr("backup_policies AS policy").ColumnExpr("policy.id").Where("policy.target_type = 'database'").Where("policy.database_id = ?", databaseID).Where("policy.archived_at IS NULL AND policy.activated_at IS NOT NULL").Limit(1).Scan(ctx, &policyID); err != nil {
+	if err := db.NewSelect().TableExpr("backup_policies AS policy").ColumnExpr("policy.id").Where("policy.target_type = 'resource'").Where("policy.resource_id = ?", resourceID).Where("policy.target ->> 'database' = ?", databaseName).Where("policy.archived_at IS NULL AND policy.activated_at IS NOT NULL").Limit(1).Scan(ctx, &policyID); err != nil {
 		return models.ScheduledBackupPolicy{}, err
 	}
 	return models.BackupPolicy.FindScheduled(ctx, db, policyID)
 }
 func advanceDatabaseRestoreAfterSafetyBackup(ctx context.Context, tx bun.Tx, queue storage.InsertQueue, backupID uuid.UUID) error {
-	restoreID, err := models.DatabaseRestore.MarkRestoringBySafetyBackup(ctx, tx, backupID, time.Now().UTC())
+	restoreID, err := models.ResourceRestore.MarkRestoringBySafetyBackup(ctx, tx, backupID, time.Now().UTC())
 	if err != nil || restoreID == nil {
 		return err
 	}
@@ -263,8 +255,8 @@ func advanceDatabaseRestoreAfterSafetyBackup(ctx context.Context, tx bun.Tx, que
 	return err
 }
 func failDatabaseRestoreSafetyBackup(ctx context.Context, db storage.Pool, backupID uuid.UUID, operationErr error) error {
-	var restore models.DatabaseRestoreEntity
-	if err := db.Executor().NewSelect().Model(&restore).Where("database_restore.safety_backup_id = ?", backupID).Where("database_restore.status = ?", models.DatabaseRestoreStatusSafetyBackup).Scan(ctx); errors.Is(err, sql.ErrNoRows) {
+	var restore models.ResourceRestoreEntity
+	if err := db.Executor().NewSelect().Model(&restore).Where("resource_restore.safety_backup_id = ?", backupID).Where("resource_restore.status = ?", models.ResourceRestoreStatusSafetyBackup).Scan(ctx); errors.Is(err, sql.ErrNoRows) {
 		return nil
 	} else if err != nil {
 		return err
@@ -278,7 +270,7 @@ func failDatabaseRestoreSafetyBackup(ctx context.Context, db storage.Pool, backu
 	return service.failTx(ctx, tx, restore, fmt.Errorf("safety backup failed: %w", operationErr), false, nil)
 }
 func mapRestoreConflict(err error) error {
-	if err != nil && strings.Contains(err.Error(), "database_restores_active_database_unique") {
+	if err != nil && strings.Contains(err.Error(), "resource-active-restore") {
 		return domainError("backupId", "restore_active", "A restore is already active for this Database")
 	}
 	return err

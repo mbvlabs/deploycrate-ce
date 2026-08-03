@@ -30,7 +30,7 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 		connections = append(connections, inertia.Props{
 			"id": connection.ID, "createdAt": connection.CreatedAt, "updatedAt": connection.UpdatedAt,
 			"alias": connection.Alias, "configuration": connection.Configuration,
-			"database":      resourceConnectionDatabase(connection.EndpointSettings),
+			"database":      resourceConnectionDatabase(connection.CredentialMetadata),
 			"environmentId": connection.EnvironmentID, "environmentName": connection.EnvironmentName,
 			"environmentKind": connection.EnvironmentKind, "environmentArchived": connection.EnvironmentArchived,
 			"applicationName": connection.ApplicationName, "applicationSlug": connection.ApplicationSlug,
@@ -45,7 +45,7 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 			"id": endpoint.ID, "createdAt": endpoint.CreatedAt, "updatedAt": endpoint.UpdatedAt,
 			"name": endpoint.Name, "role": endpoint.Role, "address": endpoint.Address,
 			"port": endpoint.Port, "protocol": endpoint.Protocol, "tlsMode": endpoint.TlsMode,
-			"settings": endpoint.Settings, "resourceInstallationId": endpoint.ResourceInstallationID,
+			"settings":         endpoint.Settings,
 			"privateNetworkId": endpoint.PrivateNetworkID,
 		})
 	}
@@ -95,7 +95,7 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 			"name": healthCheck.Name, "kind": healthCheck.Kind, "configuration": healthCheck.Configuration,
 			"intervalSeconds": healthCheck.IntervalSeconds, "timeoutSeconds": healthCheck.TimeoutSeconds,
 			"failureThreshold": healthCheck.FailureThreshold, "successThreshold": healthCheck.SuccessThreshold,
-			"enabled": healthCheck.Enabled, "resourceInstallationId": healthCheck.ResourceInstallationID,
+			"enabled":            healthCheck.Enabled,
 			"resourceEndpointId": healthCheck.ResourceEndpointID, "resourceCredentialId": healthCheck.ResourceCredentialID,
 			"state": healthCheck.State, "message": healthCheck.Message,
 			"latencyMs":            nullInt32(healthCheck.LatencyMs),
@@ -142,15 +142,14 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 	databases := make([]inertia.Props, 0, len(detail.Databases))
 	for _, database := range detail.Databases {
 		databases = append(databases, inertia.Props{
-			"id": database.ID, "name": database.Name,
-			"desiredState": database.DesiredState, "observedState": database.ObservedState,
+			"name": database.Name, "encoding": database.Encoding, "collation": database.Collation,
 		})
 	}
 	return inertia.Props{
 		"id": resource.ID, "createdAt": resource.CreatedAt, "updatedAt": resource.UpdatedAt,
-		"name": resource.Name, "slug": resource.Slug, "category": models.ResourceCategory(resource.Kind), "kind": resource.Kind,
-		"databaseBacked": detail.DatabaseBacking != nil, "databases": databases,
-		"managementMode": resource.ManagementMode.String(), "sharingScope": resource.SharingScope.String(),
+		"name": resource.Name, "slug": resource.Slug, "resourceType": resource.ResourceType.String(), "engine": resource.Engine(),
+		"configuration": resource.Configuration, "databases": databases,
+		"sharingScope":    resource.SharingScope.String(),
 		"connectionCount": len(connections), "connections": connections,
 		"environmentGrants": environmentGrants, "applicationGrants": applicationGrants,
 		"endpoints": endpoints, "credentials": credentials, "installations": installations,
@@ -179,7 +178,7 @@ func resourceBackupProps(catalog models.ResourceBackupCatalog) inertia.Props {
 func resourceDatabaseBackupProps(detail models.ResourceBackupDetails) inertia.Props {
 	activeRestore := false
 	for _, restore := range detail.Restores {
-		if restore.Status == models.DatabaseRestoreStatusPending || restore.Status == models.DatabaseRestoreStatusSafetyBackup || restore.Status == models.DatabaseRestoreStatusRestoring {
+		if restore.Status == models.ResourceRestoreStatusPending || restore.Status == models.ResourceRestoreStatusSafetyBackup || restore.Status == models.ResourceRestoreStatusRestoring {
 			activeRestore = true
 			break
 		}
@@ -216,7 +215,7 @@ func resourceDatabaseBackupProps(detail models.ResourceBackupDetails) inertia.Pr
 		}
 	}
 	return inertia.Props{
-		"databaseId": detail.DatabaseID, "databaseName": detail.DatabaseName,
+		"databaseName": detail.DatabaseName,
 		"eligibility": inertia.Props{
 			"eligible": detail.Eligibility.Eligible, "reason": detail.Eligibility.Reason,
 			"installationId": detail.Eligibility.InstallationID,
@@ -240,9 +239,9 @@ func resourceListProps(items []models.ResourceListItem) []inertia.Props {
 	props := make([]inertia.Props, 0, len(items))
 	for _, item := range items {
 		props = append(props, inertia.Props{
-			"id": item.ID, "name": item.Name, "category": item.Category, "kind": item.Kind,
-			"databaseCount":  item.DatabaseCount,
-			"managementMode": item.ManagementMode.String(), "sharingScope": item.SharingScope.String(),
+			"id": item.ID, "name": item.Name, "resourceType": item.ResourceType.String(), "engine": item.Engine,
+			"databaseCount":   item.DatabaseCount,
+			"sharingScope":    item.SharingScope.String(),
 			"connectionCount": item.ConnectionCount, "grantCount": item.GrantCount, "installationCount": item.InstallationCount,
 			"endpointCount": item.EndpointCount, "health": item.Health,
 		})
@@ -251,14 +250,14 @@ func resourceListProps(items []models.ResourceListItem) []inertia.Props {
 }
 
 func resourceOptionsProps(options models.ResourceFormOptions) inertia.Props {
-	kinds := make([]inertia.Props, 0, len(options.Kinds))
-	for _, kind := range options.Kinds {
+	engines := make([]inertia.Props, 0, len(options.Engines))
+	for _, kind := range options.Engines {
 		fields := make([]inertia.Props, 0, len(kind.CredentialFields))
 		for _, field := range kind.CredentialFields {
 			fields = append(fields, inertia.Props{"name": field.Name, "label": field.Label, "required": field.Required, "secret": field.Secret})
 		}
-		kinds = append(kinds, inertia.Props{
-			"kind": kind.Kind, "label": kind.Label, "category": kind.Category,
+		engines = append(engines, inertia.Props{
+			"engine": kind.Engine, "label": kind.Label, "resourceType": kind.ResourceType.String(),
 			"protocols": kind.Protocols, "endpointRoles": kind.EndpointRoles, "tlsModes": kind.TLSModes,
 			"credentialFields": fields, "healthCheckKinds": kind.HealthCheckKinds,
 			"defaultPort": kind.DefaultPort, "defaultProtocol": kind.DefaultProtocol, "defaultTlsMode": kind.DefaultTLSMode,
@@ -285,7 +284,7 @@ func resourceOptionsProps(options models.ResourceFormOptions) inertia.Props {
 		credentials = append(credentials, inertia.Props{"id": credential.ID, "name": credential.Name})
 	}
 	return inertia.Props{
-		"kinds": kinds, "environments": environments, "servers": servers,
+		"resourceTypes": options.ResourceTypes, "engines": engines, "environments": environments, "servers": servers,
 		"privateNetworks": networks, "registryCredentials": credentials,
 	}
 }

@@ -102,7 +102,7 @@ type EnvironmentSetupResult struct {
 type EnvironmentSetupResourceOption struct {
 	ID           uuid.UUID  `json:"id" bun:"id"`
 	Name         string     `json:"name" bun:"name"`
-	Kind         string     `json:"kind" bun:"kind"`
+	Engine       string     `json:"engine" bun:"engine"`
 	Database     string     `json:"database" bun:"database_name"`
 	EndpointID   uuid.UUID  `json:"endpointId" bun:"endpoint_id"`
 	Endpoint     string     `json:"endpoint" bun:"endpoint"`
@@ -211,10 +211,10 @@ func (service *EnvironmentSetup) List(ctx context.Context) ([]EnvironmentListIte
 }
 
 type EnvironmentResourceActivity struct {
-	ID    uuid.UUID `json:"id" bun:"id"`
-	Alias string    `json:"alias" bun:"alias"`
-	Name  string    `json:"name" bun:"name"`
-	Kind  string    `json:"kind" bun:"kind"`
+	ID     uuid.UUID `json:"id" bun:"id"`
+	Alias  string    `json:"alias" bun:"alias"`
+	Name   string    `json:"name" bun:"name"`
+	Engine string    `json:"engine" bun:"engine"`
 }
 
 type EnvironmentVariableActivity struct {
@@ -387,7 +387,7 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 		}
 	}
 	resources := make([]EnvironmentResourceActivity, 0)
-	if err := service.db.Executor().NewSelect().TableExpr("environment_resources AS connection").ColumnExpr("connection.id, connection.alias, resource.name, resource.kind").Join("JOIN resources AS resource ON resource.id = connection.resource_id").Where("connection.environment_id = ?", environmentID).Where("connection.archived_at IS NULL").OrderExpr("connection.alias").Scan(ctx, &resources); err != nil {
+	if err := service.db.Executor().NewSelect().TableExpr("environment_resources AS connection").ColumnExpr("connection.id, connection.alias, resource.name, resource.configuration ->> 'engine' AS engine").Join("JOIN resources AS resource ON resource.id = connection.resource_id").Where("connection.environment_id = ?", environmentID).Where("connection.archived_at IS NULL").OrderExpr("connection.alias").Scan(ctx, &resources); err != nil {
 		return EnvironmentOverview{}, err
 	}
 	builds := make([]EnvironmentBuildActivity, 0)
@@ -572,13 +572,14 @@ func (service *EnvironmentSetup) EditData(
 		ResourceCredentialID *uuid.UUID      `bun:"resource_credential_id"`
 		Alias                string          `bun:"alias"`
 		Configuration        json.RawMessage `bun:"configuration"`
-		EndpointSettings     json.RawMessage `bun:"endpoint_settings"`
+		CredentialMetadata   json.RawMessage `bun:"credential_metadata"`
 	}
 	rows := make([]resourceRow, 0)
 	if err := service.db.Executor().NewSelect().TableExpr("environment_resources AS connection").
 		ColumnExpr("connection.id, connection.resource_id, connection.resource_endpoint_id, connection.resource_credential_id, connection.alias, connection.configuration").
-		ColumnExpr("endpoint.settings AS endpoint_settings").
+		ColumnExpr("credential.metadata AS credential_metadata").
 		Join("JOIN resource_endpoints AS endpoint ON endpoint.id = connection.resource_endpoint_id AND endpoint.archived_at IS NULL").
+		Join("JOIN resource_credentials AS credential ON credential.id = connection.resource_credential_id AND credential.archived_at IS NULL").
 		Where("connection.environment_id = ?", environmentID).Where("connection.archived_at IS NULL").OrderExpr("connection.alias").Scan(ctx, &rows); err != nil {
 		return EnvironmentEditData{}, err
 	}
@@ -590,15 +591,13 @@ func (service *EnvironmentSetup) EditData(
 		if json.Unmarshal(row.Configuration, &configuration) != nil {
 			return EnvironmentEditData{}, errors.New("Environment Resource configuration is invalid")
 		}
-		var endpointSettings struct {
-			Database string `json:"database"`
-		}
-		if json.Unmarshal(row.EndpointSettings, &endpointSettings) != nil || strings.TrimSpace(endpointSettings.Database) == "" {
-			return EnvironmentEditData{}, errors.New("Environment Resource endpoint Database configuration is invalid")
+		database := resourceCredentialMetadataDatabase(row.CredentialMetadata)
+		if database == "" {
+			return EnvironmentEditData{}, errors.New("Environment Resource credential Database configuration is invalid")
 		}
 		resources = append(resources, EnvironmentSetupResourceInput{
 			ResourceID: row.ResourceID, EndpointID: row.ResourceEndpointID,
-			CredentialID: row.ResourceCredentialID, Alias: row.Alias, Database: strings.TrimSpace(endpointSettings.Database),
+			CredentialID: row.ResourceCredentialID, Alias: row.Alias, Database: database,
 			CredentialProjection: configuration.CredentialProjection,
 		})
 	}
@@ -710,14 +709,13 @@ func (service *EnvironmentSetup) DeploymentEvents(
 func (service *EnvironmentSetup) Options(ctx context.Context) (EnvironmentSetupOptions, error) {
 	options := make([]EnvironmentSetupResourceOption, 0)
 	if err := service.db.Executor().NewSelect().TableExpr("resources AS resource").
-		ColumnExpr("resource.id, resource.name, resource.kind, COALESCE(endpoint.settings ->> 'database', '') AS database_name, endpoint.id AS endpoint_id").
+		ColumnExpr("resource.id, resource.name, resource.configuration ->> 'engine' AS engine, COALESCE(credential.metadata ->> 'database', '') AS database_name, endpoint.id AS endpoint_id").
 		ColumnExpr("endpoint.address || ':' || endpoint.port::text AS endpoint").
 		ColumnExpr("credential.id AS credential_id, COALESCE(credential.name, '') AS credential, installation.server_id AS server_id").
-		Join("JOIN database_resources AS backing ON backing.resource_id = resource.id").
 		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = resource.id AND endpoint.archived_at IS NULL").
-		Join("LEFT JOIN resource_installations AS installation ON installation.id = endpoint.resource_installation_id AND installation.archived_at IS NULL").
-		Join("LEFT JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.archived_at IS NULL").
-		Where("resource.archived_at IS NULL").Where("resource.kind = 'postgresql'").
+		Join("LEFT JOIN resource_installations AS installation ON installation.resource_id = resource.id AND installation.archived_at IS NULL").
+		Join("JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.metadata ->> 'purpose' = 'application' AND credential.archived_at IS NULL").
+		Where("resource.archived_at IS NULL").Where("resource.resource_type = 'database'").Where("resource.configuration ->> 'engine' = 'postgresql'").
 		OrderExpr("resource.name, endpoint.role, credential.name").Scan(ctx, &options); err != nil {
 		return EnvironmentSetupOptions{}, err
 	}
@@ -882,7 +880,7 @@ func (service *EnvironmentSetup) Complete(
 			secretEntities = append(secretEntities, entity)
 		}
 		resourceStates = append(resourceStates, models.EnvironmentResourceState{
-			EnvironmentResourceID: connection.ID, ResourceID: prepared.resource.ID, Kind: prepared.resource.Kind,
+			EnvironmentResourceID: connection.ID, ResourceID: prepared.resource.ID, Kind: prepared.resource.Engine(),
 			EndpointID: prepared.endpoint.ID, CredentialID: prepared.input.CredentialID,
 			Alias: strings.ToUpper(prepared.input.Alias), Database: prepared.input.Database, Variables: prepared.variables,
 		})
@@ -1457,7 +1455,7 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 			secretDescriptors = append(secretDescriptors, models.EnvironmentSecretDescriptorFromEntity(entity))
 		}
 		resourceStates = append(resourceStates, models.EnvironmentResourceState{
-			EnvironmentResourceID: connection.ID, ResourceID: prepared.resource.ID, Kind: prepared.resource.Kind,
+			EnvironmentResourceID: connection.ID, ResourceID: prepared.resource.ID, Kind: prepared.resource.Engine(),
 			EndpointID: prepared.endpoint.ID, CredentialID: prepared.input.CredentialID,
 			Alias: prepared.input.Alias, Database: prepared.input.Database, Variables: prepared.variables,
 		})
@@ -1863,7 +1861,7 @@ func (service *EnvironmentSetup) prepareResources(ctx context.Context, environme
 			return nil, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: fmt.Sprintf("resources.%d.resourceId", index), Code: "duplicate", Message: "Resource is already selected"}})
 		}
 		resource, err := models.Resource.Find(ctx, service.db.Executor(), input.ResourceID)
-		if err != nil || resource.ArchivedAt.Valid || resource.Kind != "postgresql" {
+		if err != nil || resource.ArchivedAt.Valid || resource.Engine() != "postgresql" {
 			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected PostgreSQL Resource is unavailable"))
 		}
 		allowed, err := models.ResourceSelectableByEnvironment(ctx, service.db.Executor(), resource.ID, environmentID)
@@ -1877,37 +1875,29 @@ func (service *EnvironmentSetup) prepareResources(ctx context.Context, environme
 		if err != nil || endpoint.ArchivedAt.Valid || endpoint.ResourceID != resource.ID || (endpoint.PrivateNetworkID != nil && *endpoint.PrivateNetworkID != networkID) {
 			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected Resource endpoint is unavailable from the Environment target"))
 		}
-		if endpoint.ResourceInstallationID != nil {
-			installation, installationErr := models.ResourceInstallation.Find(ctx, service.db.Executor(), *endpoint.ResourceInstallationID)
-			if installationErr != nil || installation.ArchivedAt.Valid || installation.ServerID != serverID {
+		var installation models.ResourceInstallationEntity
+		installationErr := service.db.Executor().NewSelect().Model(&installation).
+			Where("resource_id = ?", resource.ID).Where("archived_at IS NULL").OrderExpr("created_at").Limit(1).Scan(ctx)
+		if installationErr == nil {
+			if installation.ServerID != serverID {
 				return nil, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: fmt.Sprintf("resources.%d.resourceId", index), Code: "placement", Message: "selected managed Resource is not installed on the runtime Server"}})
 			}
+		} else if !errors.Is(installationErr, sql.ErrNoRows) {
+			return nil, installationErr
 		}
-		var endpointSettings struct {
-			Database string `json:"database"`
-		}
-		if json.Unmarshal(endpoint.Settings, &endpointSettings) != nil || strings.TrimSpace(endpointSettings.Database) == "" {
-			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected PostgreSQL Resource endpoint has no Database configuration"))
-		}
-		backing, err := models.DatabaseResource.FindByResource(ctx, service.db.Executor(), resource.ID)
-		if err != nil {
-			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected PostgreSQL Resource has no active Database backing"))
-		}
-		databaseCount, err := service.db.Executor().NewSelect().TableExpr("databases").Where("database_cluster_id = ?", backing.DatabaseClusterID).
-			Where("name = ?", strings.TrimSpace(endpointSettings.Database)).Where("archived_at IS NULL").Count(ctx)
-		if err != nil {
-			return nil, err
-		}
-		if databaseCount != 1 {
-			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected PostgreSQL Resource endpoint Database is unavailable"))
-		}
-		input.Database = strings.TrimSpace(endpointSettings.Database)
 		if input.CredentialID == nil {
 			return nil, errors.Join(models.ErrDomainValidation, errors.New("PostgreSQL application credential is required"))
 		}
 		credential, err := models.ResourceCredential.Find(ctx, service.db.Executor(), *input.CredentialID)
 		if err != nil || credential.ArchivedAt.Valid || credential.ResourceID != resource.ID {
 			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected Resource credential is unavailable"))
+		}
+		if resourceCredentialMetadataPurpose(credential.Metadata) != "application" {
+			return nil, errors.Join(models.ErrDomainValidation, errors.New("Resource administrator credentials cannot be injected into an Environment"))
+		}
+		input.Database = resourceCredentialMetadataDatabase(credential.Metadata)
+		if !resourceHasDatabase(resource, input.Database) {
+			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected PostgreSQL Resource Database is unavailable"))
 		}
 		values, err := service.resources.credentialSecretValues(credential)
 		if err != nil {

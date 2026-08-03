@@ -17,10 +17,11 @@ CREATE TABLE backup_policies (
     archived_at TIMESTAMPTZ,
     activated_at TIMESTAMPTZ,
     target_type TEXT NOT NULL,
+    target JSONB NOT NULL,
     next_run_at TIMESTAMPTZ NOT NULL,
     last_scheduled_at TIMESTAMPTZ,
 
-    database_id UUID REFERENCES databases (id) ON DELETE RESTRICT,
+    resource_id UUID REFERENCES resources (id) ON DELETE RESTRICT,
     backup_destination_id UUID NOT NULL REFERENCES backup_destinations (id) ON DELETE RESTRICT,
     server_id UUID REFERENCES servers (id) ON DELETE RESTRICT
 );

@@ -38,19 +38,17 @@ func (artifact LoadedDatabaseArtifact) Close() {
 }
 
 type databaseArtifactManifest struct {
-	ArtifactVersion            string    `json:"artifact_version"`
-	InstanceID                 string    `json:"instance_id"`
-	BackupID                   string    `json:"backup_id"`
-	PolicyID                   string    `json:"policy_id"`
-	DatabaseID                 string    `json:"database_id"`
-	DatabaseClusterID          string    `json:"database_cluster_id"`
-	DatabaseClusterNodeID      string    `json:"database_cluster_node_id"`
-	DatabaseNodeInstallationID string    `json:"database_node_installation_id"`
-	DatabaseName               string    `json:"database_name"`
-	ScheduledAt                time.Time `json:"scheduled_at"`
-	ProducerVersion            string    `json:"producer_version"`
-	Format                     string    `json:"format"`
-	RiverExcluded              bool      `json:"river_table_data_excluded"`
+	ArtifactVersion        string    `json:"artifact_version"`
+	InstanceID             string    `json:"instance_id"`
+	BackupID               string    `json:"backup_id"`
+	PolicyID               string    `json:"policy_id"`
+	ResourceID             string    `json:"resource_id"`
+	ResourceInstallationID string    `json:"resource_installation_id"`
+	DatabaseName           string    `json:"database_name"`
+	ScheduledAt            time.Time `json:"scheduled_at"`
+	ProducerVersion        string    `json:"producer_version"`
+	Format                 string    `json:"format"`
+	RiverExcluded          bool      `json:"river_table_data_excluded"`
 }
 
 func (service *DatabaseArtifact) Load(
@@ -90,16 +88,14 @@ func (service *DatabaseArtifact) Load(
 	if !equalBytes(digest.Sum(nil), scope.Backup.Digest) {
 		return fail(errors.New("database backup ciphertext digest does not match the backup record"))
 	}
-	if scope.Backup.DatabaseID == nil || scope.Backup.DatabaseClusterID == nil ||
-		scope.Backup.DatabaseClusterNodeID == nil || scope.Backup.DatabaseNodeInstallationID == nil {
+	if scope.Backup.ResourceID == nil || scope.Backup.ResourceInstallationID == nil {
 		return fail(errors.New("database backup record is missing topology identity"))
 	}
 	expectedMetadata := map[string]string{
 		"backup-id": scope.Backup.ID.String(), "policy-id": scope.Backup.BackupPolicyID.String(),
-		"database-id": scope.Backup.DatabaseID.String(), "database-cluster-id": scope.Backup.DatabaseClusterID.String(),
-		"database-cluster-node-id":      scope.Backup.DatabaseClusterNodeID.String(),
-		"database-node-installation-id": scope.Backup.DatabaseNodeInstallationID.String(),
-		"database-name":                 target.DatabaseName, "instance-id": service.config.App.InstanceID,
+		"resource-id":              scope.Backup.ResourceID.String(),
+		"resource-installation-id": scope.Backup.ResourceInstallationID.String(),
+		"database-name":            target.DatabaseName, "instance-id": service.config.App.InstanceID,
 		"sha256": fmt.Sprintf("%x", scope.Backup.Digest), "format-version": scope.Backup.FormatVersion,
 	}
 	for key, expected := range expectedMetadata {
@@ -185,10 +181,8 @@ func (service *DatabaseArtifact) Load(
 		manifest.InstanceID != service.config.App.InstanceID ||
 		manifest.BackupID != scope.Backup.ID.String() ||
 		manifest.PolicyID != scope.Backup.BackupPolicyID.String() ||
-		manifest.DatabaseID != scope.Backup.DatabaseID.String() ||
-		manifest.DatabaseClusterID != scope.Backup.DatabaseClusterID.String() ||
-		manifest.DatabaseClusterNodeID != scope.Backup.DatabaseClusterNodeID.String() ||
-		manifest.DatabaseNodeInstallationID != scope.Backup.DatabaseNodeInstallationID.String() ||
+		manifest.ResourceID != scope.Backup.ResourceID.String() ||
+		manifest.ResourceInstallationID != scope.Backup.ResourceInstallationID.String() ||
 		manifest.DatabaseName != target.DatabaseName ||
 		!manifest.ScheduledAt.Equal(scope.Backup.ScheduledAt) ||
 		manifest.ProducerVersion != scope.Backup.ProducerVersion ||

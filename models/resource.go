@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
+	"encoding/json"
 	"errors"
 	"strings"
 	"time"
@@ -14,36 +15,98 @@ import (
 )
 
 type ResourceEntity struct {
-	bun.BaseModel  `bun:"table:resources,alias:resources"`
-	ID             uuid.UUID                  `bun:"id,pk,type:uuid"`
-	CreatedAt      time.Time                  `bun:"created_at"`
-	UpdatedAt      time.Time                  `bun:"updated_at"`
-	Name           string                     `bun:"name"`
-	Slug           string                     `bun:"slug"`
-	Kind           string                     `bun:"kind"`
-	ManagementMode ResourceManagementModeEnum `bun:"management_mode"`
-	SharingScope   ResourceSharingScopeEnum   `bun:"sharing_scope"`
-	SystemManaged  bool                       `bun:"system_managed"`
-	ArchivedAt     sql.NullTime               `bun:"archived_at"`
+	bun.BaseModel `bun:"table:resources,alias:resources"`
+	ID            uuid.UUID                `bun:"id,pk,type:uuid"`
+	CreatedAt     time.Time                `bun:"created_at"`
+	UpdatedAt     time.Time                `bun:"updated_at"`
+	Name          string                   `bun:"name"`
+	Slug          string                   `bun:"slug"`
+	ResourceType  ResourceTypeEnum         `bun:"resource_type"`
+	Configuration json.RawMessage          `bun:"configuration,type:jsonb"`
+	SharingScope  ResourceSharingScopeEnum `bun:"sharing_scope"`
+	SystemManaged bool                     `bun:"system_managed"`
+	ArchivedAt    sql.NullTime             `bun:"archived_at"`
+}
+
+type ResourceConfiguration struct {
+	Engine        string                       `json:"engine"`
+	EngineVersion string                       `json:"engine_version,omitempty"`
+	Databases     []ResourceDatabaseDefinition `json:"databases,omitempty"`
+}
+
+type ResourceDatabaseDefinition struct {
+	Name      string `json:"name"`
+	Encoding  string `json:"encoding,omitempty"`
+	Collation string `json:"collation,omitempty"`
+}
+
+func (e ResourceEntity) ParsedConfiguration() ResourceConfiguration {
+	var configuration ResourceConfiguration
+	_ = json.Unmarshal(e.Configuration, &configuration)
+	configuration.Engine = strings.ToLower(strings.TrimSpace(configuration.Engine))
+	return configuration
+}
+
+func (e ResourceEntity) Engine() string {
+	return e.ParsedConfiguration().Engine
+}
+
+func (e ResourceEntity) Databases() []ResourceDatabaseDefinition {
+	if e.ResourceType != ResourceTypeDatabase {
+		return nil
+	}
+	return e.ParsedConfiguration().Databases
+}
+
+func validSlug(value string) bool {
+	if value == "" || value[0] == '-' || value[len(value)-1] == '-' {
+		return false
+	}
+	previousHyphen := false
+	for _, character := range value {
+		if character == '-' {
+			if previousHyphen {
+				return false
+			}
+			previousHyphen = true
+			continue
+		}
+		previousHyphen = false
+		if character < 'a' || character > 'z' {
+			if character < '0' || character > '9' {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 func (e *ResourceEntity) Validate() error {
 	e.Name = strings.TrimSpace(e.Name)
 	e.Slug = strings.ToLower(strings.TrimSpace(e.Slug))
-	e.Kind = strings.ToLower(strings.TrimSpace(e.Kind))
-	e.ManagementMode = ResourceManagementModeEnum(strings.ToLower(strings.TrimSpace(e.ManagementMode.String())))
-	e.SharingScope = ResourceSharingScopeEnum(strings.ToLower(strings.TrimSpace(e.SharingScope.String())))
+	e.ResourceType = ResourceTypeEnum(strings.ToLower(strings.TrimSpace(e.ResourceType.String())))
+	e.SharingScope = ResourceSharingScopeEnum(
+		strings.ToLower(strings.TrimSpace(e.SharingScope.String())),
+	)
 	builder := validation.NewBuilder()
 	builder.Required("name", e.Name)
 	builder.Required("slug", e.Slug)
 	if !validSlug(e.Slug) {
-		builder.Add("slug", "format", "slug must contain lowercase letters, numbers, and single hyphens")
+		builder.Add(
+			"slug",
+			"format",
+			"slug must contain lowercase letters, numbers, and single hyphens",
+		)
 	}
-	if _, ok := FindResourceKind(e.Kind); !ok {
-		builder.Add("kind", "unsupported", "resource kind is not supported")
+	if !e.ResourceType.IsValid() {
+		builder.Add("resourceType", "unsupported", "resource type is not supported")
 	}
-	if !e.ManagementMode.IsValid() {
-		builder.Add("managementMode", "unsupported", "management mode must be managed or external")
+	if !validJSONObject(e.Configuration) {
+		builder.Add("configuration", "invalid", "configuration must be a JSON object")
+	} else if settingsContainSecret(e.Configuration) {
+		builder.Add("configuration", "secret", "configuration must not contain raw credentials")
+	} else if definition, ok := FindResourceEngine(e.Engine()); !ok || definition.ResourceType != e.ResourceType {
+		builder.Add("configuration.engine", "unsupported", "engine is not supported by this resource type")
 	}
 	if !e.SharingScope.IsValid() {
 		builder.Add("sharingScope", "unsupported", "sharing scope is not supported")
@@ -68,13 +131,13 @@ func (r resource) Find(
 }
 
 type CreateResourceData struct {
-	Name           string
-	Slug           string
-	Kind           string
-	ManagementMode ResourceManagementModeEnum
-	SharingScope   ResourceSharingScopeEnum
-	SystemManaged  bool
-	ArchivedAt     sql.NullTime
+	Name          string
+	Slug          string
+	ResourceType  ResourceTypeEnum
+	Configuration json.RawMessage
+	SharingScope  ResourceSharingScopeEnum
+	SystemManaged bool
+	ArchivedAt    sql.NullTime
 }
 
 func (r resource) Create(
@@ -83,16 +146,16 @@ func (r resource) Create(
 	data CreateResourceData,
 ) (ResourceEntity, error) {
 	entity := ResourceEntity{
-		ID:             uuid.New(),
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
-		Name:           data.Name,
-		Slug:           data.Slug,
-		Kind:           data.Kind,
-		ManagementMode: data.ManagementMode,
-		SharingScope:   data.SharingScope,
-		ArchivedAt:     data.ArchivedAt,
-		SystemManaged:  data.SystemManaged,
+		ID:            uuid.New(),
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+		Name:          data.Name,
+		Slug:          data.Slug,
+		ResourceType:  data.ResourceType,
+		Configuration: data.Configuration,
+		SharingScope:  data.SharingScope,
+		ArchivedAt:    data.ArchivedAt,
+		SystemManaged: data.SystemManaged,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -113,15 +176,15 @@ func (r resource) Create(
 }
 
 type UpdateResourceData struct {
-	ID             uuid.UUID
-	UpdatedAt      time.Time
-	Name           string
-	Slug           string
-	Kind           string
-	ManagementMode ResourceManagementModeEnum
-	SharingScope   ResourceSharingScopeEnum
-	SystemManaged  bool
-	ArchivedAt     sql.NullTime
+	ID            uuid.UUID
+	UpdatedAt     time.Time
+	Name          string
+	Slug          string
+	ResourceType  ResourceTypeEnum
+	Configuration json.RawMessage
+	SharingScope  ResourceSharingScopeEnum
+	SystemManaged bool
+	ArchivedAt    sql.NullTime
 }
 
 func (r resource) Update(
@@ -130,15 +193,15 @@ func (r resource) Update(
 	data UpdateResourceData,
 ) (ResourceEntity, error) {
 	entity := ResourceEntity{
-		ID:             data.ID,
-		UpdatedAt:      time.Now(),
-		Name:           data.Name,
-		Slug:           data.Slug,
-		Kind:           data.Kind,
-		ManagementMode: data.ManagementMode,
-		SharingScope:   data.SharingScope,
-		ArchivedAt:     data.ArchivedAt,
-		SystemManaged:  data.SystemManaged,
+		ID:            data.ID,
+		UpdatedAt:     time.Now(),
+		Name:          data.Name,
+		Slug:          data.Slug,
+		ResourceType:  data.ResourceType,
+		Configuration: data.Configuration,
+		SharingScope:  data.SharingScope,
+		ArchivedAt:    data.ArchivedAt,
+		SystemManaged: data.SystemManaged,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -156,8 +219,8 @@ func (r resource) Update(
 		Column("updated_at").
 		Column("name").
 		Column("slug").
-		Column("kind").
-		Column("management_mode").
+		Column("resource_type").
+		Column("configuration").
 		Column("sharing_scope").
 		Column("system_managed").
 		Column("archived_at").
@@ -247,16 +310,16 @@ func (r resource) Upsert(
 	data CreateResourceData,
 ) (ResourceEntity, error) {
 	entity := ResourceEntity{
-		ID:             uuid.New(),
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
-		Name:           data.Name,
-		Slug:           data.Slug,
-		Kind:           data.Kind,
-		ManagementMode: data.ManagementMode,
-		SharingScope:   data.SharingScope,
-		ArchivedAt:     data.ArchivedAt,
-		SystemManaged:  data.SystemManaged,
+		ID:            uuid.New(),
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+		Name:          data.Name,
+		Slug:          data.Slug,
+		ResourceType:  data.ResourceType,
+		Configuration: data.Configuration,
+		SharingScope:  data.SharingScope,
+		ArchivedAt:    data.ArchivedAt,
+		SystemManaged: data.SystemManaged,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -274,8 +337,8 @@ func (r resource) Upsert(
 		On("CONFLICT (id) DO UPDATE").
 		Set("name = excluded.name").
 		Set("slug = excluded.slug").
-		Set("kind = excluded.kind").
-		Set("management_mode = excluded.management_mode").
+		Set("resource_type = excluded.resource_type").
+		Set("configuration = excluded.configuration").
 		Set("sharing_scope = excluded.sharing_scope").
 		Set("system_managed = excluded.system_managed").
 		Set("archived_at = excluded.archived_at").
@@ -287,9 +350,18 @@ func (r resource) Upsert(
 	return entity, nil
 }
 
-func (r resource) ensureActiveSlugAvailable(ctx context.Context, db storage.Executor, slug string, exceptID *uuid.UUID) error {
+func (r resource) ensureActiveSlugAvailable(
+	ctx context.Context,
+	db storage.Executor,
+	slug string,
+	exceptID *uuid.UUID,
+) error {
 	normalizedSlug := strings.ToLower(strings.TrimSpace(slug))
-	if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "resource-slug:"+normalizedSlug); err != nil {
+	if _, err := db.ExecContext(
+		ctx,
+		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+		"resource-slug:"+normalizedSlug,
+	); err != nil {
 		return err
 	}
 	query := db.NewSelect().Model((*ResourceEntity)(nil)).
@@ -303,14 +375,32 @@ func (r resource) ensureActiveSlugAvailable(ctx context.Context, db storage.Exec
 		return err
 	}
 	if count > 0 {
-		return errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "slug", Code: "taken", Message: "an active Resource already uses this slug"}})
+		return errors.Join(
+			ErrDomainValidation,
+			validation.ValidationErrors{
+				{
+					Field:   "slug",
+					Code:    "taken",
+					Message: "an active Resource already uses this slug",
+				},
+			},
+		)
 	}
 	return nil
 }
 
-func (r resource) ensureActiveNameAvailable(ctx context.Context, db storage.Executor, name string, exceptID *uuid.UUID) error {
+func (r resource) ensureActiveNameAvailable(
+	ctx context.Context,
+	db storage.Executor,
+	name string,
+	exceptID *uuid.UUID,
+) error {
 	normalizedName := strings.ToLower(strings.TrimSpace(name))
-	if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "resource-name:"+normalizedName); err != nil {
+	if _, err := db.ExecContext(
+		ctx,
+		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+		"resource-name:"+normalizedName,
+	); err != nil {
 		return err
 	}
 	query := db.NewSelect().Model((*ResourceEntity)(nil)).
@@ -324,7 +414,16 @@ func (r resource) ensureActiveNameAvailable(ctx context.Context, db storage.Exec
 		return err
 	}
 	if count > 0 {
-		return errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "name", Code: "taken", Message: "an active Resource already uses this name"}})
+		return errors.Join(
+			ErrDomainValidation,
+			validation.ValidationErrors{
+				{
+					Field:   "name",
+					Code:    "taken",
+					Message: "an active Resource already uses this name",
+				},
+			},
+		)
 	}
 	return nil
 }

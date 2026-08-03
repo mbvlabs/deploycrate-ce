@@ -9,17 +9,17 @@
   import { routes } from '@/routes'
 
   type Binding = { id: string; createdAt: string; updatedAt: string; alias: string; configuration: unknown; environmentId: string; environmentName: string; environmentKind: string; endpointId: string; credentialId: string }
-  type Endpoint = { id: string; createdAt: string; updatedAt: string; name: string; role: string; address: string; port: number; protocol: string; tlsMode: string; settings: Record<string, unknown>; installationId: string; privateNetworkId: string }
-  type Credential = { id: string; name: string; username: string; metadata: unknown; hasEncryptedPayload: boolean; installationId: string }
+  type Endpoint = { id: string; createdAt: string; updatedAt: string; name: string; role: string; address: string; port: number; protocol: string; tlsMode: string; settings: Record<string, unknown>; privateNetworkId: string }
+  type Credential = { id: string; name: string; username: string; metadata: unknown; hasEncryptedPayload: boolean }
   type Installation = { id: string; createdAt: string; updatedAt: string; imageReference: string; imageDigest: string; containerName: string; restartPolicy: string; configuration: unknown; serverId: string; serverName: string; serverAddress: string; state: string; serviceState: string; health: string; healthReason: string; observedAt: string | null }
   type Volume = { id: string; name: string; driver: string; configuration: unknown; serverId: string; serverName: string; mounts: Array<{ id: string; mountPath: string; readOnly: boolean; installationId: string }> }
   type HealthCheck = { id: string; name: string; kind: string; configuration: unknown; intervalSeconds: number; timeoutSeconds: number; failureThreshold: number; successThreshold: number; enabled: boolean; state: string; message: string; observedAt: string | null }
   type DeviceGrant = { deviceId: string; deviceName: string; ownerEmail: string; privateAddress: string; grantId: string; grantedAt: string; applicationState: string; applicationError: string; latestHandshakeAt: string | null; observedAt: string | null }
-  type Resource = { id: string; createdAt: string; updatedAt: string; name: string; category: string; kind: string; sharingScope: string; bindings: Binding[]; endpoints: Endpoint[]; credentials: Credential[]; installations: Installation[]; volumes: Volume[]; healthChecks: HealthCheck[]; deviceGrants: DeviceGrant[]; privateNetworks: Array<{ id: string; name: string }>; availableDevices: Array<{ id: string; name: string; privateAddress: string }> }
+  type Resource = { id: string; createdAt: string; updatedAt: string; name: string; resourceType: string; engine: string; sharingScope: string; bindings: Binding[]; endpoints: Endpoint[]; credentials: Credential[]; installations: Installation[]; volumes: Volume[]; healthChecks: HealthCheck[]; deviceGrants: DeviceGrant[]; privateNetworks: Array<{ id: string; name: string }>; availableDevices: Array<{ id: string; name: string; privateAddress: string }> }
   type Enrollment = { deviceId: string; grantId: string; clientConfiguration: string }
 
   let { auth, resource, enrollment = null }: { auth: { email: string }; resource: Resource; enrollment?: Enrollment | null } = $props()
-  const endpointForm = useForm(() => ({ name: '', role: 'primary', address: '', port: 0, protocol: resource.kind === 'postgresql' ? 'postgresql' : resource.kind === 'clickhouse' ? 'http' : resource.kind, tlsMode: 'disable', database: '', user: '', settings: {} as Record<string, string>, resourceInstallationId: '', privateNetworkId: '' }))
+  const endpointForm = useForm(() => ({ name: '', role: 'primary', address: '', port: 0, protocol: resource.engine === 'postgresql' ? 'postgresql' : resource.engine === 'clickhouse' ? 'http' : resource.engine, tlsMode: 'disable', database: '', user: '', settings: {} as Record<string, string>, privateNetworkId: '' }))
   const deviceForm = useForm(() => ({ name: '', deviceId: '' }))
   const label = (value: string) => value ? value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) : 'Unknown'
   const timestamp = (value: string | null) => value ? new Date(value).toLocaleString() : 'Not recorded'
@@ -27,9 +27,9 @@
   const connectionExample = $derived.by(() => {
     if (!wireguardEndpoint) return ''
     const database = String(wireguardEndpoint.settings?.database ?? '')
-    const user = String(wireguardEndpoint.settings?.user ?? (resource.kind === 'postgresql' ? 'deploycrate' : ''))
-    if (resource.kind === 'postgresql') return `psql "host=${wireguardEndpoint.address} port=${wireguardEndpoint.port} dbname=${database || 'deploycrate'} user=${user || 'deploycrate'}"`
-    if (resource.kind === 'clickhouse') return `http://${wireguardEndpoint.address}:${wireguardEndpoint.port}/?database=${database || 'deploycrate'}`
+    const user = String(wireguardEndpoint.settings?.user ?? (resource.engine === 'postgresql' ? 'deploycrate' : ''))
+    if (resource.engine === 'postgresql') return `psql "host=${wireguardEndpoint.address} port=${wireguardEndpoint.port} dbname=${database || 'deploycrate'} user=${user || 'deploycrate'}"`
+    if (resource.engine === 'clickhouse') return `http://${wireguardEndpoint.address}:${wireguardEndpoint.port}/?database=${database || 'deploycrate'}`
     return `${wireguardEndpoint.protocol}://${wireguardEndpoint.address}:${wireguardEndpoint.port}`
   })
   function submitEndpoint(event: SubmitEvent) {
@@ -49,7 +49,7 @@
     <header>
       <Link class="text-xs text-muted-foreground hover:text-foreground" href={routes.systemResources()}>System resources</Link>
       <h1 class="mt-3 text-3xl font-semibold tracking-tight">{resource.name}</h1>
-      <p class="mt-3 text-sm text-muted-foreground">{label(resource.kind)} · {label(resource.sharingScope)} sharing · {resource.bindings.length} connected {resource.bindings.length === 1 ? 'Environment' : 'Environments'}</p>
+      <p class="mt-3 text-sm text-muted-foreground">{label(resource.engine)} · {label(resource.sharingScope)} sharing · {resource.bindings.length} connected {resource.bindings.length === 1 ? 'Environment' : 'Environments'}</p>
     </header>
 
     {#if enrollment?.clientConfiguration}
@@ -61,7 +61,7 @@
 
     <Card.Root>
       <Card.Header><Card.Title>Resource identity</Card.Title></Card.Header>
-      <Card.Content><dl class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><div><dt class="text-muted-foreground">Category</dt><dd>{label(resource.category)}</dd></div><div><dt class="text-muted-foreground">Kind</dt><dd>{label(resource.kind)}</dd></div><div><dt class="text-muted-foreground">Created</dt><dd>{timestamp(resource.createdAt)}</dd></div><div><dt class="text-muted-foreground">Updated</dt><dd>{timestamp(resource.updatedAt)}</dd></div><div class="sm:col-span-2"><dt class="text-muted-foreground">Resource ID</dt><dd class="break-all font-mono text-xs">{resource.id}</dd></div></dl></Card.Content>
+      <Card.Content><dl class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><div><dt class="text-muted-foreground">Type</dt><dd>{label(resource.resourceType)}</dd></div><div><dt class="text-muted-foreground">Engine</dt><dd>{label(resource.engine)}</dd></div><div><dt class="text-muted-foreground">Created</dt><dd>{timestamp(resource.createdAt)}</dd></div><div><dt class="text-muted-foreground">Updated</dt><dd>{timestamp(resource.updatedAt)}</dd></div><div class="sm:col-span-2"><dt class="text-muted-foreground">Resource ID</dt><dd class="break-all font-mono text-xs">{resource.id}</dd></div></dl></Card.Content>
     </Card.Root>
 
     <div class="grid gap-4 lg:grid-cols-2">
@@ -73,7 +73,7 @@
 
     <Card.Root>
       <Card.Header><Card.Title>Add endpoint</Card.Title><Card.Description>TCP endpoints only. Settings containing credential material are rejected.</Card.Description></Card.Header>
-      <Card.Content><form class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" onsubmit={submitEndpoint}><FormField label="Name" error={$endpointForm.errors.name}><Input bind:value={$endpointForm.name} required /></FormField><FormField label="Role" error={$endpointForm.errors.role}><select class="h-9 w-full border border-input bg-background px-3 text-sm" bind:value={$endpointForm.role}><option value="primary">Primary</option><option value="wireguard">WireGuard</option></select></FormField><FormField label="Address" error={$endpointForm.errors.address}><Input bind:value={$endpointForm.address} required /></FormField><FormField label="Port" error={$endpointForm.errors.port}><Input type="number" min="1" max="65535" bind:value={$endpointForm.port} required /></FormField><FormField label="Protocol" error={$endpointForm.errors.protocol}><Input bind:value={$endpointForm.protocol} required /></FormField><FormField label="TLS mode" error={$endpointForm.errors.tlsMode}><select class="h-9 w-full border border-input bg-background px-3 text-sm" bind:value={$endpointForm.tlsMode}><option value="disable">Disable</option><option value="prefer">Prefer</option><option value="require">Require</option><option value="verify-ca">Verify CA</option><option value="verify-full">Verify full</option></select></FormField><FormField label="Database"><Input bind:value={$endpointForm.database} /></FormField><FormField label="Username"><Input bind:value={$endpointForm.user} /></FormField><FormField label="Installation"><select class="h-9 w-full border border-input bg-background px-3 text-sm" bind:value={$endpointForm.resourceInstallationId}><option value="">None</option>{#each resource.installations as installation}<option value={installation.id}>{installation.containerName}</option>{/each}</select></FormField><FormField label="Private network" error={$endpointForm.errors.privateNetworkId}><select class="h-9 w-full border border-input bg-background px-3 text-sm" bind:value={$endpointForm.privateNetworkId}><option value="">None</option>{#each resource.privateNetworks as network}<option value={network.id}>{network.name}</option>{/each}</select></FormField><div class="flex items-end"><Button type="submit" disabled={$endpointForm.processing}>Add endpoint</Button></div></form></Card.Content>
+      <Card.Content><form class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" onsubmit={submitEndpoint}><FormField label="Name" error={$endpointForm.errors.name}><Input bind:value={$endpointForm.name} required /></FormField><FormField label="Role" error={$endpointForm.errors.role}><select class="h-9 w-full border border-input bg-background px-3 text-sm" bind:value={$endpointForm.role}><option value="primary">Primary</option><option value="wireguard">WireGuard</option></select></FormField><FormField label="Address" error={$endpointForm.errors.address}><Input bind:value={$endpointForm.address} required /></FormField><FormField label="Port" error={$endpointForm.errors.port}><Input type="number" min="1" max="65535" bind:value={$endpointForm.port} required /></FormField><FormField label="Protocol" error={$endpointForm.errors.protocol}><Input bind:value={$endpointForm.protocol} required /></FormField><FormField label="TLS mode" error={$endpointForm.errors.tlsMode}><select class="h-9 w-full border border-input bg-background px-3 text-sm" bind:value={$endpointForm.tlsMode}><option value="disable">Disable</option><option value="prefer">Prefer</option><option value="require">Require</option><option value="verify-ca">Verify CA</option><option value="verify-full">Verify full</option></select></FormField><FormField label="Database"><Input bind:value={$endpointForm.database} /></FormField><FormField label="Username"><Input bind:value={$endpointForm.user} /></FormField><FormField label="Private network" error={$endpointForm.errors.privateNetworkId}><select class="h-9 w-full border border-input bg-background px-3 text-sm" bind:value={$endpointForm.privateNetworkId}><option value="">None</option>{#each resource.privateNetworks as network}<option value={network.id}>{network.name}</option>{/each}</select></FormField><div class="flex items-end"><Button type="submit" disabled={$endpointForm.processing}>Add endpoint</Button></div></form></Card.Content>
     </Card.Root>
 
     <div class="grid gap-4 lg:grid-cols-2">

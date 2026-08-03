@@ -109,20 +109,20 @@ var ResourceHealthCheckUpdate = routing.NewRouteWithParams[ResourceHealthCheckPa
 var ResourceHealthCheckDestroy = routing.NewRouteWithParams[ResourceHealthCheckParams]("/:id/health-checks/:healthCheckID", "resources.health-checks.destroy", ResourcesPrefix)
 
 type ResourceDatabaseParams struct {
-	ResourceID string `param:"id"`
-	DatabaseID string `param:"databaseID"`
+	ResourceID   string `param:"id"`
+	DatabaseName string `param:"databaseName"`
 }
 
 type ResourceDatabaseBackupPolicyParams struct {
 	ResourceID     string `param:"id"`
-	DatabaseID     string `param:"databaseID"`
+	DatabaseName   string `param:"databaseName"`
 	BackupPolicyID string `param:"backupPolicyID"`
 }
 
-var ResourceBackupPolicyCreate = routing.NewRouteWithParams[ResourceDatabaseParams]("/:id/databases/:databaseID/backups", "resources.databases.backups.create", ResourcesPrefix)
-var ResourceBackupPolicyUpdate = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams]("/:id/databases/:databaseID/backups/:backupPolicyID", "resources.databases.backups.update", ResourcesPrefix)
-var ResourceBackupPolicyPause = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams]("/:id/databases/:databaseID/backups/:backupPolicyID/pause", "resources.databases.backups.pause", ResourcesPrefix)
-var ResourceBackupPolicyResume = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams]("/:id/databases/:databaseID/backups/:backupPolicyID/resume", "resources.databases.backups.resume", ResourcesPrefix)
-var ResourceBackupPolicyDestroy = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams]("/:id/databases/:databaseID/backups/:backupPolicyID", "resources.databases.backups.destroy", ResourcesPrefix)
-var ResourceBackupPolicyRun = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams]("/:id/databases/:databaseID/backups/:backupPolicyID/run", "resources.databases.backups.run", ResourcesPrefix)
-var ResourceRestoreCreate = routing.NewRouteWithParams[ResourceDatabaseParams]("/:id/databases/:databaseID/restores", "resources.databases.restores.create", ResourcesPrefix)
+var ResourceBackupPolicyCreate = routing.NewRouteWithParams[ResourceDatabaseParams]("/:id/databases/:databaseName/backups", "resources.databases.backups.create", ResourcesPrefix)
+var ResourceBackupPolicyUpdate = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams]("/:id/databases/:databaseName/backups/:backupPolicyID", "resources.databases.backups.update", ResourcesPrefix)
+var ResourceBackupPolicyPause = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams]("/:id/databases/:databaseName/backups/:backupPolicyID/pause", "resources.databases.backups.pause", ResourcesPrefix)
+var ResourceBackupPolicyResume = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams]("/:id/databases/:databaseName/backups/:backupPolicyID/resume", "resources.databases.backups.resume", ResourcesPrefix)
+var ResourceBackupPolicyDestroy = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams]("/:id/databases/:databaseName/backups/:backupPolicyID", "resources.databases.backups.destroy", ResourcesPrefix)
+var ResourceBackupPolicyRun = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams]("/:id/databases/:databaseName/backups/:backupPolicyID/run", "resources.databases.backups.run", ResourcesPrefix)
+var ResourceRestoreCreate = routing.NewRouteWithParams[ResourceDatabaseParams]("/:id/databases/:databaseName/restores", "resources.databases.restores.create", ResourcesPrefix)

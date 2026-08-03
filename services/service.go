@@ -36,7 +36,6 @@ var Module = fx.Module(
 		NewBackupScheduler,
 		NewDatabaseBackups,
 		NewDatabaseRestoreWorkflow,
-		NewDatabaseClusters,
 		githubclient.NewClient,
 		NewGitHubConnection,
 		NewGitHubWebhook,

@@ -177,8 +177,8 @@ func (service *BackupScheduler) enqueue(
 	}
 	targetID := policy.ServerID
 	taskServerID := policy.ServerID
-	if policy.TargetType == "database" {
-		targetID = policy.DatabaseID
+	if policy.TargetType == "resource" {
+		targetID = policy.ResourceID
 		taskServerID = policy.ExecutionServerID
 	}
 	if targetID == nil {
@@ -195,15 +195,14 @@ func (service *BackupScheduler) enqueue(
 	}
 	backupID := uuid.New()
 	if _, err := models.Backup.Create(ctx, tx, models.CreateBackupData{
-		ID: backupID, TargetType: policy.TargetType, TriggerType: triggerType, ScheduledAt: slot,
+		ID: backupID, TargetType: policy.TargetType, Target: policy.Target, TriggerType: triggerType, ScheduledAt: slot,
 		Strategy: policy.Strategy, Driver: policy.Driver, Format: policy.Format,
 		FormatVersion: "1", ProviderMetadata: json.RawMessage(`{}`),
 		Status: models.BackupStatusPending, RequestedAt: now,
 		ProducerVersion: string(service.version), ChangeID: change.ID, ChangeTaskID: task.ID,
-		BackupPolicyID: policy.ID, ServerID: policy.ServerID, DatabaseID: policy.DatabaseID,
-		DatabaseClusterID: policy.DatabaseClusterID, DatabaseClusterNodeID: policy.DatabaseClusterNodeID,
-		DatabaseNodeInstallationID: policy.DatabaseNodeInstallationID,
-		BackupDestinationID:        policy.BackupDestinationID,
+		BackupPolicyID: policy.ID, ServerID: policy.ServerID, ResourceID: policy.ResourceID,
+		ResourceInstallationID: policy.ResourceInstallationID,
+		BackupDestinationID:    policy.BackupDestinationID,
 	}); err != nil {
 		return uuid.Nil, fmt.Errorf("create pending backup: %w", err)
 	}
