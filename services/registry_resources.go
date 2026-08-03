@@ -66,6 +66,11 @@ type ManagedRegistryCredentials struct {
 	Password string `json:"password"`
 }
 
+type RegistryRepositorySummary struct {
+	Name string   `json:"name"`
+	Tags []string `json:"tags"`
+}
+
 func (service *RegistryResources) List(ctx context.Context) ([]RegistryResourceSummary, error) {
 	registries := make([]RegistryResourceSummary, 0)
 	err := service.db.Executor().NewSelect().TableExpr("registry_resources AS registry").
@@ -107,7 +112,30 @@ func (service *RegistryResources) RevealManagedCredentials(
 	if err := service.identity.VerifyUserPassword(ctx, userID, password); err != nil {
 		return ManagedRegistryCredentials{}, err
 	}
+	return service.managedCredentials(ctx, resourceID)
+}
 
+func (service *RegistryResources) Inventory(ctx context.Context, resourceID uuid.UUID) ([]RegistryRepositorySummary, error) {
+	credentials, err := service.managedCredentials(ctx, resourceID)
+	if err != nil {
+		return nil, err
+	}
+	repositories, err := service.registry.ListRepositories(ctx, registryclient.Credentials{
+		Endpoint: credentials.Endpoint,
+		Username: credentials.Username,
+		Password: credentials.Password,
+	})
+	if err != nil {
+		return nil, err
+	}
+	summaries := make([]RegistryRepositorySummary, 0, len(repositories))
+	for _, repository := range repositories {
+		summaries = append(summaries, RegistryRepositorySummary{Name: repository.Name, Tags: repository.Tags})
+	}
+	return summaries, nil
+}
+
+func (service *RegistryResources) managedCredentials(ctx context.Context, resourceID uuid.UUID) (ManagedRegistryCredentials, error) {
 	var row struct {
 		Endpoint   string         `bun:"endpoint"`
 		Username   sql.NullString `bun:"username"`

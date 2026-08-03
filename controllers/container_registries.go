@@ -113,7 +113,19 @@ func (controller RegistryResources) Show(etx *echo.Context) error {
 		slog.ErrorContext(etx.Request().Context(), "failed to load Registry", "resource_id", resourceID, "error", err)
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
-	return inertia.Page(etx, "Connections/Registries/Show", inertia.Props{"auth": authProps(etx), "registry": registry})
+	repositories := make([]services.RegistryRepositorySummary, 0)
+	inventoryError := ""
+	if registry.Managed {
+		repositories, err = controller.service.Inventory(etx.Request().Context(), resourceID)
+		if err != nil {
+			slog.WarnContext(etx.Request().Context(), "failed to load managed Registry inventory", "resource_id", resourceID, "error", err)
+			inventoryError = "Repository inventory could not be loaded. Confirm that the managed registry is reachable and try again."
+		}
+	}
+	return inertia.Page(etx, "Connections/Registries/Show", inertia.Props{
+		"auth": authProps(etx), "registry": registry,
+		"repositories": repositories, "inventoryError": inventoryError,
+	})
 }
 
 func (controller RegistryResources) Create(etx *echo.Context) error {

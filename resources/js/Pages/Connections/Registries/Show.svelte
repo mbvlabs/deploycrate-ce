@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Link } from '@inertiajs/svelte'
+  import { Link, router } from '@inertiajs/svelte'
   import { toast } from 'svelte-sonner'
 
   import FormField from '@/Components/FormField.svelte'
@@ -14,14 +14,16 @@
 
   type Registry = { id: string; name: string; slug: string; provider: string; endpoint: string; username: string; credentialName: string; managed: boolean; createdAt: string }
   type RegistryCredentials = { endpoint: string; username: string; password: string }
+  type Repository = { name: string; tags: string[] }
 
-  let { auth, registry }: { auth: { email: string }; registry: Registry } = $props()
+  let { auth, registry, repositories, inventoryError }: { auth: { email: string }; registry: Registry; repositories: Repository[]; inventoryError: string } = $props()
   let passwordDialogOpen = $state(false)
   let credentialDialogOpen = $state(false)
   let currentPassword = $state('')
   let credentialProcessing = $state(false)
   let credentialError = $state('')
   let revealedCredentials = $state<RegistryCredentials | null>(null)
+  let inventoryRefreshing = $state(false)
 
   function askForCredentials() {
     currentPassword = ''
@@ -70,6 +72,16 @@
       toast.error(`${label} could not be copied`)
     }
   }
+
+  function imageReference(repository: string, tag: string) {
+    return `${registry.endpoint}/${repository}:${tag}`
+  }
+
+  function refreshInventory() {
+    if (inventoryRefreshing) return
+    inventoryRefreshing = true
+    router.reload({ only: ['repositories', 'inventoryError'], preserveScroll: true, onFinish: () => (inventoryRefreshing = false) })
+  }
 </script>
 
 <svelte:head><title>{registry.name}</title></svelte:head>
@@ -95,6 +107,36 @@
         </dl>
       </Card.Content>
     </Card.Root>
+
+    {#if registry.managed}
+      <Card.Root class="max-w-4xl">
+        <Card.Header><Card.Action><Button type="button" size="sm" variant="outline" disabled={inventoryRefreshing} onclick={refreshInventory}>{#if inventoryRefreshing}<Spinner />{/if}Refresh</Button></Card.Action><Card.Title>Repositories</Card.Title><Card.Description>Images currently published to this managed registry, grouped by repository and tag.</Card.Description></Card.Header>
+        <Card.Content>
+          {#if inventoryError}
+            <p class="border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive" role="alert">{inventoryError}</p>
+          {:else if repositories.length === 0}
+            <p class="text-sm text-muted-foreground">No images have been pushed to this registry.</p>
+          {:else}
+            <div class="grid gap-4">
+              {#each repositories as repository (repository.name)}
+                <section class="border border-border">
+                  <div class="flex items-center justify-between gap-4 border-b border-border px-4 py-3"><h3 class="font-mono text-sm font-medium">{repository.name}</h3><span class="text-xs text-muted-foreground">{repository.tags.length} {repository.tags.length === 1 ? 'tag' : 'tags'}</span></div>
+                  {#if repository.tags.length === 0}
+                    <p class="p-4 text-sm text-muted-foreground">This repository has no tagged images.</p>
+                  {:else}
+                    <div class="divide-y divide-border">
+                      {#each repository.tags as tag (tag)}
+                        <div class="flex items-center justify-between gap-3 px-4 py-3"><code class="min-w-0 break-all text-xs">{imageReference(repository.name, tag)}</code><Button type="button" size="xs" variant="outline" onclick={() => copyCredential(imageReference(repository.name, tag), 'Image reference')}>Copy</Button></div>
+                      {/each}
+                    </div>
+                  {/if}
+                </section>
+              {/each}
+            </div>
+          {/if}
+        </Card.Content>
+      </Card.Root>
+    {/if}
 
     <Card.Root class="max-w-4xl">
       <Card.Header><Card.Title>Publisher credentials</Card.Title><Card.Description>{registry.managed ? 'Confirm your administrator password before revealing the push and pull credential.' : 'External registry credentials remain encrypted and cannot be revealed after they are connected.'}</Card.Description></Card.Header>

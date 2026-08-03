@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -23,6 +25,9 @@ const (
 	registryAuthenticationRoot   = "/var/lib/deploycrate-builds"
 	registryAuthenticationPrefix = "deploycrate-registry-auth-"
 	registryAuthenticationOwner  = "deploycrate"
+	registryListPageSize         = 100
+	registryListLimit            = 10000
+	registryListResponseLimit    = 4 << 20
 )
 
 type Credentials struct {
@@ -33,6 +38,11 @@ type Credentials struct {
 
 type Authentication struct {
 	DockerConfig string
+}
+
+type Repository struct {
+	Name string   `json:"name"`
+	Tags []string `json:"tags"`
 }
 
 func (authentication Authentication) Environment() []string {
@@ -250,6 +260,170 @@ func (Client) ResolveRemoteDigest(ctx context.Context, credentials Credentials, 
 		return "", errors.New("registry returned a different digest than requested")
 	}
 	return endpoint + "/" + repository + "@" + digest, nil
+}
+
+func (Client) ListRepositories(ctx context.Context, credentials Credentials) ([]Repository, error) {
+	endpoint := strings.TrimSuffix(strings.TrimSpace(credentials.Endpoint), "/")
+	if endpoint == "" || strings.ContainsAny(endpoint, "/ \\?#\t\r\n") ||
+		strings.TrimSpace(credentials.Username) == "" || credentials.Password == "" {
+		return nil, errors.New("registry endpoint and credentials are required")
+	}
+
+	client := telemetry.NewHTTPClient(30 * time.Second)
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return errors.New("registry inventory does not allow redirects")
+	}
+	catalogURL := &url.URL{Scheme: "https", Host: endpoint, Path: "/v2/_catalog"}
+	query := catalogURL.Query()
+	query.Set("n", fmt.Sprintf("%d", registryListPageSize))
+	catalogURL.RawQuery = query.Encode()
+
+	names := make([]string, 0)
+	next := catalogURL.String()
+	seenPages := make(map[string]struct{})
+	for next != "" {
+		if _, seen := seenPages[next]; seen {
+			return nil, errors.New("Registry repository pagination repeated a page")
+		}
+		seenPages[next] = struct{}{}
+		var payload struct {
+			Repositories []string `json:"repositories"`
+		}
+		page, err := registryJSONPage(ctx, client, next, credentials, &payload)
+		if err != nil {
+			return nil, fmt.Errorf("list Registry repositories: %w", err)
+		}
+		for _, name := range payload.Repositories {
+			name = strings.TrimSpace(name)
+			if name == "" || len(name) > 512 || strings.ContainsAny(name, " \\?#\t\r\n") || strings.Trim(name, "/") != name {
+				return nil, errors.New("Registry returned an invalid repository name")
+			}
+			names = append(names, name)
+			if len(names) > registryListLimit {
+				return nil, errors.New("Registry repository inventory exceeds the supported limit")
+			}
+		}
+		next, err = nextRegistryPage(page.URL, page.Header.Get("Link"))
+		if err != nil {
+			return nil, err
+		}
+	}
+	sort.Strings(names)
+
+	repositories := make([]Repository, 0, len(names))
+	for _, name := range names {
+		tags, err := listRepositoryTags(ctx, client, endpoint, name, credentials)
+		if err != nil {
+			return nil, fmt.Errorf("list Registry repository %s tags: %w", name, err)
+		}
+		repositories = append(repositories, Repository{Name: name, Tags: tags})
+	}
+	return repositories, nil
+}
+
+func listRepositoryTags(
+	ctx context.Context,
+	client *http.Client,
+	endpoint, repository string,
+	credentials Credentials,
+) ([]string, error) {
+	segments := strings.Split(repository, "/")
+	for index := range segments {
+		segments[index] = url.PathEscape(segments[index])
+	}
+	tagsURL := &url.URL{Scheme: "https", Host: endpoint, Path: "/v2/" + strings.Join(segments, "/") + "/tags/list"}
+	query := tagsURL.Query()
+	query.Set("n", fmt.Sprintf("%d", registryListPageSize))
+	tagsURL.RawQuery = query.Encode()
+
+	tags := make([]string, 0)
+	next := tagsURL.String()
+	seenPages := make(map[string]struct{})
+	for next != "" {
+		if _, seen := seenPages[next]; seen {
+			return nil, errors.New("Registry tag pagination repeated a page")
+		}
+		seenPages[next] = struct{}{}
+		var payload struct {
+			Tags []string `json:"tags"`
+		}
+		page, err := registryJSONPage(ctx, client, next, credentials, &payload)
+		if err != nil {
+			return nil, err
+		}
+		for _, tag := range payload.Tags {
+			tag = strings.TrimSpace(tag)
+			if tag == "" || len(tag) > 128 || strings.ContainsAny(tag, "/ \\?#\t\r\n") {
+				return nil, errors.New("Registry returned an invalid image tag")
+			}
+			tags = append(tags, tag)
+			if len(tags) > registryListLimit {
+				return nil, errors.New("Registry tag inventory exceeds the supported limit")
+			}
+		}
+		next, err = nextRegistryPage(page.URL, page.Header.Get("Link"))
+		if err != nil {
+			return nil, err
+		}
+	}
+	sort.Strings(tags)
+	return tags, nil
+}
+
+type registryPage struct {
+	URL    *url.URL
+	Header http.Header
+}
+
+func registryJSONPage(
+	ctx context.Context,
+	client *http.Client,
+	requestURL string,
+	credentials Credentials,
+	target any,
+) (registryPage, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return registryPage{}, err
+	}
+	request.Header.Set("Accept", "application/json")
+	request.SetBasicAuth(credentials.Username, credentials.Password)
+	response, err := client.Do(request)
+	if err != nil {
+		return registryPage{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < 200 || response.StatusCode >= 300 {
+		return registryPage{}, fmt.Errorf("Registry inventory returned status %d", response.StatusCode)
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, registryListResponseLimit)).Decode(target); err != nil {
+		return registryPage{}, errors.New("Registry inventory response is invalid")
+	}
+	return registryPage{URL: response.Request.URL, Header: response.Header.Clone()}, nil
+}
+
+func nextRegistryPage(current *url.URL, header string) (string, error) {
+	for part := range strings.SplitSeq(header, ",") {
+		part = strings.TrimSpace(part)
+		if !strings.Contains(strings.ToLower(part), `rel="next"`) {
+			continue
+		}
+		start := strings.IndexByte(part, '<')
+		end := strings.IndexByte(part, '>')
+		if start < 0 || end <= start+1 {
+			return "", errors.New("Registry inventory pagination link is invalid")
+		}
+		reference, err := url.Parse(part[start+1 : end])
+		if err != nil {
+			return "", errors.New("Registry inventory pagination link is invalid")
+		}
+		next := current.ResolveReference(reference)
+		if next.Scheme != current.Scheme || !strings.EqualFold(next.Host, current.Host) || !strings.HasPrefix(next.Path, "/v2/") {
+			return "", errors.New("Registry inventory pagination changed origin")
+		}
+		return next.String(), nil
+	}
+	return "", nil
 }
 
 func validSHA256Digest(value string) bool {
