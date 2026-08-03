@@ -377,10 +377,30 @@
         <Card.Content class="space-y-3">
           {#if resource.databases.length === 0}<p class="text-sm text-muted-foreground">No Databases published.</p>{/if}
           {#each resource.databases as item}
-            <div class="flex items-center justify-between gap-4 border border-border p-3">
-              <div><p class="font-mono text-sm">{item.name}</p><p class="mt-1 text-xs text-muted-foreground">{item.encoding || 'Default encoding'}{item.collation ? ` · ${item.collation}` : ''}</p></div>
-              <span class="text-xs text-muted-foreground">Available through {resource.endpoints.length} {resource.endpoints.length === 1 ? 'endpoint' : 'endpoints'}</span>
-            </div>
+            <article class="border border-border p-3">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div><p class="font-mono text-sm">{item.name}</p><p class="mt-1 text-xs text-muted-foreground">{item.encoding || 'Default encoding'}{item.collation ? ` · ${item.collation}` : ''}</p></div>
+                <p class="text-xs text-muted-foreground">Available through {resource.endpoints.length} {resource.endpoints.length === 1 ? 'endpoint' : 'endpoints'}</p>
+              </div>
+              {#if resource.endpoints.length === 0}
+                <p class="mt-3 border-t border-border pt-3 text-xs text-destructive">No published endpoints are configured.</p>
+              {:else}
+                <div class="mt-3 grid gap-2 border-t border-border pt-3 lg:grid-cols-2">
+                  {#each resource.endpoints as endpoint (endpoint.id)}
+                    <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 bg-muted/20 px-3 py-2">
+                      <div class="min-w-0">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <p class="text-xs font-medium">{endpoint.name}</p>
+                          <span class="text-[10px] uppercase tracking-wider text-muted-foreground">{endpoint.role}</span>
+                        </div>
+                        <p class="mt-1 break-all font-mono text-xs">{endpoint.address}:{endpoint.port}</p>
+                      </div>
+                      <p class="text-xs text-muted-foreground">{endpoint.protocol} · TLS {endpoint.tlsMode}</p>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </article>
           {/each}
         </Card.Content>
       </Card.Root>
