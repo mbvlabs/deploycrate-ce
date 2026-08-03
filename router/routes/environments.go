@@ -60,6 +60,7 @@ var EnvironmentSetup = routing.NewRouteWithParams[EnvironmentParams]("/:applicat
 var EnvironmentDeploymentsCreate = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/deployments", "applications.environments.deployments.create", ApplicationsPrefix)
 var EnvironmentReleaseDeploymentsCreate = routing.NewRouteWithParams[EnvironmentReleaseParams]("/:applicationID/environments/:environmentID/releases/:releaseID/deployments", "applications.environments.releases.deployments.create", ApplicationsPrefix)
 var EnvironmentDeploymentRetry = routing.NewRouteWithParams[EnvironmentDeploymentParams]("/:applicationID/environments/:environmentID/deployments/:deploymentID/retry", "applications.environments.deployments.retry", ApplicationsPrefix)
+var EnvironmentAPITokenRotate = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/api-token", "applications.environments.api-token.rotate", ApplicationsPrefix)
 var EnvironmentDeploymentEvents = routing.NewRouteWithParams[EnvironmentDeploymentEventParams]("/:environmentID/deployments/:deploymentID/events", "environments.deployments.events", EnvironmentsPrefix)
 var EnvironmentBuildLogs = routing.NewRouteWithParams[EnvironmentBuildParams]("/:environmentID/builds/:buildID/logs", "environments.builds.logs", EnvironmentsPrefix)
 var EnvironmentBuildStart = routing.NewRouteWithParams[EnvironmentBuildActionParams]("/:applicationID/environments/:environmentID/builds/:buildID/start", "applications.environments.builds.start", ApplicationsPrefix)

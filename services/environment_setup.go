@@ -2,11 +2,15 @@ package services
 
 import (
 	"context"
+	"crypto/hmac"
 	"database/sql"
+	registryclient "deploycrate-ce/clients/registry"
+	"deploycrate-ce/config"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
 	"deploycrate-ce/models"
 	"deploycrate-ce/queue/jobs"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -22,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/gosimple/slug"
 	"github.com/riverqueue/river/rivertype"
+	"github.com/uptrace/bun"
 )
 
 var goTargetsPattern = regexp.MustCompile(`^[A-Za-z0-9_./,*-]*$`)
@@ -42,6 +47,9 @@ type EnvironmentSetup struct {
 	workloads  *WorkloadExecution
 	buildpacks buildpacksclient.Client
 	servers    *ServerExecution
+	builds     *BuildExecution
+	registry   registryclient.Client
+	config     config.Config
 }
 
 func NewEnvironmentSetup(
@@ -54,10 +62,13 @@ func NewEnvironmentSetup(
 	caddy CaddyRouteService,
 	workloads *WorkloadExecution,
 	servers *ServerExecution,
+	builds *BuildExecution,
+	cfg config.Config,
 ) *EnvironmentSetup {
 	return &EnvironmentSetup{
 		db: db, queue: queue, jobControl: jobControl, github: github, secrets: secrets,
 		resources: resources, caddy: caddy, workloads: workloads, buildpacks: buildpacksclient.New(), servers: servers,
+		builds: builds, registry: registryclient.New(), config: cfg,
 	}
 }
 
@@ -97,6 +108,8 @@ type EnvironmentSetupResult struct {
 	Environment models.EnvironmentEntity              `json:"environment"`
 	Revision    models.EnvironmentStateRevisionEntity `json:"revision"`
 	Build       models.BuildEntity                    `json:"build"`
+	Release     models.ReleaseEntity                  `json:"release"`
+	Deployment  models.DeploymentEntity               `json:"deployment"`
 }
 
 type EnvironmentSetupResourceOption struct {
@@ -155,6 +168,7 @@ type EnvironmentEditInput struct {
 type EnvironmentOverview struct {
 	ApplicationID    uuid.UUID                       `json:"applicationId"`
 	ApplicationName  string                          `json:"applicationName"`
+	SourceType       string                          `json:"sourceType"`
 	Environment      models.EnvironmentEntity        `json:"environment"`
 	SetupComplete    bool                            `json:"setupComplete"`
 	Repository       string                          `json:"repository"`
@@ -173,6 +187,7 @@ type EnvironmentOverview struct {
 	Releases         []EnvironmentReleaseActivity    `json:"releases"`
 	Deployments      []EnvironmentDeploymentActivity `json:"deployments"`
 	Instances        []EnvironmentInstanceActivity   `json:"instances"`
+	APITokenPrefix   string                          `json:"apiTokenPrefix"`
 }
 
 type EnvironmentListItem struct {
@@ -325,6 +340,7 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 	}
 	var source struct {
 		ApplicationName  string `bun:"application_name"`
+		SourceType       string `bun:"source_type"`
 		Repository       string `bun:"repository"`
 		Reference        string `bun:"reference"`
 		ContextPath      string `bun:"context_path"`
@@ -332,12 +348,13 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 		RegistryEndpoint string `bun:"registry_endpoint"`
 	}
 	err = service.db.Executor().NewSelect().TableExpr("applications AS application").
-		ColumnExpr("application.name AS application_name, environment_source.repository, environment_source.reference, buildpack.context_path").
+		ColumnExpr("application.name AS application_name, environment_source.repository, environment_source.reference, CASE WHEN environment_source.kind = 'image' THEN 'image' ELSE 'buildpacks' END AS source_type, COALESCE(buildpack.context_path, '') AS context_path").
 		ColumnExpr("registry_resource.name AS registry_name").
 		ColumnExpr("CASE WHEN registry_endpoint.port IN (80, 443) THEN registry_endpoint.address ELSE registry_endpoint.address || ':' || registry_endpoint.port::text END AS registry_endpoint").
 		Join("JOIN environment_sources AS environment_source ON environment_source.environment_id = ? AND environment_source.archived_at IS NULL", environmentID).
-		Join("JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = environment_source.id").
-		Join("JOIN registry_resources AS registry ON registry.resource_id = buildpack.registry_resource_id").
+		Join("LEFT JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = environment_source.id").
+		Join("LEFT JOIN image_configurations AS image ON image.environment_source_id = environment_source.id").
+		Join("JOIN registry_resources AS registry ON registry.resource_id = COALESCE(buildpack.registry_resource_id, image.registry_resource_id)").
 		Join("JOIN resources AS registry_resource ON registry_resource.id = registry.resource_id").
 		Join("JOIN resource_endpoints AS registry_endpoint ON registry_endpoint.resource_id = registry.resource_id AND registry_endpoint.role = 'primary' AND registry_endpoint.archived_at IS NULL").
 		Where("application.id = ?", applicationID).Limit(1).Scan(ctx, &source)
@@ -400,7 +417,7 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 		return EnvironmentOverview{}, err
 	}
 	releases := make([]EnvironmentReleaseActivity, 0)
-	if err := service.db.Executor().NewSelect().TableExpr("releases").ColumnExpr("id, COALESCE(source_revision, '') AS source_revision, artifact_reference, created_at").Where("environment_id = ?", environmentID).Where("build_id IS NOT NULL").OrderExpr("created_at DESC").Limit(20).Scan(ctx, &releases); err != nil {
+	if err := service.db.Executor().NewSelect().TableExpr("releases").ColumnExpr("id, COALESCE(source_revision, version, '') AS source_revision, artifact_reference, created_at").Where("environment_id = ?", environmentID).Where("registry_resource_id IS NOT NULL").OrderExpr("created_at DESC").Limit(20).Scan(ctx, &releases); err != nil {
 		return EnvironmentOverview{}, err
 	}
 	deployments := make([]EnvironmentDeploymentActivity, 0)
@@ -408,21 +425,22 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 		ColumnExpr("deployment.id, deployment.status, COALESCE(deployment.current_step, '') AS current_step, COALESCE(deployment.error, '') AS error, deployment.release_id, deployment.created_at").
 		ColumnExpr(environmentDeploymentActiveExpression+" AS active").
 		Join("JOIN releases AS release ON release.id = deployment.release_id").
-		Where("release.environment_id = ?", environmentID).Where("release.build_id IS NOT NULL").
+		Where("release.environment_id = ?", environmentID).Where("release.registry_resource_id IS NOT NULL").
 		OrderExpr("deployment.created_at DESC").Limit(30).Scan(ctx, &deployments); err != nil {
 		return EnvironmentOverview{}, err
 	}
 	instances := make([]EnvironmentInstanceActivity, 0)
-	if err := service.db.Executor().NewSelect().TableExpr("instances AS instance").ColumnExpr("instance.id, instance.state, instance.slot, instance.ports, instance.release_id, instance.observed_at").Join("JOIN releases AS release ON release.id = instance.release_id").Where("release.environment_id = ?", environmentID).Where("release.build_id IS NOT NULL").Where("instance.removed_at IS NULL").OrderExpr("instance.created_at DESC").Limit(30).Scan(ctx, &instances); err != nil {
+	if err := service.db.Executor().NewSelect().TableExpr("instances AS instance").ColumnExpr("instance.id, instance.state, instance.slot, instance.ports, instance.release_id, instance.observed_at").Join("JOIN releases AS release ON release.id = instance.release_id").Where("release.environment_id = ?", environmentID).Where("release.registry_resource_id IS NOT NULL").Where("instance.removed_at IS NULL").OrderExpr("instance.created_at DESC").Limit(30).Scan(ctx, &instances); err != nil {
 		return EnvironmentOverview{}, err
 	}
 	return EnvironmentOverview{
 		ApplicationID: applicationID, ApplicationName: source.ApplicationName, Environment: environment, SetupComplete: setupComplete,
-		Repository: source.Repository, Reference: source.Reference, ContextPath: source.ContextPath,
+		SourceType: source.SourceType, Repository: source.Repository, Reference: source.Reference, ContextPath: source.ContextPath,
 		RegistryName: source.RegistryName, RegistryEndpoint: source.RegistryEndpoint,
 		RuntimeServerID: runtimeServer.ID, RuntimeServer: runtimeServer.Name,
 		Deployability: deployability, Secrets: secretActivity, Variables: variables, Domain: domain,
 		Resources: resources, Builds: builds, Releases: releases, Deployments: deployments, Instances: instances,
+		APITokenPrefix: environment.APITokenPrefix.String,
 	}, nil
 }
 
@@ -675,7 +693,7 @@ func (service *EnvironmentSetup) DeploymentEvents(
 		ColumnExpr(environmentDeploymentActiveExpression+" AS active").
 		Join("JOIN releases AS release ON release.id = deployment.release_id").
 		Where("deployment.id = ?", deploymentID).Where("release.environment_id = ?", environmentID).
-		Where("release.build_id IS NOT NULL").Limit(1).Scan(ctx, &deployment)
+		Where("release.registry_resource_id IS NOT NULL").Limit(1).Scan(ctx, &deployment)
 	if errors.Is(err, sql.ErrNoRows) {
 		return EnvironmentDeploymentEventSnapshot{}, sql.ErrNoRows
 	}
@@ -737,6 +755,7 @@ type environmentSetupSource struct {
 	EnvironmentSourceID   uuid.UUID    `bun:"environment_source_id"`
 	EnvironmentArchivedAt sql.NullTime `bun:"environment_archived_at"`
 	SetupComplete         bool
+	Kind                  string          `bun:"kind"`
 	Reference             string          `bun:"reference"`
 	Repository            string          `bun:"repository"`
 	RepositoryID          uuid.UUID       `bun:"repository_id"`
@@ -778,9 +797,18 @@ func (service *EnvironmentSetup) Complete(
 	if source.EnvironmentArchivedAt.Valid || source.SetupComplete {
 		return EnvironmentSetupResult{}, errors.Join(models.ErrDomainValidation, errors.New("Environment is unavailable or setup is already complete"))
 	}
-	revisionSHA, err := service.github.ResolveRevision(ctx, installation, repository, source.Reference)
-	if err != nil {
-		return EnvironmentSetupResult{}, fmt.Errorf("resolve configured GitHub reference: %w", err)
+	revisionSHA := ""
+	var imageArtifact resolvedImageArtifact
+	if source.Kind == "image" {
+		imageArtifact, err = service.resolveImageArtifact(ctx, source, "")
+		if err != nil {
+			return EnvironmentSetupResult{}, fmt.Errorf("resolve configured image reference: %w", err)
+		}
+	} else {
+		revisionSHA, err = service.github.ResolveRevision(ctx, installation, repository, source.Reference)
+		if err != nil {
+			return EnvironmentSetupResult{}, fmt.Errorf("resolve configured GitHub reference: %w", err)
+		}
 	}
 	serverID, networkID, serverNetwork, err := service.runtimePlacement(ctx, input.ServerID)
 	if err != nil {
@@ -925,6 +953,19 @@ func (service *EnvironmentSetup) Complete(
 	if _, err := models.EnvironmentTargetState.Create(ctx, tx, models.CreateEnvironmentTargetStateData{ObservedState: json.RawMessage(`{}`), State: "pending", EnvironmentTargetID: target.ID, DesiredRevisionID: &revision.ID}); err != nil {
 		return EnvironmentSetupResult{}, err
 	}
+	if source.Kind == "image" {
+		if err := models.Change.MarkCompleted(ctx, tx, change.ID, now); err != nil {
+			return EnvironmentSetupResult{}, err
+		}
+		release, deployment, err := service.queueImageDeploymentTx(ctx, tx, source, revision, imageArtifact, "system", nil, "Deploy configured image")
+		if err != nil {
+			return EnvironmentSetupResult{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return EnvironmentSetupResult{}, err
+		}
+		return EnvironmentSetupResult{Environment: environment, Revision: revision, Release: release, Deployment: deployment}, nil
+	}
 	correlationID := uuid.New()
 	eventPayload, _ := json.Marshal(map[string]any{"schema_version": 1, "reference": source.Reference, "revision": revisionSHA, "repository": source.Repository, "environment_state_revision_id": revision.ID})
 	event, err := models.SourceEvent.Create(ctx, tx, models.CreateSourceEventData{
@@ -963,6 +1004,240 @@ func (service *EnvironmentSetup) Complete(
 		return EnvironmentSetupResult{}, err
 	}
 	return EnvironmentSetupResult{Environment: environment, Revision: revision, Build: build}, nil
+}
+
+type SourceDeploymentResult struct {
+	Build      *models.BuildEntity      `json:"build,omitempty"`
+	Release    *models.ReleaseEntity    `json:"release,omitempty"`
+	Deployment *models.DeploymentEntity `json:"deployment,omitempty"`
+}
+
+type resolvedImageArtifact struct {
+	Version              string
+	Reference            string
+	Digest               []byte
+	RegistryResourceID   uuid.UUID
+	RegistryCredentialID uuid.UUID
+	RegistryEndpoint     string
+}
+
+func (service *EnvironmentSetup) RotateAPIToken(ctx context.Context, applicationID, environmentID uuid.UUID) (string, error) {
+	random, err := models.GenerateSecureToken()
+	if err != nil {
+		return "", err
+	}
+	token := "dcenv_" + strings.ToLower(random)
+	digest := []byte(models.HashForStorage(token, service.config.App.SessionEncryptionKey))
+	prefixLength := min(len(token), 13)
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+	environment, err := models.Environment.Lock(ctx, tx, environmentID)
+	if err != nil || environment.ApplicationID != applicationID || environment.ArchivedAt.Valid {
+		return "", errors.New("Environment is unavailable")
+	}
+	if _, err := models.Environment.Update(ctx, tx, models.UpdateEnvironmentData{
+		ID: environment.ID, Name: environment.Name, Slug: environment.Slug, Kind: environment.Kind,
+		APITokenPrefix: sql.NullString{String: token[:prefixLength], Valid: true}, APITokenDigest: digest,
+		ArchivedAt: environment.ArchivedAt, ApplicationID: environment.ApplicationID,
+	}); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func (service *EnvironmentSetup) AuthenticateAPIToken(ctx context.Context, environmentID uuid.UUID, token string) (models.EnvironmentEntity, error) {
+	token = strings.TrimSpace(token)
+	environment, err := models.Environment.Find(ctx, service.db.Executor(), environmentID)
+	if err != nil || environment.ArchivedAt.Valid || !environment.APITokenPrefix.Valid || len(environment.APITokenDigest) == 0 {
+		return models.EnvironmentEntity{}, errors.New("invalid Environment API token")
+	}
+	digest := []byte(models.HashForStorage(token, service.config.App.SessionEncryptionKey))
+	if !hmac.Equal(environment.APITokenDigest, digest) {
+		return models.EnvironmentEntity{}, errors.New("invalid Environment API token")
+	}
+	return environment, nil
+}
+
+func (service *EnvironmentSetup) QueueSourceDeployment(
+	ctx context.Context,
+	applicationID, environmentID uuid.UUID,
+	actorID *uuid.UUID,
+	triggerType, reference string,
+) (SourceDeploymentResult, error) {
+	source, _, _, err := service.loadSource(ctx, applicationID, environmentID)
+	if err != nil {
+		return SourceDeploymentResult{}, err
+	}
+	if source.Kind != "image" {
+		if strings.TrimSpace(reference) != "" {
+			return SourceDeploymentResult{}, errors.Join(models.ErrDomainValidation, errors.New("Buildpacks deployments do not accept an image reference override"))
+		}
+		if actorID == nil {
+			return SourceDeploymentResult{}, errors.Join(models.ErrDomainValidation, errors.New("Buildpacks API deployments are not supported"))
+		}
+		build, err := service.QueueManualDeploy(ctx, applicationID, environmentID, *actorID)
+		if err != nil {
+			return SourceDeploymentResult{}, err
+		}
+		return SourceDeploymentResult{Build: &build}, nil
+	}
+	deployability, err := models.Environment.Deployability(ctx, service.db.Executor(), environmentID)
+	if err != nil {
+		return SourceDeploymentResult{}, err
+	}
+	if !deployability.Deployable {
+		return SourceDeploymentResult{}, errors.Join(models.ErrDomainValidation, fmt.Errorf("Environment is not deployable: %s", strings.Join(deployability.Missing, ", ")))
+	}
+	artifact, err := service.resolveImageArtifact(ctx, source, reference)
+	if err != nil {
+		return SourceDeploymentResult{}, err
+	}
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return SourceDeploymentResult{}, err
+	}
+	defer tx.Rollback()
+	environment, err := models.Environment.Lock(ctx, tx, environmentID)
+	if err != nil || environment.ApplicationID != applicationID || environment.ArchivedAt.Valid {
+		return SourceDeploymentResult{}, errors.New("Environment is unavailable")
+	}
+	revision, err := models.EnvironmentStateRevision.LatestCommitted(ctx, tx, environmentID)
+	if err != nil {
+		return SourceDeploymentResult{}, err
+	}
+	release, deployment, err := service.queueImageDeploymentTx(ctx, tx, source, revision, artifact, triggerType, actorID, "Deploy image "+artifact.Version)
+	if err != nil {
+		return SourceDeploymentResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return SourceDeploymentResult{}, err
+	}
+	return SourceDeploymentResult{Release: &release, Deployment: &deployment}, nil
+}
+
+func (service *EnvironmentSetup) resolveImageArtifact(ctx context.Context, source environmentSetupSource, override string) (resolvedImageArtifact, error) {
+	version := strings.TrimSpace(override)
+	if version == "" {
+		version = strings.TrimSpace(source.Reference)
+	}
+	if version == "" || strings.ContainsAny(version, " /\t\r\n") {
+		return resolvedImageArtifact{}, errors.Join(models.ErrDomainValidation, errors.New("image tag or digest is invalid"))
+	}
+	credentials, err := service.builds.RegistryCredentials(ctx, source.RegistryID, source.RegistryCredentialID, source.RegistryEndpoint)
+	if err != nil {
+		return resolvedImageArtifact{}, fmt.Errorf("load image registry credentials: %w", err)
+	}
+	separator := ":"
+	if strings.HasPrefix(strings.ToLower(version), "sha256:") {
+		separator = "@"
+	}
+	mutableReference := strings.TrimSuffix(source.RegistryEndpoint, "/") + "/" + strings.Trim(source.ImageRepository, "/") + separator + version
+	immutableReference, err := service.registry.ResolveRemoteDigest(ctx, credentials, mutableReference)
+	if err != nil {
+		return resolvedImageArtifact{}, fmt.Errorf("resolve image reference: %w", err)
+	}
+	digestIndex := strings.LastIndex(immutableReference, "@sha256:")
+	if digestIndex < 0 {
+		return resolvedImageArtifact{}, errors.New("resolved image reference is not immutable")
+	}
+	digestText := immutableReference[digestIndex+len("@sha256:"):]
+	digest, err := hex.DecodeString(digestText)
+	if err != nil || len(digest) != 32 {
+		return resolvedImageArtifact{}, errors.New("resolved image digest is invalid")
+	}
+	return resolvedImageArtifact{
+		Version: version, Reference: immutableReference, Digest: digest,
+		RegistryResourceID: source.RegistryID, RegistryCredentialID: source.RegistryCredentialID,
+		RegistryEndpoint: source.RegistryEndpoint,
+	}, nil
+}
+
+func (service *EnvironmentSetup) queueImageDeploymentTx(
+	ctx context.Context,
+	tx bun.Tx,
+	source environmentSetupSource,
+	revision models.EnvironmentStateRevisionEntity,
+	artifact resolvedImageArtifact,
+	triggerType string,
+	actorID *uuid.UUID,
+	summary string,
+) (models.ReleaseEntity, models.DeploymentEntity, error) {
+	target, err := models.EnvironmentTarget.ActiveForEnvironment(ctx, tx, source.EnvironmentID)
+	if err != nil {
+		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
+	}
+	active, err := tx.NewSelect().TableExpr("deployments").Where("environment_target_id = ?", target.ID).Where("status IN ('queued', 'running')").Count(ctx)
+	if err != nil {
+		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
+	}
+	if active > 0 {
+		return models.ReleaseEntity{}, models.DeploymentEntity{}, errors.Join(models.ErrDomainValidation, errors.New("Environment already has an active Deployment"))
+	}
+	state, err := models.ParseEnvironmentDesiredState(revision.State)
+	if err != nil {
+		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
+	}
+	now := time.Now().UTC()
+	sequence, err := models.Change.NextSequence(ctx, tx, source.EnvironmentID)
+	if err != nil {
+		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
+	}
+	actorType := "system"
+	if actorID != nil {
+		actorType = "user"
+	}
+	change, err := models.Change.Create(ctx, tx, models.CreateChangeData{
+		Sequence: sequence, Kind: "deploy", TriggerType: triggerType, ActorType: actorType, ActorID: actorID,
+		CauseSystem: sql.NullString{String: "registry_image", Valid: true}, CauseReference: sql.NullString{String: artifact.Reference, Valid: true},
+		CorrelationID: uuid.New(), CorrectionContext: json.RawMessage(`{}`), Summary: summary, Status: "committed",
+		RequestedAt: now, CommittedAt: sql.NullTime{Time: now, Valid: true}, EnvironmentID: source.EnvironmentID,
+	})
+	if err != nil {
+		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
+	}
+	release, err := models.Release.Create(ctx, tx, models.CreateReleaseData{
+		Version: sql.NullString{String: artifact.Version, Valid: true}, ArtifactReference: artifact.Reference, ArtifactDigest: artifact.Digest,
+		EnvironmentID: source.EnvironmentID, EnvironmentSourceID: &source.EnvironmentSourceID, CreatedByChangeID: change.ID,
+		RegistryResourceID: &artifact.RegistryResourceID, RegistryCredentialID: &artifact.RegistryCredentialID,
+		RegistryEndpoint: sql.NullString{String: artifact.RegistryEndpoint, Valid: true},
+	})
+	if err != nil {
+		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
+	}
+	if _, err := models.ChangeRelease.Create(ctx, tx, models.CreateChangeReleaseData{ChangeID: change.ID, ReleaseID: release.ID}); err != nil {
+		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
+	}
+	if _, err := models.ChangeStateRevision.Create(ctx, tx, models.CreateChangeStateRevisionData{Role: "result", ChangeID: change.ID, EnvironmentStateRevisionID: revision.ID}); err != nil {
+		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
+	}
+	if _, err := tx.NewUpdate().TableExpr("environment_target_states").Set("desired_revision_id = ?", revision.ID).Set("state = 'pending'").Set("updated_at = ?", now).Where("environment_target_id = ?", target.ID).Exec(ctx); err != nil {
+		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
+	}
+	runtimeSnapshot, _ := json.Marshal(state.Runtime)
+	deployment, err := models.Deployment.Create(ctx, tx, models.CreateDeploymentData{
+		Attempt: 1, Strategy: json.RawMessage(`{"type":"blue_green","replicas":1}`), RuntimeConfiguration: runtimeSnapshot,
+		Status: "queued", CurrentStep: sql.NullString{String: "queued", Valid: true}, ChangeID: change.ID,
+		ReleaseID: release.ID, EnvironmentTargetID: target.ID,
+	})
+	if err != nil {
+		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
+	}
+	if _, err := models.Instance.Create(ctx, tx, models.CreateInstanceData{
+		ExternalID: "pending:" + deployment.ID.String(), Slot: "candidate", ReplicaKey: "primary", State: "candidate",
+		Ports: json.RawMessage(`{}`), ObservedAt: now, DeploymentID: deployment.ID, ReleaseID: release.ID, EnvironmentTargetID: target.ID,
+	}); err != nil {
+		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
+	}
+	if _, err := service.queue.InsertTx(ctx, tx.Tx, jobs.DeployReleaseArgs{DeploymentID: deployment.ID}, jobs.DeployReleaseInsertOpts(deployment.ID)); err != nil {
+		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
+	}
+	return release, deployment, nil
 }
 
 func (service *EnvironmentSetup) QueueManualDeploy(
@@ -1059,12 +1334,8 @@ func (service *EnvironmentSetup) QueueReleaseDeployment(
 		return models.DeploymentEntity{}, errors.New("Environment is unavailable")
 	}
 	release, err := models.Release.Find(ctx, tx, releaseID)
-	if err != nil || release.EnvironmentID != environmentID || release.BuildID == nil {
+	if err != nil || release.EnvironmentID != environmentID || release.RegistryResourceID == nil || release.RegistryCredentialID == nil || !release.RegistryEndpoint.Valid {
 		return models.DeploymentEntity{}, errors.New("Release does not belong to this Environment")
-	}
-	build, err := models.Build.Find(ctx, tx, *release.BuildID)
-	if err != nil || build.EnvironmentID != environmentID || build.Status != "succeeded" {
-		return models.DeploymentEntity{}, errors.New("Release Build is unavailable")
 	}
 	target, err := models.EnvironmentTarget.ActiveForEnvironment(ctx, tx, environmentID)
 	if err != nil {
@@ -1376,7 +1647,7 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	}
 	if _, err := models.Environment.Update(ctx, tx, models.UpdateEnvironmentData{
 		ID: environment.ID, Name: input.Name, Slug: input.Slug, Kind: input.Kind,
-		WebhookTokenPrefix: environment.WebhookTokenPrefix, WebhookTokenDigest: environment.WebhookTokenDigest,
+		APITokenPrefix: environment.APITokenPrefix, APITokenDigest: environment.APITokenDigest,
 		ArchivedAt: environment.ArchivedAt, ApplicationID: applicationID,
 	}); err != nil {
 		return err
@@ -1514,7 +1785,7 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	if !buildRequired {
 		return nil
 	}
-	_, err = service.QueueManualDeploy(ctx, applicationID, environmentID, userID)
+	_, err = service.QueueSourceDeployment(ctx, applicationID, environmentID, &userID, "user", "")
 	return err
 }
 
@@ -1704,7 +1975,7 @@ func (service *EnvironmentSetup) RetryDeployment(
 		return models.DeploymentEntity{}, errors.Join(models.ErrDomainValidation, errors.New("only a failed Deployment can be retried"))
 	}
 	release, err := models.Release.Find(ctx, tx, previous.ReleaseID)
-	if err != nil || release.EnvironmentID != environmentID || release.BuildID == nil {
+	if err != nil || release.EnvironmentID != environmentID || release.RegistryResourceID == nil || release.RegistryCredentialID == nil || !release.RegistryEndpoint.Valid {
 		return models.DeploymentEntity{}, errors.New("failed Deployment does not belong to this Environment")
 	}
 	target, err := models.EnvironmentTarget.Find(ctx, tx, previous.EnvironmentTargetID)
@@ -1784,17 +2055,18 @@ func (service *EnvironmentSetup) loadSource(ctx context.Context, applicationID, 
 	var source environmentSetupSource
 	err := service.db.Executor().NewSelect().TableExpr("environments AS environment").
 		ColumnExpr("environment.application_id, environment.id AS environment_id, environment.archived_at AS environment_archived_at").
-		ColumnExpr("source.id AS environment_source_id, source.reference, source.repository").
+		ColumnExpr("source.id AS environment_source_id, source.kind, source.reference, source.repository").
 		ColumnExpr("repository.id AS repository_id, installation.id AS installation_id").
-		ColumnExpr("buildpack.context_path, buildpack.builder_reference, buildpack.settings AS buildpack_settings, buildpack.image_repository, buildpack.server_id AS build_server_id").
+		ColumnExpr("COALESCE(buildpack.context_path, '') AS context_path, buildpack.builder_reference, COALESCE(buildpack.settings, '{}'::jsonb) AS buildpack_settings, COALESCE(buildpack.image_repository, source.repository) AS image_repository, buildpack.server_id AS build_server_id").
 		ColumnExpr("registry_resource.id AS registry_id, registry_credential.id AS registry_credential_id").
 		ColumnExpr("CASE WHEN registry_endpoint.port IN (80, 443) THEN registry_endpoint.address ELSE registry_endpoint.address || ':' || registry_endpoint.port::text END AS registry_endpoint").
 		Join("JOIN environment_sources AS source ON source.environment_id = environment.id AND source.archived_at IS NULL").
-		Join("JOIN github_environment_sources AS binding ON binding.environment_source_id = source.id").
-		Join("JOIN github_repositories AS repository ON repository.id = binding.github_repository_id").
-		Join("JOIN github_installations AS installation ON installation.id = repository.github_installation_id").
-		Join("JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = source.id").
-		Join("JOIN registry_resources AS registry ON registry.resource_id = buildpack.registry_resource_id").
+		Join("LEFT JOIN github_environment_sources AS binding ON binding.environment_source_id = source.id").
+		Join("LEFT JOIN github_repositories AS repository ON repository.id = binding.github_repository_id").
+		Join("LEFT JOIN github_installations AS installation ON installation.id = repository.github_installation_id").
+		Join("LEFT JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = source.id").
+		Join("LEFT JOIN image_configurations AS image ON image.environment_source_id = source.id").
+		Join("JOIN registry_resources AS registry ON registry.resource_id = COALESCE(buildpack.registry_resource_id, image.registry_resource_id)").
 		Join("JOIN resources AS registry_resource ON registry_resource.id = registry.resource_id AND registry_resource.archived_at IS NULL").
 		Join("JOIN resource_endpoints AS registry_endpoint ON registry_endpoint.resource_id = registry.resource_id AND registry_endpoint.role = 'primary' AND registry_endpoint.archived_at IS NULL").
 		Join("JOIN resource_credentials AS registry_credential ON registry_credential.resource_id = registry.resource_id AND registry_credential.archived_at IS NULL").
@@ -1805,6 +2077,9 @@ func (service *EnvironmentSetup) loadSource(ctx context.Context, applicationID, 
 	source.SetupComplete, err = models.Environment.SetupComplete(ctx, service.db.Executor(), environmentID)
 	if err != nil {
 		return source, models.GitHubRepositoryEntity{}, models.GitHubInstallationEntity{}, err
+	}
+	if source.Kind == "image" {
+		return source, models.GitHubRepositoryEntity{}, models.GitHubInstallationEntity{}, nil
 	}
 	repository, err := models.GitHubRepository.Find(ctx, service.db.Executor(), source.RepositoryID)
 	if err != nil {

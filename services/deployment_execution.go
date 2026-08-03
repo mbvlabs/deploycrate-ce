@@ -321,8 +321,14 @@ func (service *DeploymentExecution) loadScope(ctx context.Context, deployment mo
 	if err != nil || scope.Runtime.Runtime != "go" || scope.Runtime.Replicas != 1 || scope.Runtime.RestartPolicy != "unless-stopped" {
 		return scope, errors.New("Deployment Go runtime configuration is unavailable")
 	}
+	if scope.Release.RegistryResourceID != nil && scope.Release.RegistryCredentialID != nil && scope.Release.RegistryEndpoint.Valid {
+		scope.RegistryID = *scope.Release.RegistryResourceID
+		scope.RegistryCredentialID = *scope.Release.RegistryCredentialID
+		scope.RegistryEndpoint = scope.Release.RegistryEndpoint.String
+		return scope, nil
+	}
 	if scope.Release.BuildID == nil {
-		return scope, errors.New("workload Release has no Build")
+		return scope, errors.New("workload Release has no registry pull snapshot")
 	}
 	build, err := models.Build.Find(ctx, service.db.Executor(), *scope.Release.BuildID)
 	if err != nil || build.EnvironmentID != scope.Environment.ID || build.Status != "succeeded" {

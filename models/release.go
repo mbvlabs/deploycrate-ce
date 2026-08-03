@@ -15,18 +15,21 @@ import (
 )
 
 type ReleaseEntity struct {
-	bun.BaseModel       `bun:"table:releases,alias:releases"`
-	ID                  uuid.UUID      `bun:"id,pk,type:uuid"`
-	CreatedAt           time.Time      `bun:"created_at"`
-	UpdatedAt           time.Time      `bun:"updated_at"`
-	Version             sql.NullString `bun:"version"`
-	SourceRevision      sql.NullString `bun:"source_revision"`
-	ArtifactReference   string         `bun:"artifact_reference"`
-	ArtifactDigest      []byte         `bun:"artifact_digest"`
-	EnvironmentID       uuid.UUID      `bun:"environment_id,type:uuid"`
-	EnvironmentSourceID *uuid.UUID     `bun:"environment_source_id,type:uuid"`
-	BuildID             *uuid.UUID     `bun:"build_id,type:uuid"`
-	CreatedByChangeID   uuid.UUID      `bun:"created_by_change_id,type:uuid"`
+	bun.BaseModel        `bun:"table:releases,alias:releases"`
+	ID                   uuid.UUID      `bun:"id,pk,type:uuid"`
+	CreatedAt            time.Time      `bun:"created_at"`
+	UpdatedAt            time.Time      `bun:"updated_at"`
+	Version              sql.NullString `bun:"version"`
+	SourceRevision       sql.NullString `bun:"source_revision"`
+	ArtifactReference    string         `bun:"artifact_reference"`
+	ArtifactDigest       []byte         `bun:"artifact_digest"`
+	EnvironmentID        uuid.UUID      `bun:"environment_id,type:uuid"`
+	EnvironmentSourceID  *uuid.UUID     `bun:"environment_source_id,type:uuid"`
+	BuildID              *uuid.UUID     `bun:"build_id,type:uuid"`
+	CreatedByChangeID    uuid.UUID      `bun:"created_by_change_id,type:uuid"`
+	RegistryResourceID   *uuid.UUID     `bun:"registry_resource_id,type:uuid"`
+	RegistryCredentialID *uuid.UUID     `bun:"registry_credential_id,type:uuid"`
+	RegistryEndpoint     sql.NullString `bun:"registry_endpoint"`
 }
 
 func (e *ReleaseEntity) Validate() error {
@@ -36,6 +39,10 @@ func (e *ReleaseEntity) Validate() error {
 	}
 	if strings.TrimSpace(e.ArtifactReference) == "" || (len(e.ArtifactDigest) != 0 && len(e.ArtifactDigest) != sha256.Size) {
 		builder.Add("artifact", "invalid", "Release artifact reference or digest is invalid")
+	}
+	hasRegistrySnapshot := e.RegistryResourceID != nil || e.RegistryCredentialID != nil || e.RegistryEndpoint.Valid
+	if hasRegistrySnapshot && (e.RegistryResourceID == nil || e.RegistryCredentialID == nil || !e.RegistryEndpoint.Valid || strings.TrimSpace(e.RegistryEndpoint.String) == "" || !strings.Contains(e.ArtifactReference, "@sha256:") || len(e.ArtifactDigest) != sha256.Size) {
+		builder.Add("registry", "invalid", "workload Releases require a complete immutable registry snapshot")
 	}
 	return builder.Err()
 }
@@ -76,14 +83,17 @@ func (r release) LatestBuildForEnvironment(
 }
 
 type CreateReleaseData struct {
-	Version             sql.NullString
-	SourceRevision      sql.NullString
-	ArtifactReference   string
-	ArtifactDigest      []byte
-	EnvironmentID       uuid.UUID
-	EnvironmentSourceID *uuid.UUID
-	BuildID             *uuid.UUID
-	CreatedByChangeID   uuid.UUID
+	Version              sql.NullString
+	SourceRevision       sql.NullString
+	ArtifactReference    string
+	ArtifactDigest       []byte
+	EnvironmentID        uuid.UUID
+	EnvironmentSourceID  *uuid.UUID
+	BuildID              *uuid.UUID
+	CreatedByChangeID    uuid.UUID
+	RegistryResourceID   *uuid.UUID
+	RegistryCredentialID *uuid.UUID
+	RegistryEndpoint     sql.NullString
 }
 
 func (r release) Create(
@@ -92,17 +102,20 @@ func (r release) Create(
 	data CreateReleaseData,
 ) (ReleaseEntity, error) {
 	entity := ReleaseEntity{
-		ID:                  uuid.New(),
-		CreatedAt:           time.Now(),
-		UpdatedAt:           time.Now(),
-		Version:             data.Version,
-		SourceRevision:      data.SourceRevision,
-		ArtifactReference:   data.ArtifactReference,
-		ArtifactDigest:      data.ArtifactDigest,
-		EnvironmentID:       data.EnvironmentID,
-		EnvironmentSourceID: data.EnvironmentSourceID,
-		BuildID:             data.BuildID,
-		CreatedByChangeID:   data.CreatedByChangeID,
+		ID:                   uuid.New(),
+		CreatedAt:            time.Now(),
+		UpdatedAt:            time.Now(),
+		Version:              data.Version,
+		SourceRevision:       data.SourceRevision,
+		ArtifactReference:    data.ArtifactReference,
+		ArtifactDigest:       data.ArtifactDigest,
+		EnvironmentID:        data.EnvironmentID,
+		EnvironmentSourceID:  data.EnvironmentSourceID,
+		BuildID:              data.BuildID,
+		CreatedByChangeID:    data.CreatedByChangeID,
+		RegistryResourceID:   data.RegistryResourceID,
+		RegistryCredentialID: data.RegistryCredentialID,
+		RegistryEndpoint:     data.RegistryEndpoint,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -117,16 +130,19 @@ func (r release) Create(
 }
 
 type UpdateReleaseData struct {
-	ID                  uuid.UUID
-	UpdatedAt           time.Time
-	Version             sql.NullString
-	SourceRevision      sql.NullString
-	ArtifactReference   string
-	ArtifactDigest      []byte
-	EnvironmentID       uuid.UUID
-	EnvironmentSourceID *uuid.UUID
-	BuildID             *uuid.UUID
-	CreatedByChangeID   uuid.UUID
+	ID                   uuid.UUID
+	UpdatedAt            time.Time
+	Version              sql.NullString
+	SourceRevision       sql.NullString
+	ArtifactReference    string
+	ArtifactDigest       []byte
+	EnvironmentID        uuid.UUID
+	EnvironmentSourceID  *uuid.UUID
+	BuildID              *uuid.UUID
+	CreatedByChangeID    uuid.UUID
+	RegistryResourceID   *uuid.UUID
+	RegistryCredentialID *uuid.UUID
+	RegistryEndpoint     sql.NullString
 }
 
 func (r release) Update(
@@ -135,16 +151,19 @@ func (r release) Update(
 	data UpdateReleaseData,
 ) (ReleaseEntity, error) {
 	entity := ReleaseEntity{
-		ID:                  data.ID,
-		UpdatedAt:           time.Now(),
-		Version:             data.Version,
-		SourceRevision:      data.SourceRevision,
-		ArtifactReference:   data.ArtifactReference,
-		ArtifactDigest:      data.ArtifactDigest,
-		EnvironmentID:       data.EnvironmentID,
-		EnvironmentSourceID: data.EnvironmentSourceID,
-		BuildID:             data.BuildID,
-		CreatedByChangeID:   data.CreatedByChangeID,
+		ID:                   data.ID,
+		UpdatedAt:            time.Now(),
+		Version:              data.Version,
+		SourceRevision:       data.SourceRevision,
+		ArtifactReference:    data.ArtifactReference,
+		ArtifactDigest:       data.ArtifactDigest,
+		EnvironmentID:        data.EnvironmentID,
+		EnvironmentSourceID:  data.EnvironmentSourceID,
+		BuildID:              data.BuildID,
+		CreatedByChangeID:    data.CreatedByChangeID,
+		RegistryResourceID:   data.RegistryResourceID,
+		RegistryCredentialID: data.RegistryCredentialID,
+		RegistryEndpoint:     data.RegistryEndpoint,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -162,6 +181,9 @@ func (r release) Update(
 		Column("environment_source_id").
 		Column("build_id").
 		Column("created_by_change_id").
+		Column("registry_resource_id").
+		Column("registry_credential_id").
+		Column("registry_endpoint").
 		WherePK().
 		Returning("*").
 		Scan(ctx); err != nil {
@@ -248,17 +270,20 @@ func (r release) Upsert(
 	data CreateReleaseData,
 ) (ReleaseEntity, error) {
 	entity := ReleaseEntity{
-		ID:                  uuid.New(),
-		CreatedAt:           time.Now(),
-		UpdatedAt:           time.Now(),
-		Version:             data.Version,
-		SourceRevision:      data.SourceRevision,
-		ArtifactReference:   data.ArtifactReference,
-		ArtifactDigest:      data.ArtifactDigest,
-		EnvironmentID:       data.EnvironmentID,
-		EnvironmentSourceID: data.EnvironmentSourceID,
-		BuildID:             data.BuildID,
-		CreatedByChangeID:   data.CreatedByChangeID,
+		ID:                   uuid.New(),
+		CreatedAt:            time.Now(),
+		UpdatedAt:            time.Now(),
+		Version:              data.Version,
+		SourceRevision:       data.SourceRevision,
+		ArtifactReference:    data.ArtifactReference,
+		ArtifactDigest:       data.ArtifactDigest,
+		EnvironmentID:        data.EnvironmentID,
+		EnvironmentSourceID:  data.EnvironmentSourceID,
+		BuildID:              data.BuildID,
+		CreatedByChangeID:    data.CreatedByChangeID,
+		RegistryResourceID:   data.RegistryResourceID,
+		RegistryCredentialID: data.RegistryCredentialID,
+		RegistryEndpoint:     data.RegistryEndpoint,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -276,6 +301,9 @@ func (r release) Upsert(
 		Set("environment_source_id = excluded.environment_source_id").
 		Set("build_id = excluded.build_id").
 		Set("created_by_change_id = excluded.created_by_change_id").
+		Set("registry_resource_id = excluded.registry_resource_id").
+		Set("registry_credential_id = excluded.registry_credential_id").
+		Set("registry_endpoint = excluded.registry_endpoint").
 		Returning("*").
 		Scan(ctx); err != nil {
 		return ReleaseEntity{}, err

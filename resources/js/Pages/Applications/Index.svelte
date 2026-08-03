@@ -6,7 +6,7 @@
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
-  type Application = { id: string; name: string; slug: string; environmentName: string; environmentKind: string; repositoryFullName: string; reference: string; sourceHealthy: boolean }
+  type Application = { id: string; name: string; slug: string; environmentName: string; environmentKind: string; repositoryFullName: string; reference: string; sourceHealthy: boolean; sourceType: string }
   let { auth, applications }: { auth: { email: string }; applications: Application[] } = $props()
 </script>
 

@@ -19,6 +19,7 @@ type (
 	environment                  struct{}
 	registryResource             struct{}
 	environmentSource            struct{}
+	imageConfiguration           struct{}
 	buildpackConfiguration       struct{}
 	runtimeConfiguration         struct{}
 	environmentSecret            struct{}
@@ -88,6 +89,7 @@ var (
 	Environment                  environment
 	RegistryResource             registryResource
 	EnvironmentSource            environmentSource
+	ImageConfiguration           imageConfiguration
 	BuildpackConfiguration       buildpackConfiguration
 	RuntimeConfiguration         runtimeConfiguration
 	EnvironmentSecret            environmentSecret

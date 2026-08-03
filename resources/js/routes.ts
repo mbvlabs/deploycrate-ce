@@ -16,6 +16,7 @@ export const routes = {
   caddyRoutes: () => '/system/caddy-routes',
   confirmationCreate: () => '/users/confirmation',
   confirmationNew: () => '/users/confirmation/new',
+  environmentAPITokenRotate: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/api-token`,
   environmentBuildLogs: (environmentID: string, buildID: string) => `/environments/${environmentID}/builds/${buildID}/logs`,
   environmentBuildRetry: (applicationID: string, environmentID: string, buildID: string) => `/applications/${applicationID}/environments/${environmentID}/builds/${buildID}/retry`,
   environmentBuildStart: (applicationID: string, environmentID: string, buildID: string) => `/applications/${applicationID}/environments/${environmentID}/builds/${buildID}/start`,

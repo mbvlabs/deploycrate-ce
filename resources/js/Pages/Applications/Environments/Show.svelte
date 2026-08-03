@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Link, router } from '@inertiajs/svelte'
+  import { untrack } from 'svelte'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
   import * as Dialog from '@/Components/ui/dialog'
@@ -38,6 +39,7 @@
   type Overview = {
     applicationId: string
     applicationName: string
+    sourceType: 'buildpacks' | 'image'
     environment: { id: string; name: string; kind: string }
     repository: string
     reference: string
@@ -55,10 +57,16 @@
     releases: Release[]
     deployments: Deployment[]
     instances: Instance[]
+    apiTokenPrefix: string
   }
   let { auth, environment, telemetry }: { auth: { email: string }; environment: Overview; telemetry: TelemetryRow[] } = $props()
   let key = $state('')
   let value = $state('')
+  let imageReference = $state(untrack(() => environment.reference))
+  let apiToken = $state('')
+  let apiTokenError = $state('')
+  let apiTokenDialogOpen = $state(false)
+  let apiTokenProcessing = $state(false)
   let liveBuilds = $state<Build[] | null>(null)
   let liveDeployments = $state<Deployment[] | null>(null)
   let buildLogs = $state<Record<string, BuildLog[]>>({})
@@ -134,7 +142,7 @@
     })
   }
   function buildAndDeploy() {
-    router.post(routes.environmentDeploymentsCreate(environment.applicationId, environment.environment.id), {}, {
+    router.post(routes.environmentDeploymentsCreate(environment.applicationId, environment.environment.id), environment.sourceType === 'image' ? { reference: imageReference } : {}, {
       onSuccess: () => {
         liveBuilds = null
         buildLogs = {}
@@ -142,6 +150,24 @@
         expandedBuildId = ''
       },
     })
+  }
+  async function rotateAPIToken() {
+    apiTokenProcessing = true
+    apiTokenError = ''
+    try {
+      const response = await window.fetch(routes.environmentAPITokenRotate(environment.applicationId, environment.environment.id), {
+        method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' },
+      })
+      const payload = await response.json() as { token?: string; error?: string }
+      if (!response.ok || !payload.token) throw new Error(payload.error || 'API token could not be created')
+      apiToken = payload.token
+      apiTokenDialogOpen = true
+      router.reload({ only: ['environment'], preserveScroll: true })
+    } catch (error) {
+      apiTokenError = error instanceof Error ? error.message : 'API token could not be created'
+    } finally {
+      apiTokenProcessing = false
+    }
   }
   function redeployRelease(releaseId: string) {
     activeReleaseDeployment = releaseId
@@ -407,10 +433,18 @@
   <div class="space-y-8">
     <header class="flex items-end justify-between gap-4">
       <div><p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">{environment.applicationName} · {environment.environment.kind}</p><h1 class="mt-3 text-3xl font-semibold">{environment.environment.name}</h1></div>
-      <div class="flex flex-wrap gap-2"><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentEdit(environment.applicationId, environment.environment.id)}>Edit environment</Link>{/snippet}</Button><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentSourceEdit(environment.applicationId, environment.environment.id)}>Edit source</Link>{/snippet}</Button><Button onclick={buildAndDeploy}>Build & deploy</Button><EnvironmentDeleteDialog applicationId={environment.applicationId} environmentId={environment.environment.id} environmentName={environment.environment.name} /></div>
+      <div class="flex flex-wrap gap-2"><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentEdit(environment.applicationId, environment.environment.id)}>Edit environment</Link>{/snippet}</Button><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentSourceEdit(environment.applicationId, environment.environment.id)}>Edit source</Link>{/snippet}</Button>{#if environment.sourceType === 'buildpacks'}<Button onclick={buildAndDeploy}>Build & deploy</Button>{/if}<EnvironmentDeleteDialog applicationId={environment.applicationId} environmentId={environment.environment.id} environmentName={environment.environment.name} /></div>
     </header>
 
     <Card.Root><Card.Header><Card.Action><span class:text-success={environment.deployability.deployable} class:text-destructive={!environment.deployability.deployable}>{environment.deployability.deployable ? 'Ready' : 'Blocked'}</span></Card.Action><Card.Title>Desired state</Card.Title></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><DataField label="Repository" value={environment.repository} /><DataField label="Reference" value={environment.reference} /><DataField label="Build context" value={environment.contextPath} /><DataField label="Domain" value={environment.domain} /><DataField label="Runtime Server" value={environment.runtimeServer} /><DataField label="Registry" value={environment.registryName} /><DataField label="Registry endpoint" value={environment.registryEndpoint} />{#if !environment.deployability.deployable}<DataField label="Missing" value={environment.deployability.missing.join(', ')} />{/if}</Card.Content></Card.Root>
+
+    {#if environment.sourceType === 'image'}
+      <Card.Root><Card.Header><Card.Title>Deploy image version</Card.Title><Card.Description>Use the configured reference or override it with another tag or sha256 digest.</Card.Description></Card.Header><Card.Content class="flex flex-col gap-3 sm:flex-row"><Input bind:value={imageReference} placeholder="latest" /><Button onclick={buildAndDeploy}>Resolve & deploy</Button></Card.Content></Card.Root>
+    {/if}
+
+    {#if environment.sourceType === 'image'}
+      <Card.Root><Card.Header><Card.Action><Button size="sm" variant="outline" disabled={apiTokenProcessing} onclick={rotateAPIToken}>{apiTokenProcessing ? 'Creating...' : environment.apiTokenPrefix ? 'Rotate token' : 'Create token'}</Button></Card.Action><Card.Title>Deployment API</Card.Title><Card.Description>Environment-scoped bearer token for image deployments. A replacement token invalidates the previous token immediately.</Card.Description></Card.Header><Card.Content class="space-y-2 text-sm"><p class="font-mono">POST /api/environments/{environment.environment.id}/deployments</p><p class="text-xs text-muted-foreground">JSON: {`{"reference":"1.2.3"}`} · Token: {environment.apiTokenPrefix ? `${environment.apiTokenPrefix}...` : 'Not configured'}</p>{#if apiTokenError}<p class="text-xs text-destructive">{apiTokenError}</p>{/if}</Card.Content></Card.Root>
+    {/if}
 
     <section aria-labelledby="workload-telemetry-heading" class="space-y-4">
       <div class="flex flex-wrap items-end justify-between gap-3">
@@ -608,5 +642,9 @@
         <Dialog.Footer><Button type="button" variant="outline" disabled={secretActionProcessing} onclick={() => (rotateDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={!rotatedSecretValue || secretActionProcessing}>{secretActionProcessing ? 'Rotating...' : 'Rotate secret'}</Button></Dialog.Footer>
       </form>
     </Dialog.Content>
+  </Dialog.Root>
+
+  <Dialog.Root bind:open={apiTokenDialogOpen}>
+    <Dialog.Content><Dialog.Header><Dialog.Title>Deployment API token</Dialog.Title><Dialog.Description>Copy this token now. DeployCrate stores only its digest and cannot show it again.</Dialog.Description></Dialog.Header><pre class="whitespace-pre-wrap break-all border border-border bg-muted/30 p-3 font-mono text-xs">{apiToken}</pre><Dialog.Footer><Button variant="outline" onclick={() => navigator.clipboard.writeText(apiToken)}>Copy token</Button><Button onclick={() => (apiTokenDialogOpen = false)}>Done</Button></Dialog.Footer></Dialog.Content>
   </Dialog.Root>
 </DashboardLayout>

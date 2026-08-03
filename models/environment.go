@@ -15,17 +15,17 @@ import (
 )
 
 type EnvironmentEntity struct {
-	bun.BaseModel      `bun:"table:environments,alias:environments"`
-	ID                 uuid.UUID      `bun:"id,pk,type:uuid"`
-	CreatedAt          time.Time      `bun:"created_at"`
-	UpdatedAt          time.Time      `bun:"updated_at"`
-	Name               string         `bun:"name"`
-	Slug               string         `bun:"slug"`
-	Kind               string         `bun:"kind"`
-	WebhookTokenPrefix sql.NullString `bun:"webhook_token_prefix"`
-	WebhookTokenDigest []byte         `bun:"webhook_token_digest"`
-	ArchivedAt         sql.NullTime   `bun:"archived_at"`
-	ApplicationID      uuid.UUID      `bun:"application_id,type:uuid"`
+	bun.BaseModel  `bun:"table:environments,alias:environments"`
+	ID             uuid.UUID      `bun:"id,pk,type:uuid"`
+	CreatedAt      time.Time      `bun:"created_at"`
+	UpdatedAt      time.Time      `bun:"updated_at"`
+	Name           string         `bun:"name"`
+	Slug           string         `bun:"slug"`
+	Kind           string         `bun:"kind"`
+	APITokenPrefix sql.NullString `bun:"api_token_prefix"`
+	APITokenDigest []byte         `bun:"api_token_digest"`
+	ArchivedAt     sql.NullTime   `bun:"archived_at"`
+	ApplicationID  uuid.UUID      `bun:"application_id,type:uuid"`
 }
 
 func (e *EnvironmentEntity) Validate() error {
@@ -121,7 +121,7 @@ func (e environment) Deployability(
 		ApplicationActive bool `bun:"application_active"`
 		SetupComplete     bool `bun:"setup_complete"`
 		SourceReady       bool `bun:"source_ready"`
-		BuildpackReady    bool `bun:"buildpack_ready"`
+		ArtifactReady     bool `bun:"artifact_ready"`
 		RuntimeReady      bool `bun:"runtime_ready"`
 		TargetReady       bool `bun:"target_ready"`
 		DomainReady       bool `bun:"domain_ready"`
@@ -141,16 +141,24 @@ func (e environment) Deployability(
 			) AS setup_complete,
 			EXISTS (
 				SELECT 1 FROM environment_sources es
-				JOIN github_environment_sources ges ON ges.environment_source_id = es.id
-				JOIN github_repositories gr ON gr.id = ges.github_repository_id AND gr.removed_at IS NULL
-				JOIN github_installations gi ON gi.id = gr.github_installation_id AND gi.archived_at IS NULL AND gi.suspended_at IS NULL
-				WHERE es.environment_id = e.id AND es.archived_at IS NULL AND es.kind = 'git' AND es.provider = 'github'
+				LEFT JOIN github_environment_sources ges ON ges.environment_source_id = es.id
+				LEFT JOIN github_repositories gr ON gr.id = ges.github_repository_id AND gr.removed_at IS NULL
+				LEFT JOIN github_installations gi ON gi.id = gr.github_installation_id AND gi.archived_at IS NULL AND gi.suspended_at IS NULL
+				LEFT JOIN image_configurations ic ON ic.environment_source_id = es.id
+				WHERE es.environment_id = e.id AND es.archived_at IS NULL AND (
+					(es.kind = 'git' AND es.provider = 'github' AND gr.id IS NOT NULL AND gi.id IS NOT NULL) OR
+					(es.kind = 'image' AND es.provider = 'registry' AND ic.id IS NOT NULL)
+				)
 			) AS source_ready,
 			EXISTS (
-				SELECT 1 FROM buildpack_configurations bc
-				JOIN environment_sources es ON es.id = bc.environment_source_id AND es.archived_at IS NULL
-				WHERE es.environment_id = e.id
-			) AS buildpack_ready,
+				SELECT 1 FROM environment_sources es
+				LEFT JOIN buildpack_configurations bc ON bc.environment_source_id = es.id
+				LEFT JOIN image_configurations ic ON ic.environment_source_id = es.id
+				JOIN resources registry ON registry.id = COALESCE(bc.registry_resource_id, ic.registry_resource_id) AND registry.archived_at IS NULL
+				WHERE es.environment_id = e.id AND es.archived_at IS NULL
+				AND EXISTS (SELECT 1 FROM resource_endpoints endpoint WHERE endpoint.resource_id = registry.id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL)
+				AND EXISTS (SELECT 1 FROM resource_credentials credential WHERE credential.resource_id = registry.id AND credential.archived_at IS NULL)
+			) AS artifact_ready,
 			EXISTS (SELECT 1 FROM runtime_configurations rc WHERE rc.environment_id = e.id) AS runtime_ready,
 			EXISTS (
 				SELECT 1 FROM environment_targets et
@@ -189,8 +197,8 @@ func (e environment) Deployability(
 		{"environment_active", checks.EnvironmentActive},
 		{"application_active", checks.ApplicationActive},
 		{"setup_complete", checks.SetupComplete},
-		{"github_source", checks.SourceReady},
-		{"buildpacks_configuration", checks.BuildpackReady},
+		{"deployment_source", checks.SourceReady},
+		{"artifact_registry", checks.ArtifactReady},
 		{"runtime_configuration", checks.RuntimeReady},
 		{"environment_target", checks.TargetReady},
 		{"primary_domain", checks.DomainReady},
@@ -214,13 +222,13 @@ func (e environment) Deployability(
 }
 
 type CreateEnvironmentData struct {
-	Name               string
-	Slug               string
-	Kind               string
-	WebhookTokenPrefix sql.NullString
-	WebhookTokenDigest []byte
-	ArchivedAt         sql.NullTime
-	ApplicationID      uuid.UUID
+	Name           string
+	Slug           string
+	Kind           string
+	APITokenPrefix sql.NullString
+	APITokenDigest []byte
+	ArchivedAt     sql.NullTime
+	ApplicationID  uuid.UUID
 }
 
 func (e environment) Create(
@@ -229,16 +237,16 @@ func (e environment) Create(
 	data CreateEnvironmentData,
 ) (EnvironmentEntity, error) {
 	entity := EnvironmentEntity{
-		ID:                 uuid.New(),
-		CreatedAt:          time.Now(),
-		UpdatedAt:          time.Now(),
-		Name:               data.Name,
-		Slug:               data.Slug,
-		Kind:               data.Kind,
-		WebhookTokenPrefix: data.WebhookTokenPrefix,
-		WebhookTokenDigest: data.WebhookTokenDigest,
-		ArchivedAt:         data.ArchivedAt,
-		ApplicationID:      data.ApplicationID,
+		ID:             uuid.New(),
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+		Name:           data.Name,
+		Slug:           data.Slug,
+		Kind:           data.Kind,
+		APITokenPrefix: data.APITokenPrefix,
+		APITokenDigest: data.APITokenDigest,
+		ArchivedAt:     data.ArchivedAt,
+		ApplicationID:  data.ApplicationID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -253,15 +261,15 @@ func (e environment) Create(
 }
 
 type UpdateEnvironmentData struct {
-	ID                 uuid.UUID
-	UpdatedAt          time.Time
-	Name               string
-	Slug               string
-	Kind               string
-	WebhookTokenPrefix sql.NullString
-	WebhookTokenDigest []byte
-	ArchivedAt         sql.NullTime
-	ApplicationID      uuid.UUID
+	ID             uuid.UUID
+	UpdatedAt      time.Time
+	Name           string
+	Slug           string
+	Kind           string
+	APITokenPrefix sql.NullString
+	APITokenDigest []byte
+	ArchivedAt     sql.NullTime
+	ApplicationID  uuid.UUID
 }
 
 func (e environment) Update(
@@ -270,15 +278,15 @@ func (e environment) Update(
 	data UpdateEnvironmentData,
 ) (EnvironmentEntity, error) {
 	entity := EnvironmentEntity{
-		ID:                 data.ID,
-		UpdatedAt:          time.Now(),
-		Name:               data.Name,
-		Slug:               data.Slug,
-		Kind:               data.Kind,
-		WebhookTokenPrefix: data.WebhookTokenPrefix,
-		WebhookTokenDigest: data.WebhookTokenDigest,
-		ArchivedAt:         data.ArchivedAt,
-		ApplicationID:      data.ApplicationID,
+		ID:             data.ID,
+		UpdatedAt:      time.Now(),
+		Name:           data.Name,
+		Slug:           data.Slug,
+		Kind:           data.Kind,
+		APITokenPrefix: data.APITokenPrefix,
+		APITokenDigest: data.APITokenDigest,
+		ArchivedAt:     data.ArchivedAt,
+		ApplicationID:  data.ApplicationID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -291,8 +299,8 @@ func (e environment) Update(
 		Column("name").
 		Column("slug").
 		Column("kind").
-		Column("webhook_token_prefix").
-		Column("webhook_token_digest").
+		Column("api_token_prefix").
+		Column("api_token_digest").
 		Column("archived_at").
 		Column("application_id").
 		WherePK().
@@ -381,16 +389,16 @@ func (e environment) Upsert(
 	data CreateEnvironmentData,
 ) (EnvironmentEntity, error) {
 	entity := EnvironmentEntity{
-		ID:                 uuid.New(),
-		CreatedAt:          time.Now(),
-		UpdatedAt:          time.Now(),
-		Name:               data.Name,
-		Slug:               data.Slug,
-		Kind:               data.Kind,
-		WebhookTokenPrefix: data.WebhookTokenPrefix,
-		WebhookTokenDigest: data.WebhookTokenDigest,
-		ArchivedAt:         data.ArchivedAt,
-		ApplicationID:      data.ApplicationID,
+		ID:             uuid.New(),
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+		Name:           data.Name,
+		Slug:           data.Slug,
+		Kind:           data.Kind,
+		APITokenPrefix: data.APITokenPrefix,
+		APITokenDigest: data.APITokenDigest,
+		ArchivedAt:     data.ArchivedAt,
+		ApplicationID:  data.ApplicationID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -403,8 +411,8 @@ func (e environment) Upsert(
 		Set("name = excluded.name").
 		Set("slug = excluded.slug").
 		Set("kind = excluded.kind").
-		Set("webhook_token_prefix = excluded.webhook_token_prefix").
-		Set("webhook_token_digest = excluded.webhook_token_digest").
+		Set("api_token_prefix = excluded.api_token_prefix").
+		Set("api_token_digest = excluded.api_token_digest").
 		Set("archived_at = excluded.archived_at").
 		Set("application_id = excluded.application_id").
 		Returning("*").

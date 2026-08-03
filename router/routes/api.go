@@ -11,3 +11,13 @@ var Health = routing.NewSimpleRoute(
 	"api.health",
 	APIPrefix,
 )
+
+type APIEnvironmentParams struct {
+	EnvironmentID string `param:"environmentID"`
+}
+
+var APIEnvironmentDeploymentsCreate = routing.NewRouteWithParams[APIEnvironmentParams](
+	"/environments/:environmentID/deployments",
+	"api.environments.deployments.create",
+	APIPrefix,
+)

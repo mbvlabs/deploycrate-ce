@@ -177,24 +177,41 @@ func (Client) ResolveDigest(ctx context.Context, authentication Authentication, 
 	return "", errors.New("published image has no immutable registry digest")
 }
 
-func (Client) ResolveRemoteDigest(ctx context.Context, credentials Credentials, imageTag string) (string, error) {
+func (Client) ResolveRemoteDigest(ctx context.Context, credentials Credentials, imageReference string) (string, error) {
 	endpoint := strings.TrimSuffix(strings.TrimSpace(credentials.Endpoint), "/")
-	imageTag = strings.TrimSpace(imageTag)
+	imageReference = strings.TrimSpace(imageReference)
 	prefix := endpoint + "/"
-	if !strings.HasPrefix(imageTag, prefix) || strings.Contains(imageTag, "@") {
-		return "", errors.New("published image must belong to the authenticated registry and use a tag")
+	if !strings.HasPrefix(imageReference, prefix) {
+		return "", errors.New("image must belong to the authenticated registry")
 	}
-	repositoryAndTag := strings.TrimPrefix(imageTag, prefix)
-	separator := strings.LastIndex(repositoryAndTag, ":")
-	if separator <= 0 || separator == len(repositoryAndTag)-1 {
-		return "", errors.New("published image tag is invalid")
+	repositoryAndReference := strings.TrimPrefix(imageReference, prefix)
+	repository := ""
+	manifestReference := ""
+	requestedDigest := ""
+	if before, after, found := strings.Cut(repositoryAndReference, "@"); found {
+		repository, manifestReference, requestedDigest = before, after, strings.ToLower(after)
+		if !validSHA256Digest(requestedDigest) {
+			return "", errors.New("image digest is invalid")
+		}
+	} else {
+		separator := strings.LastIndex(repositoryAndReference, ":")
+		if separator <= 0 || separator == len(repositoryAndReference)-1 {
+			return "", errors.New("image tag is invalid")
+		}
+		repository, manifestReference = repositoryAndReference[:separator], repositoryAndReference[separator+1:]
 	}
-	repository, tag := repositoryAndTag[:separator], repositoryAndTag[separator+1:]
+	if strings.Trim(repository, "/") != repository || strings.ContainsAny(repository, " \\?#") {
+		return "", errors.New("image repository is invalid")
+	}
+	apiRepository := repository
 	apiEndpoint := endpoint
 	if endpoint == "docker.io" {
 		apiEndpoint = "registry-1.docker.io"
+		if !strings.Contains(apiRepository, "/") {
+			apiRepository = "library/" + apiRepository
+		}
 	}
-	requestURL := "https://" + apiEndpoint + "/v2/" + repository + "/manifests/" + url.PathEscape(tag)
+	requestURL := "https://" + apiEndpoint + "/v2/" + apiRepository + "/manifests/" + url.PathEscape(manifestReference)
 	accept := strings.Join([]string{
 		"application/vnd.oci.image.index.v1+json",
 		"application/vnd.docker.distribution.manifest.list.v2+json",
@@ -226,15 +243,25 @@ func (Client) ResolveRemoteDigest(ctx context.Context, credentials Credentials, 
 		return "", fmt.Errorf("inspect published registry manifest: status %d", response.StatusCode)
 	}
 	digest := strings.ToLower(strings.TrimSpace(response.Header.Get("Docker-Content-Digest")))
-	if len(digest) != 71 || !strings.HasPrefix(digest, "sha256:") {
+	if !validSHA256Digest(digest) {
 		return "", errors.New("registry did not return a valid immutable image digest")
 	}
-	for _, character := range strings.TrimPrefix(digest, "sha256:") {
-		if !strings.ContainsRune("0123456789abcdef", character) {
-			return "", errors.New("registry returned an invalid immutable image digest")
-		}
+	if requestedDigest != "" && digest != requestedDigest {
+		return "", errors.New("registry returned a different digest than requested")
 	}
 	return endpoint + "/" + repository + "@" + digest, nil
+}
+
+func validSHA256Digest(value string) bool {
+	if len(value) != 71 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	for _, character := range strings.TrimPrefix(value, "sha256:") {
+		if !strings.ContainsRune("0123456789abcdef", character) {
+			return false
+		}
+	}
+	return true
 }
 
 func manifestHead(

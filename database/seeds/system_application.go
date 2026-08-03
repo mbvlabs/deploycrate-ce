@@ -89,8 +89,8 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		factories.WithEnvironmentsName("Production"),
 		factories.WithEnvironmentsSlug("production"),
 		factories.WithEnvironmentsKind("production"),
-		factories.WithEnvironmentsWebhookTokenPrefix(sql.NullString{}),
-		factories.WithEnvironmentsWebhookTokenDigest([]byte{}),
+		factories.WithEnvironmentsAPITokenPrefix(sql.NullString{}),
+		factories.WithEnvironmentsAPITokenDigest([]byte{}),
 		factories.WithEnvironmentsArchivedAt(sql.NullTime{}),
 	)
 	if err != nil {

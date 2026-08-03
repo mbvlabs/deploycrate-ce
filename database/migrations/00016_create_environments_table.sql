@@ -9,8 +9,8 @@ CREATE TABLE environments (
     name TEXT NOT NULL,
     slug TEXT NOT NULL,
     kind TEXT NOT NULL,
-    webhook_token_prefix TEXT,  -- TODO: not sure
-    webhook_token_digest BYTEA, -- TODO: not sure
+    api_token_prefix TEXT,
+    api_token_digest BYTEA,
     archived_at TIMESTAMPTZ,
 
     application_id UUID NOT NULL REFERENCES applications (id) ON DELETE RESTRICT

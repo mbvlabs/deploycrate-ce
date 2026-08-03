@@ -103,6 +103,7 @@ func applicationSetupOptionsProps(options services.ApplicationSetupOptions) map[
 }
 
 type applicationSetupPayload struct {
+	SourceType           string          `json:"sourceType"`
 	ApplicationName      string          `json:"applicationName"`
 	ApplicationSlug      string          `json:"applicationSlug"`
 	EnvironmentName      string          `json:"environmentName"`
@@ -121,23 +122,31 @@ type applicationSetupPayload struct {
 }
 
 func (payload applicationSetupPayload) serviceData() (services.ApplicationSetupData, error) {
-	installationID, err := uuid.Parse(payload.GitHubInstallationID)
-	if err != nil {
-		return services.ApplicationSetupData{}, err
+	sourceType := strings.ToLower(strings.TrimSpace(payload.SourceType))
+	if sourceType == "" {
+		sourceType = "buildpacks"
 	}
-	repositoryID, err := uuid.Parse(payload.GitHubRepositoryID)
-	if err != nil {
-		return services.ApplicationSetupData{}, err
+	var installationID, repositoryID, buildServerID uuid.UUID
+	var err error
+	if sourceType == "buildpacks" {
+		installationID, err = uuid.Parse(payload.GitHubInstallationID)
+		if err != nil {
+			return services.ApplicationSetupData{}, err
+		}
+		repositoryID, err = uuid.Parse(payload.GitHubRepositoryID)
+		if err != nil {
+			return services.ApplicationSetupData{}, err
+		}
+		buildServerID, err = uuid.Parse(payload.BuildServerID)
+		if err != nil {
+			return services.ApplicationSetupData{}, err
+		}
 	}
 	registryID, err := uuid.Parse(payload.RegistryResourceID)
 	if err != nil {
 		return services.ApplicationSetupData{}, err
 	}
-	buildServerID, err := uuid.Parse(payload.BuildServerID)
-	if err != nil {
-		return services.ApplicationSetupData{}, err
-	}
-	return services.ApplicationSetupData{ApplicationName: payload.ApplicationName, ApplicationSlug: payload.ApplicationSlug, EnvironmentName: payload.EnvironmentName, EnvironmentSlug: payload.EnvironmentSlug, EnvironmentKind: payload.EnvironmentKind, GitHubInstallationID: installationID, GitHubRepositoryID: repositoryID, Reference: payload.Reference, AutoBuild: payload.AutoBuild, ContextPath: payload.ContextPath, BuilderReference: payload.BuilderReference, BuildpackSettings: payload.BuildpackSettings, RegistryResourceID: registryID, ImageRepository: payload.ImageRepository, BuildServerID: buildServerID}, nil
+	return services.ApplicationSetupData{SourceType: sourceType, ApplicationName: payload.ApplicationName, ApplicationSlug: payload.ApplicationSlug, EnvironmentName: payload.EnvironmentName, EnvironmentSlug: payload.EnvironmentSlug, EnvironmentKind: payload.EnvironmentKind, GitHubInstallationID: installationID, GitHubRepositoryID: repositoryID, Reference: payload.Reference, AutoBuild: payload.AutoBuild, ContextPath: payload.ContextPath, BuilderReference: payload.BuilderReference, BuildpackSettings: payload.BuildpackSettings, RegistryResourceID: registryID, ImageRepository: payload.ImageRepository, BuildServerID: buildServerID}, nil
 }
 
 func (controller Applications) Create(etx *echo.Context) error {

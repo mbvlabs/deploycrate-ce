@@ -967,6 +967,8 @@ func (service *BuildExecution) complete(ctx context.Context, buildID uuid.UUID, 
 		SourceRevision: sql.NullString{String: build.SourceRevision, Valid: true}, ArtifactReference: reference,
 		ArtifactDigest: digest, EnvironmentID: build.EnvironmentID, EnvironmentSourceID: &build.EnvironmentSourceID,
 		BuildID: &build.ID, CreatedByChangeID: build.ChangeID,
+		RegistryResourceID: &snapshot.RegistryResourceID, RegistryCredentialID: &snapshot.RegistryCredentialID,
+		RegistryEndpoint: sql.NullString{String: snapshot.RegistryEndpoint, Valid: true},
 	})
 	if err != nil {
 		return err

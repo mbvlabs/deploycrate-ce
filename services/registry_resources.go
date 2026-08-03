@@ -152,12 +152,15 @@ func (service *RegistryResources) ArchiveExternal(ctx context.Context, resourceI
 	if resource.Engine() != "registry" || resource.SystemManaged {
 		return errors.New("the DeployCrate-managed Registry cannot be archived here")
 	}
-	references, err := service.db.Executor().NewSelect().TableExpr("buildpack_configurations").Where("registry_resource_id = ?", resource.ID).Count(ctx)
+	references, err := service.db.Executor().NewSelect().TableExpr("environment_sources AS source").
+		Join("LEFT JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = source.id").
+		Join("LEFT JOIN image_configurations AS image ON image.environment_source_id = source.id").
+		Where("source.archived_at IS NULL").Where("COALESCE(buildpack.registry_resource_id, image.registry_resource_id) = ?", resource.ID).Count(ctx)
 	if err != nil {
 		return err
 	}
 	if references > 0 {
-		return errors.New("Registry is still selected by an Application build configuration")
+		return errors.New("Registry is still selected by an Application deployment source")
 	}
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {

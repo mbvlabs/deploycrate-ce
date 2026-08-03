@@ -22,13 +22,13 @@ type EnvironmentOption func(*EnvironmentFactory)
 func BuildEnvironment(applicationID uuid.UUID, opts ...EnvironmentOption) models.EnvironmentEntity {
 	f := &EnvironmentFactory{
 		EnvironmentEntity: models.EnvironmentEntity{
-			Name:               faker.Word(),
-			Slug:               faker.Word(),
-			Kind:               faker.Word(),
-			WebhookTokenPrefix: sql.NullString{String: faker.Word(), Valid: true},
-			WebhookTokenDigest: []byte{},
-			ArchivedAt:         sql.NullTime{Time: time.Now(), Valid: true},
-			ApplicationID:      applicationID,
+			Name:           faker.Word(),
+			Slug:           faker.Word(),
+			Kind:           faker.Word(),
+			APITokenPrefix: sql.NullString{String: faker.Word(), Valid: true},
+			APITokenDigest: []byte{},
+			ArchivedAt:     sql.NullTime{Time: time.Now(), Valid: true},
+			ApplicationID:  applicationID,
 		},
 	}
 
@@ -43,16 +43,16 @@ func CreateEnvironment(ctx context.Context, exec storage.Executor, applicationID
 	built := BuildEnvironment(applicationID, opts...)
 
 	entity := models.EnvironmentEntity{
-		ID:                 uuid.New(),
-		CreatedAt:          time.Now(),
-		UpdatedAt:          time.Now(),
-		Name:               built.Name,
-		Slug:               built.Slug,
-		Kind:               built.Kind,
-		WebhookTokenPrefix: built.WebhookTokenPrefix,
-		WebhookTokenDigest: built.WebhookTokenDigest,
-		ArchivedAt:         built.ArchivedAt,
-		ApplicationID:      built.ApplicationID,
+		ID:             uuid.New(),
+		CreatedAt:      time.Now(),
+		UpdatedAt:      time.Now(),
+		Name:           built.Name,
+		Slug:           built.Slug,
+		Kind:           built.Kind,
+		APITokenPrefix: built.APITokenPrefix,
+		APITokenDigest: built.APITokenDigest,
+		ArchivedAt:     built.ArchivedAt,
+		ApplicationID:  built.ApplicationID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -94,15 +94,15 @@ func WithEnvironmentsKind(value string) EnvironmentOption {
 	}
 }
 
-func WithEnvironmentsWebhookTokenPrefix(value sql.NullString) EnvironmentOption {
+func WithEnvironmentsAPITokenPrefix(value sql.NullString) EnvironmentOption {
 	return func(f *EnvironmentFactory) {
-		f.EnvironmentEntity.WebhookTokenPrefix = value
+		f.EnvironmentEntity.APITokenPrefix = value
 	}
 }
 
-func WithEnvironmentsWebhookTokenDigest(value []byte) EnvironmentOption {
+func WithEnvironmentsAPITokenDigest(value []byte) EnvironmentOption {
 	return func(f *EnvironmentFactory) {
-		f.EnvironmentEntity.WebhookTokenDigest = value
+		f.EnvironmentEntity.APITokenDigest = value
 	}
 }
 

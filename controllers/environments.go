@@ -67,6 +67,7 @@ func (controller Environments) RegisterRoutes(router *router.Router) error {
 		{http.MethodPost, routes.EnvironmentDeploymentsCreate, controller.Deploy},
 		{http.MethodPost, routes.EnvironmentReleaseDeploymentsCreate, controller.RedeployRelease},
 		{http.MethodPost, routes.EnvironmentDeploymentRetry, controller.RetryDeployment},
+		{http.MethodPost, routes.EnvironmentAPITokenRotate, controller.RotateAPIToken},
 		{http.MethodPost, routes.EnvironmentSecretsCreate, controller.CreateSecret},
 		{http.MethodPost, routes.EnvironmentSecretRotate, controller.RotateSecret},
 		{http.MethodDelete, routes.EnvironmentSecretDestroy, controller.ArchiveSecret},
@@ -77,6 +78,19 @@ func (controller Environments) RegisterRoutes(router *router.Router) error {
 		registered = append(registered, err)
 	}
 	return errors.Join(registered...)
+}
+
+func (controller Environments) RotateAPIToken(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	if err != nil {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Environment not found"})
+	}
+	token, err := controller.setup.RotateAPIToken(etx.Request().Context(), params.ApplicationID, params.EnvironmentID)
+	if err != nil {
+		return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+	}
+	etx.Response().Header().Set("Cache-Control", "no-store")
+	return etx.JSON(http.StatusCreated, map[string]string{"token": token})
 }
 
 func (controller Environments) Logs(etx *echo.Context) error {
@@ -196,13 +210,20 @@ func (controller Environments) RetryDeployment(etx *echo.Context) error {
 
 func (controller Environments) Deploy(etx *echo.Context) error {
 	params, err := environmentPathParams(etx)
+	var payload struct {
+		Reference string `json:"reference"`
+	}
 	if err == nil {
-		_, err = controller.setup.QueueManualDeploy(etx.Request().Context(), params.ApplicationID, params.EnvironmentID, cookies.ExtractFromCookieApp(etx).UserID)
+		err = etx.Bind(&payload)
+	}
+	if err == nil {
+		userID := cookies.ExtractFromCookieApp(etx).UserID
+		_, err = controller.setup.QueueSourceDeployment(etx.Request().Context(), params.ApplicationID, params.EnvironmentID, &userID, "user", payload.Reference)
 	}
 	if err != nil {
 		_ = cookies.AddFlash(etx, cookies.FlashError, err.Error())
 	} else {
-		_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Build & deploy queued")
+		_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Deployment queued")
 	}
 	return inertia.Redirect(etx, routes.EnvironmentShow.URL(params.routeParams()), http.StatusSeeOther)
 }
@@ -272,6 +293,7 @@ func environmentOverviewProps(overview services.EnvironmentOverview) map[string]
 	return map[string]any{
 		"applicationId":   overview.ApplicationID,
 		"applicationName": overview.ApplicationName,
+		"sourceType":      overview.SourceType,
 		"environment": environmentIdentityProps{
 			ID: overview.Environment.ID, Name: overview.Environment.Name, Kind: overview.Environment.Kind,
 		},
@@ -290,6 +312,7 @@ func environmentOverviewProps(overview services.EnvironmentOverview) map[string]
 		"releases":         overview.Releases,
 		"deployments":      overview.Deployments,
 		"instances":        overview.Instances,
+		"apiTokenPrefix":   overview.APITokenPrefix,
 	}
 }
 
@@ -446,9 +469,10 @@ func (controller Environments) UpdateSource(etx *echo.Context) error {
 			setupComplete = details.SetupComplete
 			err = controller.applications.UpdateEnvironmentSource(etx.Request().Context(), params.ApplicationID, params.EnvironmentID, data)
 			if err == nil && details.SetupComplete {
-				_, err = controller.setup.QueueManualDeploy(
+				userID := cookies.ExtractFromCookieApp(etx).UserID
+				_, err = controller.setup.QueueSourceDeployment(
 					etx.Request().Context(), params.ApplicationID, params.EnvironmentID,
-					cookies.ExtractFromCookieApp(etx).UserID,
+					&userID, "user", "",
 				)
 				queued = err == nil
 			}
@@ -562,7 +586,7 @@ func (controller Environments) CompleteSetup(etx *echo.Context) error {
 		_ = cookies.AddFlash(etx, cookies.FlashError, "Environment setup failed")
 		return inertia.Redirect(etx, routes.EnvironmentSetup.URL(params.routeParams()), http.StatusSeeOther)
 	}
-	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Environment setup completed and the first build was queued")
+	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Environment setup completed and the first deployment was queued")
 	return inertia.Redirect(etx, routes.EnvironmentShow.URL(params.routeParams()), http.StatusSeeOther)
 }
 
