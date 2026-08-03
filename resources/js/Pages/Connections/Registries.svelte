@@ -1,6 +1,6 @@
 <script lang="ts">
   import BoxesIcon from '@lucide/svelte/icons/boxes'
-  import { router, useForm } from '@inertiajs/svelte'
+  import { Link, router, useForm } from '@inertiajs/svelte'
 
   import ConfirmActionDialog from '@/Components/ConfirmActionDialog.svelte'
   import FormField from '@/Components/FormField.svelte'
@@ -54,15 +54,16 @@
       onFinish: () => (archiveProcessing = false),
     })
   }
+
 </script>
 
-<svelte:head><title>Registry Resources</title></svelte:head>
+<svelte:head><title>Image Registry</title></svelte:head>
 
 <DashboardLayout email={auth.email}>
   <div class="space-y-8">
     <header class="max-w-3xl">
       <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">Connections</p>
-		<h1 class="mt-3 text-3xl font-semibold">Registry Resources</h1>
+		<h1 class="mt-3 text-3xl font-semibold">Image Registry</h1>
       <p class="mt-4 text-sm leading-6 text-muted-foreground">Publish Application images to the DeployCrate-managed registry, Docker Hub, or another authenticated OCI registry.</p>
     </header>
 
@@ -85,14 +86,17 @@
     <section class="space-y-4">
       <div><h2 class="text-xl font-semibold">Available registries</h2><p class="mt-1 text-sm text-muted-foreground">These destinations are selectable when creating or editing an Application source.</p></div>
       {#if registries.length === 0}
-        <Empty.Root class="border border-border"><Empty.Header><Empty.Media variant="icon"><BoxesIcon /></Empty.Media><Empty.Title>No Registry Resources</Empty.Title><Empty.Description>Connect an external OCI registry to publish and deploy Application images.</Empty.Description></Empty.Header></Empty.Root>
+        <Empty.Root class="border border-border"><Empty.Header><Empty.Media variant="icon"><BoxesIcon /></Empty.Media><Empty.Title>No image registries</Empty.Title><Empty.Description>Connect an external OCI registry to publish and deploy Application images.</Empty.Description></Empty.Header></Empty.Root>
       {:else}
         <div class="grid gap-4 md:grid-cols-2">
           {#each registries as registry (registry.id)}
             <Card.Root>
-              <Card.Header><Card.Action><StatusBadge status={registry.managed ? 'managed' : 'external'} /></Card.Action><Card.Title>{registry.name}</Card.Title><Card.Description>{registry.endpoint}</Card.Description></Card.Header>
+              <Card.Header><Card.Action><StatusBadge status={registry.managed ? 'managed' : 'external'} /></Card.Action><Card.Title><Link class="hover:text-primary" href={routes.registryResourceShow(registry.id)}>{registry.name}</Link></Card.Title><Card.Description>{registry.endpoint}</Card.Description></Card.Header>
               <Card.Content class="grid gap-3 text-sm sm:grid-cols-2"><div><p class="text-xs text-muted-foreground">Protocol</p><p class="mt-1">OCI Distribution</p></div><div><p class="text-xs text-muted-foreground">Username</p><p class="mt-1 font-mono">{registry.username}</p></div></Card.Content>
-					{#if !registry.managed}<Card.Footer class="border-t border-border"><Button size="sm" variant="destructive" onclick={() => askToArchive(registry)}>Archive</Button></Card.Footer>{/if}
+					<Card.Footer class="border-t border-border">
+						<Button size="sm" variant="outline">{#snippet child({ props })}<Link {...props} href={routes.registryResourceShow(registry.id)}>View registry</Link>{/snippet}</Button>
+						{#if !registry.managed}<Button size="sm" variant="destructive" onclick={() => askToArchive(registry)}>Archive</Button>{/if}
+					</Card.Footer>
             </Card.Root>
           {/each}
         </div>

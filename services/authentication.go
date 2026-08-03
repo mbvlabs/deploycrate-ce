@@ -9,6 +9,8 @@ import (
 
 	"deploycrate-ce/internal/validation"
 	"deploycrate-ce/models"
+
+	"github.com/google/uuid"
 )
 
 var (
@@ -44,9 +46,38 @@ func (i Identity) AuthenticateUser(
 
 	}
 
+	return i.authenticatePassword(ctx, user, data.Password)
+}
+
+func (i Identity) VerifyUserPassword(
+	ctx context.Context,
+	userID uuid.UUID,
+	password string,
+) error {
+	if userID == uuid.Nil || password == "" {
+		return ErrInvalidCredentials
+	}
+
+	user, err := models.User.Find(ctx, i.db.Executor(), userID)
+	if err != nil {
+		if errors.Is(err, models.ErrNotFound) {
+			return ErrInvalidCredentials
+		}
+		return fmt.Errorf("find user: %w", err)
+	}
+
+	_, err = i.authenticatePassword(ctx, user, password)
+	return err
+}
+
+func (i Identity) authenticatePassword(
+	ctx context.Context,
+	user models.UserEntity,
+	password string,
+) (models.UserEntity, error) {
 	validPassword, needsRehash, err := verifyPasswordWithPeppers(
 		user,
-		data.Password,
+		password,
 		i.pepper,
 		i.previousPeppers,
 	)
@@ -63,7 +94,7 @@ func (i Identity) AuthenticateUser(
 	}
 
 	if needsRehash {
-		hashedPassword, err := models.HashPassword(data.Password, i.pepper)
+		hashedPassword, err := models.HashPassword(password, i.pepper)
 		if err != nil {
 			return models.UserEntity{}, fmt.Errorf("rehash password with current pepper: %w", err)
 		}

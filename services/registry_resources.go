@@ -28,14 +28,17 @@ import (
 
 const registryCredentialPurpose = "resource-credential/v1"
 
+var ErrManagedRegistryUnavailable = errors.New("managed Registry is unavailable")
+
 type RegistryResources struct {
 	db       storage.Pool
 	config   config.Config
 	registry registryclient.Client
+	identity Identity
 }
 
-func NewRegistryResources(db storage.Pool, cfg config.Config) *RegistryResources {
-	return &RegistryResources{db: db, config: cfg, registry: registryclient.New()}
+func NewRegistryResources(db storage.Pool, cfg config.Config, identity Identity) *RegistryResources {
+	return &RegistryResources{db: db, config: cfg, registry: registryclient.New(), identity: identity}
 }
 
 type ExternalRegistryResourceInput struct {
@@ -57,11 +60,17 @@ type RegistryResourceSummary struct {
 	CreatedAt      time.Time `json:"createdAt" bun:"created_at"`
 }
 
+type ManagedRegistryCredentials struct {
+	Endpoint string `json:"endpoint"`
+	Username string `json:"username"`
+	Password string `json:"password"`
+}
+
 func (service *RegistryResources) List(ctx context.Context) ([]RegistryResourceSummary, error) {
 	registries := make([]RegistryResourceSummary, 0)
 	err := service.db.Executor().NewSelect().TableExpr("registry_resources AS registry").
 		ColumnExpr("resource.id, resource.name, resource.slug, registry.provider, resource.created_at").
-		ColumnExpr("CASE WHEN endpoint.port IN (80, 443) THEN endpoint.address ELSE endpoint.address || ':' || endpoint.port::text END AS endpoint").
+		ColumnExpr("CASE WHEN resource.system_managed THEN COALESCE(NULLIF(registry.configuration ->> 'route_host', ''), endpoint.address) WHEN endpoint.port IN (80, 443) THEN endpoint.address ELSE endpoint.address || ':' || endpoint.port::text END AS endpoint").
 		ColumnExpr("credential.name AS credential_name, COALESCE(credential.username, '') AS username").
 		ColumnExpr("resource.system_managed AS managed").
 		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.configuration ->> 'engine' = 'registry' AND resource.archived_at IS NULL").
@@ -69,6 +78,81 @@ func (service *RegistryResources) List(ctx context.Context) ([]RegistryResourceS
 		Join("JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.archived_at IS NULL").
 		OrderExpr("resource.name ASC").Scan(ctx, &registries)
 	return registries, err
+}
+
+func (service *RegistryResources) Find(ctx context.Context, resourceID uuid.UUID) (RegistryResourceSummary, error) {
+	var registry RegistryResourceSummary
+	err := service.db.Executor().NewSelect().TableExpr("registry_resources AS registry").
+		ColumnExpr("resource.id, resource.name, resource.slug, registry.provider, resource.created_at").
+		ColumnExpr("CASE WHEN resource.system_managed THEN COALESCE(NULLIF(registry.configuration ->> 'route_host', ''), endpoint.address) WHEN endpoint.port IN (80, 443) THEN endpoint.address ELSE endpoint.address || ':' || endpoint.port::text END AS endpoint").
+		ColumnExpr("credential.name AS credential_name, COALESCE(credential.username, '') AS username").
+		ColumnExpr("resource.system_managed AS managed").
+		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.configuration ->> 'engine' = 'registry' AND resource.archived_at IS NULL").
+		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = resource.id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL").
+		Join("JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.archived_at IS NULL").
+		Where("resource.id = ?", resourceID).
+		Limit(1).
+		Scan(ctx, &registry)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RegistryResourceSummary{}, models.ErrNotFound
+	}
+	return registry, err
+}
+
+func (service *RegistryResources) RevealManagedCredentials(
+	ctx context.Context,
+	resourceID, userID uuid.UUID,
+	password string,
+) (ManagedRegistryCredentials, error) {
+	if err := service.identity.VerifyUserPassword(ctx, userID, password); err != nil {
+		return ManagedRegistryCredentials{}, err
+	}
+
+	var row struct {
+		Endpoint   string         `bun:"endpoint"`
+		Username   sql.NullString `bun:"username"`
+		EncPayload []byte         `bun:"enc_payload"`
+	}
+	err := service.db.Executor().NewSelect().TableExpr("registry_resources AS registry").
+		ColumnExpr("registry.configuration ->> 'route_host' AS endpoint").
+		ColumnExpr("credential.username, credential.enc_payload").
+		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.system_managed = TRUE AND resource.archived_at IS NULL").
+		Join("JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.archived_at IS NULL").
+		Where("registry.resource_id = ?", resourceID).
+		Where("credential.name = ?", "Registry publisher").
+		Limit(1).
+		Scan(ctx, &row)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ManagedRegistryCredentials{}, ErrManagedRegistryUnavailable
+		}
+		return ManagedRegistryCredentials{}, fmt.Errorf("load managed Registry credential: %w", err)
+	}
+	if strings.TrimSpace(row.Endpoint) == "" || !row.Username.Valid || strings.TrimSpace(row.Username.String) == "" {
+		return ManagedRegistryCredentials{}, ErrManagedRegistryUnavailable
+	}
+
+	plaintext, err := secretcrypto.DecryptForPurpose(
+		row.EncPayload,
+		service.config.App.SessionEncryptionKey,
+		registryCredentialPurpose,
+	)
+	if err != nil {
+		return ManagedRegistryCredentials{}, errors.New("managed Registry credential cannot be decrypted")
+	}
+	var payload struct {
+		SchemaVersion int               `json:"schema_version"`
+		Values        map[string]string `json:"values"`
+	}
+	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 || payload.Values["password"] == "" {
+		return ManagedRegistryCredentials{}, errors.New("managed Registry credential payload is invalid")
+	}
+
+	return ManagedRegistryCredentials{
+		Endpoint: strings.TrimSpace(row.Endpoint),
+		Username: strings.TrimSpace(row.Username.String),
+		Password: payload.Values["password"],
+	}, nil
 }
 
 func (service *RegistryResources) CreateExternal(ctx context.Context, input ExternalRegistryResourceInput) (models.RegistryResourceEntity, error) {
