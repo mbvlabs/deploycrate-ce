@@ -132,6 +132,7 @@ export const routes = {
   systemTasks: () => '/system/tasks',
   systemTelemetry: () => '/system/telemetry',
   systemTelemetryLogs: () => '/system/telemetry/logs',
+  systemTelemetryTrace: (id: string) => `/system/telemetry/traces/${id}`,
   systemUpdate: () => '/system/update',
   systemUpdateCreate: () => '/system/update',
   systemUpdateStatus: () => '/system/update/status',

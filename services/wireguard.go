@@ -18,6 +18,7 @@ import (
 
 const WireGuardMeshCIDR = "10.99.0.0/16"
 const WireGuardPrivateAddress = "10.99.0.1"
+const ControlPlaneOTLPEndpoint = "http://" + WireGuardPrivateAddress + ":4318"
 const wireGuardAddressAllocationLock = "deploycrate-wireguard-address-allocation"
 
 type WireGuardDesiredPeer struct {

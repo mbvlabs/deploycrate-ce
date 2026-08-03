@@ -129,6 +129,7 @@ func checkSystemListeners(ctx context.Context) (string, error) {
 	}
 	for _, listener := range []string{
 		"10.99.0.1:9100",
+		"10.99.0.1:4318",
 		"127.0.0.1:2019",
 		"127.0.0.1:4318",
 		"127.0.0.1:8123",
@@ -166,7 +167,7 @@ func checkSystemListeners(ctx context.Context) (string, error) {
 			return "", fmt.Errorf("%s has a public listener", listener.name)
 		}
 	}
-	return "node-exporter is on WireGuard; telemetry and control-plane listeners are local", nil
+	return "node-exporter and the managed-node OTLP receiver are on WireGuard; control-plane listeners are local", nil
 }
 
 func checkSystemWireGuard(ctx context.Context) (string, error) {

@@ -100,6 +100,7 @@ processors:
     log_statements:
       - set(log.attributes["deploycrate.application.id"], log.body["COM_DEPLOYCRATE_APPLICATION"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
       - set(log.attributes["deploycrate.environment.id"], log.body["COM_DEPLOYCRATE_ENVIRONMENT"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["deploycrate.target.id"], log.body["COM_DEPLOYCRATE_TARGET"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
       - set(log.attributes["deploycrate.deployment.id"], log.body["COM_DEPLOYCRATE_DEPLOYMENT"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
       - set(log.attributes["deploycrate.instance.id"], log.body["COM_DEPLOYCRATE_INSTANCE"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
       - set(log.attributes["deploycrate.release.id"], log.body["COM_DEPLOYCRATE_RELEASE"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
@@ -111,14 +112,14 @@ processors:
       - set(log.attributes["log.iostream"], "stdout") where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil and log.body["PRIORITY"] != "3"
       - set(log.body, log.body["MESSAGE"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil and log.body["MESSAGE"] != nil
       - replace_pattern(log.body, "\\\\x1B\\\\[[0-?]*[ -/]*[@-~]", "") where log.attributes["deploycrate.environment.id"] != nil and IsString(log.body)
-  resource/host:
+  resource/control_plane:
     attributes:
       - key: service.namespace
         value: deploycrate-ce
-        action: upsert
+        action: insert
       - key: host.id
         value: "${INSTANCE_ID}"
-        action: upsert
+        action: insert
 exporters:
   clickhouse:
     endpoint: tcp://127.0.0.1:9000?dial_timeout=10s
@@ -177,17 +178,33 @@ service:
                 without_type_suffix: true
                 without_units: true
   pipelines:
-    logs:
-      receivers: [journald, otlp/local, otlp/nodes]
-      processors: [memory_limiter, transform/workload_logs, resource/host]
+    logs/journald:
+      receivers: [journald]
+      processors: [memory_limiter, transform/workload_logs, resource/control_plane]
       exporters: [clickhouse]
-    traces:
-      receivers: [otlp/local, otlp/nodes]
-      processors: [memory_limiter, resource/host]
+    logs/local:
+      receivers: [otlp/local]
+      processors: [memory_limiter, resource/control_plane]
       exporters: [clickhouse]
-    metrics:
-      receivers: [otlp/local, otlp/nodes]
-      processors: [memory_limiter, resource/host]
+    logs/nodes:
+      receivers: [otlp/nodes]
+      processors: [memory_limiter]
+      exporters: [clickhouse]
+    traces/local:
+      receivers: [otlp/local]
+      processors: [memory_limiter, resource/control_plane]
+      exporters: [clickhouse]
+    traces/nodes:
+      receivers: [otlp/nodes]
+      processors: [memory_limiter]
+      exporters: [clickhouse]
+    metrics/local:
+      receivers: [otlp/local]
+      processors: [memory_limiter, resource/control_plane]
+      exporters: [clickhouse]
+    metrics/nodes:
+      receivers: [otlp/nodes]
+      processors: [memory_limiter]
       exporters: [clickhouse]
 EOF
 chown root:otelcol-contrib /etc/otelcol-contrib/config.yaml
@@ -235,6 +252,7 @@ EOF
 
 ufw delete allow 4318/tcp >/dev/null 2>&1 || true
 ufw allow in on wg0 to 10.99.0.1 port 4318 proto tcp
+ufw allow from 172.16.0.0/12 to 10.99.0.1 port 4318 proto tcp
 ufw delete allow 8888/tcp >/dev/null 2>&1 || true
 ufw delete allow 13133/tcp >/dev/null 2>&1 || true
 /usr/local/bin/otelcol-contrib validate --config=/etc/otelcol-contrib/config.yaml

@@ -163,34 +163,19 @@ func mayBypassCSRF(request *http.Request) bool {
 }
 
 func Logger(tel *telemetry.Telemetry) echo.MiddlewareFunc {
-	var httpRequestsTotal metric.Int64Counter
-	var httpDuration metric.Float64Histogram
 	var httpInFlight metric.Int64UpDownCounter
 
 	if tel.HasMetrics() {
 		var err error
-		httpRequestsTotal, err = telemetry.HTTPRequestsTotal()
-		if err != nil {
-			slog.Warn("failed to create http_requests_total metric", "error", err)
-		}
-		httpDuration, err = telemetry.HTTPRequestDuration()
-		if err != nil {
-			slog.Warn("failed to create http_request_duration metric", "error", err)
-		}
 		httpInFlight, err = telemetry.HTTPRequestsInFlight()
 		if err != nil {
-			slog.Warn("failed to create http_requests_in_flight metric", "error", err)
-		}
-
-		meter := telemetry.GetMeter(config.ServiceName)
-		if err := telemetry.SetupRuntimeMetricsInCallback(meter); err != nil {
-			slog.Warn("failed to setup runtime metrics", "error", err)
+			slog.Warn("failed to create http.server.active_requests metric", "error", err)
 		}
 	}
 
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
-			if isAssetsPath(c.Request().URL.Path) || isAPIPath(c.Request().URL.Path) ||
+			if isAssetsPath(c.Request().URL.Path) ||
 				c.Request().URL.Path == routes.SystemTelemetryLogs.Path() {
 				return next(c)
 			}
@@ -199,27 +184,26 @@ func Logger(tel *telemetry.Telemetry) echo.MiddlewareFunc {
 			start := time.Now()
 
 			if tel.HasMetrics() && httpInFlight != nil {
-				httpInFlight.Add(ctx, 1)
-				defer httpInFlight.Add(ctx, -1)
+				attributes := metric.WithAttributes(attribute.String("http.request.method", c.Request().Method))
+				httpInFlight.Add(ctx, 1, attributes)
+				defer httpInFlight.Add(ctx, -1, attributes)
 			}
 
 			err := next(c)
 			duration := time.Since(start)
-			route := c.Path()
 
 			statusCode := 0
 			if resp, unwrapErr := echo.UnwrapResponse(c.Response()); unwrapErr == nil {
 				statusCode = resp.Status
 			}
-
-			if tel.HasMetrics() && httpRequestsTotal != nil && httpDuration != nil {
-				attrs := []attribute.KeyValue{
-					attribute.String("method", c.Request().Method),
-					attribute.String("route", route),
-					attribute.Int("status_code", statusCode),
+			if statusCode == 0 {
+				statusCode = http.StatusOK
+				var httpError *echo.HTTPError
+				if errors.As(err, &httpError) {
+					statusCode = httpError.Code
+				} else if err != nil {
+					statusCode = http.StatusInternalServerError
 				}
-				httpRequestsTotal.Add(ctx, 1, metric.WithAttributes(attrs...))
-				httpDuration.Record(ctx, duration.Seconds(), metric.WithAttributes(attrs...))
 			}
 
 			slog.InfoContext(ctx, "HTTP request completed",

@@ -41,6 +41,7 @@ docker exec deploycrate-ce-clickhouse clickhouse-client \
 ip -4 address show dev wg0 | grep -Fq 'inet 10.99.0.1/16'
 wg show wg0 >/dev/null
 ss -lnt | grep -Fq '10.99.0.1:9100'
+ss -lnt | grep -Fq '10.99.0.1:4318'
 if ss -lnt | grep -Eq '(^|[[:space:]])(0\.0\.0\.0|\*):9100([[:space:]]|$)'; then
   printf 'node-exporter is exposed outside WireGuard\n' >&2
   exit 1

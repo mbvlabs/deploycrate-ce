@@ -121,7 +121,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		}
 	} else {
 		candidate, err = service.workloads.Run(ctx, scope.Target.ServerID, containerclient.WorkloadRunSpec{
-			ApplicationID: scope.ApplicationID, EnvironmentID: scope.Environment.ID, DeploymentID: scope.Deployment.ID,
+			ApplicationID: scope.ApplicationID, EnvironmentID: scope.Environment.ID, TargetID: scope.Target.ID, DeploymentID: scope.Deployment.ID,
 			InstanceID: scope.Instance.ID, ReleaseID: scope.Release.ID,
 			ContainerName:  "dc-app-" + scope.Environment.ID.String() + "-" + scope.Deployment.ID.String(),
 			ImageReference: scope.Release.ArtifactReference, NetworkName: networkName, RestartPolicy: "unless-stopped",
@@ -458,6 +458,7 @@ func (service *DeploymentExecution) composeEnvironment(ctx context.Context, scop
 func validateCandidateOwnership(candidate containerclient.WorkloadState, scope deploymentScope) error {
 	expected := map[string]string{
 		"com.deploycrate.application": scope.ApplicationID.String(), "com.deploycrate.environment": scope.Environment.ID.String(),
+		"com.deploycrate.target":     scope.Target.ID.String(),
 		"com.deploycrate.deployment": scope.Deployment.ID.String(), "com.deploycrate.instance": scope.Instance.ID.String(),
 		"com.deploycrate.release": scope.Release.ID.String(),
 	}

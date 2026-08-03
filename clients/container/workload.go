@@ -20,12 +20,14 @@ const (
 	workloadDockerExecutable  = "/usr/bin/docker"
 	labelApplication          = "com.deploycrate.application"
 	labelEnvironment          = "com.deploycrate.environment"
+	labelTarget               = "com.deploycrate.target"
 	labelDeployment           = "com.deploycrate.deployment"
 	labelInstance             = "com.deploycrate.instance"
 	labelRelease              = "com.deploycrate.release"
 	labelNetworkOwner         = "com.deploycrate.environment"
 	labelResourceInstallation = "com.deploycrate.resource-installation"
 	WorkloadLabelEnvironment  = labelEnvironment
+	WorkloadLabelTarget       = labelTarget
 	WorkloadLabelDeployment   = labelDeployment
 	WorkloadLabelInstance     = labelInstance
 	WorkloadLabelResource     = labelResourceInstallation
@@ -35,6 +37,7 @@ const (
 type WorkloadRunSpec struct {
 	ApplicationID     uuid.UUID
 	EnvironmentID     uuid.UUID
+	TargetID          uuid.UUID
 	DeploymentID      uuid.UUID
 	InstanceID        uuid.UUID
 	ReleaseID         uuid.UUID
@@ -238,7 +241,7 @@ func PrepareWorkloadRun(spec WorkloadRunSpec) (PreparedWorkloadRun, error) {
 	if !validWorkloadPublishAddress(publishAddress) {
 		return PreparedWorkloadRun{}, errors.New("workload publish address is invalid")
 	}
-	if spec.ApplicationID == uuid.Nil || spec.EnvironmentID == uuid.Nil || spec.DeploymentID == uuid.Nil ||
+	if spec.ApplicationID == uuid.Nil || spec.EnvironmentID == uuid.Nil || spec.TargetID == uuid.Nil || spec.DeploymentID == uuid.Nil ||
 		spec.InstanceID == uuid.Nil || spec.ReleaseID == uuid.Nil || spec.ContainerPort < 1 || spec.ContainerPort > 65535 ||
 		!strings.Contains(spec.ImageReference, "@sha256:") || spec.RestartPolicy != "unless-stopped" {
 		return PreparedWorkloadRun{}, errors.New("workload Docker specification is invalid")
@@ -246,6 +249,7 @@ func PrepareWorkloadRun(spec WorkloadRunSpec) (PreparedWorkloadRun, error) {
 	arguments := []string{"run", "--detach", "--name", spec.ContainerName,
 		"--label", labelApplication + "=" + spec.ApplicationID.String(),
 		"--label", labelEnvironment + "=" + spec.EnvironmentID.String(),
+		"--label", labelTarget + "=" + spec.TargetID.String(),
 		"--label", labelDeployment + "=" + spec.DeploymentID.String(),
 		"--label", labelInstance + "=" + spec.InstanceID.String(),
 		"--label", labelRelease + "=" + spec.ReleaseID.String(),

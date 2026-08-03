@@ -120,6 +120,37 @@
     systemContainers: AttributedTelemetry[]
   }
 
+  type ApplicationTelemetry = {
+    available: boolean
+    observedAt: string
+    windowSeconds: number
+    requestsPerSecond: number
+    serverErrorRate: number
+    clientErrorRate: number
+    meanRequestDurationMs: number
+    runtimeMemoryBytes: number
+    heapAllocatedBytes: number
+    heapAllocations: number
+    heapGoalBytes: number
+    goroutines: number
+  }
+
+  type TraceSpan = {
+    traceId: string
+    spanId: string
+    parentSpanId: string
+    name: string
+    kind: string
+    serviceName: string
+    scope: string
+    statusCode: string
+    statusMessage: string
+    resourceAttributes: Record<string, string>
+    spanAttributes: Record<string, string>
+    startedAt: string
+    durationNs: number
+  }
+
   type SystemLog = {
     id: string
     message: string
@@ -142,10 +173,12 @@
     hasMore: boolean
   }
 
-  let { auth, system, telemetry }: {
+  let { auth, system, telemetry, applicationTelemetry, collectorEndpoint }: {
     auth: { email: string }
     system: SystemIdentity
     telemetry: SystemTelemetry
+    applicationTelemetry: ApplicationTelemetry
+    collectorEndpoint: string
   } = $props()
 
   let systemLogs = $state<SystemLog[]>([])
@@ -155,6 +188,10 @@
   let systemLogConnectionError = $state('')
   let followingSystemLogs = $state(true)
   let systemLogViewport: HTMLDivElement
+  let selectedTraceID = $state('')
+  let traceSpans = $state<TraceSpan[]>([])
+  let traceLoading = $state(false)
+  let traceError = $state('')
 
   const formatBytes = (value: number) => {
     if (!Number.isFinite(value) || value < 0) return 'Unavailable'
@@ -166,6 +203,9 @@
   const formatRate = (value: number) => `${formatBytes(value)}/s`
   const formatCores = (value: number) => `${value.toFixed(2)} cores`
   const formatCount = (value: number) => value.toFixed(0)
+  const formatPercent = (value: number) => `${(value * 100).toFixed(2)}%`
+  const formatDuration = (milliseconds: number) => milliseconds < 1 ? `${(milliseconds * 1000).toFixed(0)} µs` : `${milliseconds.toFixed(1)} ms`
+  const formatSpanDuration = (nanoseconds: number) => formatDuration(nanoseconds / 1_000_000)
   const short = (value: string) => value ? value.slice(0, 8) : 'Unknown'
   const stamp = (value: string) => value ? new Date(value).toLocaleString() : 'Unknown'
   const label = (value: string) => value ? value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) : 'Unknown'
@@ -254,6 +294,26 @@
     return snapshot
   }
 
+  async function loadTrace(traceID: string) {
+    selectedTraceID = traceID
+    traceSpans = []
+    traceError = ''
+    traceLoading = true
+    try {
+      const response = await window.fetch(routes.systemTelemetryTrace(traceID), {
+        cache: 'no-store',
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' },
+      })
+      if (!response.ok) throw new Error(`Trace returned ${response.status}`)
+      traceSpans = ((await response.json()) as { spans: TraceSpan[] }).spans
+    } catch {
+      traceError = 'This trace could not be loaded.'
+    } finally {
+      traceLoading = false
+    }
+  }
+
   function updateSystemLogFollow() {
     followingSystemLogs = systemLogViewport.scrollHeight
       - systemLogViewport.scrollTop
@@ -313,8 +373,23 @@
         <p class="font-medium text-foreground">{system.serverName}</p>
         <p class="mt-1 font-mono">{system.serverAddress}</p>
         {#if telemetry.available}<p class="mt-1">Observed {stamp(telemetry.observedAt)}</p>{/if}
+        <p class="mt-2">OTLP/HTTP over WireGuard</p>
+        <p class="mt-1 font-mono text-foreground">{collectorEndpoint}</p>
       </div>
     </header>
+
+    <section aria-labelledby="application-telemetry-heading">
+      <div class="mb-4">
+        <h2 id="application-telemetry-heading" class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Application signals</h2>
+        <p class="mt-1 text-xs text-muted-foreground">OpenTelemetry HTTP and Go runtime metrics for the DeployCrate CE application</p>
+      </div>
+      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Card.Root><Card.Header><Card.Title class="text-sm">Request rate</Card.Title></Card.Header><Card.Content><p class="text-2xl font-semibold">{applicationTelemetry.available ? `${applicationTelemetry.requestsPerSecond.toFixed(2)} req/s` : 'Unavailable'}</p><p class="mt-1 text-xs text-muted-foreground">Rolling OpenTelemetry collection window</p></Card.Content></Card.Root>
+        <Card.Root><Card.Header><Card.Title class="text-sm">HTTP errors</Card.Title></Card.Header><Card.Content><p class="text-sm"><span class="text-muted-foreground">Server</span> {applicationTelemetry.available ? formatPercent(applicationTelemetry.serverErrorRate) : 'Unavailable'}</p><p class="mt-2 text-sm"><span class="text-muted-foreground">Client</span> {applicationTelemetry.available ? formatPercent(applicationTelemetry.clientErrorRate) : 'Unavailable'}</p></Card.Content></Card.Root>
+        <Card.Root><Card.Header><Card.Title class="text-sm">Request duration</Card.Title></Card.Header><Card.Content><p class="text-2xl font-semibold">{applicationTelemetry.available ? formatDuration(applicationTelemetry.meanRequestDurationMs) : 'Unavailable'}</p><p class="mt-1 text-xs text-muted-foreground">Mean server request duration</p></Card.Content></Card.Root>
+        <Card.Root><Card.Header><Card.Title class="text-sm">Go runtime</Card.Title></Card.Header><Card.Content><p class="text-sm"><span class="text-muted-foreground">Heap allocated</span> {applicationTelemetry.available ? formatBytes(applicationTelemetry.heapAllocatedBytes) : 'Unavailable'}</p><p class="mt-2 text-sm"><span class="text-muted-foreground">Goroutines</span> {applicationTelemetry.available ? formatCount(applicationTelemetry.goroutines) : 'Unavailable'}</p></Card.Content></Card.Root>
+      </div>
+    </section>
 
     <section aria-labelledby="host-throughput-heading">
       <div class="mb-4">
@@ -449,7 +524,7 @@
                 <span class="select-none whitespace-nowrap text-muted-foreground">{stamp(log.occurredAt)}</span>
                 <div class="min-w-0">
                   <p class="select-none text-[10px] text-muted-foreground">
-                    {systemLogLevel(log)} · {log.slot || 'slot unknown'} · {systemLogSource(log)}{#if log.traceId} · trace {short(log.traceId)}{/if}{#if log.instance} · instance {short(log.instance)}{/if}
+                    {systemLogLevel(log)} · {log.slot || 'slot unknown'} · {systemLogSource(log)}{#if log.traceId} · <button class="underline underline-offset-2 hover:text-foreground" onclick={() => loadTrace(log.traceId)}>trace {short(log.traceId)}</button>{/if}{#if log.spanId} · span {short(log.spanId)}{/if}{#if log.instance} · instance {short(log.instance)}{/if}
                   </p>
                   <pre class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
                   {#if systemLogContext(log).length > 0}
@@ -471,5 +546,40 @@
         </Card.Content>
       </Card.Root>
     </section>
+
+    {#if selectedTraceID}
+      <section aria-labelledby="trace-heading">
+        <Card.Root>
+          <Card.Header>
+            <Card.Action><Button size="sm" variant="ghost" onclick={() => { selectedTraceID = ''; traceSpans = []; traceError = '' }}>Close</Button></Card.Action>
+            <Card.Title id="trace-heading">Trace {selectedTraceID}</Card.Title>
+            <Card.Description>Correlated OpenTelemetry spans across every service that contributed to this trace.</Card.Description>
+          </Card.Header>
+          <Card.Content class="p-0">
+            {#if traceLoading}<p class="p-6 text-sm text-muted-foreground">Loading trace...</p>
+            {:else if traceError}<p class="p-6 text-sm text-destructive">{traceError}</p>
+            {:else if traceSpans.length}
+              <div class="overflow-x-auto">
+                <table class="w-full min-w-[920px] text-left text-xs">
+                  <thead class="border-y border-border bg-muted/30 text-muted-foreground"><tr><th class="px-5 py-3">Started</th><th class="px-5 py-3">Service</th><th class="px-5 py-3">Span</th><th class="px-5 py-3">Span ID / parent</th><th class="px-5 py-3">Duration</th><th class="px-5 py-3">Status</th></tr></thead>
+                  <tbody>
+                    {#each traceSpans as span (span.spanId)}
+                      <tr class="border-b border-border last:border-0">
+                        <td class="px-5 py-4 whitespace-nowrap">{stamp(span.startedAt)}</td>
+                        <td class="px-5 py-4"><p class="font-medium">{span.serviceName}</p><p class="mt-1 text-muted-foreground">{span.kind || span.scope}</p></td>
+                        <td class="px-5 py-4 font-medium">{span.name}</td>
+                        <td class="px-5 py-4 font-mono"><p>{span.spanId}</p><p class="mt-1 text-muted-foreground">{span.parentSpanId || 'root'}</p></td>
+                        <td class="px-5 py-4">{formatSpanDuration(span.durationNs)}</td>
+                        <td class="px-5 py-4" class:text-destructive={span.statusCode === 'Error'}>{span.statusCode || 'Unset'}{#if span.statusMessage}<p class="mt-1 text-muted-foreground">{span.statusMessage}</p>{/if}</td>
+                      </tr>
+                    {/each}
+                  </tbody>
+                </table>
+              </div>
+            {:else}<p class="p-6 text-sm text-muted-foreground">No spans were retained for this trace.</p>{/if}
+          </Card.Content>
+        </Card.Root>
+      </section>
+    {/if}
   </div>
 </DashboardLayout>

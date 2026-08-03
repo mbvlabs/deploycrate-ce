@@ -114,7 +114,7 @@ scrape_configs:
       - regex: instance
         action: labeldrop
       - action: labelmap
-        regex: container_label_com_deploycrate_(application|environment|deployment|instance|release|resource_installation|component)
+        regex: container_label_com_deploycrate_(application|environment|target|deployment|instance|release|resource_installation|component)
         replacement: '$1'
       - source_labels: [__name__]
         regex: 'process_.*|cadvisor_version_info|container_scrape_error'

@@ -13,6 +13,7 @@ import (
 	"deploycrate-ce/config"
 
 	"github.com/google/uuid"
+	otelruntime "go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/propagation"
@@ -45,8 +46,8 @@ func New(cfg config.Config, lifecycle fx.Lifecycle, version ServiceVersion) (*Te
 		WithServiceInstance(uuid.NewString()),
 		WithResourceAttributes(
 			semconv.ServiceNamespaceKey.String(cfg.Telemetry.ServiceNamespace),
-			semconv.HostIDKey.String(cfg.App.InstanceID),
-			semconv.DeploymentEnvironment(config.Env),
+			attribute.String("deployment.environment.name", config.Env),
+			attribute.String("deploycrate.installation.id", cfg.App.InstanceID),
 			attribute.String("deploycrate.slot", cfg.App.Slot),
 		),
 		WithBatchConfig(cfg.Telemetry.BatchSize, cfg.Telemetry.BatchTimeoutMs, 2048),
@@ -202,6 +203,7 @@ func (t *Telemetry) initMetrics(ctx context.Context) error {
 	for _, exp := range exporters {
 		reader := sdkmetric.NewPeriodicReader(exp,
 			sdkmetric.WithInterval(t.config.batchTimeout),
+			sdkmetric.WithProducer(otelruntime.NewProducer()),
 		)
 		opts = append(opts, sdkmetric.WithReader(reader))
 	}
@@ -211,6 +213,9 @@ func (t *Telemetry) initMetrics(ctx context.Context) error {
 	t.meterProvider = meterProvider
 	t.shutdownFuncs = append(t.shutdownFuncs, meterProvider.Shutdown)
 	otel.SetMeterProvider(meterProvider)
+	if err := otelruntime.Start(otelruntime.WithMeterProvider(meterProvider)); err != nil {
+		return fmt.Errorf("failed to start Go runtime metrics: %w", err)
+	}
 
 	return nil
 }

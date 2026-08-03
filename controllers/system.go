@@ -22,11 +22,12 @@ import (
 )
 
 type System struct {
-	db     storage.Pool
-	health *services.SystemHealth
-	metric services.MetricRollupService
-	logs   *services.SystemLogs
-	access *services.ResourcePrivateAccess
+	db           storage.Pool
+	health       *services.SystemHealth
+	metric       services.MetricRollupService
+	logs         *services.SystemLogs
+	appTelemetry *services.SystemApplicationTelemetry
+	access       *services.ResourcePrivateAccess
 }
 
 func NewSystem(
@@ -34,9 +35,10 @@ func NewSystem(
 	health *services.SystemHealth,
 	metric services.MetricRollupService,
 	logs *services.SystemLogs,
+	appTelemetry *services.SystemApplicationTelemetry,
 	access *services.ResourcePrivateAccess,
 ) System {
-	return System{db: db, health: health, metric: metric, logs: logs, access: access}
+	return System{db: db, health: health, metric: metric, logs: logs, appTelemetry: appTelemetry, access: access}
 }
 
 func (s System) RegisterRoutes(r *router.Router) error {
@@ -51,6 +53,7 @@ func (s System) RegisterRoutes(r *router.Router) error {
 		{method: http.MethodGet, route: routes.SystemOverview, handler: s.Overview},
 		{method: http.MethodGet, route: routes.SystemTelemetry, handler: s.Telemetry},
 		{method: http.MethodGet, route: routes.SystemTelemetryLogs, handler: s.TelemetryLogs},
+		{method: http.MethodGet, route: routes.SystemTelemetryTrace, handler: s.TelemetryTrace},
 		{method: http.MethodGet, route: routes.SystemDeployments, handler: s.Deployments},
 		{method: http.MethodGet, route: routes.SystemResources, handler: s.Resources},
 		{method: http.MethodGet, route: routes.SystemResource, handler: s.Resource},
@@ -139,10 +142,16 @@ func (s System) Telemetry(etx *echo.Context) error {
 			err,
 		)
 	}
+	applicationData, err := s.appTelemetry.Snapshot(etx.Request().Context())
+	if err != nil {
+		slog.WarnContext(etx.Request().Context(), "failed to load DeployCrate CE application telemetry", "error", err)
+	}
 	return inertia.Page(etx, "System/Telemetry", inertia.Props{
-		"auth":      s.authProps(etx),
-		"system":    overview,
-		"telemetry": metricData,
+		"auth":                 s.authProps(etx),
+		"system":               overview,
+		"telemetry":            metricData,
+		"applicationTelemetry": applicationData,
+		"collectorEndpoint":    services.ControlPlaneOTLPEndpoint,
 	})
 }
 
@@ -161,6 +170,19 @@ func (s System) TelemetryLogs(etx *echo.Context) error {
 	}
 	etx.Response().Header().Set("Cache-Control", "no-store")
 	return etx.JSON(http.StatusOK, snapshot)
+}
+
+func (s System) TelemetryTrace(etx *echo.Context) error {
+	spans, err := s.appTelemetry.Trace(etx.Request().Context(), etx.Param("id"))
+	if errors.Is(err, services.ErrInvalidTraceID) {
+		return etx.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	if err != nil {
+		slog.ErrorContext(etx.Request().Context(), "failed to load OpenTelemetry trace", "error", err)
+		return etx.JSON(http.StatusInternalServerError, map[string]string{"error": "Trace could not be loaded"})
+	}
+	etx.Response().Header().Set("Cache-Control", "no-store")
+	return etx.JSON(http.StatusOK, map[string]any{"spans": spans})
 }
 
 func (s System) Deployments(etx *echo.Context) error {

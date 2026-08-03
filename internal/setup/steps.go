@@ -126,7 +126,7 @@ func DefaultSteps(operations Operations) []Step {
 			nil,
 		),
 		scriptSetupStep(
-			"docker-29-6-2-journald-v1",
+			"docker-29-6-2-journald-v2",
 			"Install and configure the pinned Docker toolchain",
 			"docker.sh",
 			func(cfg Config) map[string]string {
@@ -142,7 +142,7 @@ func DefaultSteps(operations Operations) []Step {
 			},
 		),
 		scriptSetupStep(
-			"cadvisor-"+CadvisorVersion+"-docker-attribution-v3",
+			"cadvisor-"+CadvisorVersion+"-docker-attribution-v4",
 			"Install localhost-only cAdvisor resource accounting",
 			"cadvisor.sh",
 			nil,
@@ -156,7 +156,7 @@ func DefaultSteps(operations Operations) []Step {
 			},
 		),
 		scriptSetupStep(
-			"otel-collector-"+OpenTelemetryCollectorVersion+"-workload-ansi-v3",
+			"otel-collector-"+OpenTelemetryCollectorVersion+"-wireguard-otlp-v4",
 			"Install durable logs, traces, and metrics collection",
 			"otel-collector.sh",
 			func(cfg Config) map[string]string {
@@ -168,7 +168,7 @@ func DefaultSteps(operations Operations) []Step {
 			},
 		),
 		scriptSetupStep(
-			"prometheus-3-13-1-service-metrics-v3",
+			"prometheus-3-13-1-service-metrics-v4",
 			"Install Prometheus with 24-hour raw retention",
 			"prometheus.sh",
 			nil,

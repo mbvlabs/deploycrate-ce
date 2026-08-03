@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"strconv"
 	"strings"
@@ -96,6 +97,7 @@ func (service *WorkloadExecution) Run(ctx context.Context, serverID uuid.UUID, s
 	if err != nil {
 		return containerclient.WorkloadState{}, err
 	}
+	spec.Environment = workloadTelemetryEnvironment(spec, target)
 	if !target.remote {
 		authentication, err := service.registry.Authenticate(ctx, credentials)
 		if err != nil {
@@ -206,17 +208,44 @@ func (service *WorkloadExecution) target(ctx context.Context, serverID uuid.UUID
 		if server.Kind != "self_hosted" {
 			return workloadExecutionTarget{}, errors.New("workload target Server kind is unsupported")
 		}
+	}
+	target.peer, err = models.WireGuardPeer.FindActiveForServer(ctx, service.db.Executor(), server.ID)
+	if err != nil {
+		return workloadExecutionTarget{}, errors.New("workload target Server has no active WireGuard peer")
+	}
+	if !target.remote {
 		return target, nil
 	}
 	target.credential, err = models.ServerSSHCredential.FindForServer(ctx, service.db.Executor(), server.ID)
 	if err != nil || !target.credential.HostKeyConfirmedAt.Valid || strings.TrimSpace(target.credential.KnownHostKey) == "" {
 		return workloadExecutionTarget{}, errors.New("workload target Server has no trusted SSH identity")
 	}
-	target.peer, err = models.WireGuardPeer.FindActiveForServer(ctx, service.db.Executor(), server.ID)
-	if err != nil {
-		return workloadExecutionTarget{}, errors.New("workload target Server has no active WireGuard peer")
-	}
 	return target, nil
+}
+
+func workloadTelemetryEnvironment(spec containerclient.WorkloadRunSpec, target workloadExecutionTarget) map[string]string {
+	environment := make(map[string]string, len(spec.Environment)+3)
+	maps.Copy(environment, spec.Environment)
+	if strings.TrimSpace(environment["OTEL_EXPORTER_OTLP_ENDPOINT"]) == "" {
+		environment["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://" + net.JoinHostPort(target.peer.PrivateAddress, "4318")
+	}
+	if strings.TrimSpace(environment["OTEL_EXPORTER_OTLP_PROTOCOL"]) == "" {
+		environment["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
+	}
+	resourceAttributes := []string{
+		"deploycrate.application.id=" + spec.ApplicationID.String(),
+		"deploycrate.environment.id=" + spec.EnvironmentID.String(),
+		"deploycrate.target.id=" + spec.TargetID.String(),
+		"deploycrate.deployment.id=" + spec.DeploymentID.String(),
+		"deploycrate.instance.id=" + spec.InstanceID.String(),
+		"deploycrate.release.id=" + spec.ReleaseID.String(),
+		"deploycrate.server.id=" + target.server.ID.String(),
+	}
+	if configured := strings.TrimSpace(environment["OTEL_RESOURCE_ATTRIBUTES"]); configured != "" {
+		resourceAttributes = append([]string{configured}, resourceAttributes...)
+	}
+	environment["OTEL_RESOURCE_ATTRIBUTES"] = strings.Join(resourceAttributes, ",")
+	return environment
 }
 
 func (service *WorkloadExecution) reconcileRemoteNetwork(ctx context.Context, target workloadExecutionTarget, environmentID uuid.UUID) (string, error) {

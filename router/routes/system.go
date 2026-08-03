@@ -22,6 +22,12 @@ var SystemTelemetryLogs = routing.NewSimpleRoute(
 	SystemPrefix,
 )
 
+var SystemTelemetryTrace = routing.NewRouteWithStringID(
+	"/telemetry/traces/:id",
+	"system.telemetry.trace",
+	SystemPrefix,
+)
+
 var SystemDeployments = routing.NewSimpleRoute(
 	"/deployments",
 	"system.deployments",

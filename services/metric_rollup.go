@@ -47,7 +47,7 @@ type rollupDefinition struct {
 	expression string
 }
 
-const containerIdentityLabels = "application,environment,release,deployment,instance,resource_installation,component,id"
+const containerIdentityLabels = "application,environment,target,release,deployment,instance,resource_installation,component,id"
 
 var metricRollupDefinitions = []rollupDefinition{
 	{scope: "host", name: "cpu_cores_used", expression: `sum(rate(node_cpu_seconds_total{mode!="idle"}[1m]))`},
@@ -300,7 +300,7 @@ func (service MetricRollupService) Collect(ctx context.Context) (resultErr error
 }
 
 func (resolver *metricIdentityResolver) resolve(scope string, labels map[string]string) (models.MetricRollupIdentities, error) {
-	key := scope + "\x00" + labels["application"] + "\x00" + labels["environment"] + "\x00" +
+	key := scope + "\x00" + labels["application"] + "\x00" + labels["environment"] + "\x00" + labels["target"] + "\x00" +
 		labels["release"] + "\x00" + labels["deployment"] + "\x00" + labels["instance"] + "\x00" +
 		labels["resource_installation"] + "\x00" + labels["component"]
 	if identity, ok := resolver.cache[key]; ok {

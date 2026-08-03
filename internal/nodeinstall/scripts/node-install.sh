@@ -46,7 +46,7 @@ cat > /etc/docker/daemon.json <<'EOF'
   "log-driver": "journald",
   "log-opts": {
     "tag": "{{.Name}}",
-    "labels": "com.deploycrate.application,com.deploycrate.environment,com.deploycrate.deployment,com.deploycrate.instance,com.deploycrate.release,com.deploycrate.resource-installation,com.deploycrate.component"
+    "labels": "com.deploycrate.application,com.deploycrate.environment,com.deploycrate.target,com.deploycrate.deployment,com.deploycrate.instance,com.deploycrate.release,com.deploycrate.resource-installation,com.deploycrate.component"
   },
   "live-restore": true
 }
@@ -148,7 +148,7 @@ cat > /etc/systemd/system/cadvisor.service <<EOF
 [Unit]
 After=network-online.target docker.service wg-quick@wg0.service
 [Service]
-ExecStart=/usr/local/bin/cadvisor --listen_ip=${DEPLOYCRATE_PRIVATE_ADDRESS} --port=9101 --docker_only=true --store_container_labels=false --whitelisted_container_labels=com.deploycrate.application,com.deploycrate.environment,com.deploycrate.deployment,com.deploycrate.instance,com.deploycrate.release,com.deploycrate.resource-installation,com.deploycrate.component
+ExecStart=/usr/local/bin/cadvisor --listen_ip=${DEPLOYCRATE_PRIVATE_ADDRESS} --port=9101 --docker_only=true --store_container_labels=false --whitelisted_container_labels=com.deploycrate.application,com.deploycrate.environment,com.deploycrate.target,com.deploycrate.deployment,com.deploycrate.instance,com.deploycrate.release,com.deploycrate.resource-installation,com.deploycrate.component
 Restart=on-failure
 [Install]
 WantedBy=multi-user.target
@@ -168,20 +168,44 @@ receivers:
   journald:
     start_at: end
     units: [docker.service, node-exporter.service, cadvisor.service, wg-quick@wg0.service]
+    storage: file_storage
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 0
   otlp:
     protocols:
       http:
-        endpoint: 127.0.0.1:4318
+        endpoint: ${DEPLOYCRATE_PRIVATE_ADDRESS}:4318
 processors:
   batch: {}
+  transform/workload_logs:
+    error_mode: ignore
+    log_statements:
+      - set(log.attributes["deploycrate.application.id"], log.body["COM_DEPLOYCRATE_APPLICATION"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["deploycrate.environment.id"], log.body["COM_DEPLOYCRATE_ENVIRONMENT"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["deploycrate.target.id"], log.body["COM_DEPLOYCRATE_TARGET"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["deploycrate.deployment.id"], log.body["COM_DEPLOYCRATE_DEPLOYMENT"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["deploycrate.instance.id"], log.body["COM_DEPLOYCRATE_INSTANCE"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["deploycrate.release.id"], log.body["COM_DEPLOYCRATE_RELEASE"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["deploycrate.log.epoch"], log.body["CONTAINER_LOG_EPOCH"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["deploycrate.log.ordinal"], log.body["CONTAINER_LOG_ORDINAL"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["container.id"], log.body["CONTAINER_ID_FULL"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["container.name"], log.body["CONTAINER_NAME"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["log.iostream"], "stderr") where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil and log.body["PRIORITY"] == "3"
+      - set(log.attributes["log.iostream"], "stdout") where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil and log.body["PRIORITY"] != "3"
+      - set(log.body, log.body["MESSAGE"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil and log.body["MESSAGE"] != nil
+      - replace_pattern(log.body, "\\\\x1B\\\\[[0-?]*[ -/]*[@-~]", "") where log.attributes["deploycrate.environment.id"] != nil and IsString(log.body)
   resource/node:
     attributes:
-      - key: service.namespace
-        value: deploycrate-ce
+      - key: deploycrate.server.id
+        value: "${DEPLOYCRATE_SERVER_ID}"
         action: upsert
       - key: server.id
         value: "${DEPLOYCRATE_SERVER_ID}"
         action: upsert
+      - key: host.id
+        value: "${DEPLOYCRATE_SERVER_ID}"
+        action: insert
       - key: host.name
         value: ${DEPLOYCRATE_NODE_NAME_YAML}
         action: upsert
@@ -205,6 +229,14 @@ service:
   pipelines:
     logs:
       receivers: [journald, otlp]
+      processors: [transform/workload_logs, resource/node, batch]
+      exporters: [otlphttp/control-plane]
+    metrics:
+      receivers: [otlp]
+      processors: [resource/node, batch]
+      exporters: [otlphttp/control-plane]
+    traces:
+      receivers: [otlp]
       processors: [resource/node, batch]
       exporters: [otlphttp/control-plane]
 EOF
@@ -228,6 +260,8 @@ ufw allow "${DEPLOYCRATE_WIREGUARD_PORT}/udp"
 ufw allow "${DEPLOYCRATE_SSH_PORT}/tcp"
 ufw allow in on wg0 to "${DEPLOYCRATE_PRIVATE_ADDRESS}" port 9100 proto tcp
 ufw allow in on wg0 to "${DEPLOYCRATE_PRIVATE_ADDRESS}" port 9101 proto tcp
+ufw allow in on wg0 to "${DEPLOYCRATE_PRIVATE_ADDRESS}" port 4318 proto tcp
+ufw allow from 172.16.0.0/12 to "${DEPLOYCRATE_PRIVATE_ADDRESS}" port 4318 proto tcp
 ufw --force enable
 systemctl daemon-reload
 systemctl enable docker.service node-exporter.service cadvisor.service otelcol-contrib.service
@@ -263,6 +297,7 @@ fi
 for attempt in $(seq 1 30); do
   if curl -fsS "http://${DEPLOYCRATE_PRIVATE_ADDRESS}:9100/metrics" >/dev/null && \
     curl -fsS "http://${DEPLOYCRATE_PRIVATE_ADDRESS}:9101/healthz" >/dev/null && \
+    ss -lnt | grep -Fq "${DEPLOYCRATE_PRIVATE_ADDRESS}:4318" && \
     curl -fsS http://127.0.0.1:13133/ >/dev/null; then
     break
   fi
