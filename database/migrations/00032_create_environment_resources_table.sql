@@ -10,7 +10,7 @@ CREATE TABLE environment_resources (
     configuration JSONB NOT NULL,
     archived_at TIMESTAMPTZ,
 
-    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE RESTRICT,
+    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
     resource_id UUID NOT NULL REFERENCES resources (id) ON DELETE RESTRICT,
     resource_endpoint_id UUID NOT NULL REFERENCES resource_endpoints (id) ON DELETE RESTRICT,
     resource_credential_id UUID REFERENCES resource_credentials (id) ON DELETE RESTRICT

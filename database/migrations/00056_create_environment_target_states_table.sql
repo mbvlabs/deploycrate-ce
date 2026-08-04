@@ -10,10 +10,10 @@ CREATE TABLE environment_target_states (
     state TEXT NOT NULL,
     observed_at TIMESTAMPTZ,
 
-    environment_target_id UUID NOT NULL REFERENCES environment_targets (id) ON DELETE RESTRICT,
-    desired_revision_id UUID REFERENCES environment_state_revisions (id) ON DELETE RESTRICT,
-    applying_revision_id UUID REFERENCES environment_state_revisions (id) ON DELETE RESTRICT,
-    applied_revision_id UUID REFERENCES environment_state_revisions (id) ON DELETE RESTRICT
+    environment_target_id UUID NOT NULL REFERENCES environment_targets (id) ON DELETE CASCADE,
+    desired_revision_id UUID REFERENCES environment_state_revisions (id) ON DELETE SET NULL,
+    applying_revision_id UUID REFERENCES environment_state_revisions (id) ON DELETE SET NULL,
+    applied_revision_id UUID REFERENCES environment_state_revisions (id) ON DELETE SET NULL
 );
 -- +goose StatementEnd
 

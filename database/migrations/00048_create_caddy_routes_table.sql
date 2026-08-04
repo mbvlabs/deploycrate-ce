@@ -12,9 +12,9 @@ CREATE TABLE caddy_routes (
     observed_at TIMESTAMPTZ,
     removed_at TIMESTAMPTZ,
 
-    environment_target_id UUID NOT NULL REFERENCES environment_targets (id) ON DELETE RESTRICT,
-    environment_domain_id UUID NOT NULL REFERENCES environment_domains (id) ON DELETE RESTRICT,
-    release_id UUID NOT NULL REFERENCES releases (id) ON DELETE RESTRICT
+    environment_target_id UUID NOT NULL REFERENCES environment_targets (id) ON DELETE CASCADE,
+    environment_domain_id UUID NOT NULL REFERENCES environment_domains (id) ON DELETE CASCADE,
+    release_id UUID NOT NULL REFERENCES releases (id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

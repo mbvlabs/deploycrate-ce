@@ -82,6 +82,28 @@ func (dnsConnection) Create(ctx context.Context, db storage.Executor, data Creat
 	if err := validation.Validate(&entity); err != nil {
 		return DNSConnectionEntity{}, errors.Join(ErrDomainValidation, err)
 	}
+	if err := ensureActiveUnique(
+		ctx,
+		db,
+		"dns-connection-name:"+strings.ToLower(entity.Name),
+		entity.ID,
+		db.NewSelect().Model((*DNSConnectionEntity)(nil)).Where("lower(name) = ?", strings.ToLower(entity.Name)),
+		"name",
+		"an active DNS connection already uses this name",
+	); err != nil {
+		return DNSConnectionEntity{}, err
+	}
+	if err := ensureActiveUnique(
+		ctx,
+		db,
+		"dns-connection-credential:"+entity.CredentialID.String(),
+		entity.ID,
+		db.NewSelect().Model((*DNSConnectionEntity)(nil)).Where("credential_id = ?", entity.CredentialID),
+		"credentialId",
+		"an active DNS connection already uses this credential",
+	); err != nil {
+		return DNSConnectionEntity{}, err
+	}
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
 		return DNSConnectionEntity{}, err
 	}

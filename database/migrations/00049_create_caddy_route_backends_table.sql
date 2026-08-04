@@ -9,8 +9,8 @@ CREATE TABLE caddy_route_backends (
     weight INTEGER NOT NULL,
     removed_at TIMESTAMPTZ,
 
-    caddy_route_id UUID NOT NULL REFERENCES caddy_routes (id) ON DELETE RESTRICT,
-    instance_id UUID NOT NULL REFERENCES instances (id) ON DELETE RESTRICT
+    caddy_route_id UUID NOT NULL REFERENCES caddy_routes (id) ON DELETE CASCADE,
+    instance_id UUID NOT NULL REFERENCES instances (id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

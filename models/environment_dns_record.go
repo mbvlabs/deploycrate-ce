@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"deploycrate-ce/internal/storage"
+	"deploycrate-ce/internal/validation"
+	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -22,6 +25,29 @@ type EnvironmentDNSRecordEntity struct {
 	ArchivedAt              sql.NullTime `bun:"archived_at"`
 	EnvironmentDNSBindingID uuid.UUID    `bun:"environment_dns_binding_id,type:uuid"`
 	DNSZoneID               uuid.UUID    `bun:"dns_zone_id,type:uuid"`
+}
+
+func (entity *EnvironmentDNSRecordEntity) Validate() error {
+	entity.ExternalID = strings.TrimSpace(entity.ExternalID)
+	entity.Content = strings.TrimSpace(entity.Content)
+	entity.ObservedName = strings.TrimSpace(entity.ObservedName)
+	builder := validation.NewBuilder()
+	if entity.ID == uuid.Nil {
+		builder.Add("id", "required", "DNS record ID is required")
+	}
+	builder.Required("externalId", entity.ExternalID)
+	if entity.RecordType != "A" {
+		builder.Add("recordType", "invalid", "DNS record type must be A")
+	}
+	builder.Required("content", entity.Content)
+	builder.Required("observedName", entity.ObservedName)
+	if entity.EnvironmentDNSBindingID == uuid.Nil {
+		builder.Add("environmentDnsBindingId", "required", "Environment DNS binding is required")
+	}
+	if entity.DNSZoneID == uuid.Nil {
+		builder.Add("dnsZoneId", "required", "DNS zone is required")
+	}
+	return builder.Err()
 }
 
 func (environmentDNSRecord) ActiveForBinding(ctx context.Context, db storage.Executor, bindingID uuid.UUID) ([]EnvironmentDNSRecordEntity, error) {
@@ -46,12 +72,38 @@ func (environmentDNSRecord) Upsert(ctx context.Context, db storage.Executor, dat
 		RecordType: "A", Content: data.Content, ObservedName: data.ObservedName,
 		EnvironmentDNSBindingID: data.EnvironmentDNSBindingID, DNSZoneID: data.DNSZoneID,
 	}
-	if err := db.NewInsert().Model(&entity).
-		On("CONFLICT (environment_dns_binding_id, external_id) DO UPDATE").
-		Set("updated_at = excluded.updated_at").Set("record_type = excluded.record_type").
-		Set("content = excluded.content").Set("observed_name = excluded.observed_name").
-		Set("dns_zone_id = excluded.dns_zone_id").
-		Set("archived_at = NULL").Returning("*").Scan(ctx); err != nil {
+	if err := validation.Validate(&entity); err != nil {
+		return EnvironmentDNSRecordEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := lockUnique(
+		ctx,
+		db,
+		"environment-dns-record:"+entity.EnvironmentDNSBindingID.String()+":"+entity.ExternalID,
+	); err != nil {
+		return EnvironmentDNSRecordEntity{}, err
+	}
+
+	var existing EnvironmentDNSRecordEntity
+	err := db.NewSelect().Model(&existing).
+		Where("environment_dns_binding_id = ?", entity.EnvironmentDNSBindingID).
+		Where("external_id = ?", entity.ExternalID).
+		Scan(ctx)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return EnvironmentDNSRecordEntity{}, err
+	}
+	if err == nil {
+		entity.ID = existing.ID
+		entity.CreatedAt = existing.CreatedAt
+	}
+	if existing.ID == uuid.Nil {
+		if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
+			return EnvironmentDNSRecordEntity{}, err
+		}
+		return entity, nil
+	}
+	if err := db.NewUpdate().Model(&entity).
+		Column("updated_at", "record_type", "content", "observed_name", "dns_zone_id", "archived_at").
+		WherePK().Returning("*").Scan(ctx); err != nil {
 		return EnvironmentDNSRecordEntity{}, err
 	}
 	return entity, nil

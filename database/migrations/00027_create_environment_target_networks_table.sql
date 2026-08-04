@@ -15,7 +15,7 @@ CREATE TABLE environment_target_networks (
     error TEXT,
     removed_at TIMESTAMPTZ,
 
-    environment_target_id UUID NOT NULL REFERENCES environment_targets (id) ON DELETE RESTRICT,
+    environment_target_id UUID NOT NULL REFERENCES environment_targets (id) ON DELETE CASCADE,
     private_network_id UUID NOT NULL REFERENCES private_networks (id) ON DELETE RESTRICT
 );
 -- +goose StatementEnd

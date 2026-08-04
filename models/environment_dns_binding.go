@@ -84,6 +84,17 @@ func (environmentDNSBinding) Create(ctx context.Context, db storage.Executor, da
 	if err := validation.Validate(&entity); err != nil {
 		return EnvironmentDNSBindingEntity{}, errors.Join(ErrDomainValidation, err)
 	}
+	if err := ensureActiveUnique(
+		ctx,
+		db,
+		"environment-dns-binding-domain:"+entity.EnvironmentDomainID.String(),
+		entity.ID,
+		db.NewSelect().Model((*EnvironmentDNSBindingEntity)(nil)).Where("environment_domain_id = ?", entity.EnvironmentDomainID),
+		"environmentDomainId",
+		"the Environment domain already has an active DNS binding",
+	); err != nil {
+		return EnvironmentDNSBindingEntity{}, err
+	}
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
 		return EnvironmentDNSBindingEntity{}, err
 	}

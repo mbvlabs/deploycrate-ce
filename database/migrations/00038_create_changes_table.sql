@@ -24,8 +24,8 @@ CREATE TABLE changes (
     cancelled_at TIMESTAMPTZ,
     error TEXT,
 
-    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE RESTRICT,
-    corrects_change_id UUID REFERENCES changes (id) ON DELETE RESTRICT
+    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
+    corrects_change_id UUID REFERENCES changes (id) ON DELETE SET NULL
 );
 -- +goose StatementEnd
 

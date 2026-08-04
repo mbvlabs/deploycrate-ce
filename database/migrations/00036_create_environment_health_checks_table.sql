@@ -15,7 +15,7 @@ CREATE TABLE environment_health_checks (
     enabled BOOLEAN NOT NULL,
     archived_at TIMESTAMPTZ,
 
-    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE RESTRICT
+    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

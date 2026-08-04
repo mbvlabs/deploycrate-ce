@@ -12,7 +12,7 @@ CREATE TABLE network_access_rules (
     action TEXT NOT NULL,
     archived_at TIMESTAMPTZ,
 
-    environment_resource_id UUID NOT NULL REFERENCES environment_resources (id) ON DELETE RESTRICT
+    environment_resource_id UUID NOT NULL REFERENCES environment_resources (id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

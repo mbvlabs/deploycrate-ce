@@ -12,9 +12,9 @@ CREATE TABLE change_logs (
     message TEXT NOT NULL,
     metadata JSONB NOT NULL,
 
-    change_id UUID NOT NULL REFERENCES changes (id) ON DELETE RESTRICT,
-    change_task_id UUID REFERENCES change_tasks (id) ON DELETE RESTRICT,
-    change_task_attempt_id UUID REFERENCES change_task_attempts (id) ON DELETE RESTRICT
+    change_id UUID NOT NULL REFERENCES changes (id) ON DELETE CASCADE,
+    change_task_id UUID REFERENCES change_tasks (id) ON DELETE CASCADE,
+    change_task_attempt_id UUID REFERENCES change_task_attempts (id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

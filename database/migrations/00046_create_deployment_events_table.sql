@@ -15,8 +15,8 @@ CREATE TABLE deployment_events (
     error TEXT,
     occurred_at TIMESTAMPTZ NOT NULL,
 
-    deployment_id UUID NOT NULL REFERENCES deployments (id) ON DELETE RESTRICT,
-    change_task_attempt_id UUID REFERENCES change_task_attempts (id) ON DELETE RESTRICT
+    deployment_id UUID NOT NULL REFERENCES deployments (id) ON DELETE CASCADE,
+    change_task_attempt_id UUID REFERENCES change_task_attempts (id) ON DELETE SET NULL
 );
 -- +goose StatementEnd
 

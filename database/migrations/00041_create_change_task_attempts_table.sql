@@ -14,7 +14,7 @@ CREATE TABLE change_task_attempts (
     result JSONB,
     error TEXT,
 
-    change_task_id UUID NOT NULL REFERENCES change_tasks (id) ON DELETE RESTRICT
+    change_task_id UUID NOT NULL REFERENCES change_tasks (id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

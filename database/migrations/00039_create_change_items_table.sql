@@ -12,7 +12,7 @@ CREATE TABLE change_items (
     previous_value JSONB,
     requested_value JSONB,
 
-    change_id UUID NOT NULL REFERENCES changes (id) ON DELETE RESTRICT
+    change_id UUID NOT NULL REFERENCES changes (id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

@@ -16,9 +16,11 @@ CREATE TABLE builds (
     finished_at TIMESTAMPTZ,
     error TEXT,
 
-    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE RESTRICT,
-    environment_source_id UUID NOT NULL REFERENCES environment_sources (id) ON DELETE RESTRICT,
-    change_id UUID NOT NULL REFERENCES changes (id) ON DELETE RESTRICT
+    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
+    environment_source_id UUID NOT NULL REFERENCES environment_sources (id) ON DELETE CASCADE,
+    change_id UUID NOT NULL REFERENCES changes (id) ON DELETE CASCADE,
+
+    current_step TEXT
 );
 -- +goose StatementEnd
 

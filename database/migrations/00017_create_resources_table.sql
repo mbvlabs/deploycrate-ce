@@ -10,7 +10,6 @@ CREATE TABLE resources (
     slug TEXT NOT NULL,
     resource_type TEXT NOT NULL,
     configuration JSONB NOT NULL,
-    sharing_scope TEXT NOT NULL,
     system_managed BOOLEAN NOT NULL,
     archived_at TIMESTAMPTZ
 );

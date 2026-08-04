@@ -8,8 +8,8 @@ CREATE TABLE environment_state_revisions (
 
     state JSONB NOT NULL,
 
-    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE RESTRICT,
-    change_id UUID NOT NULL REFERENCES changes (id) ON DELETE RESTRICT
+    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
+    change_id UUID NOT NULL REFERENCES changes (id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

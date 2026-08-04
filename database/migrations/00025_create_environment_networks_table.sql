@@ -9,7 +9,7 @@ CREATE TABLE environment_networks (
     role TEXT NOT NULL,
     removed_at TIMESTAMPTZ,
 
-    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE RESTRICT,
+    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
     private_network_id UUID NOT NULL REFERENCES private_networks (id) ON DELETE RESTRICT
 );
 -- +goose StatementEnd

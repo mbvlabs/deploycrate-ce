@@ -14,7 +14,7 @@ CREATE TABLE source_events (
     processed_at TIMESTAMPTZ,
     error TEXT,
 
-    environment_source_id UUID NOT NULL REFERENCES environment_sources (id) ON DELETE RESTRICT
+    environment_source_id UUID NOT NULL REFERENCES environment_sources (id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

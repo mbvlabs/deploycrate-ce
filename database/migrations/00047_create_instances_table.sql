@@ -14,9 +14,9 @@ CREATE TABLE instances (
     observed_at TIMESTAMPTZ NOT NULL,
     removed_at TIMESTAMPTZ,
 
-    deployment_id UUID NOT NULL REFERENCES deployments (id) ON DELETE RESTRICT,
-    release_id UUID NOT NULL REFERENCES releases (id) ON DELETE RESTRICT,
-    environment_target_id UUID NOT NULL REFERENCES environment_targets (id) ON DELETE RESTRICT
+    deployment_id UUID NOT NULL REFERENCES deployments (id) ON DELETE CASCADE,
+    release_id UUID NOT NULL REFERENCES releases (id) ON DELETE CASCADE,
+    environment_target_id UUID NOT NULL REFERENCES environment_targets (id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

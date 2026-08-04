@@ -54,6 +54,10 @@ type NodeEnrollmentEntity struct {
 }
 
 func (entity *NodeEnrollmentEntity) Validate() error {
+	entity.CurrentStep = strings.TrimSpace(entity.CurrentStep)
+	entity.HostFingerprint = strings.TrimSpace(entity.HostFingerprint)
+	entity.AllocatedAddress = strings.TrimSpace(entity.AllocatedAddress)
+	entity.InstallerVersion = strings.TrimSpace(entity.InstallerVersion)
 	var errs []error
 	if entity.ID == uuid.Nil {
 		errs = append(errs, errors.New("ID is required"))
@@ -97,6 +101,28 @@ func (nodeEnrollment) Create(ctx context.Context, db storage.Executor, data Crea
 	}
 	if err := validation.Validate(&entity); err != nil {
 		return NodeEnrollmentEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureUnique(
+		ctx,
+		db,
+		"node-enrollment-active-server:"+entity.ServerID.String(),
+		db.NewSelect().Model((*NodeEnrollmentEntity)(nil)).
+			Where("server_id = ?", entity.ServerID).
+			Where("state NOT IN (?, ?)", NodeEnrollmentReady, NodeEnrollmentFailed),
+		"serverId",
+		"the Server already has an active node enrollment",
+	); err != nil {
+		return NodeEnrollmentEntity{}, err
+	}
+	if err := ensureUnique(
+		ctx,
+		db,
+		"node-enrollment-address:"+entity.AllocatedAddress,
+		db.NewSelect().Model((*NodeEnrollmentEntity)(nil)).Where("allocated_address = ?", entity.AllocatedAddress),
+		"allocatedAddress",
+		"the WireGuard address is already allocated to another node enrollment",
+	); err != nil {
+		return NodeEnrollmentEntity{}, err
 	}
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
 		return NodeEnrollmentEntity{}, err

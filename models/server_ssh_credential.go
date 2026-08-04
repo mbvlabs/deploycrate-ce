@@ -6,6 +6,7 @@ import (
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,7 +28,18 @@ type ServerSSHCredentialEntity struct {
 }
 
 func (e *ServerSSHCredentialEntity) Validate() error {
-	return nil
+	e.Username = strings.TrimSpace(e.Username)
+	e.KnownHostKey = strings.TrimSpace(e.KnownHostKey)
+	builder := validation.NewBuilder()
+	builder.Required("username", e.Username)
+	if e.Port < 1 || e.Port > 65535 {
+		builder.Add("port", "range", "SSH port must be between 1 and 65535")
+	}
+	builder.Required("knownHostKey", e.KnownHostKey)
+	if e.ServerID == uuid.Nil {
+		builder.Add("serverId", "required", "Server is required")
+	}
+	return builder.Err()
 }
 
 func (ssshc serverSSHCredential) Find(
@@ -103,6 +115,16 @@ func (ssshc serverSSHCredential) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return ServerSSHCredentialEntity{}, errors.Join(ErrDomainValidation, err)
 	}
+	if err := ensureUnique(
+		ctx,
+		db,
+		"server-ssh-credential:"+entity.ServerID.String(),
+		db.NewSelect().Model((*ServerSSHCredentialEntity)(nil)).Where("server_id = ?", entity.ServerID),
+		"serverId",
+		"the Server already has SSH credentials",
+	); err != nil {
+		return ServerSSHCredentialEntity{}, err
+	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
 		return ServerSSHCredentialEntity{}, err
@@ -142,6 +164,18 @@ func (ssshc serverSSHCredential) Update(
 
 	if err := validation.Validate(&entity); err != nil {
 		return ServerSSHCredentialEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if err := ensureUnique(
+		ctx,
+		db,
+		"server-ssh-credential:"+entity.ServerID.String(),
+		db.NewSelect().Model((*ServerSSHCredentialEntity)(nil)).
+			Where("server_id = ?", entity.ServerID).
+			Where("id <> ?", entity.ID),
+		"serverId",
+		"the Server already has SSH credentials",
+	); err != nil {
+		return ServerSSHCredentialEntity{}, err
 	}
 
 	if err := db.NewUpdate().
@@ -257,19 +291,28 @@ func (ssshc serverSSHCredential) Upsert(
 	if err := validation.Validate(&entity); err != nil {
 		return ServerSSHCredentialEntity{}, errors.Join(ErrDomainValidation, err)
 	}
+	if err := lockUnique(ctx, db, "server-ssh-credential:"+entity.ServerID.String()); err != nil {
+		return ServerSSHCredentialEntity{}, err
+	}
 
-	if err := db.NewInsert().
-		Model(&entity).
-		On("CONFLICT (id) DO UPDATE").
-		Set("username = excluded.username").
-		Set("port = excluded.port").
-		Set("enc_private_key = excluded.enc_private_key").
-		Set("enc_private_key_passphrase = excluded.enc_private_key_passphrase").
-		Set("known_host_key = excluded.known_host_key").
-		Set("host_key_confirmed_at = excluded.host_key_confirmed_at").
-		Set("server_id = excluded.server_id").
-		Returning("*").
-		Scan(ctx); err != nil {
+	var existing ServerSSHCredentialEntity
+	err := db.NewSelect().Model(&existing).Where("server_id = ?", entity.ServerID).Scan(ctx)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return ServerSSHCredentialEntity{}, err
+	}
+	if err == nil {
+		entity.ID = existing.ID
+		entity.CreatedAt = existing.CreatedAt
+	}
+	if existing.ID == 0 {
+		if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
+			return ServerSSHCredentialEntity{}, err
+		}
+		return entity, nil
+	}
+	if err := db.NewUpdate().Model(&entity).
+		Column("updated_at", "username", "port", "enc_private_key", "enc_private_key_passphrase", "known_host_key", "host_key_confirmed_at", "server_id").
+		WherePK().Returning("*").Scan(ctx); err != nil {
 		return ServerSSHCredentialEntity{}, err
 	}
 

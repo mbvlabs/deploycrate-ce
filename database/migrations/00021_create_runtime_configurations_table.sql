@@ -15,7 +15,7 @@ CREATE TABLE runtime_configurations (
     restart_policy TEXT NOT NULL,
     settings JSONB NOT NULL,
 
-    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE RESTRICT
+    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

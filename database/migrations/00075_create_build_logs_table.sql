@@ -1,7 +1,5 @@
 -- +goose Up
 -- +goose StatementBegin
-ALTER TABLE builds ADD COLUMN current_step TEXT;
-
 CREATE TABLE build_logs (
     id UUID NOT NULL PRIMARY KEY,
 
@@ -20,5 +18,4 @@ CREATE TABLE build_logs (
 -- +goose Down
 -- +goose StatementBegin
 DROP TABLE build_logs;
-ALTER TABLE builds DROP COLUMN current_step;
 -- +goose StatementEnd

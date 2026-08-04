@@ -15,9 +15,9 @@ CREATE TABLE deployments (
     finished_at TIMESTAMPTZ,
     error TEXT,
 
-    change_id UUID NOT NULL REFERENCES changes (id) ON DELETE RESTRICT,
-    release_id UUID NOT NULL REFERENCES releases (id) ON DELETE RESTRICT,
-    environment_target_id UUID NOT NULL REFERENCES environment_targets (id) ON DELETE RESTRICT
+    change_id UUID NOT NULL REFERENCES changes (id) ON DELETE CASCADE,
+    release_id UUID NOT NULL REFERENCES releases (id) ON DELETE CASCADE,
+    environment_target_id UUID NOT NULL REFERENCES environment_targets (id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

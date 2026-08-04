@@ -15,8 +15,8 @@ CREATE TABLE network_access_rule_applications (
     removed_at TIMESTAMPTZ,
     error TEXT,
 
-    network_access_rule_id UUID NOT NULL REFERENCES network_access_rules (id) ON DELETE RESTRICT,
-    environment_target_network_id INTEGER NOT NULL REFERENCES environment_target_networks (id) ON DELETE RESTRICT
+    network_access_rule_id UUID NOT NULL REFERENCES network_access_rules (id) ON DELETE CASCADE,
+    environment_target_network_id INTEGER NOT NULL CONSTRAINT nara_environment_target_network_id_fkey REFERENCES environment_target_networks (id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

@@ -15,10 +15,10 @@ CREATE TABLE change_tasks (
     attempt_count INTEGER NOT NULL,
     available_at TIMESTAMPTZ NOT NULL,
 
-    change_id UUID NOT NULL REFERENCES changes (id) ON DELETE RESTRICT,
-    parent_task_id UUID REFERENCES change_tasks (id) ON DELETE RESTRICT,
+    change_id UUID NOT NULL REFERENCES changes (id) ON DELETE CASCADE,
+    parent_task_id UUID REFERENCES change_tasks (id) ON DELETE SET NULL,
     server_id UUID REFERENCES servers (id) ON DELETE RESTRICT,
-    environment_target_id UUID REFERENCES environment_targets (id) ON DELETE RESTRICT
+    environment_target_id UUID REFERENCES environment_targets (id) ON DELETE SET NULL
 );
 -- +goose StatementEnd
 

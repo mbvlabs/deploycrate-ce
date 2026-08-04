@@ -53,6 +53,16 @@ func (ic imageConfiguration) Create(ctx context.Context, db storage.Executor, da
 	if err := validation.Validate(&entity); err != nil {
 		return ImageConfigurationEntity{}, errors.Join(ErrDomainValidation, err)
 	}
+	if err := ensureUnique(
+		ctx,
+		db,
+		"image-configuration-source:"+entity.EnvironmentSourceID.String(),
+		db.NewSelect().Model((*ImageConfigurationEntity)(nil)).Where("environment_source_id = ?", entity.EnvironmentSourceID),
+		"environmentSourceId",
+		"the Environment source already has an image configuration",
+	); err != nil {
+		return ImageConfigurationEntity{}, err
+	}
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
 		return ImageConfigurationEntity{}, err
 	}

@@ -14,7 +14,7 @@ CREATE TABLE environment_sources (
     settings JSONB NOT NULL,
     auto_build BOOLEAN NOT NULL DEFAULT TRUE,
 
-    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE RESTRICT,
+    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
     credential_id UUID REFERENCES credentials (id) ON DELETE RESTRICT
 );
 -- +goose StatementEnd

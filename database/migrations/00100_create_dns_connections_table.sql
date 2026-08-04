@@ -1,23 +1,24 @@
 -- +goose Up
 -- +goose StatementBegin
-CREATE TABLE environments (
+CREATE TABLE dns_connections (
     id UUID NOT NULL PRIMARY KEY,
 
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
 
     name TEXT NOT NULL,
-    slug TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    api_token_prefix TEXT,
-    api_token_digest BYTEA,
+    provider TEXT NOT NULL,
+    verified_at TIMESTAMPTZ,
+    last_synced_at TIMESTAMPTZ,
     archived_at TIMESTAMPTZ,
 
-    application_id UUID NOT NULL REFERENCES applications (id) ON DELETE CASCADE
+    credential_id UUID NOT NULL REFERENCES credentials (id) ON DELETE RESTRICT,
+
+    account_external_id TEXT NOT NULL
 );
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
-DROP TABLE environments;
+DROP TABLE dns_connections;
 -- +goose StatementEnd

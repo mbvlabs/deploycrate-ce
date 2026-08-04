@@ -6,8 +6,8 @@ CREATE TABLE change_releases (
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
 
-    change_id UUID NOT NULL REFERENCES changes (id) ON DELETE RESTRICT,
-    release_id UUID NOT NULL REFERENCES releases (id) ON DELETE RESTRICT
+    change_id UUID NOT NULL REFERENCES changes (id) ON DELETE CASCADE,
+    release_id UUID NOT NULL REFERENCES releases (id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

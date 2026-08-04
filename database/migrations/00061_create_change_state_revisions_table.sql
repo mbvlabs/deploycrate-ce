@@ -8,8 +8,8 @@ CREATE TABLE change_state_revisions (
 
     role TEXT NOT NULL,
 
-    change_id UUID NOT NULL REFERENCES changes (id) ON DELETE RESTRICT,
-    environment_state_revision_id UUID NOT NULL REFERENCES environment_state_revisions (id) ON DELETE RESTRICT
+    change_id UUID NOT NULL REFERENCES changes (id) ON DELETE CASCADE,
+    environment_state_revision_id UUID NOT NULL REFERENCES environment_state_revisions (id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

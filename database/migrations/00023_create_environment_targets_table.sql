@@ -9,7 +9,7 @@ CREATE TABLE environment_targets (
     attached_at TIMESTAMPTZ NOT NULL,
     detached_at TIMESTAMPTZ,
 
-    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE RESTRICT,
+    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE CASCADE,
     server_id UUID NOT NULL REFERENCES servers (id) ON DELETE RESTRICT
 );
 -- +goose StatementEnd

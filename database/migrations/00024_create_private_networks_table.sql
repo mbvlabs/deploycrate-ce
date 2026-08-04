@@ -9,7 +9,7 @@ CREATE TABLE private_networks (
     name TEXT NOT NULL,
     archived_at TIMESTAMPTZ,
 
-    owner_environment_id UUID REFERENCES environments (id) ON DELETE RESTRICT
+    owner_environment_id UUID REFERENCES environments (id) ON DELETE SET NULL
 );
 -- +goose StatementEnd
 

@@ -10,7 +10,7 @@ CREATE TABLE environment_domains (
     is_primary BOOLEAN NOT NULL,
     archived_at TIMESTAMPTZ,
 
-    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE RESTRICT
+    environment_id UUID NOT NULL REFERENCES environments (id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

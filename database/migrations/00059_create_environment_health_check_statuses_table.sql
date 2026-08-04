@@ -12,10 +12,10 @@ CREATE TABLE environment_health_check_statuses (
     error TEXT,
     observed_at TIMESTAMPTZ NOT NULL,
 
-    health_check_id UUID NOT NULL REFERENCES environment_health_checks (id) ON DELETE RESTRICT,
-    environment_target_id UUID REFERENCES environment_targets (id) ON DELETE RESTRICT,
-    instance_id UUID REFERENCES instances (id) ON DELETE RESTRICT,
-    release_id UUID REFERENCES releases (id) ON DELETE RESTRICT
+    health_check_id UUID NOT NULL REFERENCES environment_health_checks (id) ON DELETE CASCADE,
+    environment_target_id UUID REFERENCES environment_targets (id) ON DELETE CASCADE,
+    instance_id UUID REFERENCES instances (id) ON DELETE CASCADE,
+    release_id UUID REFERENCES releases (id) ON DELETE CASCADE
 );
 -- +goose StatementEnd
 

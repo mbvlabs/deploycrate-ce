@@ -8,10 +8,13 @@ CREATE TABLE server_ssh_credentials (
 
     username TEXT NOT NULL,
     port INTEGER NOT NULL,
-    enc_private_key BYTEA NOT NULL,
+    enc_private_key BYTEA,
     known_host_key TEXT NOT NULL,
 
-    server_id UUID NOT NULL REFERENCES servers (id) ON DELETE RESTRICT
+    server_id UUID NOT NULL REFERENCES servers (id) ON DELETE RESTRICT,
+
+    enc_private_key_passphrase BYTEA,
+    host_key_confirmed_at TIMESTAMPTZ
 );
 -- +goose StatementEnd
 

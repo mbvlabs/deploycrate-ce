@@ -58,11 +58,44 @@ func (dnsZone) Upsert(ctx context.Context, db storage.Executor, data UpsertDNSZo
 	if err := validation.Validate(&entity); err != nil {
 		return DNSZoneEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if err := db.NewInsert().Model(&entity).
-		On("CONFLICT (dns_connection_id, external_id) DO UPDATE").
-		Set("updated_at = excluded.updated_at").Set("name = excluded.name").
-		Set("status = excluded.status").Set("last_synced_at = excluded.last_synced_at").
-		Set("archived_at = NULL").Returning("*").Scan(ctx); err != nil {
+	if err := lockUnique(ctx, db, "dns-zone-external:"+entity.DNSConnectionID.String()+":"+entity.ExternalID); err != nil {
+		return DNSZoneEntity{}, err
+	}
+
+	var existing DNSZoneEntity
+	err := db.NewSelect().Model(&existing).
+		Where("dns_connection_id = ?", entity.DNSConnectionID).
+		Where("external_id = ?", entity.ExternalID).
+		Scan(ctx)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return DNSZoneEntity{}, err
+	}
+	if err == nil {
+		entity.ID = existing.ID
+		entity.CreatedAt = existing.CreatedAt
+	}
+	if err := ensureUnique(
+		ctx,
+		db,
+		"dns-zone-name:"+entity.DNSConnectionID.String()+":"+entity.Name,
+		db.NewSelect().Model((*DNSZoneEntity)(nil)).
+			Where("dns_connection_id = ?", entity.DNSConnectionID).
+			Where("lower(name) = ?", entity.Name).
+			Where("id <> ?", entity.ID),
+		"name",
+		"the DNS connection already has a zone with this name",
+	); err != nil {
+		return DNSZoneEntity{}, err
+	}
+	if existing.ID == uuid.Nil {
+		if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
+			return DNSZoneEntity{}, err
+		}
+		return entity, nil
+	}
+	if err := db.NewUpdate().Model(&entity).
+		Column("updated_at", "name", "status", "last_synced_at", "archived_at").
+		WherePK().Returning("*").Scan(ctx); err != nil {
 		return DNSZoneEntity{}, err
 	}
 	return entity, nil
