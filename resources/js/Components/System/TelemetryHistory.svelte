@@ -7,6 +7,7 @@
   type TelemetrySeries = {
     label: string
     points: TelemetryPoint[]
+    comparison?: boolean
   }
 
   let {
@@ -22,10 +23,10 @@
   } = $props()
 
   let hoveredIndex = $state<number | null>(null)
-  const left = 68
+  const left = 112
   const right = 780
-  const top = 18
-  const bottom = 178
+  const top = 22
+  const bottom = 190
   const bucketCount = 12
   const historyWindowMilliseconds = 24 * 60 * 60 * 1000
   const colors = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)']
@@ -55,6 +56,7 @@
       return {
         label: item.label,
         color: colors[seriesIndex % colors.length],
+        comparison: item.comparison === true,
         values: buckets.map((bucket, index) => samples.findLast((point) => (
           point.timestamp >= bucket.start
           && (index === bucketCount - 1 ? point.timestamp <= bucket.end : point.timestamp < bucket.end)
@@ -92,15 +94,15 @@
   }
 </script>
 
-<article class="border border-border bg-card/35 p-5">
+<article class="border border-border bg-card/35 p-6">
   <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
     <div>
-      <h3 class="text-sm font-semibold">{label}</h3>
-      <p class="mt-1 text-xs text-muted-foreground">{description}</p>
+      <h3 class="text-base font-semibold">{label}</h3>
+      <p class="mt-1 text-sm leading-5 text-muted-foreground">{description}</p>
     </div>
-    <div class="flex flex-wrap justify-end gap-x-4 gap-y-2 text-[11px] text-muted-foreground">
+    <div class="flex flex-wrap justify-end gap-x-5 gap-y-2 text-sm text-muted-foreground">
       {#each chart.series as item}
-        <span class="flex items-center gap-2"><span class="size-2" style:background={item.color}></span>{item.label}</span>
+        <span class="flex items-center gap-2"><span class="h-0.5 w-5" style:background={item.comparison ? 'var(--muted-foreground)' : item.color}></span>{item.label}</span>
       {/each}
     </div>
   </div>
@@ -108,8 +110,8 @@
   {#if chart.available}
     <div class="relative mt-4">
       <svg
-        viewBox="0 0 800 220"
-        class="h-56 w-full touch-none"
+        viewBox="0 0 800 240"
+        class="h-64 w-full touch-none"
         role="img"
         aria-label={`${label} over the last 24 hours`}
         onpointerenter={hover}
@@ -119,16 +121,18 @@
         {#each [0, 0.5, 1] as ratio}
           {@const y = bottom - ratio * (bottom - top)}
           <line x1={left} x2={right} y1={y} y2={y} stroke="currentColor" stroke-width="1" class="text-border" />
-          <text x={left - 10} y={y + 4} text-anchor="end" class="fill-muted-foreground text-[12px]">{formatValue(chart.maximum * ratio)}</text>
+          <text x={left - 12} y={y + 5} text-anchor="end" class="fill-muted-foreground text-[17px] font-medium">{formatValue(chart.maximum * ratio)}</text>
         {/each}
 
         {#each chart.series as item}
-          <path d={pathFor(item.values)} fill="none" stroke={item.color} stroke-width="3" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
-          {#each item.values as value, index}
-            {#if value !== null}
-              <circle cx={chart.buckets[index].x} cy={yFor(value)} r="3" fill={item.color} />
-            {/if}
-          {/each}
+          <path d={pathFor(item.values)} fill="none" stroke={item.comparison ? 'var(--muted-foreground)' : item.color} stroke-width={item.comparison ? 2 : 3.5} stroke-dasharray={item.comparison ? '7 6' : undefined} stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke" />
+          {#if !item.comparison}
+            {#each item.values as value, index}
+              {#if value !== null}
+                <circle cx={chart.buckets[index].x} cy={yFor(value)} r="3.5" fill={item.color} />
+              {/if}
+            {/each}
+          {/if}
         {/each}
 
         {#if hoveredIndex !== null}
@@ -136,25 +140,25 @@
           {#each chart.series as item}
             {@const value = item.values[hoveredIndex]}
             {#if value !== null}
-              <circle cx={chart.buckets[hoveredIndex].x} cy={yFor(value)} r="4" fill={item.color} />
+              <circle cx={chart.buckets[hoveredIndex].x} cy={yFor(value)} r="4.5" fill={item.comparison ? 'var(--muted-foreground)' : item.color} />
             {/if}
           {/each}
         {/if}
 
         {#each chart.buckets as bucket, index}
           {#if index === 0 || index === Math.floor((bucketCount - 1) / 2) || index === bucketCount - 1}
-            <text x={bucket.x} y="210" text-anchor={index === 0 ? 'start' : index === bucketCount - 1 ? 'end' : 'middle'} class="fill-muted-foreground text-[12px]">{timeFormatter.format(bucket.end)}</text>
+            <text x={bucket.x} y="226" text-anchor={index === 0 ? 'start' : index === bucketCount - 1 ? 'end' : 'middle'} class="fill-muted-foreground text-[16px] font-medium">{timeFormatter.format(bucket.end)}</text>
           {/if}
         {/each}
       </svg>
 
       {#if hoveredIndex !== null}
-        <div class="pointer-events-none absolute right-2 top-2 z-20 min-w-52 border border-border bg-background/95 px-3 py-2 text-xs shadow-xl">
+        <div class="pointer-events-none absolute right-2 top-2 z-20 min-w-60 border border-border bg-background/95 px-4 py-3 text-sm shadow-xl">
           <p class="font-medium">{bucketLabel(hoveredIndex)}</p>
-          <div class="mt-2 space-y-1.5">
+          <div class="mt-3 space-y-2">
             {#each chart.series as item}
-              <div class="flex items-center justify-between gap-5">
-                <span class="flex items-center gap-2 text-muted-foreground"><span class="size-2" style:background={item.color}></span>{item.label}</span>
+              <div class="flex items-center justify-between gap-6">
+                <span class="flex items-center gap-2 text-muted-foreground"><span class="h-0.5 w-5" style:background={item.comparison ? 'var(--muted-foreground)' : item.color}></span>{item.label}</span>
                 <span class="font-mono tabular-nums">{item.values[hoveredIndex] === null ? 'Unavailable' : formatValue(item.values[hoveredIndex])}</span>
               </div>
             {/each}

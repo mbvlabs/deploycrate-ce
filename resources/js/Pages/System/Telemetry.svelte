@@ -2,6 +2,7 @@
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
   import * as Empty from '@/Components/ui/empty'
+  import * as NativeSelect from '@/Components/ui/native-select'
   import * as Table from '@/Components/ui/table'
   import StatusBadge from '@/Components/StatusBadge.svelte'
   import TelemetryHistory from '@/Components/System/TelemetryHistory.svelte'
@@ -95,6 +96,7 @@
   type ChartSeries = {
     label: string
     points: Array<{ observedAt: string; value: number }>
+    comparison?: boolean
   }
 
   type SystemTelemetry = {
@@ -195,6 +197,8 @@
   let traceSpans = $state<TraceSpan[]>([])
   let traceLoading = $state(false)
   let traceError = $state('')
+  let selectedAttributionID = $state('')
+  let attributionComparison = $state<'host' | 'service'>('host')
 
   const formatBytes = (value: number) => {
     if (!Number.isFinite(value) || value < 0) return 'Unavailable'
@@ -226,13 +230,6 @@
 
   const platform = $derived(telemetry.platform ?? [])
   const systemContainers = $derived(telemetry.systemContainers ?? [])
-  const currentRows = $derived([...platform, ...systemContainers].filter((row) => row.available))
-  const currentCPURows = $derived(currentRows.filter((row) => row.cpuAvailable))
-  const currentMemoryRows = $derived(currentRows.filter((row) => row.memoryAvailable))
-  const attributedCPUCores = $derived(currentCPURows.reduce((total, row) => total + row.cpuCores, 0))
-  const attributedMemoryBytes = $derived(currentMemoryRows.reduce((total, row) => total + row.memoryBytes, 0))
-  const unattributedCPUCores = $derived(Math.max(0, telemetry.cpuCoresUsed - attributedCPUCores))
-  const unattributedMemoryBytes = $derived(Math.max(0, telemetry.memory.used - attributedMemoryBytes))
   const hostHistory = $derived(telemetry.hostHistory ?? [])
   const memoryHistory = $derived(telemetry.memoryHistory ?? [])
   const attributionRows = $derived([...platform, ...systemContainers])
@@ -242,7 +239,16 @@
     if (row.installation) return `Managed resource ${short(row.resource)}`
     return label(row.component)
   }
+  const attributionID = (row: AttributedTelemetry) => [row.scope, row.component, row.resource, row.installation].join(':')
+  const attributionOptions = $derived(attributionRows.map((row) => ({
+    id: attributionID(row),
+    label: rowName(row),
+    scope: row.scope === 'native' ? 'Native service' : 'System container',
+  })))
+  const selectedAttributionRow = $derived(attributionRows.find((row) => attributionID(row) === selectedAttributionID))
+  const selectedAttributionLabel = $derived(selectedAttributionRow ? rowName(selectedAttributionRow) : 'No service selected')
   const attributedSeries = (metric: 'cpu' | 'memory'): ChartSeries[] => attributionRows.flatMap((row) => {
+    if (attributionID(row) !== selectedAttributionID) return []
     const points = (row.history ?? []).flatMap((point) => {
       if (metric === 'cpu' && point.cpuAvailable) return [{ observedAt: point.observedAt, value: point.cpuCores }]
       if (metric === 'memory' && point.memoryAvailable) return [{ observedAt: point.observedAt, value: point.memoryBytes }]
@@ -260,8 +266,22 @@
     { label: 'Receive', points: hostHistory.filter((point) => point.networkReceiveAvailable).map((point) => ({ observedAt: point.observedAt, value: point.networkReceiveBytesPerSecond })) },
     { label: 'Transmit', points: hostHistory.filter((point) => point.networkTransmitAvailable).map((point) => ({ observedAt: point.observedAt, value: point.networkTransmitBytesPerSecond })) },
   ])
-  const attributedCPUSeries = $derived(attributedSeries('cpu'))
-  const attributedMemorySeries = $derived(attributedSeries('memory'))
+  const attributedCPUSeries = $derived<ChartSeries[]>(selectedAttributionRow ? [
+    ...attributedSeries('cpu'),
+    ...(attributionComparison === 'host' ? hostCPUSeries.map((series) => ({ ...series, label: 'Host total', comparison: true })) : []),
+  ] : [])
+  const attributedMemorySeries = $derived<ChartSeries[]>(selectedAttributionRow ? [
+    ...attributedSeries('memory'),
+    ...(attributionComparison === 'host' ? hostMemorySeries.map((series) => ({ ...series, label: 'Host total', comparison: true })) : []),
+  ] : [])
+  const focusedCurrent = (available: boolean | undefined, value: string) => selectedAttributionRow
+    ? current(selectedAttributionRow, available === true, value)
+    : 'Unavailable'
+
+  $effect(() => {
+    if (attributionOptions.some((option) => option.id === selectedAttributionID)) return
+    selectedAttributionID = attributionOptions[0]?.id ?? ''
+  })
 
   const systemLogLevel = (log: SystemLog) => {
     if (log.severity) return log.severity.toUpperCase()
@@ -433,21 +453,40 @@
     </section>
 
     <section aria-labelledby="attribution-heading" class="space-y-4">
-      <div>
-        <h2 id="attribution-heading" class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">System service attribution</h2>
-        <p class="mt-1 text-xs text-muted-foreground">Host totals compared with current system service samples</p>
+      <div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
+        <div>
+          <h2 id="attribution-heading" class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">System service attribution</h2>
+          <p class="mt-1 text-sm text-muted-foreground">Focus the graphs on one service and optionally compare it with total host usage</p>
+        </div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <label class="grid gap-1.5 text-xs font-medium">
+            <span class="text-muted-foreground">Service</span>
+            <NativeSelect.Root class="w-full min-w-64 [&_select]:h-9 [&_select]:text-sm" bind:value={selectedAttributionID} disabled={attributionOptions.length === 0} aria-label="Select system service">
+              {#each attributionOptions as option}
+                <NativeSelect.Option value={option.id}>{option.label} · {option.scope}</NativeSelect.Option>
+              {/each}
+            </NativeSelect.Root>
+          </label>
+          <label class="grid gap-1.5 text-xs font-medium">
+            <span class="text-muted-foreground">Comparison</span>
+            <NativeSelect.Root class="w-full min-w-44 [&_select]:h-9 [&_select]:text-sm" bind:value={attributionComparison} aria-label="Choose graph comparison">
+              <NativeSelect.Option value="host">Show host total</NativeSelect.Option>
+              <NativeSelect.Option value="service">Service only</NativeSelect.Option>
+            </NativeSelect.Root>
+          </label>
+        </div>
       </div>
 
       <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Card.Root><Card.Header><Card.Title class="text-sm">Attributed CPU</Card.Title></Card.Header><Card.Content><p class="text-2xl font-semibold">{currentCPURows.length ? formatCores(attributedCPUCores) : 'Unavailable'}</p><p class="mt-1 text-xs text-muted-foreground">Across {currentCPURows.length} current services</p></Card.Content></Card.Root>
-        <Card.Root><Card.Header><Card.Title class="text-sm">Estimated other host CPU</Card.Title></Card.Header><Card.Content><p class="text-2xl font-semibold">{telemetry.available && currentCPURows.length ? formatCores(unattributedCPUCores) : 'Unavailable'}</p><p class="mt-1 text-xs text-muted-foreground">Directional difference, not exact reconciliation</p></Card.Content></Card.Root>
-        <Card.Root><Card.Header><Card.Title class="text-sm">Attributed memory</Card.Title></Card.Header><Card.Content><p class="text-2xl font-semibold">{currentMemoryRows.length ? formatBytes(attributedMemoryBytes) : 'Unavailable'}</p><p class="mt-1 text-xs text-muted-foreground">Across {currentMemoryRows.length} current working sets</p></Card.Content></Card.Root>
-        <Card.Root><Card.Header><Card.Title class="text-sm">Estimated other host memory</Card.Title></Card.Header><Card.Content><p class="text-2xl font-semibold">{telemetry.available && currentMemoryRows.length ? formatBytes(unattributedMemoryBytes) : 'Unavailable'}</p><p class="mt-1 text-xs text-muted-foreground">Directional difference, not exact reconciliation</p></Card.Content></Card.Root>
+        <Card.Root><Card.Header><Card.Title class="text-sm">CPU usage</Card.Title></Card.Header><Card.Content><p class="text-2xl font-semibold">{focusedCurrent(selectedAttributionRow?.cpuAvailable, formatCores(selectedAttributionRow?.cpuCores ?? 0))}</p><p class="mt-1 text-xs text-muted-foreground">Current usage for {selectedAttributionLabel}</p></Card.Content></Card.Root>
+        <Card.Root><Card.Header><Card.Title class="text-sm">Memory usage</Card.Title></Card.Header><Card.Content><p class="text-2xl font-semibold">{focusedCurrent(selectedAttributionRow?.memoryAvailable, formatBytes(selectedAttributionRow?.memoryBytes ?? 0))}</p><p class="mt-1 text-xs text-muted-foreground">Current working set for {selectedAttributionLabel}</p></Card.Content></Card.Root>
+        <Card.Root><Card.Header><Card.Title class="text-sm">Disk throughput</Card.Title></Card.Header><Card.Content><p class="text-sm"><span class="text-muted-foreground">Read</span> {focusedCurrent(selectedAttributionRow?.diskReadAvailable, formatRate(selectedAttributionRow?.diskReadBytesPerSecond ?? 0))}</p><p class="mt-2 text-sm"><span class="text-muted-foreground">Write</span> {focusedCurrent(selectedAttributionRow?.diskWriteAvailable, formatRate(selectedAttributionRow?.diskWriteBytesPerSecond ?? 0))}</p></Card.Content></Card.Root>
+        <Card.Root><Card.Header><Card.Title class="text-sm">Network throughput</Card.Title></Card.Header><Card.Content><p class="text-sm"><span class="text-muted-foreground">Receive</span> {focusedCurrent(selectedAttributionRow?.networkReceiveAvailable, formatRate(selectedAttributionRow?.networkReceiveBytesPerSecond ?? 0))}</p><p class="mt-2 text-sm"><span class="text-muted-foreground">Transmit</span> {focusedCurrent(selectedAttributionRow?.networkTransmitAvailable, formatRate(selectedAttributionRow?.networkTransmitBytesPerSecond ?? 0))}</p></Card.Content></Card.Root>
       </div>
 
       <div class="grid gap-4 xl:grid-cols-2">
-        <TelemetryHistory label="Attributed CPU" description="CPU usage by system service" series={attributedCPUSeries} formatValue={formatCores} />
-        <TelemetryHistory label="Attributed memory" description="Working set by system service" series={attributedMemorySeries} formatValue={formatBytes} />
+        <TelemetryHistory label="CPU usage" description={`${selectedAttributionLabel}${attributionComparison === 'host' ? ' compared with total host CPU' : ''}`} series={attributedCPUSeries} formatValue={formatCores} />
+        <TelemetryHistory label="Memory usage" description={`${selectedAttributionLabel}${attributionComparison === 'host' ? ' compared with total host memory' : ''}`} series={attributedMemorySeries} formatValue={formatBytes} />
       </div>
 
       <Card.Root>
