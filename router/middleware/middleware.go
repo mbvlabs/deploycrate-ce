@@ -176,7 +176,8 @@ func Logger(tel *telemetry.Telemetry) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
 			if isAssetsPath(c.Request().URL.Path) ||
-				c.Request().URL.Path == routes.SystemTelemetryLogs.Path() {
+				c.Request().URL.Path == routes.SystemTelemetryLogs.Path() ||
+				c.Request().URL.Path == routes.Health.Path() {
 				return next(c)
 			}
 
@@ -206,7 +207,7 @@ func Logger(tel *telemetry.Telemetry) echo.MiddlewareFunc {
 				}
 			}
 
-			slog.InfoContext(ctx, "HTTP request completed",
+			slog.Log(ctx, requestLogLevel(statusCode), "HTTP request completed",
 				"method", c.Request().Method,
 				"path", c.Request().URL.Path,
 				"status", statusCode,
@@ -217,6 +218,17 @@ func Logger(tel *telemetry.Telemetry) echo.MiddlewareFunc {
 
 			return err
 		}
+	}
+}
+
+func requestLogLevel(statusCode int) slog.Level {
+	switch {
+	case statusCode >= http.StatusInternalServerError:
+		return slog.LevelError
+	case statusCode >= http.StatusBadRequest:
+		return slog.LevelWarn
+	default:
+		return slog.LevelInfo
 	}
 }
 
