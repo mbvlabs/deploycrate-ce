@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	internalwireguard "deploycrate-ce/internal/wireguard"
+
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
 )
@@ -40,9 +42,9 @@ func (e *WireGuardPeerEntity) Validate() error {
 		errs = append(errs, errors.New("public key must be a base64-encoded 32-byte WireGuard key"))
 	}
 	address, err := netip.ParseAddr(strings.TrimSpace(e.PrivateAddress))
-	network := netip.MustParsePrefix("10.99.0.0/16")
+	network := netip.MustParsePrefix(internalwireguard.NodeCIDR)
 	if err != nil || !address.Is4() || !network.Contains(address) || address == network.Addr() {
-		errs = append(errs, errors.New("private address must be a host address in 10.99.0.0/16"))
+		errs = append(errs, errors.New("private address must be a host address in the WireGuard Node pool"))
 	}
 	if e.ListenPort < 1 || e.ListenPort > 65535 {
 		errs = append(errs, errors.New("listen port must be between 1 and 65535"))

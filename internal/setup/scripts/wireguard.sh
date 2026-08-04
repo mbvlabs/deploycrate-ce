@@ -8,6 +8,7 @@ wireguard_directory="/etc/wireguard"
 private_key_path="${wireguard_directory}/deploycrate-ce.key"
 public_key_path="${wireguard_directory}/deploycrate-ce.pub"
 configuration_path="${wireguard_directory}/wg0.conf"
+forwarding_configuration_path="/etc/sysctl.d/99-deploycrate-wireguard-gateway.conf"
 
 install -d -m 0700 "${wireguard_directory}"
 
@@ -47,6 +48,12 @@ chmod 0600 "${temporary_configuration}"
 mv "${temporary_configuration}" "${configuration_path}"
 temporary_configuration=""
 unset private_key
+
+cat > "${forwarding_configuration_path}" <<'EOF'
+net.ipv4.ip_forward = 1
+EOF
+chmod 0644 "${forwarding_configuration_path}"
+sysctl --system >/dev/null
 
 ufw allow "${WG_LISTEN_PORT}/udp"
 systemctl enable wg-quick@wg0

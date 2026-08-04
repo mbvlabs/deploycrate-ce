@@ -312,7 +312,7 @@ func (service *ContainerExecution) remotePortMappings(ctx context.Context, targe
 
 func (service *ContainerExecution) updateFirewall(ctx context.Context, target ServerExecutionTarget, mappings []containerclient.PortMapping, allow bool) error {
 	for _, mapping := range mappings {
-		arguments := []string{"allow", "in", "on", "wg0", "to", target.Peer.PrivateAddress, "port", strconv.Itoa(int(mapping.HostPort)), "proto", mapping.Protocol}
+		arguments := []string{"allow", "in", "on", "wg0", "from", WireGuardNodeCIDR, "to", target.Peer.PrivateAddress, "port", strconv.Itoa(int(mapping.HostPort)), "proto", mapping.Protocol}
 		if !allow {
 			arguments = append([]string{"--force", "delete"}, arguments...)
 		}

@@ -17,6 +17,7 @@ set -euo pipefail
 : "${DEPLOYCRATE_CAPABILITY_RESOURCE:?DEPLOYCRATE_CAPABILITY_RESOURCE is required}"
 : "${DEPLOYCRATE_CAPABILITY_DATABASE:?DEPLOYCRATE_CAPABILITY_DATABASE is required}"
 : "${DEPLOYCRATE_CAPABILITY_REPOSITORY:?DEPLOYCRATE_CAPABILITY_REPOSITORY is required}"
+: "${DEPLOYCRATE_WIREGUARD_PEERS:?DEPLOYCRATE_WIREGUARD_PEERS is required}"
 
 . /etc/os-release
 [ "${ID}" = "debian" ] || { printf 'Only Debian is supported\n' >&2; exit 1; }
@@ -94,13 +95,8 @@ cat > /etc/wireguard/wg0.conf <<EOF
 Address = ${DEPLOYCRATE_PRIVATE_ADDRESS}/16
 ListenPort = ${DEPLOYCRATE_WIREGUARD_PORT}
 PrivateKey = ${wireguard_private_key}
-
-[Peer]
-PublicKey = ${DEPLOYCRATE_CONTROL_PUBLIC_KEY}
-AllowedIPs = ${DEPLOYCRATE_CONTROL_ADDRESS}/32
-Endpoint = ${DEPLOYCRATE_CONTROL_ENDPOINT}
-PersistentKeepalive = 25
 EOF
+printf '%s' "${DEPLOYCRATE_WIREGUARD_PEERS}" | base64 --decode >> /etc/wireguard/wg0.conf
 chmod 0600 /etc/wireguard/wg0.conf
 systemctl enable --now wg-quick@wg0.service
 

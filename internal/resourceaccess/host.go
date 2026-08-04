@@ -13,12 +13,14 @@ import (
 	"strconv"
 	"strings"
 
+	internalwireguard "deploycrate-ce/internal/wireguard"
+
 	"github.com/google/uuid"
 )
 
 const (
 	interfaceName   = "wg0"
-	wireGuardServer = "10.99.0.1"
+	wireGuardServer = internalwireguard.ControlPlaneAddress
 )
 
 func RunHostCommand(arguments []string) error {
@@ -36,7 +38,7 @@ func RunHostCommand(arguments []string) error {
 		if err := validatePublicKey(arguments[1]); err != nil {
 			return err
 		}
-		if err := validateDeviceAddress(arguments[2]); err != nil {
+		if err := validateManagedPeerAddress(arguments[2]); err != nil {
 			return err
 		}
 		if err := run("/usr/bin/wg", "set", interfaceName, "peer", arguments[1], "allowed-ips", arguments[2]+"/32"); err != nil {
@@ -94,6 +96,32 @@ func RunHostCommand(arguments []string) error {
 		ufwArguments := []string{"allow", "in", "on", interfaceName, "from", arguments[2], "to", wireGuardServer, "port", strconv.Itoa(port), "proto", "tcp", "comment", "deploycrate-grant-" + arguments[1]}
 		if arguments[0] == "firewall-remove" {
 			ufwArguments = append([]string{"--force", "delete"}, ufwArguments...)
+			return runAllowMissingFirewallRule("/usr/sbin/ufw", ufwArguments...)
+		}
+		return run("/usr/sbin/ufw", ufwArguments...)
+	case "firewall-route-apply", "firewall-route-remove":
+		if len(arguments) != 6 {
+			return errors.New("usage: host-resource-access firewall-route-(apply|remove) GRANT_ID SOURCE_ADDRESS DESTINATION_ADDRESS DESTINATION_PORT tcp")
+		}
+		if _, err := uuid.Parse(arguments[1]); err != nil {
+			return errors.New("grant ID must be a UUID")
+		}
+		if err := validateDeviceAddress(arguments[2]); err != nil {
+			return err
+		}
+		if err := validateNodeAddress(arguments[3], false); err != nil {
+			return err
+		}
+		port, err := validatePort(arguments[4])
+		if err != nil {
+			return err
+		}
+		if arguments[5] != "tcp" {
+			return errors.New("only TCP firewall routes are supported")
+		}
+		ufwArguments := []string{"route", "allow", "in", "on", interfaceName, "out", "on", interfaceName, "from", arguments[2], "to", arguments[3], "port", strconv.Itoa(port), "proto", "tcp", "comment", "deploycrate-grant-" + arguments[1]}
+		if arguments[0] == "firewall-route-remove" {
+			ufwArguments = append([]string{"--force", "route", "delete"}, ufwArguments[1:]...)
 			return runAllowMissingFirewallRule("/usr/sbin/ufw", ufwArguments...)
 		}
 		return run("/usr/sbin/ufw", ufwArguments...)
@@ -176,7 +204,7 @@ func RunHostCommand(arguments []string) error {
 		if err != nil {
 			return errors.New("Server ID must be a UUID")
 		}
-		if err := validateDeviceAddress(arguments[2]); err != nil {
+		if err := validateNodeAddress(arguments[2], false); err != nil {
 			return err
 		}
 		return configureNodeTelemetryTarget(serverID, arguments[2])
@@ -270,11 +298,29 @@ func validatePublicKey(value string) error {
 	return nil
 }
 
+func validateManagedPeerAddress(value string) error {
+	address, err := netip.ParseAddr(strings.TrimSpace(value))
+	network := netip.MustParsePrefix(internalwireguard.MeshCIDR)
+	if err != nil || !address.Is4() || !network.Contains(address) || address.String() == wireGuardServer || address == network.Addr() {
+		return errors.New("peer address must be an allocatable host in the WireGuard overlay")
+	}
+	return nil
+}
+
+func validateNodeAddress(value string, allowControlPlane bool) error {
+	address, err := netip.ParseAddr(strings.TrimSpace(value))
+	network := netip.MustParsePrefix(internalwireguard.NodeCIDR)
+	if err != nil || !address.Is4() || !network.Contains(address) || address == network.Addr() || (!allowControlPlane && address.String() == wireGuardServer) {
+		return errors.New("address must identify a Node in the WireGuard Node pool")
+	}
+	return nil
+}
+
 func validateDeviceAddress(value string) error {
 	address, err := netip.ParseAddr(strings.TrimSpace(value))
-	network := netip.MustParsePrefix("10.99.0.0/16")
-	if err != nil || !address.Is4() || !network.Contains(address) || address.String() == wireGuardServer || address == network.Addr() {
-		return errors.New("device address must be an allocatable host in 10.99.0.0/16")
+	network := netip.MustParsePrefix(internalwireguard.DeviceCIDR)
+	if err != nil || !address.Is4() || !network.Contains(address) || address == network.Addr() {
+		return errors.New("device address must be an allocatable host in the WireGuard device pool")
 	}
 	return nil
 }

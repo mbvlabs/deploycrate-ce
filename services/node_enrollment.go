@@ -23,6 +23,7 @@ import (
 	"deploycrate-ce/internal/secretcrypto"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
+	internalwireguard "deploycrate-ce/internal/wireguard"
 	"deploycrate-ce/models"
 	"deploycrate-ce/queue/jobs"
 
@@ -137,7 +138,7 @@ func (service *NodeEnrollment) Create(ctx context.Context, input CreateNodeInput
 		return NodeEnrollmentDetail{}, err
 	}
 	defer tx.Rollback()
-	allocated, err := AllocateWireGuardPrivateAddress(ctx, tx)
+	allocated, err := AllocateWireGuardNodeAddress(ctx, tx)
 	if err != nil {
 		return NodeEnrollmentDetail{}, err
 	}
@@ -337,6 +338,9 @@ ${dc_sudo} /usr/local/bin/bootstrap node install --manifest-stdin`, nodeInstalle
 	if _, err := service.ssh.RunWithCertificate(ctx, privateAddress, "admin", detail.Credential.KnownHostKey, certificate.PrivateKey, certificate.Certificate, harden, nil); err != nil {
 		return fmt.Errorf("complete SSH trust transition: %w", err)
 	}
+	if err := service.reconcileNodeMesh(ctx, detail.Server.ID); err != nil {
+		return fmt.Errorf("reconcile Node WireGuard mesh: %w", err)
+	}
 	tx, err := service.db.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		return err
@@ -423,14 +427,110 @@ func (service *NodeEnrollment) manifest(ctx context.Context, detail NodeEnrollme
 	if err != nil {
 		return nodeinstall.Manifest{}, fmt.Errorf("parse node capabilities: %w", err)
 	}
+	nodePeers, err := service.activeNodeMeshPeers(ctx, detail.Server.ID, uuid.Nil)
+	if err != nil {
+		return nodeinstall.Manifest{}, err
+	}
 	return nodeinstall.Manifest{
 		ManifestVersion: nodeinstall.ManifestVersion, ServerID: detail.Server.ID.String(), NodeName: detail.Server.Name,
 		PrivateAddress: detail.Enrollment.AllocatedAddress, ListenPort: 51820, SSHPort: int(detail.Credential.Port),
 		ControlPlanePublicKey: control.PublicKey, ControlPlaneAddress: WireGuardPrivateAddress,
-		ControlPlaneEndpoint: control.Endpoint.String, SSHUserCAPublicKey: strings.TrimSpace(string(userCA)),
-		OTLPEndpoint: net.JoinHostPort(WireGuardPrivateAddress, "4318"),
-		Capabilities: capabilities,
+		ControlPlaneEndpoint: control.Endpoint.String, NodePeers: nodePeers,
+		SSHUserCAPublicKey: strings.TrimSpace(string(userCA)),
+		OTLPEndpoint:       net.JoinHostPort(WireGuardPrivateAddress, "4318"),
+		Capabilities:       capabilities,
 	}, nil
+}
+
+func (service *NodeEnrollment) activeNodeMeshPeers(ctx context.Context, excludeServerID, includeServerID uuid.UUID) ([]internalwireguard.Peer, error) {
+	type peerRow struct {
+		ServerID       uuid.UUID `bun:"server_id"`
+		PublicKey      string    `bun:"public_key"`
+		PrivateAddress string    `bun:"private_address"`
+		Endpoint       string    `bun:"endpoint"`
+	}
+	rows := make([]peerRow, 0)
+	query := service.db.Executor().NewSelect().TableExpr("wireguard_peers AS peer").
+		ColumnExpr("peer.server_id, peer.public_key, host(peer.private_address) AS private_address, COALESCE(peer.endpoint, '') AS endpoint").
+		Join("JOIN servers AS server ON server.id = peer.server_id").
+		Where("peer.retired_at IS NULL").
+		Where("server.kind = 'worker'").
+		Where("server.archived_at IS NULL").
+		Where("peer.server_id <> ?", excludeServerID)
+	if includeServerID == uuid.Nil {
+		query = query.Where("server.is_configured = TRUE")
+	} else {
+		query = query.Where("(server.is_configured = TRUE OR server.id = ?)", includeServerID)
+	}
+	if err := query.OrderExpr("peer.private_address").Scan(ctx, &rows); err != nil {
+		return nil, fmt.Errorf("load active Node WireGuard peers: %w", err)
+	}
+	peers := make([]internalwireguard.Peer, 0, len(rows))
+	for _, row := range rows {
+		peers = append(peers, internalwireguard.Peer{
+			PublicKey: row.PublicKey, AllowedIPs: []string{row.PrivateAddress + "/32"},
+			Endpoint: row.Endpoint, PersistentKeepalive: true,
+		})
+	}
+	return peers, nil
+}
+
+func (service *NodeEnrollment) reconcileNodeMesh(ctx context.Context, enrollingServerID uuid.UUID) error {
+	var control models.WireGuardPeerEntity
+	if err := service.db.Executor().NewSelect().Model(&control).
+		Where("private_address = ?", WireGuardPrivateAddress).
+		Where("retired_at IS NULL").Scan(ctx); err != nil {
+		return fmt.Errorf("load control-plane WireGuard peer: %w", err)
+	}
+	if !control.Endpoint.Valid {
+		return errors.New("control-plane WireGuard endpoint is unavailable")
+	}
+	type targetRow struct {
+		ServerID       uuid.UUID `bun:"server_id"`
+		PrivateAddress string    `bun:"private_address"`
+		SSHPort        int32     `bun:"ssh_port"`
+		KnownHostKey   string    `bun:"known_host_key"`
+	}
+	targets := make([]targetRow, 0)
+	if err := service.db.Executor().NewSelect().TableExpr("servers AS server").
+		ColumnExpr("server.id AS server_id, host(peer.private_address) AS private_address, credential.port AS ssh_port, credential.known_host_key").
+		Join("JOIN wireguard_peers AS peer ON peer.server_id = server.id AND peer.retired_at IS NULL").
+		Join("JOIN server_ssh_credentials AS credential ON credential.server_id = server.id").
+		Where("server.kind = 'worker'").Where("server.archived_at IS NULL").
+		Where("credential.host_key_confirmed_at IS NOT NULL").
+		Where("(server.is_configured = TRUE OR server.id = ?)", enrollingServerID).
+		OrderExpr("peer.private_address").Scan(ctx, &targets); err != nil {
+		return fmt.Errorf("load Node mesh targets: %w", err)
+	}
+	certificate, err := service.sshCA.GenerateUserCertificate(5 * time.Minute)
+	if err != nil {
+		return err
+	}
+	for _, target := range targets {
+		peers, err := service.activeNodeMeshPeers(ctx, target.ServerID, enrollingServerID)
+		if err != nil {
+			return err
+		}
+		peers = append(peers, internalwireguard.Peer{
+			PublicKey: control.PublicKey,
+			AllowedIPs: []string{
+				WireGuardPrivateAddress + "/32",
+				WireGuardDeviceCIDR,
+			},
+			Endpoint: control.Endpoint.String, PersistentKeepalive: true,
+		})
+		desired, err := internalwireguard.BuildPeerConfiguration(peers)
+		if err != nil {
+			return fmt.Errorf("build Node WireGuard configuration: %w", err)
+		}
+		configuration := "[Interface]\nListenPort = 51820\n" + desired.Configuration
+		address := net.JoinHostPort(target.PrivateAddress, strconv.Itoa(int(target.SSHPort)))
+		command := "sudo -n /usr/bin/wg syncconf wg0 /dev/stdin && sudo -n /usr/bin/wg-quick save wg0"
+		if _, err := service.ssh.RunWithCertificate(ctx, address, "admin", target.KnownHostKey, certificate.PrivateKey, certificate.Certificate, command, strings.NewReader(configuration)); err != nil {
+			return fmt.Errorf("apply Node WireGuard configuration to %s: %w", target.PrivateAddress, err)
+		}
+	}
+	return nil
 }
 
 func (service *NodeEnrollment) decryptBootstrapCredential(detail NodeEnrollmentDetail) ([]byte, []byte, error) {

@@ -303,8 +303,6 @@ type ResourceAccessTarget struct {
 	Protocol            string    `bun:"protocol"`
 	ServerID            uuid.UUID `bun:"server_id"`
 	PrivateNetworkID    uuid.UUID `bun:"private_network_id"`
-	ServerPublicKey     string    `bun:"server_public_key"`
-	ServerEndpoint      string    `bun:"server_endpoint"`
 }
 
 func (application) FindResourceAccessTarget(ctx context.Context, db storage.Executor, resourceID uuid.UUID) (ResourceAccessTarget, error) {
@@ -315,13 +313,11 @@ func (application) FindResourceAccessTarget(ctx context.Context, db storage.Exec
 			origin.address AS origin_address, origin.port AS origin_port,
 			wireguard.id AS wireguard_endpoint_id, wireguard.address AS wireguard_address,
 			wireguard.port AS wireguard_port, wireguard.protocol AS protocol,
-			installation.server_id, wireguard.private_network_id,
-			peer.public_key AS server_public_key, peer.endpoint AS server_endpoint
+			installation.server_id, wireguard.private_network_id
 		FROM resources AS resource
 		JOIN resource_endpoints AS wireguard ON wireguard.resource_id = resource.id AND wireguard.private_network_id IS NOT NULL AND wireguard.archived_at IS NULL AND wireguard.address NOT IN ('127.0.0.1', '::1', 'localhost')
-		JOIN resource_endpoints AS origin ON origin.resource_id = resource.id AND origin.role = 'primary' AND (wireguard.role = origin.role OR wireguard.role = 'wireguard') AND origin.archived_at IS NULL AND origin.address IN ('127.0.0.1', '::1', 'localhost') AND origin.port = wireguard.port AND origin.protocol = wireguard.protocol AND origin.tls_mode = wireguard.tls_mode AND origin.id <> wireguard.id
+		JOIN resource_endpoints AS origin ON origin.resource_id = resource.id AND origin.role = 'primary' AND (wireguard.role = origin.role OR wireguard.role = 'wireguard') AND origin.archived_at IS NULL AND (origin.address IN ('127.0.0.1', '::1', 'localhost') OR origin.address = wireguard.address) AND origin.port = wireguard.port AND origin.protocol = wireguard.protocol AND origin.tls_mode = wireguard.tls_mode AND origin.id <> wireguard.id
 		JOIN resource_installations AS installation ON installation.resource_id = resource.id AND installation.archived_at IS NULL
-		JOIN wireguard_peers AS peer ON peer.server_id = installation.server_id AND peer.retired_at IS NULL
 		WHERE resource.id = ? AND resource.archived_at IS NULL
 		ORDER BY installation.created_at
 		LIMIT 1`, resourceID).Scan(ctx, &target)

@@ -26,12 +26,13 @@ type ResourcePrivateAccess struct {
 	wireguard wireguardclient.Client
 	firewall  firewallclient.Client
 	listener  listenerclient.Client
+	servers   *ServerExecution
 }
 
-func NewResourcePrivateAccess(db storage.Pool) *ResourcePrivateAccess {
+func NewResourcePrivateAccess(db storage.Pool, servers *ServerExecution) *ResourcePrivateAccess {
 	return &ResourcePrivateAccess{
 		db: db, wireguard: wireguardclient.New(), firewall: firewallclient.New(),
-		listener: listenerclient.New(),
+		listener: listenerclient.New(), servers: servers,
 	}
 }
 
@@ -148,8 +149,13 @@ func createManagedResourcePrivateEndpoint(ctx context.Context, db storage.Execut
 	if err != nil {
 		return models.ResourceEndpointEntity{}, err
 	}
-	if strings.TrimSpace(attachment.Address) != WireGuardPrivateAddress {
-		return models.ResourceEndpointEntity{}, domainError("privateNetworkId", "topology", "private network attachment does not use the DeployCrate WireGuard listener address")
+	attachment.Address = strings.TrimSpace(attachment.Address)
+	originIsLoopback := origin.Address == "127.0.0.1" || origin.Address == "::1" || origin.Address == "localhost"
+	if attachment.Address == WireGuardPrivateAddress && !originIsLoopback {
+		return models.ResourceEndpointEntity{}, domainError("privateNetworkId", "topology", "control-plane private access requires a loopback Resource origin")
+	}
+	if attachment.Address != WireGuardPrivateAddress && origin.Address != attachment.Address {
+		return models.ResourceEndpointEntity{}, domainError("privateNetworkId", "topology", "Node private access requires the Resource origin on its WireGuard address")
 	}
 	mapping, err := primaryPortMapping(attachment.Configuration)
 	if err != nil {
@@ -160,7 +166,7 @@ func createManagedResourcePrivateEndpoint(ctx context.Context, db storage.Execut
 	}
 
 	endpoint, err := models.ResourceEndpoint.Create(ctx, db, models.CreateResourceEndpointData{
-		Name: "Private access", Role: "wireguard", Address: strings.TrimSpace(attachment.Address),
+		Name: "Private access", Role: "wireguard", Address: attachment.Address,
 		Port: origin.Port, Protocol: origin.Protocol, TlsMode: origin.TlsMode,
 		Settings: json.RawMessage(`{}`), ResourceID: resourceID, PrivateNetworkID: &privateNetworkID,
 	})
@@ -174,7 +180,7 @@ func (service *ResourcePrivateAccess) Disable(ctx context.Context, resourceID uu
 	if err := service.requireOrdinaryManagedResource(ctx, resourceID); err != nil {
 		return err
 	}
-	_, err := models.Application.FindResourceAccessTarget(ctx, service.db.Executor(), resourceID)
+	target, err := models.Application.FindResourceAccessTarget(ctx, service.db.Executor(), resourceID)
 	if errors.Is(err, models.ErrNotFound) {
 		return nil
 	}
@@ -202,8 +208,10 @@ func (service *ResourcePrivateAccess) Disable(ctx context.Context, resourceID uu
 			return fmt.Errorf("revoke private access for device %q: %w", device.Name, err)
 		}
 	}
-	if err := service.listener.RemoveListener(ctx, resourceID); err != nil {
-		return fmt.Errorf("remove private resource listener: %w", err)
+	if targetUsesControlPlaneListener(target) {
+		if err := service.listener.RemoveListener(ctx, resourceID); err != nil {
+			return fmt.Errorf("remove private resource listener: %w", err)
+		}
 	}
 
 	now := time.Now().UTC()
@@ -264,6 +272,13 @@ func (service *ResourcePrivateAccess) Enroll(ctx context.Context, resourceID uui
 	if target.Protocol == "" {
 		return ResourcePrivateAccessResult{}, errors.New("resource has no supported WireGuard endpoint")
 	}
+	var controlPlane models.WireGuardPeerEntity
+	if data.DeviceID == uuid.Nil {
+		controlPlane, err = service.controlPlaneWireGuardPeer(ctx)
+		if err != nil {
+			return ResourcePrivateAccessResult{}, err
+		}
+	}
 
 	tx, err := service.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
@@ -286,7 +301,7 @@ func (service *ResourcePrivateAccess) Enroll(ctx context.Context, resourceID uui
 		if strings.TrimSpace(data.Name) == "" {
 			return ResourcePrivateAccessResult{}, errors.Join(models.ErrDomainValidation, errors.New("device name is required"))
 		}
-		address, err := AllocateWireGuardPrivateAddress(ctx, tx)
+		address, err := AllocateWireGuardDeviceAddress(ctx, tx)
 		if err != nil {
 			return ResourcePrivateAccessResult{}, err
 		}
@@ -353,14 +368,14 @@ func (service *ResourcePrivateAccess) Enroll(ctx context.Context, resourceID uui
 
 	configuration := ""
 	if newDevice {
-		configuration = buildClientConfiguration(privateKey, device.PrivateAddress, target.ServerPublicKey, target.ServerEndpoint)
+		configuration = buildClientConfiguration(privateKey, device.PrivateAddress, controlPlane.PublicKey, controlPlane.Endpoint.String)
 	}
 	return ResourcePrivateAccessResult{DeviceID: device.ID, GrantID: grant.ID, ClientConfiguration: configuration}, nil
 }
 
 func (service *ResourcePrivateAccess) cleanupFailedEnrollment(ctx context.Context, device models.WireGuardDeviceEntity, grant models.WireGuardDeviceResourceGrantEntity, target models.ResourceAccessTarget) {
-	_ = service.firewall.RemoveRule(ctx, grant.ID, device.PrivateAddress, target.WireGuardPort)
-	if count, err := models.WireGuardDeviceResourceGrant.ActiveCountForResource(ctx, service.db.Executor(), target.ResourceID); err == nil && count == 1 {
+	_ = service.removeGrantNetworkAccess(ctx, device, grant, target)
+	if count, err := models.WireGuardDeviceResourceGrant.ActiveCountForResource(ctx, service.db.Executor(), target.ResourceID); targetUsesControlPlaneListener(target) && err == nil && count == 1 {
 		_ = service.listener.RemoveListener(ctx, target.ResourceID)
 	}
 	_ = service.wireguard.RemovePeer(ctx, device.PublicKey)
@@ -375,13 +390,85 @@ func (service *ResourcePrivateAccess) apply(ctx context.Context, device models.W
 			return fmt.Errorf("apply WireGuard device peer: %w", err)
 		}
 	}
-	if err := service.listener.ApplyListener(ctx, target.ResourceID, target.WireGuardAddress, target.WireGuardPort, target.OriginAddress, target.OriginPort); err != nil {
-		return fmt.Errorf("apply private resource listener: %w", err)
+	if targetUsesControlPlaneListener(target) {
+		if err := service.listener.ApplyListener(ctx, target.ResourceID, target.WireGuardAddress, target.WireGuardPort, target.OriginAddress, target.OriginPort); err != nil {
+			return fmt.Errorf("apply private resource listener: %w", err)
+		}
+		if err := service.firewall.ApplyRule(ctx, grant.ID, device.PrivateAddress, target.WireGuardPort); err != nil {
+			return fmt.Errorf("apply private resource firewall rule: %w", err)
+		}
+		return nil
 	}
-	if err := service.firewall.ApplyRule(ctx, grant.ID, device.PrivateAddress, target.WireGuardPort); err != nil {
-		return fmt.Errorf("apply private resource firewall rule: %w", err)
+	if err := service.applyNodeGrantRule(ctx, device, grant, target); err != nil {
+		return err
+	}
+	if err := service.firewall.ApplyRouteRule(ctx, grant.ID, device.PrivateAddress, target.WireGuardAddress, target.WireGuardPort); err != nil {
+		_ = service.removeNodeGrantRule(ctx, device, grant, target)
+		return fmt.Errorf("apply private resource gateway route: %w", err)
 	}
 	return nil
+}
+
+func targetUsesControlPlaneListener(target models.ResourceAccessTarget) bool {
+	return target.WireGuardAddress == WireGuardPrivateAddress
+}
+
+func (service *ResourcePrivateAccess) controlPlaneWireGuardPeer(ctx context.Context) (models.WireGuardPeerEntity, error) {
+	var peer models.WireGuardPeerEntity
+	if err := service.db.Executor().NewSelect().Model(&peer).
+		Where("private_address = ?", WireGuardPrivateAddress).
+		Where("retired_at IS NULL").Scan(ctx); err != nil {
+		return models.WireGuardPeerEntity{}, fmt.Errorf("load control-plane WireGuard identity: %w", err)
+	}
+	if !peer.Endpoint.Valid {
+		return models.WireGuardPeerEntity{}, errors.New("control-plane WireGuard endpoint is unavailable")
+	}
+	return peer, nil
+}
+
+func (service *ResourcePrivateAccess) applyNodeGrantRule(ctx context.Context, device models.WireGuardDeviceEntity, grant models.WireGuardDeviceResourceGrantEntity, target models.ResourceAccessTarget) error {
+	execution, err := service.servers.Target(ctx, target.ServerID, managedResourceCapability(target.ResourceEngine))
+	if err != nil {
+		return err
+	}
+	if !execution.Remote {
+		return errors.New("private Resource gateway target must be a Node")
+	}
+	_, err = service.servers.RunRootCommand(ctx, execution, nil, "/usr/sbin/ufw",
+		"allow", "in", "on", "wg0", "from", device.PrivateAddress, "to", target.WireGuardAddress,
+		"port", fmt.Sprint(target.WireGuardPort), "proto", "tcp", "comment", "deploycrate-grant-"+grant.ID.String())
+	if err != nil {
+		return fmt.Errorf("apply destination Node firewall rule: %w", err)
+	}
+	return nil
+}
+
+func (service *ResourcePrivateAccess) removeNodeGrantRule(ctx context.Context, device models.WireGuardDeviceEntity, grant models.WireGuardDeviceResourceGrantEntity, target models.ResourceAccessTarget) error {
+	execution, err := service.servers.Target(ctx, target.ServerID, managedResourceCapability(target.ResourceEngine))
+	if err != nil {
+		return err
+	}
+	_, err = service.servers.RunRootCommand(ctx, execution, nil, "/usr/sbin/ufw",
+		"--force", "delete", "allow", "in", "on", "wg0", "from", device.PrivateAddress, "to", target.WireGuardAddress,
+		"port", fmt.Sprint(target.WireGuardPort), "proto", "tcp", "comment", "deploycrate-grant-"+grant.ID.String())
+	if err != nil {
+		message := strings.ToLower(err.Error())
+		if strings.Contains(message, "non-existent") || strings.Contains(message, "skipping") {
+			return nil
+		}
+		return fmt.Errorf("remove destination Node firewall rule: %w", err)
+	}
+	return nil
+}
+
+func (service *ResourcePrivateAccess) removeGrantNetworkAccess(ctx context.Context, device models.WireGuardDeviceEntity, grant models.WireGuardDeviceResourceGrantEntity, target models.ResourceAccessTarget) error {
+	if targetUsesControlPlaneListener(target) {
+		return service.firewall.RemoveRule(ctx, grant.ID, device.PrivateAddress, target.WireGuardPort)
+	}
+	if err := service.firewall.RemoveRouteRule(ctx, grant.ID, device.PrivateAddress, target.WireGuardAddress, target.WireGuardPort); err != nil {
+		return err
+	}
+	return service.removeNodeGrantRule(ctx, device, grant, target)
 }
 
 func (service *ResourcePrivateAccess) RevokeGrant(ctx context.Context, resourceID, deviceID uuid.UUID) error {
@@ -404,7 +491,7 @@ func (service *ResourcePrivateAccess) RevokeGrant(ctx context.Context, resourceI
 	if err != nil {
 		return err
 	}
-	if err := service.firewall.RemoveRule(ctx, grant.ID, device.PrivateAddress, target.WireGuardPort); err != nil {
+	if err := service.removeGrantNetworkAccess(ctx, device, grant, target); err != nil {
 		_ = models.WireGuardGrantApplication.Mark(ctx, service.db.Executor(), application.ID, "failed", err)
 		return err
 	}
@@ -412,7 +499,7 @@ func (service *ResourcePrivateAccess) RevokeGrant(ctx context.Context, resourceI
 	if err != nil {
 		return err
 	}
-	if count == 1 {
+	if targetUsesControlPlaneListener(target) && count == 1 {
 		if err := service.listener.RemoveListener(ctx, resourceID); err != nil {
 			_ = models.WireGuardGrantApplication.Mark(ctx, service.db.Executor(), application.ID, "failed", err)
 			return err
@@ -442,14 +529,14 @@ func (service *ResourcePrivateAccess) RevokeDevice(ctx context.Context, deviceID
 		if err != nil {
 			return err
 		}
-		if err := service.firewall.RemoveRule(ctx, grant.ID, device.PrivateAddress, target.WireGuardPort); err != nil {
+		if err := service.removeGrantNetworkAccess(ctx, device, grant, target); err != nil {
 			return err
 		}
 		count, err := models.WireGuardDeviceResourceGrant.ActiveCountForResource(ctx, service.db.Executor(), grant.ResourceID)
 		if err != nil {
 			return err
 		}
-		if count == 1 {
+		if targetUsesControlPlaneListener(target) && count == 1 {
 			if err := service.listener.RemoveListener(ctx, grant.ResourceID); err != nil {
 				return err
 			}
@@ -511,5 +598,5 @@ func generateWireGuardKeyPair() (string, string, error) {
 }
 
 func buildClientConfiguration(privateKey, privateAddress, serverPublicKey, serverEndpoint string) string {
-	return fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = %s/32\n\n[Peer]\nPublicKey = %s\nEndpoint = %s\nAllowedIPs = 10.99.0.1/32\nPersistentKeepalive = 25\n", privateKey, privateAddress, serverPublicKey, serverEndpoint)
+	return fmt.Sprintf("[Interface]\nPrivateKey = %s\nAddress = %s/32\n\n[Peer]\nPublicKey = %s\nEndpoint = %s\nAllowedIPs = %s\nPersistentKeepalive = 25\n", privateKey, privateAddress, serverPublicKey, serverEndpoint, WireGuardNodeCIDR)
 }

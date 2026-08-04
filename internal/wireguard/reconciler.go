@@ -2,13 +2,102 @@ package wireguard
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
 )
+
+const (
+	MeshCIDR            = "10.99.0.0/16"
+	NodeCIDR            = "10.99.0.0/17"
+	DeviceCIDR          = "10.99.128.0/17"
+	ControlPlaneAddress = "10.99.0.1"
+)
+
+type Peer struct {
+	PublicKey           string   `json:"public_key"`
+	AllowedIPs          []string `json:"allowed_ips"`
+	Endpoint            string   `json:"endpoint"`
+	PersistentKeepalive bool     `json:"persistent_keepalive"`
+}
+
+type DesiredState struct {
+	Configuration string
+	Revision      string
+}
+
+func BuildPeerConfiguration(peers []Peer) (DesiredState, error) {
+	mesh := netip.MustParsePrefix(MeshCIDR)
+	seenKeys := make(map[string]struct{}, len(peers))
+	seenAllowedIPs := make(map[netip.Prefix]struct{})
+	normalized := make([]Peer, 0, len(peers))
+	for _, peer := range peers {
+		key := strings.TrimSpace(peer.PublicKey)
+		decodedKey, err := base64.StdEncoding.DecodeString(key)
+		if err != nil || len(decodedKey) != 32 {
+			return DesiredState{}, errors.New("WireGuard peer public key must be a base64-encoded 32-byte key")
+		}
+		if _, exists := seenKeys[key]; exists {
+			return DesiredState{}, errors.New("duplicate WireGuard peer public key")
+		}
+		allowedIPs := make([]string, 0, len(peer.AllowedIPs))
+		for _, value := range peer.AllowedIPs {
+			prefix, prefixErr := netip.ParsePrefix(strings.TrimSpace(value))
+			if prefixErr != nil || !prefix.Addr().Is4() || !mesh.Contains(prefix.Addr()) || prefix.Bits() < mesh.Bits() {
+				return DesiredState{}, fmt.Errorf("invalid WireGuard peer allowed IP %q", value)
+			}
+			prefix = prefix.Masked()
+			if _, exists := seenAllowedIPs[prefix]; exists {
+				return DesiredState{}, fmt.Errorf("duplicate WireGuard peer allowed IP %s", prefix)
+			}
+			seenAllowedIPs[prefix] = struct{}{}
+			allowedIPs = append(allowedIPs, prefix.String())
+		}
+		if len(allowedIPs) == 0 {
+			return DesiredState{}, errors.New("WireGuard peer requires at least one allowed IP")
+		}
+		slices.Sort(allowedIPs)
+		host, port, endpointErr := net.SplitHostPort(strings.TrimSpace(peer.Endpoint))
+		portNumber, portErr := strconv.Atoi(port)
+		if endpointErr != nil || strings.TrimSpace(host) == "" || portErr != nil || portNumber < 1 || portNumber > 65535 {
+			return DesiredState{}, fmt.Errorf("invalid WireGuard peer endpoint %q", peer.Endpoint)
+		}
+		seenKeys[key] = struct{}{}
+		normalized = append(normalized, Peer{
+			PublicKey: key, AllowedIPs: allowedIPs, Endpoint: net.JoinHostPort(host, port),
+			PersistentKeepalive: peer.PersistentKeepalive,
+		})
+	}
+	slices.SortFunc(normalized, func(left, right Peer) int {
+		return strings.Compare(strings.Join(left.AllowedIPs, ","), strings.Join(right.AllowedIPs, ","))
+	})
+	var builder strings.Builder
+	for _, peer := range normalized {
+		builder.WriteString("\n[Peer]\nPublicKey = ")
+		builder.WriteString(peer.PublicKey)
+		builder.WriteString("\nAllowedIPs = ")
+		builder.WriteString(strings.Join(peer.AllowedIPs, ", "))
+		builder.WriteString("\nEndpoint = ")
+		builder.WriteString(peer.Endpoint)
+		builder.WriteByte('\n')
+		if peer.PersistentKeepalive {
+			builder.WriteString("PersistentKeepalive = 25\n")
+		}
+	}
+	configuration := builder.String()
+	digest := sha256.Sum256([]byte(configuration))
+	return DesiredState{Configuration: configuration, Revision: hex.EncodeToString(digest[:])}, nil
+}
 
 func Apply(ctx context.Context, interfaceName, configurationPath string, desired []byte) error {
 	if interfaceName == "" || strings.ContainsAny(interfaceName, "/\\\r\n\x00") {

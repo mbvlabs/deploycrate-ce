@@ -480,7 +480,7 @@ func (service *WorkloadExecution) updateRemoteFirewall(ctx context.Context, targ
 	if state.HostAddress != target.peer.PrivateAddress {
 		return errors.New("workload firewall address does not belong to its target Server")
 	}
-	arguments := []string{"allow", "in", "on", "wg0", "to", state.HostAddress, "port", fmt.Sprint(state.HostPort), "proto", "tcp"}
+	arguments := []string{"allow", "in", "on", "wg0", "from", WireGuardNodeCIDR, "to", state.HostAddress, "port", fmt.Sprint(state.HostPort), "proto", "tcp"}
 	if !allow {
 		arguments = append([]string{"--force", "delete"}, arguments...)
 	}

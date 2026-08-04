@@ -12,6 +12,7 @@ import (
 
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
+	internalwireguard "deploycrate-ce/internal/wireguard"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -70,8 +71,8 @@ func (entity *NodeEnrollmentEntity) Validate() error {
 		errs = append(errs, errors.New("SSH host fingerprint is required"))
 	}
 	address, err := netip.ParseAddr(strings.TrimSpace(entity.AllocatedAddress))
-	if err != nil || !netip.MustParsePrefix("10.99.0.0/16").Contains(address) || address.String() == "10.99.0.1" {
-		errs = append(errs, errors.New("allocated address must be a managed WireGuard address"))
+	if err != nil || !netip.MustParsePrefix(internalwireguard.NodeCIDR).Contains(address) || address.String() == internalwireguard.ControlPlaneAddress || address == netip.MustParsePrefix(internalwireguard.NodeCIDR).Addr() {
+		errs = append(errs, errors.New("allocated address must be a Node WireGuard address"))
 	}
 	if strings.TrimSpace(entity.InstallerVersion) == "" {
 		errs = append(errs, errors.New("installer version is required"))

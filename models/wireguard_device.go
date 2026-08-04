@@ -12,6 +12,7 @@ import (
 
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
+	internalwireguard "deploycrate-ce/internal/wireguard"
 
 	"github.com/google/uuid"
 	"github.com/uptrace/bun"
@@ -43,9 +44,9 @@ func (entity *WireGuardDeviceEntity) Validate() error {
 		errs = append(errs, errors.New("public key must be a base64-encoded 32-byte WireGuard key"))
 	}
 	address, err := netip.ParseAddr(strings.TrimSpace(entity.PrivateAddress))
-	network := netip.MustParsePrefix("10.99.0.0/16")
-	if err != nil || !address.Is4() || !network.Contains(address) || address.String() == "10.99.0.1" || address == network.Addr() {
-		errs = append(errs, errors.New("private address must be an allocatable host in 10.99.0.0/16"))
+	network := netip.MustParsePrefix(internalwireguard.DeviceCIDR)
+	if err != nil || !address.Is4() || !network.Contains(address) || address == network.Addr() {
+		errs = append(errs, errors.New("private address must be an allocatable host in the WireGuard device pool"))
 	}
 	if entity.ActivatedAt.IsZero() {
 		errs = append(errs, errors.New("activation time is required"))

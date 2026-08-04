@@ -10,13 +10,14 @@ import (
 	"strconv"
 	"strings"
 
+	internalwireguard "deploycrate-ce/internal/wireguard"
 	"deploycrate-ce/models"
 
 	"github.com/google/uuid"
 	"golang.org/x/crypto/ssh"
 )
 
-const ManifestVersion = 2
+const ManifestVersion = 3
 
 type Manifest struct {
 	ManifestVersion       int                       `json:"manifest_version"`
@@ -28,6 +29,7 @@ type Manifest struct {
 	ControlPlanePublicKey string                    `json:"control_plane_public_key"`
 	ControlPlaneAddress   string                    `json:"control_plane_address"`
 	ControlPlaneEndpoint  string                    `json:"control_plane_endpoint"`
+	NodePeers             []internalwireguard.Peer  `json:"node_peers"`
 	SSHUserCAPublicKey    string                    `json:"ssh_user_ca_public_key"`
 	OTLPEndpoint          string                    `json:"otlp_endpoint"`
 	Capabilities          models.ServerCapabilities `json:"capabilities"`
@@ -69,8 +71,8 @@ func (manifest Manifest) Validate() error {
 		errs = append(errs, errors.New("node name is invalid"))
 	}
 	address, err := netip.ParseAddr(strings.TrimSpace(manifest.PrivateAddress))
-	if err != nil || !netip.MustParsePrefix("10.99.0.0/16").Contains(address) || address.String() == "10.99.0.1" {
-		errs = append(errs, errors.New("private address must be a worker address in 10.99.0.0/16"))
+	if err != nil || !netip.MustParsePrefix(internalwireguard.NodeCIDR).Contains(address) || address.String() == internalwireguard.ControlPlaneAddress || address == netip.MustParsePrefix(internalwireguard.NodeCIDR).Addr() {
+		errs = append(errs, errors.New("private address must be an allocatable Node address"))
 	}
 	if manifest.ListenPort < 1 || manifest.ListenPort > 65535 {
 		errs = append(errs, errors.New("WireGuard listen port is invalid"))
@@ -83,8 +85,8 @@ func (manifest Manifest) Validate() error {
 		errs = append(errs, errors.New("control-plane WireGuard public key is invalid"))
 	}
 	controlAddress, addressErr := netip.ParseAddr(strings.TrimSpace(manifest.ControlPlaneAddress))
-	if addressErr != nil || controlAddress.String() != "10.99.0.1" {
-		errs = append(errs, errors.New("control-plane WireGuard address must be 10.99.0.1"))
+	if addressErr != nil || controlAddress.String() != internalwireguard.ControlPlaneAddress {
+		errs = append(errs, errors.New("control-plane WireGuard address is invalid"))
 	}
 	host, port, endpointErr := net.SplitHostPort(strings.TrimSpace(manifest.ControlPlaneEndpoint))
 	portNumber, portErr := strconv.Atoi(port)
@@ -95,11 +97,40 @@ func (manifest Manifest) Validate() error {
 		errs = append(errs, errors.New("SSH user CA public key is invalid"))
 	}
 	otlp, otlpErr := netip.ParseAddrPort(strings.TrimSpace(manifest.OTLPEndpoint))
-	if otlpErr != nil || otlp.Addr().String() != "10.99.0.1" {
+	if otlpErr != nil || otlp.Addr().String() != internalwireguard.ControlPlaneAddress {
 		errs = append(errs, errors.New("OTLP endpoint must be on the control-plane WireGuard address"))
+	}
+	for _, peer := range manifest.NodePeers {
+		if len(peer.AllowedIPs) != 1 {
+			errs = append(errs, errors.New("each Node peer must own exactly one WireGuard address"))
+			continue
+		}
+		prefix, prefixErr := netip.ParsePrefix(strings.TrimSpace(peer.AllowedIPs[0]))
+		if prefixErr != nil || prefix.Bits() != 32 || !netip.MustParsePrefix(internalwireguard.NodeCIDR).Contains(prefix.Addr()) || prefix.Addr() == address || prefix.Addr().String() == internalwireguard.ControlPlaneAddress {
+			errs = append(errs, errors.New("Node peer allowed IP must identify another Node"))
+		}
+	}
+	if _, peerErr := manifest.PeerConfiguration(); peerErr != nil {
+		errs = append(errs, peerErr)
 	}
 	if err := manifest.Capabilities.Validate(); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
+}
+
+func (manifest Manifest) PeerConfiguration() (string, error) {
+	peers := make([]internalwireguard.Peer, 0, len(manifest.NodePeers)+1)
+	peers = append(peers, internalwireguard.Peer{
+		PublicKey: manifest.ControlPlanePublicKey,
+		AllowedIPs: []string{
+			strings.TrimSpace(manifest.ControlPlaneAddress) + "/32",
+			internalwireguard.DeviceCIDR,
+		},
+		Endpoint:            manifest.ControlPlaneEndpoint,
+		PersistentKeepalive: true,
+	})
+	peers = append(peers, manifest.NodePeers...)
+	state, err := internalwireguard.BuildPeerConfiguration(peers)
+	return state.Configuration, err
 }

@@ -103,6 +103,9 @@ Rules local to one entity belong in `models/`. Rules involving multiple records,
 - A server has one active SSH credential configuration and one active WireGuard peer identity.
 - WireGuard public keys and allocated overlay addresses identify one active peer or network attachment.
 - All managed servers participate in the single DeployCrate WireGuard overlay.
+- The control plane and Nodes use `10.99.0.0/17`; user devices use `10.99.128.0/17`.
+- Every Node has a direct `/32` WireGuard peer for every other active Node, and Node peer state never includes user devices.
+- Every Node must expose its declared WireGuard UDP endpoint to every other Node.
 - Server and WireGuard status records are current projections. Older observations cannot replace newer observations.
 - Archiving a server prevents new placements while preserving target, deployment, backup, and telemetry history.
 
@@ -117,6 +120,8 @@ Rules local to one entity belong in `models/`. Rules involving multiple records,
 - `environment_target` is the runtime network-isolation boundary. Containers and native workloads for different targets must not share unrestricted network namespaces or policy identities.
 - An access rule's environment, target, dependency, endpoint, and network describe one coherent source-to-destination permission.
 - A dependency can reach only its selected endpoint and required protocol and port through the declared logical network.
+- User devices peer only with the control plane. A Resource grant creates an exact device-address, destination-address, protocol, and port route through the control plane, plus a matching destination-Node firewall rule.
+- The control plane does not provide unrestricted forwarding between the device and Node address pools.
 - Sharing a server or resource never grants access to unrelated environments, endpoints, or services.
 - Applied and observed access state cannot claim success until the responsible target or server reports the intended rule.
 

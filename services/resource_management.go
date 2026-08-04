@@ -853,12 +853,12 @@ func (service *ResourceManagement) syncManagedEndpoints(ctx context.Context, db 
 				return err
 			}
 			address = strings.TrimSpace(attachmentAddress)
-			if address != WireGuardPrivateAddress || address != endpoint.Address {
+			if address != endpoint.Address {
 				return domainError("serverId", "private_access", "remove this Resource from its private network before changing its WireGuard attachment address")
 			}
 		}
 		if _, err := models.ResourceEndpoint.Update(ctx, db, models.UpdateResourceEndpointData{
-			ID: endpoint.ID, Name: endpoint.Name, Role: "primary", Address: address,
+			ID: endpoint.ID, Name: endpoint.Name, Role: endpoint.Role, Address: address,
 			Port: mapping.HostPort, Protocol: definition.DefaultProtocol, TlsMode: endpoint.TlsMode,
 			Settings: endpoint.Settings, ArchivedAt: endpoint.ArchivedAt, ResourceID: resource.ID,
 			PrivateNetworkID: endpoint.PrivateNetworkID,

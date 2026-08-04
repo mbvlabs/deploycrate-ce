@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	_ "embed"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -38,6 +39,10 @@ func Install(ctx context.Context, manifest Manifest) (Result, error) {
 	if err != nil {
 		return Result{}, fmt.Errorf("encode node name for telemetry configuration: %w", err)
 	}
+	peerConfiguration, err := manifest.PeerConfiguration()
+	if err != nil {
+		return Result{}, fmt.Errorf("build Node WireGuard peers: %w", err)
+	}
 
 	command := exec.CommandContext(ctx, "/usr/bin/env", "bash", "-s")
 	command.Stdin = strings.NewReader(installationScript)
@@ -51,6 +56,7 @@ func Install(ctx context.Context, manifest Manifest) (Result, error) {
 		"DEPLOYCRATE_CONTROL_PUBLIC_KEY="+manifest.ControlPlanePublicKey,
 		"DEPLOYCRATE_CONTROL_ADDRESS="+manifest.ControlPlaneAddress,
 		"DEPLOYCRATE_CONTROL_ENDPOINT="+manifest.ControlPlaneEndpoint,
+		"DEPLOYCRATE_WIREGUARD_PEERS="+base64.StdEncoding.EncodeToString([]byte(peerConfiguration)),
 		"DEPLOYCRATE_SSH_USER_CA="+manifest.SSHUserCAPublicKey,
 		"DEPLOYCRATE_OTLP_ENDPOINT="+manifest.OTLPEndpoint,
 		fmt.Sprintf("DEPLOYCRATE_CAPABILITY_BUILD=%t", manifest.Capabilities.Build),
