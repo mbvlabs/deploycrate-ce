@@ -29,7 +29,6 @@ type ResourceEntity struct {
 
 type ResourceConfiguration struct {
 	Engine          string                       `json:"engine"`
-	EngineVersion   string                       `json:"engine_version,omitempty"`
 	Databases       []ResourceDatabaseDefinition `json:"databases,omitempty"`
 	EnvironmentKeys map[string]string            `json:"environment_keys"`
 }

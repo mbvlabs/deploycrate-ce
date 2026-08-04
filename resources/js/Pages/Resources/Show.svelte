@@ -14,6 +14,7 @@
   import * as NativeSelect from '@/Components/ui/native-select'
   import { Spinner } from '@/Components/ui/spinner'
   import StatusBadge from '@/Components/StatusBadge.svelte'
+  import * as Table from '@/Components/ui/table'
   import { Textarea } from '@/Components/ui/textarea'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
@@ -28,24 +29,30 @@
   type BackupPolicy = { id: string; schedule: string; active: boolean; nextRunAt: string; backupDestinationId: string; keepLast: number; keepDaily: number; keepWeekly: number; keepMonthly: number }
   type BackupHistory = { id: string; status: string; triggerType: string; scheduledAt: string; finishedAt: string | null; verifiedAt: string | null; sizeBytes: number | null; error: string; canRestore: boolean }
   type RestoreHistory = { id: string; status: string; requestedAt: string; startedAt: string | null; finishedAt: string | null; verifiedAt: string | null; cutoverAt: string | null; rolledBackAt: string | null; error: string; backupId: string; backupScheduledAt: string; safetyBackupId: string | null }
+  type RevealedCredential = { id: string; name: string; username: string; values: Record<string, string> }
   type DatabaseBackups = { databaseName: string; eligibility: { eligible: boolean; reason: string; installationId: string | null }; policy: BackupPolicy | null; history: BackupHistory[]; restores: RestoreHistory[]; activeRestore: boolean }
   type Backups = { destinations: BackupDestination[]; databases: DatabaseBackups[] }
   type DestructiveAction =
     | { kind: 'remove-container'; installationId: string; title: string; description: string; confirmationLabel: string }
     | { kind: 'disable-private-access'; title: string; description: string; confirmationLabel: string }
     | { kind: 'revoke-device'; deviceId: string; title: string; description: string; confirmationLabel: string }
+    | { kind: 'archive-endpoint'; endpointId: string; title: string; description: string; confirmationLabel: string }
+    | { kind: 'archive-credential'; credentialId: string; title: string; description: string; confirmationLabel: string }
+    | { kind: 'archive-volume'; volumeId: string; title: string; description: string; confirmationLabel: string }
+    | { kind: 'archive-mount'; mountId: string; title: string; description: string; confirmationLabel: string }
+    | { kind: 'archive-health'; healthId: string; title: string; description: string; confirmationLabel: string }
     | { kind: 'archive-resource'; title: string; description: string; confirmationLabel: string }
     | { kind: 'archive-backup-policy'; databaseName: string; policyId: string; title: string; description: string; confirmationLabel: string }
-  let { auth, resource, backups, options, section = 'overview', enrollment = null, errors = {} }: { auth: { email: string }; resource: any; backups: Backups; options: Options; section?: string; enrollment?: Enrollment | null; errors?: Record<string, string> } = $props()
-  let selectedBackupDatabaseName = $state('')
+  let { auth, resource, backups, options, section = 'overview', selectedDatabase = '', enrollment = null, errors = {} }: { auth: { email: string }; resource: any; backups: Backups; options: Options; section?: string; selectedDatabase?: string; enrollment?: Enrollment | null; errors?: Record<string, string> } = $props()
+  let selectedBackupDatabaseName = $state(initialSelectedBackupDatabase())
 
   const definition = $derived(options.engines.find((kind) => kind.engine === resource.engine) ?? options.engines[0])
   const endpointNetworks = $derived(resource.installations.length === 1
     ? options.privateNetworks.filter((network) => network.serverIds.includes(resource.installations[0].serverId) && Boolean(network.serverAddresses[resource.installations[0].serverId]))
     : options.privateNetworks)
   const primaryEndpoint = $derived(resource.endpoints.find((item: any) => item.role === 'primary' && !item.privateNetworkId))
-  const privateEndpoint = $derived(resource.endpoints.find((item: any) => Boolean(item.privateNetworkId)))
-  const privateNetwork = $derived(privateEndpoint ? options.privateNetworks.find((item) => item.id === privateEndpoint.privateNetworkId) : undefined)
+  const privateAccess = $derived(resource.privateAccess)
+  const privateNetwork = $derived(privateAccess ? options.privateNetworks.find((item) => item.id === privateAccess.privateNetworkId) : undefined)
   const administratorCredentials = $derived(resource.credentials.filter((item: any) => item.metadata?.purpose === 'administrator'))
   const applicationCredentials = $derived(resource.credentials.filter((item: any) => item.metadata?.purpose === 'application'))
 	const databaseBacked = $derived(resource.resourceType === 'database')
@@ -53,15 +60,15 @@
   const containerRunning = $derived(resource.installations.some((item: any) => item.serviceState === 'running'))
   const canAddApplicationUser = $derived((!databaseBacked || resource.databases.length > 0) && (!managedPostgreSQL || containerRunning))
   const selectedBackups = $derived(backups.databases.find((item) => item.databaseName === selectedBackupDatabaseName) ?? backups.databases[0])
+  const configuredBackups = $derived(backups.databases.filter((item) => Boolean(item.policy)))
   const lastSuccessfulBackup = $derived(selectedBackups?.history.find((item) => item.status === 'verified'))
   const activeRestore = $derived(Boolean(selectedBackups?.activeRestore))
   const sectionTitle = $derived(({
     overview: 'Overview',
     databases: 'Databases',
     backups: 'Backups',
-    endpoints: 'Endpoints & access',
+    endpoints: 'Endpoints',
     credentials: 'Credentials',
-    runtime: 'Runtime & storage',
     health: 'Health checks',
   } as Record<string, string>)[section] ?? 'Overview')
   const overallStatus = $derived.by(() => {
@@ -86,7 +93,10 @@
 
   let endpointDialogOpen = $state(false)
   let privateAccessDialogOpen = $state(false)
+  let deviceDialogOpen = $state(false)
   let credentialDialogOpen = $state(false)
+  let credentialPasswordDialogOpen = $state(false)
+  let revealedCredentialDialogOpen = $state(false)
   let databaseDialogOpen = $state(false)
   let volumeDialogOpen = $state(false)
   let mountDialogOpen = $state(false)
@@ -94,6 +104,7 @@
   let connectionKeysDialogOpen = $state(false)
   let destructiveActionDialogOpen = $state(false)
   let restoreDialogOpen = $state(false)
+  let backupPolicyDialogOpen = $state(false)
   let wireGuardConfigurationDialogOpen = $state(false)
   let containerLogsDialogOpen = $state(false)
   let containerLogsInstallation = $state<any>(null)
@@ -108,13 +119,23 @@
   let destructiveAction = $state<DestructiveAction | null>(null)
   let shownEnrollmentGrantId = $state('')
   let endpoint = $state(initialEndpoint())
-  let credential = $state({ name: 'Application user', username: '', database: '', secretValues: {} as Record<string, string> })
+  let editingEndpointId = $state('')
+  let credential = $state({ name: 'Application user', username: '', database: '', purpose: 'application', metadata: {} as Record<string, unknown>, rotate: false, secretValues: {} as Record<string, string> })
+  let editingCredentialId = $state('')
+  let selectedCredential = $state<any>(null)
+  let currentPassword = $state('')
+  let credentialRevealError = $state('')
+  let credentialRevealProcessing = $state(false)
+  let revealedCredential = $state<RevealedCredential | null>(null)
   let database = $state({ name: '', encoding: 'UTF8', collation: '' })
   let privateAccessNetworkId = $state('')
   let device = $state({ name: '', deviceId: '' })
   let volume = $state(initialVolume())
+  let editingVolumeId = $state('')
   let mount = $state(initialMount())
+  let editingMountId = $state('')
   let health = $state(initialHealth())
+  let editingHealthId = $state('')
   let backupPolicy = $state(initialBackupPolicy())
   let restoreBackup = $state<BackupHistory | null>(null)
   let restoreConfirmation = $state('')
@@ -141,16 +162,18 @@
   })
 
   $effect(() => {
-    if (backups.databases.some((item) => item.databaseName === selectedBackupDatabaseName)) return
-    const first = backups.databases[0]
+    const available = section === 'backups' ? configuredBackups : backups.databases
+    if (available.some((item) => item.databaseName === selectedBackupDatabaseName)) return
+    const first = available[0]
     selectedBackupDatabaseName = first?.databaseName ?? ''
     if (!credential.database) credential.database = resource.databases[0]?.name ?? ''
     backupPolicy = initialBackupPolicy(first)
   })
 
   function initialEndpoint() {
-    return { name: 'Primary', role: definition?.endpointRoles[0] ?? 'primary', address: '127.0.0.1', port: definition?.defaultPort ?? 1, protocol: definition?.defaultProtocol ?? 'tcp', tlsMode: definition?.defaultTlsMode ?? 'disable', privateNetworkId: '' }
+    return { name: 'Primary', role: definition?.endpointRoles[0] ?? 'primary', address: '127.0.0.1', port: definition?.defaultPort ?? 1, protocol: definition?.defaultProtocol ?? 'tcp', tlsMode: definition?.defaultTlsMode ?? 'disable', privateNetworkId: '', settings: {} }
   }
+  function initialSelectedBackupDatabase() { return selectedDatabase }
   function initialVolume() { return { name: '', driver: 'local', configurationText: '{}', serverId: options.servers[0]?.id ?? '' } }
   function initialMount() { return { mountPath: '/data', readOnly: false, resourceVolumeId: resource.volumes[0]?.id ?? '', resourceInstallationId: resource.installations[0]?.id ?? '' } }
 	function initialHealth() { return { name: 'Readiness', kind: resource.engine === 'postgresql' || resource.engine === 'clickhouse' ? resource.engine : definition?.healthCheckKinds?.[0] ?? 'tcp', configurationText: '{}', intervalSeconds: 30, timeoutSeconds: 5, failureThreshold: 3, successThreshold: 1, enabled: true, resourceEndpointId: primaryEndpoint?.id ?? '', resourceCredentialId: applicationCredentials[0]?.id ?? administratorCredentials[0]?.id ?? '' } }
@@ -170,6 +193,11 @@
     backupPolicy = initialBackupPolicy(backups.databases.find((item) => item.databaseName === databaseName))
   }
 
+  function openBackupPolicyDialog(databaseName: string) {
+    selectBackupDatabase(databaseName)
+    backupPolicyDialogOpen = true
+  }
+
   function json(value: string) {
     try { jsonError = ''; return JSON.parse(value || '{}') }
     catch { jsonError = 'Configuration and metadata must contain valid JSON.'; throw new Error(jsonError) }
@@ -179,25 +207,51 @@
   function actionURL(url: string) { return `${url}${url.includes('?') ? '&' : '?'}returnTo=${section}` }
   function openWireGuardConfiguration() { if (enrollment?.clientConfiguration) wireGuardConfigurationDialogOpen = true }
   function createDatabase() { if (dialogAction) return; dialogAction = 'database'; router.post(actionURL(routes.resourceDatabaseCreateForResource(resource.id)), database, { onSuccess: () => { databaseDialogOpen = false; database = { name: '', encoding: 'UTF8', collation: '' } }, onError: () => (databaseDialogOpen = true), onFinish: () => (dialogAction = '') }) }
-  function createEndpoint() { if (dialogAction) return; dialogAction = 'endpoint'; router.post(actionURL(routes.resourceEndpointCreate(resource.id)), { ...endpoint, settings: {} }, { onSuccess: () => (endpointDialogOpen = false), onError: () => (endpointDialogOpen = true), onFinish: () => (dialogAction = '') }) }
+  function openEndpointDialog(item: any = null) {
+    editingEndpointId = item?.id ?? ''
+    endpoint = item ? { name: item.name, role: item.role, address: item.address, port: item.port, protocol: item.protocol, tlsMode: item.tlsMode, privateNetworkId: item.privateNetworkId ?? '', settings: item.settings ?? {} } : initialEndpoint()
+    endpointDialogOpen = true
+  }
+  function saveEndpoint() {
+    if (dialogAction) return
+    dialogAction = 'endpoint'
+    const payload = { ...endpoint }
+    const options = { onSuccess: () => { endpointDialogOpen = false; editingEndpointId = '' }, onError: () => (endpointDialogOpen = true), onFinish: () => (dialogAction = '') }
+    if (editingEndpointId) router.patch(actionURL(routes.resourceEndpointUpdate(resource.id, editingEndpointId)), payload, options)
+    else router.post(actionURL(routes.resourceEndpointCreate(resource.id)), payload, options)
+  }
   function chooseEndpointNetwork(networkId: string) {
     endpoint.privateNetworkId = networkId
     const selected = options.privateNetworks.find((network) => network.id === networkId)
     const serverId = resource.installations[0]?.serverId
     endpoint.address = selected && serverId ? selected.serverAddresses[serverId] ?? '127.0.0.1' : '127.0.0.1'
   }
-  function openCredentialDialog() { if (canAddApplicationUser) credentialDialogOpen = true }
-  function createCredential() { if (!canAddApplicationUser || dialogAction) return; dialogAction = 'credential'; router.post(actionURL(routes.resourceCredentialCreate(resource.id)), { name: credential.name, username: credential.username, secretValues: credential.secretValues, metadata: { purpose: 'application', database: credential.database } }, { onSuccess: () => { credentialDialogOpen = false; credential.secretValues = {} }, onError: () => (credentialDialogOpen = true), onFinish: () => (dialogAction = '') }) }
+  function openCredentialDialog(item: any = null) {
+    if (!item && !canAddApplicationUser) return
+    editingCredentialId = item?.id ?? ''
+    credential = item
+      ? { name: item.name, username: item.username, database: item.metadata?.database ?? '', purpose: item.metadata?.purpose ?? 'application', metadata: item.metadata ?? {}, rotate: false, secretValues: {} }
+      : { name: 'Application user', username: '', database: resource.databases[0]?.name ?? '', purpose: 'application', metadata: {}, rotate: false, secretValues: {} }
+    credentialDialogOpen = true
+  }
+  function saveCredential() {
+    if ((!editingCredentialId && !canAddApplicationUser) || dialogAction) return
+    dialogAction = 'credential'
+    const payload = { name: credential.name, username: credential.username, rotate: credential.rotate, secretValues: credential.secretValues, metadata: { ...credential.metadata, purpose: credential.purpose, database: credential.database } }
+    const options = { onSuccess: () => { credentialDialogOpen = false; editingCredentialId = ''; credential.secretValues = {} }, onError: () => (credentialDialogOpen = true), onFinish: () => (dialogAction = '') }
+    if (editingCredentialId) router.patch(actionURL(routes.resourceCredentialUpdate(resource.id, editingCredentialId)), payload, options)
+    else router.post(actionURL(routes.resourceCredentialCreate(resource.id)), payload, options)
+  }
   function enablePrivateAccess() { if (dialogAction) return; dialogAction = 'private-access'; router.post(actionURL(routes.resourcePrivateAccessCreate(resource.id)), { privateNetworkId: privateAccessNetworkId }, { onSuccess: () => (privateAccessDialogOpen = false), onError: () => (privateAccessDialogOpen = true), onFinish: () => (dialogAction = '') }) }
   function disablePrivateAccess() {
     confirmDestructive({
       kind: 'disable-private-access',
-      title: 'Remove from private network?',
-      description: 'The private listener will be removed and every device grant for this Resource will be revoked.',
-      confirmationLabel: 'Remove from private network',
+      title: 'Turn off WireGuard access?',
+      description: 'The private listener will be removed and every device grant for this Resource will be revoked. Archive endpoints using WireGuard before turning access off.',
+      confirmationLabel: 'Turn off WireGuard access',
     })
   }
-  function submitDevice() { if (pendingAction) return; pendingAction = 'device'; router.post(actionURL(routes.resourcePrivateAccessDeviceCreate(resource.id)), device, { onFinish: () => (pendingAction = '') }) }
+  function submitDevice() { if (pendingAction) return; pendingAction = 'device'; router.post(actionURL(routes.resourcePrivateAccessDeviceCreate(resource.id)), device, { onSuccess: () => (deviceDialogOpen = false), onFinish: () => (pendingAction = '') }) }
   function revokeDevice(deviceId: string, deviceName: string) {
     confirmDestructive({
       kind: 'revoke-device',
@@ -208,9 +262,12 @@
     })
   }
   function retryDevice(deviceId: string) { router.post(actionURL(routes.resourcePrivateAccessDeviceCreate(resource.id)), { deviceId, name: '' }) }
-  function createVolume() { if (dialogAction) return; submit(() => { const configuration = json(volume.configurationText); dialogAction = 'volume'; router.post(actionURL(routes.resourceVolumeCreate(resource.id)), { ...volume, configuration }, { onSuccess: () => (volumeDialogOpen = false), onError: () => (volumeDialogOpen = true), onFinish: () => (dialogAction = '') }) }) }
-  function createMount() { if (dialogAction) return; dialogAction = 'mount'; router.post(actionURL(routes.resourceMountCreate(resource.id)), mount, { onSuccess: () => (mountDialogOpen = false), onError: () => (mountDialogOpen = true), onFinish: () => (dialogAction = '') }) }
-  function createHealth() { if (dialogAction) return; submit(() => { const configuration = json(health.configurationText); dialogAction = 'health'; router.post(actionURL(routes.resourceHealthCheckCreate(resource.id)), { ...health, configuration }, { onSuccess: () => (healthDialogOpen = false), onError: () => (healthDialogOpen = true), onFinish: () => (dialogAction = '') }) }) }
+  function openVolumeDialog(item: any = null) { editingVolumeId = item?.id ?? ''; volume = item ? { name: item.name, driver: item.driver, configurationText: JSON.stringify(item.configuration ?? {}, null, 2), serverId: item.serverId } : initialVolume(); volumeDialogOpen = true }
+  function saveVolume() { if (dialogAction) return; submit(() => { const configuration = json(volume.configurationText); dialogAction = 'volume'; const options = { onSuccess: () => { volumeDialogOpen = false; editingVolumeId = '' }, onError: () => (volumeDialogOpen = true), onFinish: () => (dialogAction = '') }; if (editingVolumeId) router.patch(actionURL(routes.resourceVolumeUpdate(resource.id, editingVolumeId)), { ...volume, configuration }, options); else router.post(actionURL(routes.resourceVolumeCreate(resource.id)), { ...volume, configuration }, options) }) }
+  function openMountDialog(item: any = null) { editingMountId = item?.id ?? ''; mount = item ? { mountPath: item.mountPath, readOnly: item.readOnly, resourceVolumeId: item.resourceVolumeId, resourceInstallationId: item.resourceInstallationId } : initialMount(); mountDialogOpen = true }
+  function saveMount() { if (dialogAction) return; dialogAction = 'mount'; const options = { onSuccess: () => { mountDialogOpen = false; editingMountId = '' }, onError: () => (mountDialogOpen = true), onFinish: () => (dialogAction = '') }; if (editingMountId) router.patch(actionURL(routes.resourceMountUpdate(resource.id, editingMountId)), mount, options); else router.post(actionURL(routes.resourceMountCreate(resource.id)), mount, options) }
+  function openHealthDialog(item: any = null) { editingHealthId = item?.id ?? ''; health = item ? { name: item.name, kind: item.kind, configurationText: JSON.stringify(item.configuration ?? {}, null, 2), intervalSeconds: item.intervalSeconds, timeoutSeconds: item.timeoutSeconds, failureThreshold: item.failureThreshold, successThreshold: item.successThreshold, enabled: item.enabled, resourceEndpointId: item.resourceEndpointId ?? '', resourceCredentialId: item.resourceCredentialId ?? '' } : initialHealth(); healthDialogOpen = true }
+  function saveHealth() { if (dialogAction) return; submit(() => { const configuration = json(health.configurationText); dialogAction = 'health'; const options = { onSuccess: () => { healthDialogOpen = false; editingHealthId = '' }, onError: () => (healthDialogOpen = true), onFinish: () => (dialogAction = '') }; if (editingHealthId) router.patch(actionURL(routes.resourceHealthCheckUpdate(resource.id, editingHealthId)), { ...health, configuration }, options); else router.post(actionURL(routes.resourceHealthCheckCreate(resource.id)), { ...health, configuration }, options) }) }
   function openConnectionKeys(connection: any) {
     connectionKeysConnection = connection
     connectionKeys = { ...connection.environmentKeys }
@@ -238,8 +295,9 @@
   function saveBackupPolicy() {
     if (!selectedBackups) return
     const databaseName = databaseRouteName(selectedBackups.databaseName)
-    if (selectedBackups.policy) router.patch(actionURL(routes.resourceBackupPolicyUpdate(resource.id, databaseName, selectedBackups.policy.id)), backupPolicy)
-    else router.post(actionURL(routes.resourceBackupPolicyCreate(resource.id, databaseName)), backupPolicy)
+    const options = { onSuccess: () => (backupPolicyDialogOpen = false), onError: () => (backupPolicyDialogOpen = true) }
+    if (selectedBackups.policy) router.patch(actionURL(routes.resourceBackupPolicyUpdate(resource.id, databaseName, selectedBackups.policy.id)), backupPolicy, options)
+    else router.post(actionURL(routes.resourceBackupPolicyCreate(resource.id, databaseName)), backupPolicy, options)
   }
   function pauseBackupPolicy() { if (selectedBackups?.policy) router.post(actionURL(routes.resourceBackupPolicyPause(resource.id, databaseRouteName(selectedBackups.databaseName), selectedBackups.policy.id)), {}) }
   function resumeBackupPolicy() { if (selectedBackups?.policy) router.post(actionURL(routes.resourceBackupPolicyResume(resource.id, databaseRouteName(selectedBackups.databaseName), selectedBackups.policy.id)), {}) }
@@ -306,6 +364,27 @@
     destructiveActionDialogOpen = true
   }
 
+  function archiveEndpoint() { if (!editingEndpointId) return; endpointDialogOpen = false; confirmDestructive({ kind: 'archive-endpoint', endpointId: editingEndpointId, title: `Archive ${endpoint.name}?`, description: 'The endpoint can no longer be selected by Environments or health checks.', confirmationLabel: 'Archive endpoint' }) }
+  function archiveCredential() { if (!editingCredentialId) return; credentialDialogOpen = false; confirmDestructive({ kind: 'archive-credential', credentialId: editingCredentialId, title: `Archive ${credential.name}?`, description: 'The credential can no longer be selected by Environments or health checks.', confirmationLabel: 'Archive credential' }) }
+  function archiveVolume() { if (!editingVolumeId) return; volumeDialogOpen = false; confirmDestructive({ kind: 'archive-volume', volumeId: editingVolumeId, title: `Archive ${volume.name}?`, description: 'Remove its mounts before archiving this volume.', confirmationLabel: 'Archive volume' }) }
+  function archiveMount() { if (!editingMountId) return; mountDialogOpen = false; confirmDestructive({ kind: 'archive-mount', mountId: editingMountId, title: `Archive mount ${mount.mountPath}?`, description: 'The volume will no longer be mounted into this installation.', confirmationLabel: 'Archive mount' }) }
+  function archiveHealth() { if (!editingHealthId) return; healthDialogOpen = false; confirmDestructive({ kind: 'archive-health', healthId: editingHealthId, title: `Archive ${health.name}?`, description: 'DeployCrate will stop evaluating this health check.', confirmationLabel: 'Archive health check' }) }
+
+  function destructiveActionURL(action: DestructiveAction) {
+    switch (action.kind) {
+      case 'remove-container': return routes.resourceInstallationRemove(resource.id, action.installationId)
+      case 'disable-private-access': return routes.resourcePrivateAccessDestroy(resource.id)
+      case 'revoke-device': return routes.resourcePrivateAccessDeviceDestroy(resource.id, action.deviceId)
+      case 'archive-endpoint': return routes.resourceEndpointDestroy(resource.id, action.endpointId)
+      case 'archive-credential': return routes.resourceCredentialDestroy(resource.id, action.credentialId)
+      case 'archive-volume': return routes.resourceVolumeDestroy(resource.id, action.volumeId)
+      case 'archive-mount': return routes.resourceMountDestroy(resource.id, action.mountId)
+      case 'archive-health': return routes.resourceHealthCheckDestroy(resource.id, action.healthId)
+      case 'archive-resource': return routes.resourceDestroy(resource.id)
+      case 'archive-backup-policy': return routes.resourceBackupPolicyDestroy(resource.id, databaseRouteName(action.databaseName), action.policyId)
+    }
+  }
+
   function executeDestructiveAction() {
     const action = destructiveAction
     if (!action) return
@@ -313,11 +392,7 @@
     if (destructiveProcessing) return
     destructiveProcessing = true
     destructiveError = ''
-    const url = action.kind === 'remove-container' ? routes.resourceInstallationRemove(resource.id, action.installationId)
-      : action.kind === 'disable-private-access' ? routes.resourcePrivateAccessDestroy(resource.id)
-      : action.kind === 'revoke-device' ? routes.resourcePrivateAccessDeviceDestroy(resource.id, action.deviceId)
-      : action.kind === 'archive-resource' ? routes.resourceDestroy(resource.id)
-      : routes.resourceBackupPolicyDestroy(resource.id, databaseRouteName(action.databaseName), action.policyId)
+    const url = destructiveActionURL(action)
     router.delete(actionURL(url), {
       onSuccess: () => { destructiveActionDialogOpen = false; destructiveAction = null },
       onError: (errors) => (destructiveError = Object.values(errors).map(String).join('\n') || 'The action could not be completed.'),
@@ -330,6 +405,53 @@
     if (!configuration) return
     try { await navigator.clipboard.writeText(configuration); toast.success('WireGuard configuration copied') }
     catch { toast.error('WireGuard configuration could not be copied') }
+  }
+
+  function askForCredential(item: any) {
+    selectedCredential = item
+    currentPassword = ''
+    credentialRevealError = ''
+    credentialPasswordDialogOpen = true
+  }
+
+  async function revealCredential(event: SubmitEvent) {
+    event.preventDefault()
+    if (!selectedCredential || !currentPassword || credentialRevealProcessing) return
+    credentialRevealProcessing = true
+    credentialRevealError = ''
+    try {
+      const response = await window.fetch(routes.resourceCredentialReveal(resource.id, selectedCredential.id), {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: currentPassword }),
+      })
+      const payload = await response.json().catch(() => ({})) as Partial<RevealedCredential> & { error?: string }
+      if (!response.ok || !payload.id || !payload.name || !payload.values || Object.keys(payload.values).length === 0) throw new Error(payload.error || 'Resource credential could not be loaded')
+      revealedCredential = { id: payload.id, name: payload.name, username: payload.username ?? '', values: payload.values }
+      currentPassword = ''
+      credentialPasswordDialogOpen = false
+      revealedCredentialDialogOpen = true
+    } catch (error) {
+      credentialRevealError = error instanceof Error ? error.message : 'Resource credential could not be loaded'
+    } finally {
+      credentialRevealProcessing = false
+    }
+  }
+
+  function closeRevealedCredential() {
+    revealedCredentialDialogOpen = false
+    revealedCredential = null
+    selectedCredential = null
+  }
+
+  async function copyCredential(value: string, label: string) {
+    try { await navigator.clipboard.writeText(value); toast.success(`${label} copied`) }
+    catch { toast.error(`${label} could not be copied`) }
+  }
+
+  function displayLabel(value: string) {
+    return value.replaceAll('_', ' ').replace(/\b\w/g, (character) => character.toUpperCase())
   }
 
   async function openContainerLogs(installation: any) {
@@ -378,10 +500,6 @@
         <p class="mt-2 text-sm text-muted-foreground">{sectionTitle}</p>
         {#if databaseBacked}<p class="mt-1 text-xs text-muted-foreground">{resource.databases.length} {resource.databases.length === 1 ? 'Database' : 'Databases'}</p>{/if}
       </div>
-      <div class="flex gap-2">
-        <Button variant="outline" onclick={() => router.reload({ only: ['resource'] })}>Refresh status</Button>
-        <Button>{#snippet child({ props })}<Link {...props} href={routes.resourceSettings(resource.id)}>Settings</Link>{/snippet}</Button>
-      </div>
     </header>
 
     {#if Object.keys(errors).length > 0}<Alert.Root variant="destructive"><Alert.Title>The item could not be created</Alert.Title><Alert.Description>Review the dialog fields and try again.</Alert.Description></Alert.Root>{/if}
@@ -413,114 +531,98 @@
           <Card.Title>Databases</Card.Title>
           <Card.Description>Logical Databases published through this Resource's endpoints.</Card.Description>
         </Card.Header>
-        <Card.Content class="space-y-3">
-          {#if resource.databases.length === 0}<p class="text-sm text-muted-foreground">No Databases published.</p>{/if}
-          {#each resource.databases as item}
-            <article class="border border-border p-3">
-              <div class="flex flex-wrap items-start justify-between gap-3">
-                <div><p class="font-mono text-sm">{item.name}</p><p class="mt-1 text-xs text-muted-foreground">{item.encoding || 'Default encoding'}{item.collation ? ` · ${item.collation}` : ''}</p></div>
-                <p class="text-xs text-muted-foreground">Available through {resource.endpoints.length} {resource.endpoints.length === 1 ? 'endpoint' : 'endpoints'}</p>
-              </div>
-              {#if resource.endpoints.length === 0}
-                <p class="mt-3 border-t border-border pt-3 text-xs text-destructive">No published endpoints are configured.</p>
-              {:else}
-                <div class="mt-3 grid gap-2 border-t border-border pt-3 lg:grid-cols-2">
-                  {#each resource.endpoints as endpoint (endpoint.id)}
-                    <div class="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 bg-muted/20 px-3 py-2">
-                      <div class="min-w-0">
-                        <div class="flex flex-wrap items-center gap-2">
-                          <p class="text-xs font-medium">{endpoint.name}</p>
-                          <span class="text-[10px] uppercase tracking-wider text-muted-foreground">{endpoint.role}</span>
-                        </div>
-                        <p class="mt-1 break-all font-mono text-xs">{endpoint.address}:{endpoint.port}</p>
-                      </div>
-                      <p class="text-xs text-muted-foreground">{endpoint.protocol} · TLS {endpoint.tlsMode}</p>
-                    </div>
+        <Card.Content>
+          {#if resource.databases.length === 0}<p class="text-sm text-muted-foreground">No Databases published.</p>{:else}
+            <div class="overflow-hidden border border-border">
+              <Table.Root>
+                <Table.Header><Table.Row><Table.Head>Database</Table.Head><Table.Head>Encoding</Table.Head><Table.Head>Collation</Table.Head><Table.Head>Endpoints</Table.Head><Table.Head class="text-right">Backups</Table.Head></Table.Row></Table.Header>
+                <Table.Body>
+                  {#each resource.databases as item}
+                    {@const backup = backups.databases.find((detail) => detail.databaseName === item.name)}
+                    <Table.Row>
+                      <Table.Cell class="font-mono font-medium">{item.name}</Table.Cell>
+                      <Table.Cell>{item.encoding || 'Default'}</Table.Cell>
+                      <Table.Cell>{item.collation || 'Default'}</Table.Cell>
+                      <Table.Cell>{resource.endpoints.length}</Table.Cell>
+                      <Table.Cell class="text-right">
+                        {#if backup?.policy}
+                          <Button size="sm" variant="ghost">{#snippet child({ props })}<Link {...props} href={`${routes.resourceBackups(resource.id)}?database=${encodeURIComponent(item.name)}`}>Manage</Link>{/snippet}</Button>
+                        {:else}
+                          <Button size="sm" variant="outline" disabled={!backup?.eligibility.eligible} title={backup?.eligibility.reason || undefined} onclick={() => openBackupPolicyDialog(item.name)}>Set up</Button>
+                        {/if}
+                      </Table.Cell>
+                    </Table.Row>
                   {/each}
-                </div>
-              {/if}
-            </article>
-          {/each}
+                </Table.Body>
+              </Table.Root>
+            </div>
+          {/if}
         </Card.Content>
       </Card.Root>
     {/if}
 
     {#if section === 'backups' && resource.engine === 'postgresql'}
-    <Card.Root>
-      <Card.Header>
-        <Card.Action>{#if selectedBackups?.policy}<StatusBadge status={selectedBackups.policy.active ? 'active' : 'paused'} />{/if}</Card.Action>
-        <Card.Title>Backups</Card.Title>
-        <Card.Description>Encrypted logical backups of one PostgreSQL Database using a verified Object Storage connection.</Card.Description>
-      </Card.Header>
-      <Card.Content class="space-y-6">
-        {#if backups.databases.length === 0}
-          <p class="border border-border bg-muted/20 p-3 text-sm text-muted-foreground">No active Database is available for backup.</p>
-        {:else if selectedBackups}
-          <FormField label="Database">
-            <NativeSelect.Root value={selectedBackups.databaseName} onchange={(event) => selectBackupDatabase(event.currentTarget.value)} class="w-full">
-              {#each backups.databases as database}<NativeSelect.Option value={database.databaseName}>{database.databaseName}</NativeSelect.Option>{/each}
-            </NativeSelect.Root>
-          </FormField>
-        {/if}
-        {#if selectedBackups && !selectedBackups.eligibility.eligible}
-          <p class="border border-border bg-muted/20 p-3 text-sm text-muted-foreground">{selectedBackups.eligibility.reason}</p>
-        {:else if selectedBackups}
-          <form class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" onsubmit={(event) => { event.preventDefault(); saveBackupPolicy() }}>
-            <FormField label="Object Storage" error={errors.backupDestinationId}>
-              <NativeSelect.Root bind:value={backupPolicy.backupDestinationId} class="w-full" required>
-                {#each backups.destinations as destination}<NativeSelect.Option value={destination.id}>{destination.name} · {destination.bucket}</NativeSelect.Option>{/each}
-              </NativeSelect.Root>
-            </FormField>
-            <FormField label="Schedule" error={errors.schedule}><Input bind:value={backupPolicy.schedule} class="font-mono" placeholder="0 2 * * *" required /></FormField>
-            <div class="hidden lg:block"></div>
-            <FormField label="Keep last"><Input type="number" min="0" bind:value={backupPolicy.keepLast} /></FormField>
-            <FormField label="Keep daily"><Input type="number" min="0" bind:value={backupPolicy.keepDaily} /></FormField>
-            <FormField label="Keep weekly"><Input type="number" min="0" bind:value={backupPolicy.keepWeekly} /></FormField>
-            <FormField label="Keep monthly"><Input type="number" min="0" bind:value={backupPolicy.keepMonthly} /></FormField>
-            <div class="flex flex-wrap items-end gap-2 sm:col-span-2">
-              <Button type="submit">{selectedBackups.policy ? 'Save policy' : 'Create policy'}</Button>
-              {#if selectedBackups.policy}
-                {#if selectedBackups.policy.active}<Button type="button" variant="outline" onclick={pauseBackupPolicy}>Pause</Button>{:else}<Button type="button" variant="outline" onclick={resumeBackupPolicy}>Resume</Button>{/if}
-                <Button type="button" variant="outline" disabled={!selectedBackups.policy.active} onclick={runBackupPolicy}>Back up now</Button>
-                <Button type="button" variant="destructive" onclick={confirmBackupPolicyArchive}>Archive</Button>
-              {/if}
-            </div>
-          </form>
-          {#if selectedBackups.policy}
-            <div class="grid gap-4 border-t border-border pt-5 sm:grid-cols-3">
-              <DataField label="Next run" value={selectedBackups.policy.active ? observedLabel(selectedBackups.policy.nextRunAt) : 'Paused'} />
-              <DataField label="Last successful" value={observedLabel(lastSuccessfulBackup?.finishedAt ?? null)} />
-              <DataField label="Last verified" value={observedLabel(lastSuccessfulBackup?.verifiedAt ?? null)} />
-            </div>
-          {/if}
-        {/if}
+      <div class="space-y-6">
+        <Card.Root>
+          <Card.Header>
+            <Card.Title>Backups</Card.Title>
+            <Card.Description>Manage encrypted PostgreSQL backups by Database.</Card.Description>
+          </Card.Header>
+          <Card.Content>
+            {#if configuredBackups.length === 0}
+              <div class="flex flex-wrap items-center justify-between gap-3">
+                <p class="text-sm text-muted-foreground">No backup policy is configured. Set one up from Databases.</p>
+                <Button size="sm" variant="outline">{#snippet child({ props })}<Link {...props} href={routes.resourceDatabases(resource.id)}>Open Databases</Link>{/snippet}</Button>
+              </div>
+            {:else if selectedBackups}
+              <FormField label="Database">
+                <NativeSelect.Root value={selectedBackups.databaseName} onchange={(event) => selectBackupDatabase(event.currentTarget.value)} class="w-full">
+                  {#each configuredBackups as database}<NativeSelect.Option value={database.databaseName}>{database.databaseName}</NativeSelect.Option>{/each}
+                </NativeSelect.Root>
+              </FormField>
+            {/if}
+          </Card.Content>
+        </Card.Root>
 
-        <section class="space-y-3 border-t border-border pt-5">
-          <div><h3 class="text-sm font-medium">Recent history</h3><p class="mt-1 text-xs text-muted-foreground">The latest backup attempts for the selected Database, including retained outcomes after policy archival.</p></div>
-          {#if !selectedBackups || selectedBackups.history.length === 0}<p class="text-sm text-muted-foreground">No backups have been requested for this Database.</p>{/if}
-          {#each selectedBackups?.history ?? [] as item (item.id)}
-            <div class="grid gap-3 border border-border p-3 text-sm sm:grid-cols-[1fr_auto]">
-              <div><div class="flex flex-wrap items-center gap-2"><span class="font-medium capitalize">{item.status.replaceAll('_', ' ')}</span><span class="text-xs uppercase tracking-wider text-muted-foreground">{item.triggerType}</span></div><p class="mt-1 text-xs text-muted-foreground">{observedLabel(item.scheduledAt)} · {bytesLabel(item.sizeBytes)}</p>{#if item.error}<p class="mt-2 text-xs text-destructive">{item.error}</p>{/if}</div>
-              <div class="flex items-center gap-3"><span class="font-mono text-xs text-muted-foreground">{item.id.slice(0, 8)}</span>{#if item.canRestore}<Button size="sm" variant="destructive" onclick={() => openRestoreDialog(item)}>Restore</Button>{/if}</div>
-            </div>
-          {/each}
-        </section>
+        {#if selectedBackups?.policy}
+          <Card.Root>
+            <Card.Header>
+              <Card.Action><div class="flex items-center gap-2"><StatusBadge status={selectedBackups.policy.active ? 'active' : 'paused'} /><Button size="sm" variant="outline" onclick={() => openBackupPolicyDialog(selectedBackups.databaseName)}>Edit policy</Button></div></Card.Action>
+              <Card.Title>Backup policy</Card.Title>
+              <Card.Description>Schedule, verification status, and policy controls for {selectedBackups.databaseName}.</Card.Description>
+            </Card.Header>
+            <Card.Content>
+              <div class="overflow-hidden border border-border"><Table.Root><Table.Header><Table.Row><Table.Head>Schedule</Table.Head><Table.Head>Next run</Table.Head><Table.Head>Last successful</Table.Head><Table.Head>Last verified</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header><Table.Body><Table.Row><Table.Cell class="font-mono text-xs">{selectedBackups.policy.schedule}</Table.Cell><Table.Cell>{selectedBackups.policy.active ? observedLabel(selectedBackups.policy.nextRunAt) : 'Paused'}</Table.Cell><Table.Cell>{observedLabel(lastSuccessfulBackup?.finishedAt ?? null)}</Table.Cell><Table.Cell>{observedLabel(lastSuccessfulBackup?.verifiedAt ?? null)}</Table.Cell><Table.Cell><div class="flex justify-end gap-2">{#if selectedBackups.policy.active}<Button size="sm" variant="ghost" onclick={pauseBackupPolicy}>Pause</Button>{:else}<Button size="sm" variant="ghost" onclick={resumeBackupPolicy}>Resume</Button>{/if}<Button size="sm" variant="outline" disabled={!selectedBackups.policy.active} onclick={runBackupPolicy}>Run now</Button><Button size="sm" variant="destructive" onclick={confirmBackupPolicyArchive}>Archive</Button></div></Table.Cell></Table.Row></Table.Body></Table.Root></div>
+            </Card.Content>
+          </Card.Root>
 
-        <section class="space-y-3 border-t border-border pt-5">
-          <div class="flex flex-wrap items-start justify-between gap-3"><div><h3 class="text-sm font-medium">Restore history</h3><p class="mt-1 text-xs text-muted-foreground">A safety backup is verified before any database is changed.</p></div>{#if activeRestore}<span class="border border-primary/50 px-2 py-1 text-xs text-primary">Restore in progress</span>{/if}</div>
-          {#if !selectedBackups || selectedBackups.restores.length === 0}<p class="text-sm text-muted-foreground">No restores have been requested for this Database.</p>{/if}
-          {#each selectedBackups?.restores ?? [] as restore (restore.id)}
-            <div class="grid gap-3 border border-border p-3 text-sm sm:grid-cols-[1fr_auto]">
-              <div><div class="flex flex-wrap items-center gap-2"><span class="font-medium capitalize">{restore.status.replaceAll('_', ' ')}</span><span class="text-xs text-muted-foreground">Source {observedLabel(restore.backupScheduledAt)}</span></div><p class="mt-1 text-xs text-muted-foreground">Requested {observedLabel(restore.requestedAt)}{restore.safetyBackupId ? ` · Safety backup ${restore.safetyBackupId.slice(0, 8)}` : ''}</p>{#if restore.error}<p class="mt-2 text-xs text-destructive">{restore.error}</p>{/if}</div>
-              <span class="font-mono text-xs text-muted-foreground">{restore.id.slice(0, 8)}</span>
-            </div>
-          {/each}
-        </section>
-      </Card.Content>
-    </Card.Root>
+          <Card.Root>
+            <Card.Header>
+              <Card.Title>Recent backups</Card.Title>
+              <Card.Description>The latest backup attempts, including retained outcomes after policy archival.</Card.Description>
+            </Card.Header>
+            <Card.Content>
+              {#if selectedBackups.history.length === 0}<p class="text-sm text-muted-foreground">No backups have been requested for this Database.</p>{/if}
+              {#if selectedBackups.history.length > 0}<div class="overflow-hidden border border-border"><Table.Root><Table.Header><Table.Row><Table.Head>Status</Table.Head><Table.Head>Trigger</Table.Head><Table.Head>Scheduled</Table.Head><Table.Head>Size</Table.Head><Table.Head class="w-24"><span class="sr-only">Actions</span></Table.Head></Table.Row></Table.Header><Table.Body>{#each selectedBackups.history as item (item.id)}<Table.Row><Table.Cell><div><span class="font-medium capitalize">{item.status.replaceAll('_', ' ')}</span>{#if item.error}<p class="mt-1 max-w-md text-xs text-destructive">{item.error}</p>{/if}</div></Table.Cell><Table.Cell class="capitalize">{item.triggerType}</Table.Cell><Table.Cell>{observedLabel(item.scheduledAt)}</Table.Cell><Table.Cell>{bytesLabel(item.sizeBytes)}</Table.Cell><Table.Cell class="text-right">{#if item.canRestore}<Button size="sm" variant="destructive" onclick={() => openRestoreDialog(item)}>Restore</Button>{/if}</Table.Cell></Table.Row>{/each}</Table.Body></Table.Root></div>{/if}
+            </Card.Content>
+          </Card.Root>
+
+          <Card.Root>
+            <Card.Header>
+              <Card.Action>{#if activeRestore}<span class="border border-primary/50 px-2 py-1 text-xs text-primary">Restore in progress</span>{/if}</Card.Action>
+              <Card.Title>Restore history</Card.Title>
+              <Card.Description>A safety backup is verified before any Database is changed.</Card.Description>
+            </Card.Header>
+            <Card.Content>
+              {#if selectedBackups.restores.length === 0}<p class="text-sm text-muted-foreground">No restores have been requested for this Database.</p>{/if}
+              {#if selectedBackups.restores.length > 0}<div class="overflow-hidden border border-border"><Table.Root><Table.Header><Table.Row><Table.Head>Status</Table.Head><Table.Head>Requested</Table.Head><Table.Head>Source backup</Table.Head><Table.Head>Safety backup</Table.Head></Table.Row></Table.Header><Table.Body>{#each selectedBackups.restores as restore (restore.id)}<Table.Row><Table.Cell><div><span class="font-medium capitalize">{restore.status.replaceAll('_', ' ')}</span>{#if restore.error}<p class="mt-1 max-w-md text-xs text-destructive">{restore.error}</p>{/if}</div></Table.Cell><Table.Cell>{observedLabel(restore.requestedAt)}</Table.Cell><Table.Cell>{observedLabel(restore.backupScheduledAt)}</Table.Cell><Table.Cell class="font-mono text-xs">{restore.safetyBackupId?.slice(0, 8) ?? 'None'}</Table.Cell></Table.Row>{/each}</Table.Body></Table.Root></div>{/if}
+            </Card.Content>
+          </Card.Root>
+        {/if}
+      </div>
     {/if}
 
-    {#if section === 'runtime'}
+    {#if section === 'overview'}
     <Card.Root>
       <Card.Header>
         <Card.Title>Docker installations</Card.Title>
@@ -570,62 +672,78 @@
     {/if}
 
     {#if section === 'endpoints'}
-    <Card.Root>
-      <Card.Header><Card.Action><Button size="sm" variant="outline" onclick={() => (endpointDialogOpen = true)}>Add endpoint</Button></Card.Action><Card.Title>{databaseBacked ? 'Primary endpoint' : 'Primary service'}</Card.Title><Card.Description>{databaseBacked ? 'The default published Database access endpoint and its optional private path.' : 'The Docker origin and its optional private network path.'}</Card.Description></Card.Header>
-      <Card.Content class="space-y-6">
-        {#if primaryEndpoint}
-          <div class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            <DataField label={databaseBacked ? 'Address' : 'Runtime origin'} value={`${primaryEndpoint.address}:${primaryEndpoint.port}`} />
-            <DataField label="Installation" value={resource.installations[0]?.containerName ?? 'Not installed'} />
-            <DataField label="Protocol" value={primaryEndpoint.protocol} />
-            <DataField label="TLS" value={primaryEndpoint.tlsMode} />
-          </div>
-        {:else}<p class="text-sm text-destructive">No primary origin is configured.</p>{/if}
+      <div class="space-y-6">
+        <Card.Root>
+          <Card.Header><Card.Action><Button size="sm" variant="outline" onclick={() => openEndpointDialog()}>Add endpoint</Button></Card.Action><Card.Title>Endpoints</Card.Title><Card.Description>Every address published by this Resource, including endpoints routed through enabled WireGuard access.</Card.Description></Card.Header>
+          <Card.Content>
+            {#if resource.endpoints.length === 0}<p class="text-sm text-muted-foreground">No endpoints configured.</p>{/if}
+            {#if resource.endpoints.length > 0}
+              <div class="overflow-hidden border border-border">
+                <Table.Root>
+                  <Table.Header><Table.Row><Table.Head>Name</Table.Head><Table.Head>Address</Table.Head><Table.Head>Role</Table.Head><Table.Head>Network</Table.Head><Table.Head class="w-20"><span class="sr-only">Actions</span></Table.Head></Table.Row></Table.Header>
+                  <Table.Body>
+                    {#each resource.endpoints as item (item.id)}
+                      <Table.Row>
+                        <Table.Cell class="font-medium">{item.name}</Table.Cell>
+                        <Table.Cell class="font-mono text-xs">{item.address}:{item.port}</Table.Cell>
+                        <Table.Cell class="capitalize">{item.role}</Table.Cell>
+                        <Table.Cell>{item.privateNetworkId ? options.privateNetworks.find((network) => network.id === item.privateNetworkId)?.name ?? 'WireGuard' : 'Public or local'}</Table.Cell>
+                        <Table.Cell class="text-right">{#if item.managed}<span class="text-xs text-muted-foreground">Managed</span>{:else}<Button size="sm" variant="ghost" onclick={() => openEndpointDialog(item)}>Edit</Button>{/if}</Table.Cell>
+                      </Table.Row>
+                    {/each}
+                  </Table.Body>
+                </Table.Root>
+              </div>
+            {/if}
+          </Card.Content>
+        </Card.Root>
 
-        <section class="border-t border-border pt-5">
+        <Card.Root>
+          <Card.Header>
+            <Card.Action>{#if privateAccess}<Button size="sm" variant="destructive" onclick={disablePrivateAccess}>Turn off WireGuard access</Button>{:else}<Button size="sm" variant="outline" onclick={() => (privateAccessDialogOpen = true)}>Turn on WireGuard access</Button>{/if}</Card.Action>
+            <Card.Title>WireGuard network access</Card.Title>
+            <Card.Description>Enable private access and manage the devices allowed to reach this Resource.</Card.Description>
+          </Card.Header>
+          <Card.Content>
             <div class="flex flex-wrap items-start justify-between gap-3">
-              <div><h3 class="font-medium">Private network</h3><p class="mt-1 text-xs text-muted-foreground">A WireGuard listener derived from the primary origin.</p></div>
-              {#if privateEndpoint}<Button size="sm" variant="destructive" onclick={disablePrivateAccess}>Remove from private network</Button>{:else}<Button size="sm" variant="outline" onclick={() => (privateAccessDialogOpen = true)}>Add to private network</Button>{/if}
+              {#if !privateAccess}<p class="text-sm text-muted-foreground">Turn on WireGuard access to create a managed private endpoint and grant device access.</p>{/if}
             </div>
-            {#if privateEndpoint}
-              <div class="mt-4 grid gap-5 sm:grid-cols-3">
-                <DataField label="Address" value={`${privateEndpoint.address}:${privateEndpoint.port}`} />
+            {#if privateAccess}
+              <div class="grid gap-5 sm:grid-cols-3">
+                <DataField label="Gateway" value={`${privateAccess.address}:${privateAccess.port}`} />
                 <DataField label="Network" value={privateNetwork?.name ?? 'Unknown'} />
                 <DataField label="State" value={accessStateLabel(resource.privateAccessState)} />
               </div>
               <div class="mt-6 space-y-3">
-                <div class="flex flex-wrap items-center justify-between gap-3"><h4 class="text-sm font-medium">Granted devices</h4><div class="flex items-center gap-3">{#if enrollment?.clientConfiguration}<Button size="sm" variant="outline" onclick={openWireGuardConfiguration}>View client configuration</Button>{/if}<span class="text-xs text-muted-foreground">{resource.deviceGrants.length} granted</span></div></div>
+                <div class="flex flex-wrap items-center justify-between gap-3"><h4 class="text-sm font-medium">Granted devices</h4><div class="flex items-center gap-2">{#if enrollment?.clientConfiguration}<Button size="sm" variant="outline" onclick={openWireGuardConfiguration}>View client configuration</Button>{/if}<Button size="sm" variant="outline" onclick={() => (deviceDialogOpen = true)}>Grant access</Button></div></div>
                 {#if resource.deviceGrants.length === 0}<p class="text-sm text-muted-foreground">No device grant has applied the listener yet. The Resource is on the private network, but its listener is not ready.</p>{/if}
-                {#each resource.deviceGrants as grant}
-                  <div class="flex flex-col justify-between gap-3 border border-border p-3 sm:flex-row sm:items-center"><div><p class="font-medium">{grant.deviceName}</p><p class="mt-1 font-mono text-xs text-muted-foreground">{grant.privateAddress} · {accessStateLabel(grant.applicationState === 'applied' ? 'ready' : grant.applicationState === 'failed' ? 'failed' : 'applying')}</p><p class="mt-1 text-xs text-muted-foreground">Latest handshake: {observedLabel(grant.latestHandshakeAt)}</p>{#if grant.applicationError}<p class="mt-1 text-xs text-destructive">{grant.applicationError}</p>{/if}</div><div class="flex gap-2">{#if grant.applicationState !== 'applied'}<Button size="sm" variant="outline" onclick={() => retryDevice(grant.deviceId)}>Retry</Button>{/if}<Button size="sm" variant="destructive" onclick={() => revokeDevice(grant.deviceId, grant.deviceName)}>Revoke</Button></div></div>
-                {/each}
+                {#if resource.deviceGrants.length > 0}<div class="overflow-hidden border border-border"><Table.Root><Table.Header><Table.Row><Table.Head>Device</Table.Head><Table.Head>Address</Table.Head><Table.Head>State</Table.Head><Table.Head>Latest handshake</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header><Table.Body>{#each resource.deviceGrants as grant}<Table.Row><Table.Cell><div><span class="font-medium">{grant.deviceName}</span>{#if grant.applicationError}<p class="mt-1 max-w-xs text-xs text-destructive">{grant.applicationError}</p>{/if}</div></Table.Cell><Table.Cell class="font-mono text-xs">{grant.privateAddress}</Table.Cell><Table.Cell>{accessStateLabel(grant.applicationState === 'applied' ? 'ready' : grant.applicationState === 'failed' ? 'failed' : 'applying')}</Table.Cell><Table.Cell>{observedLabel(grant.latestHandshakeAt)}</Table.Cell><Table.Cell><div class="flex justify-end gap-2">{#if grant.applicationState !== 'applied'}<Button size="sm" variant="ghost" onclick={() => retryDevice(grant.deviceId)}>Retry</Button>{/if}<Button size="sm" variant="destructive" onclick={() => revokeDevice(grant.deviceId, grant.deviceName)}>Revoke</Button></div></Table.Cell></Table.Row>{/each}</Table.Body></Table.Root></div>{/if}
               </div>
-              <form class="mt-5 grid gap-4 border-t border-border pt-5 sm:grid-cols-3" onsubmit={(event) => { event.preventDefault(); submitDevice() }}><FormField label="Existing device"><NativeSelect.Root bind:value={device.deviceId} class="w-full"><NativeSelect.Option value="">Enroll a new device</NativeSelect.Option>{#each resource.availableDevices as item}<NativeSelect.Option value={item.id}>{item.name} · {item.privateAddress}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>{#if !device.deviceId}<FormField label="New device name" error={errors.name}><Input bind:value={device.name} placeholder="MBV MacBook" required /></FormField>{/if}<div class="flex items-end"><Button type="submit" disabled={Boolean(pendingAction)} aria-busy={pendingAction === 'device'}>{#if pendingAction === 'device'}<Spinner />{/if}{device.deviceId ? 'Grant existing device' : 'Enroll new device'}</Button></div></form>
             {/if}
-        </section>
-      </Card.Content>
-    </Card.Root>
+          </Card.Content>
+        </Card.Root>
+      </div>
     {/if}
 
     {#if section === 'credentials'}
     <Card.Root>
       <Card.Header><Card.Action><Button size="sm" variant="outline" disabled={!canAddApplicationUser} onclick={openCredentialDialog}>Add application credential</Button></Card.Action><Card.Title>Credentials</Card.Title><Card.Description>{databaseBacked ? 'The administrator stays internal. Each application credential is tied to one configured Database.' : 'Encrypted application credentials for this Resource.'}</Card.Description></Card.Header>
-      <Card.Content class={databaseBacked ? 'grid gap-6' : 'grid gap-6 lg:grid-cols-2'}>
-        {#if managedPostgreSQL && !containerRunning}<p class="border border-border bg-muted/20 p-3 text-sm text-muted-foreground lg:col-span-2">Start the PostgreSQL container before adding an application user. DeployCrate must connect to the running server to create its LOGIN role.</p>{/if}
-        {#if databaseBacked}<section><h3 class="text-sm font-medium">Resource administrator</h3><div class="mt-3 space-y-3">{#if administratorCredentials.length === 0}<p class="text-sm text-muted-foreground">No Resource administrator.</p>{/if}{#each administratorCredentials as item}<div class="border border-border p-3"><div class="flex justify-between gap-3"><p class="font-medium">{item.username}</p><span class="text-xs text-muted-foreground">{item.hasEncryptedPayload ? 'Encrypted' : 'Missing secret'}</span></div><p class="mt-2 text-xs text-muted-foreground">Superuser, not selectable by Environments</p></div>{/each}</div></section>{/if}
-        <section><h3 class="text-sm font-medium">Application credentials</h3><div class="mt-3 space-y-3">{#if applicationCredentials.length === 0}<p class="text-sm text-muted-foreground">No application credentials.</p>{/if}{#each applicationCredentials as item}<div class="border border-border p-3"><div class="flex justify-between gap-3"><p class="font-medium">{item.username}</p><span class="text-xs text-muted-foreground">{item.hasEncryptedPayload ? 'Encrypted' : 'Missing secret'}</span></div><p class="mt-2 text-xs text-muted-foreground">{item.name}{item.metadata?.database ? ` · Database ${item.metadata.database}` : ''}</p></div>{/each}</div></section>
+      <Card.Content class="space-y-4">
+        {#if managedPostgreSQL && !containerRunning}<p class="border border-border bg-muted/20 p-3 text-sm text-muted-foreground">Start the PostgreSQL container before adding an application user. DeployCrate must connect to the running server to create its LOGIN role.</p>{/if}
+        {#if resource.credentials.length === 0}<p class="text-sm text-muted-foreground">No credentials configured.</p>{:else}<div class="overflow-hidden border border-border"><Table.Root><Table.Header><Table.Row><Table.Head>Name</Table.Head><Table.Head>Username</Table.Head><Table.Head>Purpose</Table.Head><Table.Head>Database</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header><Table.Body>{#each resource.credentials as item (item.id)}<Table.Row><Table.Cell class="font-medium">{item.name}</Table.Cell><Table.Cell class="font-mono text-xs">{item.username || 'None'}</Table.Cell><Table.Cell class="capitalize">{item.metadata?.purpose ?? 'Application'}</Table.Cell><Table.Cell>{item.metadata?.database || 'All / none'}</Table.Cell><Table.Cell><div class="flex justify-end gap-2">{#if item.hasEncryptedPayload}<Button size="sm" variant="ghost" onclick={() => askForCredential(item)}>View</Button>{/if}<Button size="sm" variant="outline" onclick={() => openCredentialDialog(item)}>Edit</Button></div></Table.Cell></Table.Row>{/each}</Table.Body></Table.Root></div>{/if}
       </Card.Content>
     </Card.Root>
     {/if}
 
+    {#if section === 'overview'}
     <div class="grid gap-6 lg:grid-cols-2">
-      {#if section === 'runtime'}
-      <Card.Root><Card.Header><Card.Action>{#if resource.volumes.length === 0 || (resource.volumes.length === 1 && resource.installations.length === 1 && resource.mounts.length === 0)}<div class="flex gap-2">{#if resource.volumes.length === 0}<Button size="sm" variant="outline" onclick={() => (volumeDialogOpen = true)}>Add volume</Button>{/if}{#if resource.volumes.length === 1 && resource.installations.length === 1 && resource.mounts.length === 0}<Button size="sm" variant="outline" onclick={() => (mountDialogOpen = true)}>Add mount</Button>{/if}</div>{/if}</Card.Action><Card.Title>Storage</Card.Title><Card.Description>The primary durable volume and its installation mount.</Card.Description></Card.Header><Card.Content class="space-y-3">{#if resource.volumes.length === 0}<p class="text-sm text-muted-foreground">No primary volume configured.</p>{/if}{#each resource.volumes as item}<div class="border border-border p-3"><p class="font-medium">{item.name}</p><p class="mt-2 text-xs text-muted-foreground">{item.driver} on {item.serverName}</p>{#each resource.mounts.filter((mount: any) => mount.resourceVolumeId === item.id) as mount}<p class="mt-2 font-mono text-xs">{mount.mountPath} → {mount.containerName}{mount.readOnly ? ' (read only)' : ''}</p>{/each}</div>{/each}</Card.Content></Card.Root>
-      {/if}
-      {#if section === 'health'}
-      <Card.Root><Card.Header><Card.Action><Button size="sm" variant="outline" disabled={databaseBacked ? applicationCredentials.length === 0 || resource.endpoints.length === 0 : resource.installations.length === 0} onclick={() => (healthDialogOpen = true)}>Add check</Button></Card.Action><Card.Title>Health checks</Card.Title><Card.Description>Desired checks and their latest observations.</Card.Description></Card.Header><Card.Content class="space-y-3">{#if resource.healthChecks.length === 0}<p class="text-sm text-muted-foreground">No health checks configured.</p>{/if}{#each resource.healthChecks as item}<div class="border border-border p-3"><div class="flex justify-between gap-3"><p class="font-medium">{item.name}</p><StatusBadge status={item.state || 'unknown'} /></div><p class="mt-2 text-xs text-muted-foreground">{item.kind} · every {item.intervalSeconds}s · {item.enabled ? 'Enabled' : 'Disabled'}</p><p class="mt-1 text-xs text-muted-foreground">Observed {observedLabel(item.observedAt)}{item.latencyMs !== null ? ` · ${item.latencyMs} ms` : ''} · successes {item.consecutiveSuccesses} · failures {item.consecutiveFailures}</p>{#if item.message}<p class="mt-2 text-xs text-muted-foreground">{item.message}</p>{/if}</div>{/each}</Card.Content></Card.Root>
-      {/if}
+      <Card.Root><Card.Header><Card.Action><div class="flex gap-2"><Button size="sm" variant="outline" onclick={() => openVolumeDialog()}>Add volume</Button>{#if resource.volumes.length > 0 && resource.installations.length > 0}<Button size="sm" variant="outline" onclick={() => openMountDialog()}>Add mount</Button>{/if}</div></Card.Action><Card.Title>Storage</Card.Title><Card.Description>Durable volumes and their installation mounts.</Card.Description></Card.Header><Card.Content class="space-y-5">{#if resource.volumes.length === 0}<p class="text-sm text-muted-foreground">No volumes configured.</p>{:else}<div class="overflow-hidden border border-border"><Table.Root><Table.Header><Table.Row><Table.Head>Volume</Table.Head><Table.Head>Driver</Table.Head><Table.Head>Server</Table.Head><Table.Head class="w-20"><span class="sr-only">Actions</span></Table.Head></Table.Row></Table.Header><Table.Body>{#each resource.volumes as item}<Table.Row><Table.Cell class="font-medium">{item.name}</Table.Cell><Table.Cell>{item.driver}</Table.Cell><Table.Cell>{item.serverName}</Table.Cell><Table.Cell class="text-right"><Button size="sm" variant="ghost" onclick={() => openVolumeDialog(item)}>Edit</Button></Table.Cell></Table.Row>{/each}</Table.Body></Table.Root></div>{/if}{#if resource.mounts.length > 0}<div><p class="mb-2 text-xs font-medium text-muted-foreground">Mounts</p><div class="overflow-hidden border border-border"><Table.Root><Table.Header><Table.Row><Table.Head>Path</Table.Head><Table.Head>Volume</Table.Head><Table.Head>Installation</Table.Head><Table.Head>Mode</Table.Head><Table.Head class="w-20"><span class="sr-only">Actions</span></Table.Head></Table.Row></Table.Header><Table.Body>{#each resource.mounts as item}<Table.Row><Table.Cell class="font-mono text-xs">{item.mountPath}</Table.Cell><Table.Cell>{item.volumeName}</Table.Cell><Table.Cell>{item.containerName}</Table.Cell><Table.Cell>{item.readOnly ? 'Read only' : 'Read/write'}</Table.Cell><Table.Cell class="text-right"><Button size="sm" variant="ghost" onclick={() => openMountDialog(item)}>Edit</Button></Table.Cell></Table.Row>{/each}</Table.Body></Table.Root></div></div>{/if}</Card.Content></Card.Root>
     </div>
+    {/if}
+
+    {#if section === 'health'}
+    <Card.Root><Card.Header><Card.Action><Button size="sm" variant="outline" disabled={resource.endpoints.length === 0 || (databaseBacked && applicationCredentials.length === 0)} onclick={() => openHealthDialog()}>Add check</Button></Card.Action><Card.Title>Health checks</Card.Title><Card.Description>Desired checks and their latest observations.</Card.Description></Card.Header><Card.Content>{#if resource.healthChecks.length === 0}<p class="text-sm text-muted-foreground">No health checks configured.</p>{:else}<div class="overflow-hidden border border-border"><Table.Root><Table.Header><Table.Row><Table.Head>Name</Table.Head><Table.Head>Kind</Table.Head><Table.Head>State</Table.Head><Table.Head>Interval</Table.Head><Table.Head>Observed</Table.Head><Table.Head class="w-20"><span class="sr-only">Actions</span></Table.Head></Table.Row></Table.Header><Table.Body>{#each resource.healthChecks as item}<Table.Row><Table.Cell><div><span class="font-medium">{item.name}</span>{#if item.message}<p class="mt-1 max-w-xs text-xs text-muted-foreground">{item.message}</p>{/if}</div></Table.Cell><Table.Cell class="capitalize">{item.kind}</Table.Cell><Table.Cell><StatusBadge status={item.state || 'unknown'} /></Table.Cell><Table.Cell>{item.intervalSeconds}s</Table.Cell><Table.Cell>{observedLabel(item.observedAt)}</Table.Cell><Table.Cell class="text-right"><Button size="sm" variant="ghost" onclick={() => openHealthDialog(item)}>Edit</Button></Table.Cell></Table.Row>{/each}</Table.Body></Table.Root></div>{/if}</Card.Content></Card.Root>
+    {/if}
 
     {#if section === 'overview'}
     <Card.Root>
@@ -704,17 +822,28 @@
   <Dialog.Root bind:open={privateAccessDialogOpen}>
     <Dialog.Content>
       <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); enablePrivateAccess() }}>
-        <Dialog.Header><Dialog.Title>Add to private network</Dialog.Title><Dialog.Description>Select the WireGuard network attached to the installation Server. Address, port, protocol, and installation are derived.</Dialog.Description></Dialog.Header>
+        <Dialog.Header><Dialog.Title>Turn on WireGuard access</Dialog.Title><Dialog.Description>Enable a private network for this Resource. You can then create endpoints routed through it.</Dialog.Description></Dialog.Header>
         <FormField label="Private network" error={errors.privateNetworkId}><NativeSelect.Root bind:value={privateAccessNetworkId} class="w-full" required><NativeSelect.Option value="">Select a private network</NativeSelect.Option>{#each endpointNetworks as value}<NativeSelect.Option value={value.id}>{value.name}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
-        <Dialog.Footer><Button type="button" variant="outline" disabled={dialogAction === 'private-access'} onclick={() => (privateAccessDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'private-access'} aria-busy={dialogAction === 'private-access'}>{#if dialogAction === 'private-access'}<Spinner />{/if}Add to private network</Button></Dialog.Footer>
+        <Dialog.Footer><Button type="button" variant="outline" disabled={dialogAction === 'private-access'} onclick={() => (privateAccessDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'private-access'} aria-busy={dialogAction === 'private-access'}>{#if dialogAction === 'private-access'}<Spinner />{/if}Turn on access</Button></Dialog.Footer>
+      </form>
+    </Dialog.Content>
+  </Dialog.Root>
+
+  <Dialog.Root bind:open={deviceDialogOpen}>
+    <Dialog.Content>
+      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); submitDevice() }}>
+        <Dialog.Header><Dialog.Title>Grant WireGuard access</Dialog.Title><Dialog.Description>Grant an existing device or enroll a new one for this Resource.</Dialog.Description></Dialog.Header>
+        <FormField label="Existing device"><NativeSelect.Root bind:value={device.deviceId} class="w-full"><NativeSelect.Option value="">Enroll a new device</NativeSelect.Option>{#each resource.availableDevices as item}<NativeSelect.Option value={item.id}>{item.name} · {item.privateAddress}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
+        {#if !device.deviceId}<FormField label="New device name" error={errors.name}><Input bind:value={device.name} placeholder="MBV MacBook" required /></FormField>{/if}
+        <Dialog.Footer><Button type="button" variant="outline" disabled={pendingAction === 'device'} onclick={() => (deviceDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={Boolean(pendingAction)} aria-busy={pendingAction === 'device'}>{#if pendingAction === 'device'}<Spinner />{/if}{device.deviceId ? 'Grant access' : 'Enroll and grant'}</Button></Dialog.Footer>
       </form>
     </Dialog.Content>
   </Dialog.Root>
 
   <Dialog.Root bind:open={endpointDialogOpen}>
     <Dialog.Content class="sm:max-w-2xl">
-      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createEndpoint() }}>
-        <Dialog.Header><Dialog.Title>Add endpoint</Dialog.Title><Dialog.Description>Define another address for this Resource.</Dialog.Description></Dialog.Header>
+      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); saveEndpoint() }}>
+        <Dialog.Header><Dialog.Title>{editingEndpointId ? 'Edit endpoint' : 'Add endpoint'}</Dialog.Title><Dialog.Description>{editingEndpointId ? 'Update how this Resource endpoint is published.' : 'Define another address for this Resource.'}</Dialog.Description></Dialog.Header>
         <div class="grid gap-4 sm:grid-cols-2">
           <FormField label="Name" error={errors.name}><Input bind:value={endpoint.name} required /></FormField>
           <FormField label="Address" error={errors.address}><Input bind:value={endpoint.address} required /></FormField>
@@ -722,10 +851,10 @@
           <FormField label="Protocol"><NativeSelect.Root bind:value={endpoint.protocol} class="w-full">{#each definition.protocols as value}<NativeSelect.Option value={value}>{value}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
           <FormField label="Port"><Input type="number" bind:value={endpoint.port} min="1" max="65535" /></FormField>
           <FormField label="TLS"><NativeSelect.Root bind:value={endpoint.tlsMode} class="w-full">{#each definition.tlsModes as value}<NativeSelect.Option value={value}>{value}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
-          <FormField label="Private network"><NativeSelect.Root value={endpoint.privateNetworkId} onchange={(event) => chooseEndpointNetwork(event.currentTarget.value)} class="w-full"><NativeSelect.Option value="">No private network</NativeSelect.Option>{#each endpointNetworks as value}<NativeSelect.Option value={value.id}>{value.name}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
+          <FormField label="Network path"><NativeSelect.Root value={endpoint.privateNetworkId} onchange={(event) => chooseEndpointNetwork(event.currentTarget.value)} class="w-full"><NativeSelect.Option value="">Public or local</NativeSelect.Option>{#if privateAccess && privateNetwork}<NativeSelect.Option value={privateNetwork.id}>WireGuard · {privateNetwork.name}</NativeSelect.Option>{/if}</NativeSelect.Root>{#if !privateAccess}<p class="mt-1 text-[11px] text-muted-foreground">Turn on WireGuard access before creating a private endpoint.</p>{/if}</FormField>
           <div class="border border-border bg-muted/20 px-3 py-2"><p class="text-[10px] uppercase tracking-wider text-muted-foreground">Docker installation</p><p class="mt-1 text-sm">{resource.installations[0]?.containerName ?? 'Not installed'}</p></div>
         </div>
-        <Dialog.Footer><Button type="button" variant="outline" disabled={dialogAction === 'endpoint'} onclick={() => (endpointDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'endpoint'} aria-busy={dialogAction === 'endpoint'}>{#if dialogAction === 'endpoint'}<Spinner />{/if}Create endpoint</Button></Dialog.Footer>
+        <Dialog.Footer>{#if editingEndpointId}<Button type="button" variant="destructive" disabled={dialogAction === 'endpoint'} onclick={archiveEndpoint}>Archive</Button>{/if}<Button type="button" variant="outline" disabled={dialogAction === 'endpoint'} onclick={() => (endpointDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'endpoint'} aria-busy={dialogAction === 'endpoint'}>{#if dialogAction === 'endpoint'}<Spinner />{/if}{editingEndpointId ? 'Save endpoint' : 'Create endpoint'}</Button></Dialog.Footer>
       </form>
     </Dialog.Content>
   </Dialog.Root>
@@ -749,10 +878,27 @@
 
   <Dialog.Root bind:open={credentialDialogOpen}>
     <Dialog.Content class="sm:max-w-2xl">
-      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createCredential() }}>
-        <Dialog.Header><Dialog.Title>Add application credential</Dialog.Title><Dialog.Description>The credential is scoped to one Database. For PostgreSQL, DeployCrate creates the LOGIN role and grants access in code.</Dialog.Description></Dialog.Header>
-        <div class="grid gap-4 sm:grid-cols-2"><FormField label="Display name" error={errors.name}><Input bind:value={credential.name} required /></FormField><FormField label="Username" error={errors.username}><Input bind:value={credential.username} required autocomplete="username" /></FormField>{#if databaseBacked}<FormField label="Database" error={errors['metadata.database']}><NativeSelect.Root bind:value={credential.database} class="w-full" required><NativeSelect.Option value="">Select a Database</NativeSelect.Option>{#each resource.databases as item}<NativeSelect.Option value={item.name}>{item.name}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>{/if}{#each definition.credentialFields as field}<FormField label={field.label} error={errors[`secretValues.${field.name}`]}><Input type={field.secret ? 'password' : 'text'} value={credential.secretValues[field.name] ?? ''} oninput={(event) => credential.secretValues[field.name] = event.currentTarget.value} required={field.required} autocomplete="new-password" /></FormField>{/each}</div>
-        <Dialog.Footer><Button type="button" variant="outline" disabled={dialogAction === 'credential'} onclick={() => (credentialDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={!canAddApplicationUser || dialogAction === 'credential'} aria-busy={dialogAction === 'credential'}>{#if dialogAction === 'credential'}<Spinner />{/if}Create application credential</Button></Dialog.Footer>
+      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); saveCredential() }}>
+        <Dialog.Header><Dialog.Title>{editingCredentialId ? 'Edit credential' : 'Add application credential'}</Dialog.Title><Dialog.Description>{editingCredentialId ? 'Update credential metadata or rotate its encrypted secret values.' : 'Create an encrypted application credential for this Resource.'}</Dialog.Description></Dialog.Header>
+        <div class="grid gap-4 sm:grid-cols-2"><FormField label="Display name" error={errors.name}><Input bind:value={credential.name} required /></FormField><FormField label="Username" error={errors.username}><Input bind:value={credential.username} readonly={Boolean(editingCredentialId) && managedPostgreSQL} required autocomplete="username" /></FormField>{#if databaseBacked}<FormField label="Database" error={errors['metadata.database']}><NativeSelect.Root bind:value={credential.database} class="w-full" disabled={credential.purpose === 'administrator'} required={credential.purpose === 'application'}><NativeSelect.Option value="">No Database</NativeSelect.Option>{#each resource.databases as item}<NativeSelect.Option value={item.name}>{item.name}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>{/if}{#if editingCredentialId}<label class="flex items-center gap-2 self-end text-xs"><Checkbox bind:checked={credential.rotate} /> Rotate secret values</label>{/if}{#if !editingCredentialId || credential.rotate}{#each definition.credentialFields as field}<FormField label={field.label} error={errors[`secretValues.${field.name}`]}><Input type={field.secret ? 'password' : 'text'} value={credential.secretValues[field.name] ?? ''} oninput={(event) => credential.secretValues[field.name] = event.currentTarget.value} required={field.required} autocomplete="new-password" /></FormField>{/each}{/if}</div>
+        <Dialog.Footer>{#if editingCredentialId}<Button type="button" variant="destructive" disabled={dialogAction === 'credential'} onclick={archiveCredential}>Archive</Button>{/if}<Button type="button" variant="outline" disabled={dialogAction === 'credential'} onclick={() => (credentialDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={(!editingCredentialId && !canAddApplicationUser) || dialogAction === 'credential'} aria-busy={dialogAction === 'credential'}>{#if dialogAction === 'credential'}<Spinner />{/if}{editingCredentialId ? (credential.rotate ? 'Save and rotate' : 'Save credential') : 'Create application credential'}</Button></Dialog.Footer>
+      </form>
+    </Dialog.Content>
+  </Dialog.Root>
+
+  <Dialog.Root bind:open={backupPolicyDialogOpen}>
+    <Dialog.Content class="sm:max-w-2xl">
+      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); saveBackupPolicy() }}>
+        <Dialog.Header><Dialog.Title>{selectedBackups?.policy ? 'Edit backup policy' : 'Set up backups'}</Dialog.Title><Dialog.Description>{selectedBackups?.databaseName ? `Configure backups for ${selectedBackups.databaseName}.` : 'Configure backups for this Database.'}</Dialog.Description></Dialog.Header>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <FormField label="Object Storage" error={errors.backupDestinationId}><NativeSelect.Root bind:value={backupPolicy.backupDestinationId} class="w-full" required>{#each backups.destinations as destination}<NativeSelect.Option value={destination.id}>{destination.name} · {destination.bucket}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
+          <FormField label="Schedule" error={errors.schedule}><Input bind:value={backupPolicy.schedule} class="font-mono" placeholder="0 2 * * *" required /></FormField>
+          <FormField label="Keep last"><Input type="number" min="0" bind:value={backupPolicy.keepLast} /></FormField>
+          <FormField label="Keep daily"><Input type="number" min="0" bind:value={backupPolicy.keepDaily} /></FormField>
+          <FormField label="Keep weekly"><Input type="number" min="0" bind:value={backupPolicy.keepWeekly} /></FormField>
+          <FormField label="Keep monthly"><Input type="number" min="0" bind:value={backupPolicy.keepMonthly} /></FormField>
+        </div>
+        <Dialog.Footer><Button type="button" variant="outline" onclick={() => (backupPolicyDialogOpen = false)}>Cancel</Button><Button type="submit">{selectedBackups?.policy ? 'Save policy' : 'Create policy'}</Button></Dialog.Footer>
       </form>
     </Dialog.Content>
   </Dialog.Root>
@@ -773,31 +919,57 @@
 
   <Dialog.Root bind:open={volumeDialogOpen}>
     <Dialog.Content class="sm:max-w-xl">
-      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createVolume() }}>
-        <Dialog.Header><Dialog.Title>Add volume</Dialog.Title><Dialog.Description>Create durable storage for this Resource.</Dialog.Description></Dialog.Header>
+      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); saveVolume() }}>
+        <Dialog.Header><Dialog.Title>{editingVolumeId ? 'Edit volume' : 'Add volume'}</Dialog.Title><Dialog.Description>{editingVolumeId ? 'Update this durable storage definition.' : 'Create durable storage for this Resource.'}</Dialog.Description></Dialog.Header>
         <div class="grid gap-4 sm:grid-cols-2"><FormField label="Name"><Input bind:value={volume.name} required /></FormField><FormField label="Driver"><Input bind:value={volume.driver} required /></FormField><FormField label="Server"><NativeSelect.Root bind:value={volume.serverId} class="w-full">{#each options.servers as value}<NativeSelect.Option value={value.id}>{value.name}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField><div class="sm:col-span-2"><FormField label="Configuration JSON" error={jsonError}><Textarea bind:value={volume.configurationText} class="min-h-28 font-mono" /></FormField></div></div>
-        <Dialog.Footer><Button type="button" variant="outline" disabled={dialogAction === 'volume'} onclick={() => (volumeDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'volume'} aria-busy={dialogAction === 'volume'}>{#if dialogAction === 'volume'}<Spinner />{/if}Create volume</Button></Dialog.Footer>
+        <Dialog.Footer>{#if editingVolumeId}<Button type="button" variant="destructive" disabled={dialogAction === 'volume'} onclick={archiveVolume}>Archive</Button>{/if}<Button type="button" variant="outline" disabled={dialogAction === 'volume'} onclick={() => (volumeDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'volume'} aria-busy={dialogAction === 'volume'}>{#if dialogAction === 'volume'}<Spinner />{/if}{editingVolumeId ? 'Save volume' : 'Create volume'}</Button></Dialog.Footer>
       </form>
     </Dialog.Content>
   </Dialog.Root>
 
   <Dialog.Root bind:open={mountDialogOpen}>
     <Dialog.Content class="sm:max-w-xl">
-      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createMount() }}>
-        <Dialog.Header><Dialog.Title>Add mount</Dialog.Title><Dialog.Description>Attach a Resource volume to an installation.</Dialog.Description></Dialog.Header>
+      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); saveMount() }}>
+        <Dialog.Header><Dialog.Title>{editingMountId ? 'Edit mount' : 'Add mount'}</Dialog.Title><Dialog.Description>Attach a Resource volume to an installation.</Dialog.Description></Dialog.Header>
         <div class="grid gap-4 sm:grid-cols-2"><FormField label="Mount path"><Input bind:value={mount.mountPath} required /></FormField><FormField label="Volume"><NativeSelect.Root bind:value={mount.resourceVolumeId} class="w-full">{#each resource.volumes as value}<NativeSelect.Option value={value.id}>{value.name}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField><FormField label="Installation"><NativeSelect.Root bind:value={mount.resourceInstallationId} class="w-full">{#each resource.installations as value}<NativeSelect.Option value={value.id}>{value.containerName}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField><label class="flex items-center gap-2 self-end text-xs"><Checkbox bind:checked={mount.readOnly} /> Read only</label></div>
-        <Dialog.Footer><Button type="button" variant="outline" disabled={dialogAction === 'mount'} onclick={() => (mountDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'mount'} aria-busy={dialogAction === 'mount'}>{#if dialogAction === 'mount'}<Spinner />{/if}Create mount</Button></Dialog.Footer>
+        <Dialog.Footer>{#if editingMountId}<Button type="button" variant="destructive" disabled={dialogAction === 'mount'} onclick={archiveMount}>Archive</Button>{/if}<Button type="button" variant="outline" disabled={dialogAction === 'mount'} onclick={() => (mountDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'mount'} aria-busy={dialogAction === 'mount'}>{#if dialogAction === 'mount'}<Spinner />{/if}{editingMountId ? 'Save mount' : 'Create mount'}</Button></Dialog.Footer>
       </form>
     </Dialog.Content>
   </Dialog.Root>
 
   <Dialog.Root bind:open={healthDialogOpen}>
     <Dialog.Content class="sm:max-w-2xl">
-      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); createHealth() }}>
-        <Dialog.Header><Dialog.Title>Add health check</Dialog.Title><Dialog.Description>Define how DeployCrate should evaluate this Resource.</Dialog.Description></Dialog.Header>
+      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); saveHealth() }}>
+        <Dialog.Header><Dialog.Title>{editingHealthId ? 'Edit health check' : 'Add health check'}</Dialog.Title><Dialog.Description>Define how DeployCrate should evaluate this Resource.</Dialog.Description></Dialog.Header>
         <div class="grid gap-4 sm:grid-cols-2"><FormField label="Name"><Input bind:value={health.name} required /></FormField><FormField label="Kind"><NativeSelect.Root bind:value={health.kind} class="w-full">{#each definition.healthCheckKinds as value}<NativeSelect.Option value={value}>{value}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField><FormField label="Endpoint"><NativeSelect.Root bind:value={health.resourceEndpointId} class="w-full"><NativeSelect.Option value="">None</NativeSelect.Option>{#each resource.endpoints as value}<NativeSelect.Option value={value.id}>{value.name}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField><FormField label="Credential"><NativeSelect.Root bind:value={health.resourceCredentialId} class="w-full"><NativeSelect.Option value="">None</NativeSelect.Option>{#each resource.credentials as value}<NativeSelect.Option value={value.id}>{value.name}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField><FormField label="Interval seconds"><Input type="number" bind:value={health.intervalSeconds} min="1" /></FormField><FormField label="Timeout seconds"><Input type="number" bind:value={health.timeoutSeconds} min="1" /></FormField><FormField label="Failure threshold"><Input type="number" bind:value={health.failureThreshold} min="1" /></FormField><FormField label="Success threshold"><Input type="number" bind:value={health.successThreshold} min="1" /></FormField><label class="flex items-center gap-2 text-xs"><Checkbox bind:checked={health.enabled} /> Enabled</label><div class="sm:col-span-2"><FormField label="Configuration JSON" error={jsonError}><Textarea bind:value={health.configurationText} class="min-h-28 font-mono" /></FormField></div></div>
-        <Dialog.Footer><Button type="button" variant="outline" disabled={dialogAction === 'health'} onclick={() => (healthDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'health'} aria-busy={dialogAction === 'health'}>{#if dialogAction === 'health'}<Spinner />{/if}Create health check</Button></Dialog.Footer>
+        <Dialog.Footer>{#if editingHealthId}<Button type="button" variant="destructive" disabled={dialogAction === 'health'} onclick={archiveHealth}>Archive</Button>{/if}<Button type="button" variant="outline" disabled={dialogAction === 'health'} onclick={() => (healthDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'health'} aria-busy={dialogAction === 'health'}>{#if dialogAction === 'health'}<Spinner />{/if}{editingHealthId ? 'Save health check' : 'Create health check'}</Button></Dialog.Footer>
       </form>
+    </Dialog.Content>
+  </Dialog.Root>
+
+  <Dialog.Root bind:open={credentialPasswordDialogOpen} onOpenChange={(open) => { if (!open && !credentialRevealProcessing) { currentPassword = ''; credentialRevealError = ''; selectedCredential = null } }}>
+    <Dialog.Content showCloseButton={!credentialRevealProcessing}>
+      <form class="grid gap-4" onsubmit={revealCredential}>
+        <Dialog.Header><Dialog.Title>View Resource credential</Dialog.Title><Dialog.Description>Enter your current password to reveal {selectedCredential?.name ?? 'this credential'}.</Dialog.Description></Dialog.Header>
+        <FormField label="Current password"><Input type="password" bind:value={currentPassword} autocomplete="current-password" autofocus required disabled={credentialRevealProcessing} /></FormField>
+        {#if credentialRevealError}<p class="border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive" role="alert">{credentialRevealError}</p>{/if}
+        <Dialog.Footer><Button type="button" variant="outline" disabled={credentialRevealProcessing} onclick={() => (credentialPasswordDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={!currentPassword || credentialRevealProcessing}>{#if credentialRevealProcessing}<Spinner />{/if}Continue</Button></Dialog.Footer>
+      </form>
+    </Dialog.Content>
+  </Dialog.Root>
+
+  <Dialog.Root bind:open={revealedCredentialDialogOpen} onOpenChange={(open) => { if (!open) closeRevealedCredential() }}>
+    <Dialog.Content class="sm:max-w-xl">
+      <Dialog.Header><Dialog.Title>{revealedCredential?.name ?? 'Resource credential'}</Dialog.Title><Dialog.Description>This decrypted credential is shown only until you close this dialog.</Dialog.Description></Dialog.Header>
+      {#if revealedCredential}
+        <div class="grid gap-4">
+          {#if revealedCredential.username}<div class="grid gap-2"><p class="text-xs font-medium">Username</p><div class="flex gap-2"><Input value={revealedCredential.username} readonly /><Button type="button" variant="outline" onclick={() => copyCredential(revealedCredential!.username, 'Username')}>Copy</Button></div></div>{/if}
+          {#each Object.entries(revealedCredential.values) as [name, value] (name)}
+            <div class="grid gap-2"><p class="text-xs font-medium">{displayLabel(name)}</p><div class="flex gap-2"><Input type="text" {value} readonly autocomplete="off" /><Button type="button" variant="outline" onclick={() => copyCredential(value, displayLabel(name))}>Copy</Button></div></div>
+          {/each}
+        </div>
+      {/if}
+      <Dialog.Footer><Button type="button" onclick={closeRevealedCredential}>Done</Button></Dialog.Footer>
     </Dialog.Content>
   </Dialog.Root>
 </DashboardLayout>

@@ -1283,6 +1283,9 @@ func (service *ResourceManagement) UpdateEndpoint(ctx context.Context, resourceI
 	if err != nil {
 		return models.ResourceEndpointEntity{}, err
 	}
+	if current.Role == "wireguard" && current.PrivateNetworkID != nil && current.Name == "Private access" {
+		return models.ResourceEndpointEntity{}, domainError("endpoint", "managed", "WireGuard access is managed through the Endpoints page")
+	}
 	if current.Role == "primary" && current.PrivateNetworkID == nil && (input.Role != "primary" || input.PrivateNetworkID != nil) {
 		return models.ResourceEndpointEntity{}, domainError("role", "primary", "external Resource primary origin cannot be changed into another endpoint type")
 	}
@@ -1339,6 +1342,19 @@ func (service *ResourceManagement) validateEndpointTopology(ctx context.Context,
 		if err := requireChild(count, "privateNetworkId", "private network is unavailable"); err != nil {
 			return err
 		}
+		enabled, err := db.NewSelect().TableExpr("resource_endpoints").
+			Where("resource_id = ?", resource.ID).
+			Where("private_network_id = ?", *input.PrivateNetworkID).
+			Where("role = 'wireguard'").
+			Where("name = 'Private access'").
+			Where("archived_at IS NULL").
+			Count(ctx)
+		if err != nil {
+			return err
+		}
+		if err := requireChild(enabled, "privateNetworkId", "turn on WireGuard access before publishing an endpoint through this private network"); err != nil {
+			return err
+		}
 		if endpointID != nil {
 			incompatible, err := db.NewSelect().TableExpr("environment_resources AS connection").
 				Where("connection.resource_endpoint_id = ?", *endpointID).Where("connection.archived_at IS NULL").
@@ -1371,6 +1387,9 @@ func (service *ResourceManagement) ArchiveEndpoint(ctx context.Context, resource
 	}
 	if err != nil {
 		return err
+	}
+	if endpoint.Role == "wireguard" && endpoint.PrivateNetworkID != nil && endpoint.Name == "Private access" {
+		return domainError("endpoint", "managed", "turn off WireGuard access instead of archiving its gateway endpoint")
 	}
 	dependencies, err := tx.NewSelect().TableExpr("resource_endpoints AS endpoint").Where("endpoint.id = ?", endpointID).
 		Where("EXISTS (SELECT 1 FROM environment_resources WHERE resource_endpoint_id = endpoint.id AND archived_at IS NULL) OR EXISTS (SELECT 1 FROM resource_health_checks WHERE resource_endpoint_id = endpoint.id AND archived_at IS NULL)").Count(ctx)
@@ -2619,10 +2638,11 @@ func (service *ResourceManagement) validateHealthTopology(ctx context.Context, d
 	if err := db.NewSelect().TableExpr("resources").ColumnExpr("resource_type").Where("id = ?", resourceID).Scan(ctx, &resourceType); err != nil {
 		return err
 	}
-	if resourceType == models.ResourceTypeDatabase {
-		if input.ResourceEndpointID == nil || input.ResourceCredentialID == nil {
-			return domainError("healthCheck", "incomplete", "database Resource access checks require an endpoint and credential")
-		}
+	if input.ResourceEndpointID == nil {
+		return domainError("resourceEndpointId", "required", "health checks require an endpoint")
+	}
+	if resourceType == models.ResourceTypeDatabase && input.ResourceCredentialID == nil {
+		return domainError("resourceCredentialId", "required", "database Resource access checks require a credential")
 	}
 	if input.ResourceEndpointID != nil {
 		query := db.NewSelect().TableExpr("resource_endpoints").Where("id = ?", *input.ResourceEndpointID).Where("resource_id = ?", resourceID).Where("archived_at IS NULL")

@@ -28,7 +28,7 @@ type System struct {
 	logs         *services.SystemLogs
 	appTelemetry *services.SystemApplicationTelemetry
 	access       *services.ResourcePrivateAccess
-	credentials  *services.SystemResourceCredentials
+	credentials  *services.ResourceCredentials
 }
 
 func NewSystem(
@@ -38,7 +38,7 @@ func NewSystem(
 	logs *services.SystemLogs,
 	appTelemetry *services.SystemApplicationTelemetry,
 	access *services.ResourcePrivateAccess,
-	credentials *services.SystemResourceCredentials,
+	credentials *services.ResourceCredentials,
 ) System {
 	return System{db: db, health: health, metric: metric, logs: logs, appTelemetry: appTelemetry, access: access, credentials: credentials}
 }
@@ -242,7 +242,7 @@ func (s System) RevealResourceCredential(etx *echo.Context) error {
 		return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "Current password is required"})
 	}
 
-	credential, err := s.credentials.Reveal(
+	credential, err := s.credentials.RevealSystem(
 		etx.Request().Context(), resourceID, credentialID,
 		cookies.ExtractFromCookieApp(etx).UserID, payload.Password,
 	)
@@ -250,7 +250,7 @@ func (s System) RevealResourceCredential(etx *echo.Context) error {
 		switch {
 		case errors.Is(err, services.ErrInvalidCredentials):
 			return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "Current password is incorrect"})
-		case errors.Is(err, services.ErrSystemResourceCredentialUnavailable):
+		case errors.Is(err, services.ErrResourceCredentialUnavailable):
 			return etx.JSON(http.StatusNotFound, map[string]string{"error": "System Resource credential not found"})
 		default:
 			slog.ErrorContext(etx.Request().Context(), "failed to reveal system Resource credential", "resource_id", resourceID, "credential_id", credentialID, "error", err)

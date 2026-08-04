@@ -144,8 +144,6 @@ func (rhc resourceHealthCheck) DueApplicationChecks(
 		Join("LEFT JOIN resource_endpoints AS endpoint ON endpoint.id = health_check.resource_endpoint_id AND endpoint.resource_id = resource.id AND endpoint.archived_at IS NULL").
 		Join("LEFT JOIN resource_credentials AS credential ON credential.id = health_check.resource_credential_id AND credential.resource_id = resource.id AND credential.archived_at IS NULL").
 		Join("LEFT JOIN resource_health_check_statuses AS status ON status.health_check_id = health_check.id").
-		Where("resource.resource_type = 'database'").
-		Where("health_check.kind = resource.configuration ->> 'engine'").
 		Where("health_check.enabled = TRUE").
 		Where("health_check.archived_at IS NULL").
 		Where("status.health_check_id IS NULL OR status.observed_at + health_check.interval_seconds * INTERVAL '1 second' <= ?", now).

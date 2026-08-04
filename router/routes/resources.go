@@ -12,7 +12,6 @@ var ResourceDatabases = routing.NewRouteWithUUIDID("/:id/databases", "resources.
 var ResourceBackups = routing.NewRouteWithUUIDID("/:id/backups", "resources.backups", ResourcesPrefix)
 var ResourceEndpoints = routing.NewRouteWithUUIDID("/:id/endpoints", "resources.endpoints", ResourcesPrefix)
 var ResourceCredentials = routing.NewRouteWithUUIDID("/:id/credentials", "resources.credentials", ResourcesPrefix)
-var ResourceRuntime = routing.NewRouteWithUUIDID("/:id/runtime", "resources.runtime", ResourcesPrefix)
 var ResourceHealth = routing.NewRouteWithUUIDID("/:id/health", "resources.health", ResourcesPrefix)
 var ResourceSettings = routing.NewRouteWithUUIDID("/:id/settings", "resources.settings", ResourcesPrefix)
 var ResourceDeploy = routing.NewRouteWithUUIDID("/:id/deploy", "resources.deploy", ResourcesPrefix)
@@ -59,6 +58,7 @@ type ResourceCredentialParams struct {
 var ResourceCredentialCreate = routing.NewRouteWithUUIDID("/:id/credentials", "resources.credentials.create", ResourcesPrefix)
 var ResourceCredentialUpdate = routing.NewRouteWithParams[ResourceCredentialParams]("/:id/credentials/:credentialID", "resources.credentials.update", ResourcesPrefix)
 var ResourceCredentialDestroy = routing.NewRouteWithParams[ResourceCredentialParams]("/:id/credentials/:credentialID", "resources.credentials.destroy", ResourcesPrefix)
+var ResourceCredentialReveal = routing.NewRouteWithParams[ResourceCredentialParams]("/:id/credentials/:credentialID/reveal", "resources.credentials.reveal", ResourcesPrefix)
 
 type ResourceInstallationParams struct {
 	ResourceID     string `param:"id"`

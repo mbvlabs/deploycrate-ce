@@ -28,6 +28,14 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 			"environmentKeyOverrides": connection.EnvironmentKeyOverrides,
 		})
 	}
+	var privateAccessEndpoint *models.ResourceEndpointEntity
+	for index := range detail.Endpoints {
+		endpoint := &detail.Endpoints[index]
+		if endpoint.Role == "wireguard" && endpoint.PrivateNetworkID != nil && endpoint.Name == "Private access" {
+			privateAccessEndpoint = endpoint
+			break
+		}
+	}
 	endpoints := make([]inertia.Props, 0, len(detail.Endpoints))
 	for _, endpoint := range detail.Endpoints {
 		endpoints = append(endpoints, inertia.Props{
@@ -36,6 +44,7 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 			"port": endpoint.Port, "protocol": endpoint.Protocol, "tlsMode": endpoint.TlsMode,
 			"settings":         endpoint.Settings,
 			"privateNetworkId": endpoint.PrivateNetworkID,
+			"managed":          privateAccessEndpoint != nil && endpoint.ID == privateAccessEndpoint.ID,
 		})
 	}
 	credentials := make([]inertia.Props, 0, len(detail.Credentials))
@@ -95,10 +104,13 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 	}
 	deviceGrants := make([]inertia.Props, 0, len(privateAccess.DeviceGrants))
 	privateAccessState := ""
-	for _, endpoint := range detail.Endpoints {
-		if endpoint.PrivateNetworkID != nil {
-			privateAccessState = "configured"
-			break
+	var privateAccessProp inertia.Props
+	if privateAccessEndpoint != nil {
+		privateAccessState = "configured"
+		privateAccessProp = inertia.Props{
+			"id": privateAccessEndpoint.ID, "address": privateAccessEndpoint.Address,
+			"port": privateAccessEndpoint.Port, "protocol": privateAccessEndpoint.Protocol,
+			"tlsMode": privateAccessEndpoint.TlsMode, "privateNetworkId": privateAccessEndpoint.PrivateNetworkID,
 		}
 	}
 	allApplied := len(privateAccess.DeviceGrants) > 0
@@ -141,7 +153,7 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 		"connectionCount": len(connections), "connections": connections,
 		"endpoints": endpoints, "credentials": credentials, "installations": installations,
 		"volumes": volumes, "mounts": mounts, "healthChecks": healthChecks,
-		"privateAccessState": privateAccessState, "deviceGrants": deviceGrants,
+		"privateAccess": privateAccessProp, "privateAccessState": privateAccessState, "deviceGrants": deviceGrants,
 		"availableDevices": availableDevices,
 	}
 }

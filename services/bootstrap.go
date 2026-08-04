@@ -598,7 +598,7 @@ func createBootstrapClickHouseResource(
 	resource, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
 		Name:         "DeployCrate CE ClickHouse",
 		Slug:         "deploycrate-ce-clickhouse",
-		ResourceType: models.ResourceTypeDatabase, Configuration: json.RawMessage(`{"engine":"clickhouse","engine_version":"25.8.28.1","databases":[{"name":"deploycrate"}]}`),
+		ResourceType: models.ResourceTypeDatabase, Configuration: json.RawMessage(`{"engine":"clickhouse","databases":[{"name":"deploycrate"}]}`),
 		SystemManaged: true,
 	})
 	if err != nil {
@@ -816,7 +816,7 @@ func createBootstrapDatabaseResource(
 	environmentID, serverID, networkID uuid.UUID,
 ) (bootstrapDatabaseTopology, error) {
 	configuration, err := json.Marshal(models.ResourceConfiguration{
-		Engine: "postgresql", EngineVersion: "17",
+		Engine:    "postgresql",
 		Databases: []models.ResourceDatabaseDefinition{{Name: input.DatabaseName}},
 	})
 	if err != nil {

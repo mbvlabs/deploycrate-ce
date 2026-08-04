@@ -23,14 +23,15 @@ import (
 )
 
 type Resources struct {
-	service *services.ResourceManagement
-	access  *services.ResourcePrivateAccess
-	backups *services.DatabaseBackups
-	restore *services.DatabaseRestoreWorkflow
+	service     *services.ResourceManagement
+	access      *services.ResourcePrivateAccess
+	backups     *services.DatabaseBackups
+	restore     *services.DatabaseRestoreWorkflow
+	credentials *services.ResourceCredentials
 }
 
-func NewResources(service *services.ResourceManagement, access *services.ResourcePrivateAccess, backups *services.DatabaseBackups, restore *services.DatabaseRestoreWorkflow) Resources {
-	return Resources{service: service, access: access, backups: backups, restore: restore}
+func NewResources(service *services.ResourceManagement, access *services.ResourcePrivateAccess, backups *services.DatabaseBackups, restore *services.DatabaseRestoreWorkflow, credentials *services.ResourceCredentials) Resources {
+	return Resources{service: service, access: access, backups: backups, restore: restore, credentials: credentials}
 }
 
 func (controller Resources) RegisterRoutes(r *router.Router) error {
@@ -50,7 +51,6 @@ func (controller Resources) RegisterRoutes(r *router.Router) error {
 		{http.MethodGet, routes.ResourceBackups, controller.Backups},
 		{http.MethodGet, routes.ResourceEndpoints, controller.Endpoints},
 		{http.MethodGet, routes.ResourceCredentials, controller.Credentials},
-		{http.MethodGet, routes.ResourceRuntime, controller.Runtime},
 		{http.MethodGet, routes.ResourceHealth, controller.Health},
 		{http.MethodPost, routes.ResourceDeploy, controller.Deploy},
 		{http.MethodGet, routes.ResourceSettings, controller.Edit},
@@ -67,6 +67,7 @@ func (controller Resources) RegisterRoutes(r *router.Router) error {
 		{http.MethodPost, routes.ResourceCredentialCreate, controller.CreateCredential},
 		{http.MethodPatch, routes.ResourceCredentialUpdate, controller.UpdateCredential},
 		{http.MethodDelete, routes.ResourceCredentialDestroy, controller.DestroyCredential},
+		{http.MethodPost, routes.ResourceCredentialReveal, middleware.IPRateLimiter(5, routes.Resources)(controller.RevealCredential)},
 		{http.MethodPost, routes.ResourceDatabaseCreateForResource, controller.CreateDatabase},
 		{http.MethodPost, routes.ResourceInstallationCreate, controller.CreateInstallation},
 		{http.MethodGet, routes.ResourceInstallationLogs, controller.InstallationLogs},
@@ -252,10 +253,6 @@ func (controller Resources) Endpoints(etx *echo.Context) error {
 
 func (controller Resources) Credentials(etx *echo.Context) error {
 	return controller.showSection(etx, "credentials")
-}
-
-func (controller Resources) Runtime(etx *echo.Context) error {
-	return controller.showSection(etx, "runtime")
 }
 
 func (controller Resources) Health(etx *echo.Context) error {
@@ -553,6 +550,39 @@ func (controller Resources) DestroyCredential(etx *echo.Context) error {
 		err = controller.service.ArchiveCredential(etx.Request().Context(), resourceID, credentialID)
 	}
 	return controller.finishChildMutation(etx, resourceID, err, "Credential archived")
+}
+
+func (controller Resources) RevealCredential(etx *echo.Context) error {
+	etx.Response().Header().Set("Cache-Control", "no-store")
+	etx.Response().Header().Set("Pragma", "no-cache")
+
+	resourceID, credentialID, err := parseChildIDs(etx, "credentialID")
+	if err != nil {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Resource credential not found"})
+	}
+	var payload struct {
+		Password string `json:"password"`
+	}
+	if err := etx.Bind(&payload); err != nil || payload.Password == "" || len(payload.Password) > 4096 {
+		return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "Current password is required"})
+	}
+
+	credential, err := controller.credentials.RevealManaged(
+		etx.Request().Context(), resourceID, credentialID,
+		cookies.ExtractFromCookieApp(etx).UserID, payload.Password,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrInvalidCredentials):
+			return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "Current password is incorrect"})
+		case errors.Is(err, services.ErrResourceCredentialUnavailable):
+			return etx.JSON(http.StatusNotFound, map[string]string{"error": "Resource credential not found"})
+		default:
+			slog.ErrorContext(etx.Request().Context(), "failed to reveal Resource credential", "resource_id", resourceID, "credential_id", credentialID, "error", err)
+			return etx.JSON(http.StatusInternalServerError, map[string]string{"error": "Resource credential could not be loaded"})
+		}
+	}
+	return etx.JSON(http.StatusOK, credential)
 }
 
 type resourceInstallationPayload struct {
@@ -1008,7 +1038,7 @@ func (controller Resources) renderShowSection(etx *echo.Context, resourceID uuid
 		return controller.renderLoadError(etx, err)
 	}
 	backups := models.ResourceBackupCatalog{}
-	if section == "backups" {
+	if section == "backups" || section == "databases" {
 		backups, err = controller.backups.DetailsForResource(etx.Request().Context(), resourceID)
 		if err != nil {
 			return controller.renderLoadError(etx, err)
@@ -1017,7 +1047,7 @@ func (controller Resources) renderShowSection(etx *echo.Context, resourceID uuid
 	props := inertia.Props{
 		"auth": authProps(etx), "resource": resourceDetailProps(detail, privateAccess),
 		"backups": resourceBackupProps(backups), "options": resourceOptionsProps(options),
-		"section": section, "flash": resourceFlashProps(etx),
+		"section": section, "selectedDatabase": strings.TrimSpace(etx.QueryParam("database")), "flash": resourceFlashProps(etx),
 	}
 	if enrollment != nil {
 		props["enrollment"] = enrollment
@@ -1081,7 +1111,7 @@ func resourceReturnSection(etx *echo.Context) string {
 		return "settings"
 	}
 	switch section {
-	case "databases", "backups", "endpoints", "credentials", "runtime", "health", "settings":
+	case "databases", "backups", "endpoints", "credentials", "health", "settings":
 		return section
 	default:
 		return "overview"
@@ -1098,8 +1128,6 @@ func resourceSectionURL(resourceID uuid.UUID, section string) string {
 		return routes.ResourceEndpoints.URL(resourceID)
 	case "credentials":
 		return routes.ResourceCredentials.URL(resourceID)
-	case "runtime":
-		return routes.ResourceRuntime.URL(resourceID)
 	case "health":
 		return routes.ResourceHealth.URL(resourceID)
 	case "settings":

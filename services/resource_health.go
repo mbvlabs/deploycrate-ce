@@ -15,6 +15,7 @@ import (
 
 	clickhouseclient "deploycrate-ce/clients/clickhouse"
 	postgresqlclient "deploycrate-ce/clients/postgresql"
+	resourcehealthclient "deploycrate-ce/clients/resourcehealth"
 	"deploycrate-ce/config"
 	"deploycrate-ce/internal/secretcrypto"
 	"deploycrate-ce/internal/storage"
@@ -27,10 +28,11 @@ type ResourceHealth struct {
 	db       storage.Pool
 	config   config.Config
 	postgres postgresqlclient.Client
+	generic  resourcehealthclient.Client
 }
 
 func NewResourceHealth(db storage.Pool, cfg config.Config) *ResourceHealth {
-	return &ResourceHealth{db: db, config: cfg, postgres: postgresqlclient.New()}
+	return &ResourceHealth{db: db, config: cfg, postgres: postgresqlclient.New(), generic: resourcehealthclient.New()}
 }
 
 func (service *ResourceHealth) Sweep(ctx context.Context) error {
@@ -149,6 +151,15 @@ func (service *ResourceHealth) probe(
 		return "", err
 	}
 	password := values["password"]
+	endpoint := resourcehealthclient.Endpoint{
+		Address: check.EndpointAddress, Port: check.EndpointPort, Protocol: check.EndpointProtocol,
+	}
+	credentials := resourcehealthclient.Credentials{
+		Password: password, Token: values["token"],
+	}
+	if check.CredentialUsername.Valid {
+		credentials.Username = check.CredentialUsername.String
+	}
 
 	var settings struct {
 		Database string `json:"database"`
@@ -159,6 +170,23 @@ func (service *ResourceHealth) probe(
 	}
 
 	switch check.Kind {
+	case "tcp":
+		return service.generic.TCP(ctx, endpoint)
+	case "http":
+		var configuration struct {
+			Path           string `json:"path"`
+			ExpectedStatus int    `json:"expected_status"`
+		}
+		if err := json.Unmarshal(check.Configuration, &configuration); err != nil {
+			return "", errors.New("the HTTP health check configuration is invalid")
+		}
+		return service.generic.HTTP(ctx, endpoint, resourcehealthclient.HTTPOptions{
+			Path: configuration.Path, ExpectedStatus: configuration.ExpectedStatus, Credentials: credentials,
+		})
+	case "mysql":
+		return service.generic.MySQL(ctx, endpoint)
+	case "redis":
+		return service.generic.Redis(ctx, endpoint, credentials)
 	case "postgresql":
 		if !check.CredentialUsername.Valid || strings.TrimSpace(check.CredentialUsername.String) == "" || password == "" {
 			return "", errors.New("the PostgreSQL health check credential is unavailable")

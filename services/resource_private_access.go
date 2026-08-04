@@ -187,9 +187,20 @@ func (service *ResourcePrivateAccess) Disable(ctx context.Context, resourceID uu
 	if err != nil {
 		return err
 	}
-	dependencies, err := service.db.Executor().NewSelect().TableExpr("resource_endpoints AS endpoint").
+	privateEndpoints, err := service.db.Executor().NewSelect().TableExpr("resource_endpoints AS endpoint").
 		Where("endpoint.resource_id = ?", resourceID).
-		Where("endpoint.private_network_id IS NOT NULL").Where("endpoint.archived_at IS NULL").
+		Where("endpoint.private_network_id IS NOT NULL").
+		Where("endpoint.id <> ?", target.WireGuardEndpointID).
+		Where("endpoint.archived_at IS NULL").
+		Count(ctx)
+	if err != nil {
+		return err
+	}
+	if privateEndpoints > 0 {
+		return errors.Join(models.ErrDomainValidation, errors.New("archive every endpoint using WireGuard before turning off private access"))
+	}
+	dependencies, err := service.db.Executor().NewSelect().TableExpr("resource_endpoints AS endpoint").
+		Where("endpoint.id = ?", target.WireGuardEndpointID).
 		Where("EXISTS (SELECT 1 FROM environment_resources WHERE resource_endpoint_id = endpoint.id AND archived_at IS NULL) OR EXISTS (SELECT 1 FROM resource_health_checks WHERE resource_endpoint_id = endpoint.id AND archived_at IS NULL)").
 		Count(ctx)
 	if err != nil {
@@ -218,8 +229,7 @@ func (service *ResourcePrivateAccess) Disable(ctx context.Context, resourceID uu
 	result, err := service.db.Executor().NewUpdate().TableExpr("resource_endpoints").
 		Set("archived_at = ?", now).
 		Set("updated_at = ?", now).
-		Where("resource_id = ?", resourceID).
-		Where("private_network_id IS NOT NULL").
+		Where("id = ?", target.WireGuardEndpointID).
 		Where("archived_at IS NULL").
 		Exec(ctx)
 	if err != nil {

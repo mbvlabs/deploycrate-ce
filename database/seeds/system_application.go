@@ -149,7 +149,7 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		factories.WithResourcesName("DeployCrate CE PostgreSQL"),
 		factories.WithResourcesSlug("deploycrate-ce-postgresql"),
 		factories.WithResourcesResourceType(models.ResourceTypeDatabase),
-		factories.WithResourcesConfiguration(json.RawMessage(`{"engine":"postgresql","engine_version":"17","databases":[{"name":"deploycrate"}]}`)),
+		factories.WithResourcesConfiguration(json.RawMessage(`{"engine":"postgresql","databases":[{"name":"deploycrate"}]}`)),
 		factories.WithResourcesSystemManaged(true),
 		factories.WithResourcesArchivedAt(sql.NullTime{}),
 	)
@@ -222,7 +222,7 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		factories.WithResourcesName("DeployCrate CE ClickHouse"),
 		factories.WithResourcesSlug("deploycrate-ce-clickhouse"),
 		factories.WithResourcesResourceType(models.ResourceTypeDatabase),
-		factories.WithResourcesConfiguration(json.RawMessage(`{"engine":"clickhouse","engine_version":"25.8.28.1","databases":[{"name":"deploycrate"}]}`)),
+		factories.WithResourcesConfiguration(json.RawMessage(`{"engine":"clickhouse","databases":[{"name":"deploycrate"}]}`)),
 		factories.WithResourcesSystemManaged(true),
 		factories.WithResourcesArchivedAt(sql.NullTime{}),
 	)

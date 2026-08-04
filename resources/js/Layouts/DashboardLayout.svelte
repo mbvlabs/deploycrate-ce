@@ -51,9 +51,8 @@
         [routes.resourceShow(resourceNavigation.id)]: 'Overview',
         [routes.resourceDatabases(resourceNavigation.id)]: 'Databases',
         [routes.resourceBackups(resourceNavigation.id)]: 'Backups',
-        [routes.resourceEndpoints(resourceNavigation.id)]: 'Endpoints & access',
+        [routes.resourceEndpoints(resourceNavigation.id)]: 'Endpoints',
         [routes.resourceCredentials(resourceNavigation.id)]: 'Credentials',
-        [routes.resourceRuntime(resourceNavigation.id)]: 'Runtime & storage',
         [routes.resourceHealth(resourceNavigation.id)]: 'Health checks',
         [routes.resourceSettings(resourceNavigation.id)]: 'Settings',
       }
@@ -146,18 +145,13 @@
                 </Sidebar.MenuItem>
               {/if}
               <Sidebar.MenuItem>
-                <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceEndpoints(resourceNavigation.id)} tooltipContent="Endpoints & access">
-                  {#snippet child({ props })}<Link {...props} href={routes.resourceEndpoints(resourceNavigation.id)}><NetworkIcon /><span>Endpoints & access</span></Link>{/snippet}
+                <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceEndpoints(resourceNavigation.id)} tooltipContent="Endpoints">
+                  {#snippet child({ props })}<Link {...props} href={routes.resourceEndpoints(resourceNavigation.id)}><NetworkIcon /><span>Endpoints</span></Link>{/snippet}
                 </Sidebar.MenuButton>
               </Sidebar.MenuItem>
               <Sidebar.MenuItem>
                 <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceCredentials(resourceNavigation.id)} tooltipContent="Credentials">
                   {#snippet child({ props })}<Link {...props} href={routes.resourceCredentials(resourceNavigation.id)}><KeyRoundIcon /><span>Credentials</span></Link>{/snippet}
-                </Sidebar.MenuButton>
-              </Sidebar.MenuItem>
-              <Sidebar.MenuItem>
-                <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceRuntime(resourceNavigation.id)} tooltipContent="Runtime & storage">
-                  {#snippet child({ props })}<Link {...props} href={routes.resourceRuntime(resourceNavigation.id)}><ServerIcon /><span>Runtime & storage</span></Link>{/snippet}
                 </Sidebar.MenuButton>
               </Sidebar.MenuItem>
               <Sidebar.MenuItem>
