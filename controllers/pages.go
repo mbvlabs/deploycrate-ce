@@ -13,6 +13,7 @@ import (
 	"deploycrate-ce/router/cookies"
 	"deploycrate-ce/router/middleware"
 	"deploycrate-ce/router/routes"
+	"deploycrate-ce/services"
 
 	"github.com/labstack/echo/v5"
 )
@@ -20,13 +21,15 @@ import (
 type Pages struct {
 	db         storage.Pool
 	insertOnly queue.InsertOnly
+	dashboard  *services.Dashboard
 }
 
 func NewPages(
 	db storage.Pool,
 	insertOnly queue.InsertOnly,
+	dashboard *services.Dashboard,
 ) Pages {
-	return Pages{db, insertOnly}
+	return Pages{db: db, insertOnly: insertOnly, dashboard: dashboard}
 }
 
 func (p Pages) RegisterRoutes(r *router.Router) error {
@@ -51,10 +54,11 @@ func (p Pages) RegisterRoutes(r *router.Router) error {
 }
 
 func (p Pages) Home(etx *echo.Context) error {
+	ctx := etx.Request().Context()
 	appSession := cookies.ExtractFromCookieApp(etx)
 	if appSession.Email == "" {
 		user, err := models.User.Find(
-			etx.Request().Context(),
+			ctx,
 			p.db.Executor(),
 			appSession.UserID,
 		)
@@ -79,11 +83,17 @@ func (p Pages) Home(etx *echo.Context) error {
 		}
 		appSession.Email = user.Email
 	}
+	dashboard, err := p.dashboard.Snapshot(ctx)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to load dashboard", "error", err)
+		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
+	}
 
 	return inertia.Page(etx, "Home", inertia.Props{
 		"auth": inertia.Props{
 			"email": appSession.Email,
 		},
+		"dashboard": dashboard,
 	})
 }
 
