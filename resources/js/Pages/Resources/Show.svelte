@@ -36,7 +36,7 @@
     | { kind: 'revoke-device'; deviceId: string; title: string; description: string; confirmationLabel: string }
     | { kind: 'archive-resource'; title: string; description: string; confirmationLabel: string }
     | { kind: 'archive-backup-policy'; databaseName: string; policyId: string; title: string; description: string; confirmationLabel: string }
-  let { auth, resource, backups, options, enrollment = null, errors = {} }: { auth: { email: string }; resource: any; backups: Backups; options: Options; enrollment?: Enrollment | null; errors?: Record<string, string> } = $props()
+  let { auth, resource, backups, options, section = 'overview', enrollment = null, errors = {} }: { auth: { email: string }; resource: any; backups: Backups; options: Options; section?: string; enrollment?: Enrollment | null; errors?: Record<string, string> } = $props()
   let selectedBackupDatabaseName = $state('')
 
   const definition = $derived(options.engines.find((kind) => kind.engine === resource.engine) ?? options.engines[0])
@@ -55,6 +55,15 @@
   const selectedBackups = $derived(backups.databases.find((item) => item.databaseName === selectedBackupDatabaseName) ?? backups.databases[0])
   const lastSuccessfulBackup = $derived(selectedBackups?.history.find((item) => item.status === 'verified'))
   const activeRestore = $derived(Boolean(selectedBackups?.activeRestore))
+  const sectionTitle = $derived(({
+    overview: 'Overview',
+    databases: 'Databases',
+    backups: 'Backups',
+    endpoints: 'Endpoints & access',
+    credentials: 'Credentials',
+    runtime: 'Runtime & storage',
+    health: 'Health checks',
+  } as Record<string, string>)[section] ?? 'Overview')
   const overallStatus = $derived.by(() => {
 		if (databaseBacked) {
 			if (resource.healthChecks.some((item: any) => item.enabled && item.state === 'unhealthy')) return { label: 'Unhealthy', tone: 'bad', detail: 'The published Database access check reached its failure threshold.' }
@@ -114,10 +123,10 @@
 
   onMount(() => {
     const restoreInterval = window.setInterval(() => {
-      if (activeRestore) router.reload({ only: ['backups'] })
+      if (section === 'backups' && activeRestore) router.reload({ only: ['backups'] })
     }, 5000)
     const healthInterval = window.setInterval(() => {
-      if (resource.healthChecks.some((item: any) => item.enabled)) router.reload({ only: ['resource'] })
+      if (section === 'health' && resource.healthChecks.some((item: any) => item.enabled)) router.reload({ only: ['resource'] })
     }, 15000)
     return () => {
       window.clearInterval(restoreInterval)
@@ -167,9 +176,10 @@
   }
 
   function submit(action: () => void) { try { action() } catch {} }
+  function actionURL(url: string) { return `${url}${url.includes('?') ? '&' : '?'}returnTo=${section}` }
   function openWireGuardConfiguration() { if (enrollment?.clientConfiguration) wireGuardConfigurationDialogOpen = true }
-  function createDatabase() { if (dialogAction) return; dialogAction = 'database'; router.post(routes.resourceDatabaseCreateForResource(resource.id), database, { onSuccess: () => { databaseDialogOpen = false; database = { name: '', encoding: 'UTF8', collation: '' } }, onError: () => (databaseDialogOpen = true), onFinish: () => (dialogAction = '') }) }
-  function createEndpoint() { if (dialogAction) return; dialogAction = 'endpoint'; router.post(routes.resourceEndpointCreate(resource.id), { ...endpoint, settings: {} }, { onSuccess: () => (endpointDialogOpen = false), onError: () => (endpointDialogOpen = true), onFinish: () => (dialogAction = '') }) }
+  function createDatabase() { if (dialogAction) return; dialogAction = 'database'; router.post(actionURL(routes.resourceDatabaseCreateForResource(resource.id)), database, { onSuccess: () => { databaseDialogOpen = false; database = { name: '', encoding: 'UTF8', collation: '' } }, onError: () => (databaseDialogOpen = true), onFinish: () => (dialogAction = '') }) }
+  function createEndpoint() { if (dialogAction) return; dialogAction = 'endpoint'; router.post(actionURL(routes.resourceEndpointCreate(resource.id)), { ...endpoint, settings: {} }, { onSuccess: () => (endpointDialogOpen = false), onError: () => (endpointDialogOpen = true), onFinish: () => (dialogAction = '') }) }
   function chooseEndpointNetwork(networkId: string) {
     endpoint.privateNetworkId = networkId
     const selected = options.privateNetworks.find((network) => network.id === networkId)
@@ -177,8 +187,8 @@
     endpoint.address = selected && serverId ? selected.serverAddresses[serverId] ?? '127.0.0.1' : '127.0.0.1'
   }
   function openCredentialDialog() { if (canAddApplicationUser) credentialDialogOpen = true }
-  function createCredential() { if (!canAddApplicationUser || dialogAction) return; dialogAction = 'credential'; router.post(routes.resourceCredentialCreate(resource.id), { name: credential.name, username: credential.username, secretValues: credential.secretValues, metadata: { purpose: 'application', database: credential.database } }, { onSuccess: () => { credentialDialogOpen = false; credential.secretValues = {} }, onError: () => (credentialDialogOpen = true), onFinish: () => (dialogAction = '') }) }
-  function enablePrivateAccess() { if (dialogAction) return; dialogAction = 'private-access'; router.post(routes.resourcePrivateAccessCreate(resource.id), { privateNetworkId: privateAccessNetworkId }, { onSuccess: () => (privateAccessDialogOpen = false), onError: () => (privateAccessDialogOpen = true), onFinish: () => (dialogAction = '') }) }
+  function createCredential() { if (!canAddApplicationUser || dialogAction) return; dialogAction = 'credential'; router.post(actionURL(routes.resourceCredentialCreate(resource.id)), { name: credential.name, username: credential.username, secretValues: credential.secretValues, metadata: { purpose: 'application', database: credential.database } }, { onSuccess: () => { credentialDialogOpen = false; credential.secretValues = {} }, onError: () => (credentialDialogOpen = true), onFinish: () => (dialogAction = '') }) }
+  function enablePrivateAccess() { if (dialogAction) return; dialogAction = 'private-access'; router.post(actionURL(routes.resourcePrivateAccessCreate(resource.id)), { privateNetworkId: privateAccessNetworkId }, { onSuccess: () => (privateAccessDialogOpen = false), onError: () => (privateAccessDialogOpen = true), onFinish: () => (dialogAction = '') }) }
   function disablePrivateAccess() {
     confirmDestructive({
       kind: 'disable-private-access',
@@ -187,7 +197,7 @@
       confirmationLabel: 'Remove from private network',
     })
   }
-  function submitDevice() { if (pendingAction) return; pendingAction = 'device'; router.post(routes.resourcePrivateAccessDeviceCreate(resource.id), device, { onFinish: () => (pendingAction = '') }) }
+  function submitDevice() { if (pendingAction) return; pendingAction = 'device'; router.post(actionURL(routes.resourcePrivateAccessDeviceCreate(resource.id)), device, { onFinish: () => (pendingAction = '') }) }
   function revokeDevice(deviceId: string, deviceName: string) {
     confirmDestructive({
       kind: 'revoke-device',
@@ -197,10 +207,10 @@
       confirmationLabel: 'Revoke access',
     })
   }
-  function retryDevice(deviceId: string) { router.post(routes.resourcePrivateAccessDeviceCreate(resource.id), { deviceId, name: '' }) }
-  function createVolume() { if (dialogAction) return; submit(() => { const configuration = json(volume.configurationText); dialogAction = 'volume'; router.post(routes.resourceVolumeCreate(resource.id), { ...volume, configuration }, { onSuccess: () => (volumeDialogOpen = false), onError: () => (volumeDialogOpen = true), onFinish: () => (dialogAction = '') }) }) }
-  function createMount() { if (dialogAction) return; dialogAction = 'mount'; router.post(routes.resourceMountCreate(resource.id), mount, { onSuccess: () => (mountDialogOpen = false), onError: () => (mountDialogOpen = true), onFinish: () => (dialogAction = '') }) }
-  function createHealth() { if (dialogAction) return; submit(() => { const configuration = json(health.configurationText); dialogAction = 'health'; router.post(routes.resourceHealthCheckCreate(resource.id), { ...health, configuration }, { onSuccess: () => (healthDialogOpen = false), onError: () => (healthDialogOpen = true), onFinish: () => (dialogAction = '') }) }) }
+  function retryDevice(deviceId: string) { router.post(actionURL(routes.resourcePrivateAccessDeviceCreate(resource.id)), { deviceId, name: '' }) }
+  function createVolume() { if (dialogAction) return; submit(() => { const configuration = json(volume.configurationText); dialogAction = 'volume'; router.post(actionURL(routes.resourceVolumeCreate(resource.id)), { ...volume, configuration }, { onSuccess: () => (volumeDialogOpen = false), onError: () => (volumeDialogOpen = true), onFinish: () => (dialogAction = '') }) }) }
+  function createMount() { if (dialogAction) return; dialogAction = 'mount'; router.post(actionURL(routes.resourceMountCreate(resource.id)), mount, { onSuccess: () => (mountDialogOpen = false), onError: () => (mountDialogOpen = true), onFinish: () => (dialogAction = '') }) }
+  function createHealth() { if (dialogAction) return; submit(() => { const configuration = json(health.configurationText); dialogAction = 'health'; router.post(actionURL(routes.resourceHealthCheckCreate(resource.id)), { ...health, configuration }, { onSuccess: () => (healthDialogOpen = false), onError: () => (healthDialogOpen = true), onFinish: () => (dialogAction = '') }) }) }
   function openConnectionKeys(connection: any) {
     connectionKeysConnection = connection
     connectionKeys = { ...connection.environmentKeys }
@@ -218,7 +228,7 @@
   function saveConnectionKeys() {
     if (!connectionKeysConnection || dialogAction) return
     dialogAction = 'connection-keys'
-    router.patch(routes.resourceConnectionEnvironmentKeysUpdate(resource.id, connectionKeysConnection.id), { environmentKeys: connectionKeys }, {
+    router.patch(actionURL(routes.resourceConnectionEnvironmentKeysUpdate(resource.id, connectionKeysConnection.id)), { environmentKeys: connectionKeys }, {
       onSuccess: () => (connectionKeysDialogOpen = false),
       onError: () => (connectionKeysDialogOpen = true),
       onFinish: () => (dialogAction = ''),
@@ -228,12 +238,12 @@
   function saveBackupPolicy() {
     if (!selectedBackups) return
     const databaseName = databaseRouteName(selectedBackups.databaseName)
-    if (selectedBackups.policy) router.patch(routes.resourceBackupPolicyUpdate(resource.id, databaseName, selectedBackups.policy.id), backupPolicy)
-    else router.post(routes.resourceBackupPolicyCreate(resource.id, databaseName), backupPolicy)
+    if (selectedBackups.policy) router.patch(actionURL(routes.resourceBackupPolicyUpdate(resource.id, databaseName, selectedBackups.policy.id)), backupPolicy)
+    else router.post(actionURL(routes.resourceBackupPolicyCreate(resource.id, databaseName)), backupPolicy)
   }
-  function pauseBackupPolicy() { if (selectedBackups?.policy) router.post(routes.resourceBackupPolicyPause(resource.id, databaseRouteName(selectedBackups.databaseName), selectedBackups.policy.id), {}) }
-  function resumeBackupPolicy() { if (selectedBackups?.policy) router.post(routes.resourceBackupPolicyResume(resource.id, databaseRouteName(selectedBackups.databaseName), selectedBackups.policy.id), {}) }
-  function runBackupPolicy() { if (selectedBackups?.policy) router.post(routes.resourceBackupPolicyRun(resource.id, databaseRouteName(selectedBackups.databaseName), selectedBackups.policy.id), {}) }
+  function pauseBackupPolicy() { if (selectedBackups?.policy) router.post(actionURL(routes.resourceBackupPolicyPause(resource.id, databaseRouteName(selectedBackups.databaseName), selectedBackups.policy.id)), {}) }
+  function resumeBackupPolicy() { if (selectedBackups?.policy) router.post(actionURL(routes.resourceBackupPolicyResume(resource.id, databaseRouteName(selectedBackups.databaseName), selectedBackups.policy.id)), {}) }
+  function runBackupPolicy() { if (selectedBackups?.policy) router.post(actionURL(routes.resourceBackupPolicyRun(resource.id, databaseRouteName(selectedBackups.databaseName), selectedBackups.policy.id)), {}) }
   function confirmBackupPolicyArchive() {
     if (!selectedBackups?.policy) return
     confirmDestructive({ kind: 'archive-backup-policy', databaseName: selectedBackups.databaseName, policyId: selectedBackups.policy.id, title: 'Archive backup policy?', description: 'Future schedules stop immediately. Existing backup history and artifacts are retained.', confirmationLabel: 'Archive policy' })
@@ -249,7 +259,7 @@
     if (!restoreBackup || restoreConfirmation !== resource.name || dialogAction) return
     if (!selectedBackups) return
     dialogAction = 'restore'
-    router.post(routes.resourceRestoreCreate(resource.id, databaseRouteName(selectedBackups.databaseName)), {
+    router.post(actionURL(routes.resourceRestoreCreate(resource.id, databaseRouteName(selectedBackups.databaseName))), {
       backupId: restoreBackup.id,
       confirmation: restoreConfirmation,
     }, {
@@ -267,8 +277,8 @@
       : action === 'restart' ? routes.resourceInstallationRestart(resource.id, installationId)
       : routes.resourceInstallationRemove(resource.id, installationId)
     const done = { onFinish: () => { pendingAction = '' } }
-    if (action === 'remove') router.delete(route, done)
-    else router.post(route, {}, done)
+    if (action === 'remove') router.delete(actionURL(route), done)
+    else router.post(actionURL(route), {}, done)
   }
 
   function confirmContainerRemoval(installationId: string, containerName: string) {
@@ -308,7 +318,7 @@
       : action.kind === 'revoke-device' ? routes.resourcePrivateAccessDeviceDestroy(resource.id, action.deviceId)
       : action.kind === 'archive-resource' ? routes.resourceDestroy(resource.id)
       : routes.resourceBackupPolicyDestroy(resource.id, databaseRouteName(action.databaseName), action.policyId)
-    router.delete(url, {
+    router.delete(actionURL(url), {
       onSuccess: () => { destructiveActionDialogOpen = false; destructiveAction = null },
       onError: (errors) => (destructiveError = Object.values(errors).map(String).join('\n') || 'The action could not be completed.'),
       onFinish: () => (destructiveProcessing = false),
@@ -359,24 +369,25 @@
 </script>
 
 <svelte:head><title>{resource.name}</title></svelte:head>
-<DashboardLayout email={auth.email}>
+<DashboardLayout email={auth.email} resourceNavigation={resource}>
   <div class="mx-auto max-w-6xl space-y-8">
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
         <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">{resource.engine} · {resource.resourceType}</p>
         <h1 class="mt-3 text-3xl font-semibold">{resource.name}</h1>
-        <p class="mt-2 text-sm text-muted-foreground">Docker Resource</p>
+        <p class="mt-2 text-sm text-muted-foreground">{sectionTitle}</p>
         {#if databaseBacked}<p class="mt-1 text-xs text-muted-foreground">{resource.databases.length} {resource.databases.length === 1 ? 'Database' : 'Databases'}</p>{/if}
       </div>
       <div class="flex gap-2">
         <Button variant="outline" onclick={() => router.reload({ only: ['resource'] })}>Refresh status</Button>
-        <Button>{#snippet child({ props })}<Link {...props} href={routes.resourceEdit(resource.id)}>Edit Resource</Link>{/snippet}</Button>
+        <Button>{#snippet child({ props })}<Link {...props} href={routes.resourceSettings(resource.id)}>Settings</Link>{/snippet}</Button>
       </div>
     </header>
 
     {#if Object.keys(errors).length > 0}<Alert.Root variant="destructive"><Alert.Title>The item could not be created</Alert.Title><Alert.Description>Review the dialog fields and try again.</Alert.Description></Alert.Root>{/if}
     {#if jsonError}<Alert.Root variant="destructive"><Alert.Title>Invalid configuration</Alert.Title><Alert.Description>{jsonError}</Alert.Description></Alert.Root>{/if}
 
+    {#if section === 'overview'}
     <Card.Root class="overflow-hidden">
       <Card.Content class="grid gap-0 p-0 lg:grid-cols-[minmax(0,1fr)_18rem]">
         <div class="p-6">
@@ -393,8 +404,9 @@
         </div>
       </Card.Content>
     </Card.Root>
+    {/if}
 
-    {#if databaseBacked}
+    {#if section === 'databases' && databaseBacked}
       <Card.Root>
         <Card.Header>
           <Card.Action><Button size="sm" variant="outline" onclick={() => (databaseDialogOpen = true)}>Add Database</Button></Card.Action>
@@ -433,7 +445,7 @@
       </Card.Root>
     {/if}
 
-    {#if resource.engine === 'postgresql'}
+    {#if section === 'backups' && resource.engine === 'postgresql'}
     <Card.Root>
       <Card.Header>
         <Card.Action>{#if selectedBackups?.policy}<StatusBadge status={selectedBackups.policy.active ? 'active' : 'paused'} />{/if}</Card.Action>
@@ -508,6 +520,7 @@
     </Card.Root>
     {/if}
 
+    {#if section === 'runtime'}
     <Card.Root>
       <Card.Header>
         <Card.Title>Docker installations</Card.Title>
@@ -554,7 +567,9 @@
         {/each}
       </Card.Content>
     </Card.Root>
+    {/if}
 
+    {#if section === 'endpoints'}
     <Card.Root>
       <Card.Header><Card.Action><Button size="sm" variant="outline" onclick={() => (endpointDialogOpen = true)}>Add endpoint</Button></Card.Action><Card.Title>{databaseBacked ? 'Primary endpoint' : 'Primary service'}</Card.Title><Card.Description>{databaseBacked ? 'The default published Database access endpoint and its optional private path.' : 'The Docker origin and its optional private network path.'}</Card.Description></Card.Header>
       <Card.Content class="space-y-6">
@@ -590,7 +605,9 @@
         </section>
       </Card.Content>
     </Card.Root>
+    {/if}
 
+    {#if section === 'credentials'}
     <Card.Root>
       <Card.Header><Card.Action><Button size="sm" variant="outline" disabled={!canAddApplicationUser} onclick={openCredentialDialog}>Add application credential</Button></Card.Action><Card.Title>Credentials</Card.Title><Card.Description>{databaseBacked ? 'The administrator stays internal. Each application credential is tied to one configured Database.' : 'Encrypted application credentials for this Resource.'}</Card.Description></Card.Header>
       <Card.Content class={databaseBacked ? 'grid gap-6' : 'grid gap-6 lg:grid-cols-2'}>
@@ -599,12 +616,18 @@
         <section><h3 class="text-sm font-medium">Application credentials</h3><div class="mt-3 space-y-3">{#if applicationCredentials.length === 0}<p class="text-sm text-muted-foreground">No application credentials.</p>{/if}{#each applicationCredentials as item}<div class="border border-border p-3"><div class="flex justify-between gap-3"><p class="font-medium">{item.username}</p><span class="text-xs text-muted-foreground">{item.hasEncryptedPayload ? 'Encrypted' : 'Missing secret'}</span></div><p class="mt-2 text-xs text-muted-foreground">{item.name}{item.metadata?.database ? ` · Database ${item.metadata.database}` : ''}</p></div>{/each}</div></section>
       </Card.Content>
     </Card.Root>
+    {/if}
 
     <div class="grid gap-6 lg:grid-cols-2">
+      {#if section === 'runtime'}
       <Card.Root><Card.Header><Card.Action>{#if resource.volumes.length === 0 || (resource.volumes.length === 1 && resource.installations.length === 1 && resource.mounts.length === 0)}<div class="flex gap-2">{#if resource.volumes.length === 0}<Button size="sm" variant="outline" onclick={() => (volumeDialogOpen = true)}>Add volume</Button>{/if}{#if resource.volumes.length === 1 && resource.installations.length === 1 && resource.mounts.length === 0}<Button size="sm" variant="outline" onclick={() => (mountDialogOpen = true)}>Add mount</Button>{/if}</div>{/if}</Card.Action><Card.Title>Storage</Card.Title><Card.Description>The primary durable volume and its installation mount.</Card.Description></Card.Header><Card.Content class="space-y-3">{#if resource.volumes.length === 0}<p class="text-sm text-muted-foreground">No primary volume configured.</p>{/if}{#each resource.volumes as item}<div class="border border-border p-3"><p class="font-medium">{item.name}</p><p class="mt-2 text-xs text-muted-foreground">{item.driver} on {item.serverName}</p>{#each resource.mounts.filter((mount: any) => mount.resourceVolumeId === item.id) as mount}<p class="mt-2 font-mono text-xs">{mount.mountPath} → {mount.containerName}{mount.readOnly ? ' (read only)' : ''}</p>{/each}</div>{/each}</Card.Content></Card.Root>
+      {/if}
+      {#if section === 'health'}
       <Card.Root><Card.Header><Card.Action><Button size="sm" variant="outline" disabled={databaseBacked ? applicationCredentials.length === 0 || resource.endpoints.length === 0 : resource.installations.length === 0} onclick={() => (healthDialogOpen = true)}>Add check</Button></Card.Action><Card.Title>Health checks</Card.Title><Card.Description>Desired checks and their latest observations.</Card.Description></Card.Header><Card.Content class="space-y-3">{#if resource.healthChecks.length === 0}<p class="text-sm text-muted-foreground">No health checks configured.</p>{/if}{#each resource.healthChecks as item}<div class="border border-border p-3"><div class="flex justify-between gap-3"><p class="font-medium">{item.name}</p><StatusBadge status={item.state || 'unknown'} /></div><p class="mt-2 text-xs text-muted-foreground">{item.kind} · every {item.intervalSeconds}s · {item.enabled ? 'Enabled' : 'Disabled'}</p><p class="mt-1 text-xs text-muted-foreground">Observed {observedLabel(item.observedAt)}{item.latencyMs !== null ? ` · ${item.latencyMs} ms` : ''} · successes {item.consecutiveSuccesses} · failures {item.consecutiveFailures}</p>{#if item.message}<p class="mt-2 text-xs text-muted-foreground">{item.message}</p>{/if}</div>{/each}</Card.Content></Card.Root>
+      {/if}
     </div>
 
+    {#if section === 'overview'}
     <Card.Root>
       <Card.Header><Card.Action><span class="text-xs text-muted-foreground">{resource.connectionCount} attached</span></Card.Action><Card.Title>Attached Environments</Card.Title><Card.Description>Attach Resources from Environment pages. Manage injected key names here on the Resource.</Card.Description></Card.Header>
       <Card.Content class="space-y-3">
@@ -619,6 +642,7 @@
     </Card.Root>
 
     <div class="border-t border-border pt-6"><Button variant="destructive" onclick={confirmResourceArchive}>Archive Resource</Button></div>
+    {/if}
   </div>
 
   <Dialog.Root bind:open={containerLogsDialogOpen}>

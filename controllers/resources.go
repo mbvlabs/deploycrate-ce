@@ -46,8 +46,14 @@ func (controller Resources) RegisterRoutes(r *router.Router) error {
 		{http.MethodGet, routes.ResourceNew, controller.New},
 		{http.MethodPost, routes.ResourceCreate, controller.Create},
 		{http.MethodGet, routes.ResourceShow, controller.Show},
+		{http.MethodGet, routes.ResourceDatabases, controller.Databases},
+		{http.MethodGet, routes.ResourceBackups, controller.Backups},
+		{http.MethodGet, routes.ResourceEndpoints, controller.Endpoints},
+		{http.MethodGet, routes.ResourceCredentials, controller.Credentials},
+		{http.MethodGet, routes.ResourceRuntime, controller.Runtime},
+		{http.MethodGet, routes.ResourceHealth, controller.Health},
 		{http.MethodPost, routes.ResourceDeploy, controller.Deploy},
-		{http.MethodGet, routes.ResourceEdit, controller.Edit},
+		{http.MethodGet, routes.ResourceSettings, controller.Edit},
 		{http.MethodPatch, routes.ResourceUpdate, controller.Update},
 		{http.MethodDelete, routes.ResourceDestroy, controller.Destroy},
 		{http.MethodPatch, routes.ResourceConnectionEnvironmentKeysUpdate, controller.UpdateConnectionEnvironmentKeys},
@@ -229,11 +235,39 @@ func (controller Resources) Create(etx *echo.Context) error {
 }
 
 func (controller Resources) Show(etx *echo.Context) error {
+	return controller.showSection(etx, "overview")
+}
+
+func (controller Resources) Databases(etx *echo.Context) error {
+	return controller.showSection(etx, "databases")
+}
+
+func (controller Resources) Backups(etx *echo.Context) error {
+	return controller.showSection(etx, "backups")
+}
+
+func (controller Resources) Endpoints(etx *echo.Context) error {
+	return controller.showSection(etx, "endpoints")
+}
+
+func (controller Resources) Credentials(etx *echo.Context) error {
+	return controller.showSection(etx, "credentials")
+}
+
+func (controller Resources) Runtime(etx *echo.Context) error {
+	return controller.showSection(etx, "runtime")
+}
+
+func (controller Resources) Health(etx *echo.Context) error {
+	return controller.showSection(etx, "health")
+}
+
+func (controller Resources) showSection(etx *echo.Context, section string) error {
 	resourceID, err := uuid.Parse(etx.Param("id"))
 	if err != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
-	return controller.renderShow(etx, resourceID, nil)
+	return controller.renderShowSection(etx, resourceID, section, nil, nil)
 }
 
 func (controller Resources) Deploy(etx *echo.Context) error {
@@ -269,10 +303,10 @@ func (controller Resources) Update(etx *echo.Context) error {
 		if validationErrors, ok := validation.As(err); ok {
 			return controller.renderEdit(etx, resourceID, inertia.WithValidationErrors(validationErrors.ToMap()))
 		}
-		return controller.redirectError(etx, routes.ResourceEdit.URL(resourceID), err)
+		return controller.redirectError(etx, routes.ResourceSettings.URL(resourceID), err)
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Resource updated")
-	return inertia.Redirect(etx, routes.ResourceShow.URL(resourceID), http.StatusSeeOther)
+	return inertia.Redirect(etx, routes.ResourceSettings.URL(resourceID), http.StatusSeeOther)
 }
 
 func (controller Resources) Destroy(etx *echo.Context) error {
@@ -429,7 +463,7 @@ func (controller Resources) CreatePrivateAccessDevice(etx *echo.Context) error {
 		"deviceId": result.DeviceID.String(), "grantId": result.GrantID.String(),
 		"clientConfiguration": result.ClientConfiguration,
 	}
-	return controller.renderShowPage(etx, resourceID, enrollment, nil)
+	return controller.renderShowSection(etx, resourceID, resourceReturnSection(etx), enrollment, nil)
 }
 
 func (controller Resources) DestroyPrivateAccessDevice(etx *echo.Context) error {
@@ -951,10 +985,10 @@ func (controller Resources) CreateRestore(etx *echo.Context) error {
 }
 
 func (controller Resources) renderShow(etx *echo.Context, resourceID uuid.UUID, option inertia.PageOption) error {
-	return controller.renderShowPage(etx, resourceID, nil, option)
+	return controller.renderShowSection(etx, resourceID, resourceReturnSection(etx), nil, option)
 }
 
-func (controller Resources) renderShowPage(etx *echo.Context, resourceID uuid.UUID, enrollment inertia.Props, option inertia.PageOption) error {
+func (controller Resources) renderShowSection(etx *echo.Context, resourceID uuid.UUID, section string, enrollment inertia.Props, option inertia.PageOption) error {
 	if err := controller.access.ObserveResource(etx.Request().Context(), resourceID); err != nil {
 		slog.WarnContext(etx.Request().Context(), "failed to observe Resource WireGuard device handshakes", "resource_id", resourceID, "error", err)
 	}
@@ -973,11 +1007,18 @@ func (controller Resources) renderShowPage(etx *echo.Context, resourceID uuid.UU
 	if err != nil {
 		return controller.renderLoadError(etx, err)
 	}
-	backups, err := controller.backups.DetailsForResource(etx.Request().Context(), resourceID)
-	if err != nil {
-		return controller.renderLoadError(etx, err)
+	backups := models.ResourceBackupCatalog{}
+	if section == "backups" {
+		backups, err = controller.backups.DetailsForResource(etx.Request().Context(), resourceID)
+		if err != nil {
+			return controller.renderLoadError(etx, err)
+		}
 	}
-	props := inertia.Props{"auth": authProps(etx), "resource": resourceDetailProps(detail, privateAccess), "backups": resourceBackupProps(backups), "options": resourceOptionsProps(options), "flash": resourceFlashProps(etx)}
+	props := inertia.Props{
+		"auth": authProps(etx), "resource": resourceDetailProps(detail, privateAccess),
+		"backups": resourceBackupProps(backups), "options": resourceOptionsProps(options),
+		"section": section, "flash": resourceFlashProps(etx),
+	}
 	if enrollment != nil {
 		props["enrollment"] = enrollment
 	}
@@ -1018,28 +1059,54 @@ func (controller Resources) renderCreateError(etx *echo.Context, err error) erro
 }
 
 func (controller Resources) finishChildMutation(etx *echo.Context, resourceID uuid.UUID, err error, success string) error {
-	returnToEdit := etx.QueryParam("returnTo") == "edit"
+	section := resourceReturnSection(etx)
 	if err != nil {
 		if validationErrors, ok := validation.As(err); ok && resourceID != uuid.Nil {
-			if returnToEdit {
+			if section == "settings" {
 				return controller.renderEdit(etx, resourceID, inertia.WithValidationErrors(validationErrors.ToMap()))
 			}
-			return controller.renderShow(etx, resourceID, inertia.WithValidationErrors(validationErrors.ToMap()))
+			return controller.renderShowSection(etx, resourceID, section, nil, inertia.WithValidationErrors(validationErrors.ToMap()))
 		}
-		location := routes.ResourceShow.URL(resourceID)
-		if returnToEdit {
-			location = routes.ResourceEdit.URL(resourceID)
-		}
-		return controller.redirectError(etx, location, err)
+		return controller.redirectError(etx, resourceSectionURL(resourceID, section), err)
 	}
 	if flashErr := cookies.AddFlash(etx, cookies.FlashSuccess, success); flashErr != nil {
 		return controller.renderLoadError(etx, flashErr)
 	}
-	location := routes.ResourceShow.URL(resourceID)
-	if returnToEdit {
-		location = routes.ResourceEdit.URL(resourceID)
+	return inertia.Redirect(etx, resourceSectionURL(resourceID, section), http.StatusSeeOther)
+}
+
+func resourceReturnSection(etx *echo.Context) string {
+	section := etx.QueryParam("returnTo")
+	if section == "edit" {
+		return "settings"
 	}
-	return inertia.Redirect(etx, location, http.StatusSeeOther)
+	switch section {
+	case "databases", "backups", "endpoints", "credentials", "runtime", "health", "settings":
+		return section
+	default:
+		return "overview"
+	}
+}
+
+func resourceSectionURL(resourceID uuid.UUID, section string) string {
+	switch section {
+	case "databases":
+		return routes.ResourceDatabases.URL(resourceID)
+	case "backups":
+		return routes.ResourceBackups.URL(resourceID)
+	case "endpoints":
+		return routes.ResourceEndpoints.URL(resourceID)
+	case "credentials":
+		return routes.ResourceCredentials.URL(resourceID)
+	case "runtime":
+		return routes.ResourceRuntime.URL(resourceID)
+	case "health":
+		return routes.ResourceHealth.URL(resourceID)
+	case "settings":
+		return routes.ResourceSettings.URL(resourceID)
+	default:
+		return routes.ResourceShow.URL(resourceID)
+	}
 }
 
 func resourceFlashProps(etx *echo.Context) []inertia.Props {

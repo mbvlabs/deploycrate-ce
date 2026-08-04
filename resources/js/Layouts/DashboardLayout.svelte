@@ -1,6 +1,7 @@
 <script lang="ts">
   import AppWindowIcon from '@lucide/svelte/icons/app-window'
   import ActivityIcon from '@lucide/svelte/icons/activity'
+  import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left'
   import ChevronDownIcon from '@lucide/svelte/icons/chevron-down'
   import CloudIcon from '@lucide/svelte/icons/cloud'
   import DatabaseIcon from '@lucide/svelte/icons/database'
@@ -27,7 +28,14 @@
   import { SIDEBAR_COOKIE_NAME } from '@/Components/ui/sidebar/constants'
   import { routes } from '@/routes'
 
-  let { children, email, version }: { children: Snippet; email: string; version?: string } = $props()
+  type ResourceNavigation = {
+    id: string
+    name: string
+    engine: string
+    resourceType: string
+  }
+
+  let { children, email, version, resourceNavigation = null }: { children: Snippet; email: string; version?: string; resourceNavigation?: ResourceNavigation | null } = $props()
   const appVersion = $derived(version ?? String($page.props.appVersion ?? 'dev'))
   const environmentPage = $derived($page.url.startsWith(routes.environments()) || /^\/applications\/[^/]+\/environments(?:\/|$)/.test($page.url))
   const breadcrumbs = $derived.by(() => {
@@ -37,7 +45,24 @@
     if (path === routes.homePage()) return []
     if (environmentPage) return [{ label: 'Applications', href: routes.applications() }, { label: path === routes.environments() ? 'Environments' : leaf }]
     if (path.startsWith(routes.applications())) return [{ label: 'Applications', href: routes.applications() }, ...(path === routes.applications() ? [] : [{ label: leaf }])]
-    if (path.startsWith(routes.resources())) return [{ label: 'Resources', href: routes.resources() }, ...(path === routes.resources() ? [] : [{ label: leaf }])]
+    if (path.startsWith(routes.resources())) {
+      if (!resourceNavigation) return [{ label: 'Resources', href: routes.resources() }, ...(path === routes.resources() ? [] : [{ label: leaf }])]
+      const resourceSections: Record<string, string> = {
+        [routes.resourceShow(resourceNavigation.id)]: 'Overview',
+        [routes.resourceDatabases(resourceNavigation.id)]: 'Databases',
+        [routes.resourceBackups(resourceNavigation.id)]: 'Backups',
+        [routes.resourceEndpoints(resourceNavigation.id)]: 'Endpoints & access',
+        [routes.resourceCredentials(resourceNavigation.id)]: 'Credentials',
+        [routes.resourceRuntime(resourceNavigation.id)]: 'Runtime & storage',
+        [routes.resourceHealth(resourceNavigation.id)]: 'Health checks',
+        [routes.resourceSettings(resourceNavigation.id)]: 'Settings',
+      }
+      return [
+        { label: 'Resources', href: routes.resources() },
+        { label: resourceNavigation.name, href: routes.resourceShow(resourceNavigation.id) },
+        { label: resourceSections[path] ?? 'Overview' },
+      ]
+    }
     if (path.startsWith(routes.nodes())) return [{ label: 'Nodes', href: routes.nodes() }, ...(path === routes.nodes() ? [] : [{ label: leaf }])]
     if (path.startsWith(routes.networks())) return [{ label: 'Networks' }]
     if (path.startsWith(routes.caddyRoutes())) return [{ label: 'Infrastructure' }, { label: 'Caddy Routes' }]
@@ -75,16 +100,80 @@
 <Sidebar.Provider bind:open={sidebarOpen}>
   <Sidebar.Root collapsible="icon">
     <Sidebar.Header class="h-14 justify-center border-b border-sidebar-border p-1">
-      <Link
-        href={routes.homePage()}
-        class="flex h-12 w-full items-center px-3 text-sm font-semibold tracking-tight group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
-      >
-        <span class="group-data-[collapsible=icon]:hidden">DeployCrate CE</span>
-        <span class="hidden group-data-[collapsible=icon]:inline">DC</span>
-      </Link>
+      {#if resourceNavigation}
+        <Link
+          href={routes.resources()}
+          class="flex h-12 w-full items-center gap-2 px-3 text-sm font-medium group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+          aria-label="Back to all resources"
+        >
+          <ArrowLeftIcon class="size-4 shrink-0" />
+          <span class="truncate group-data-[collapsible=icon]:hidden">All resources</span>
+        </Link>
+      {:else}
+        <Link
+          href={routes.homePage()}
+          class="flex h-12 w-full items-center px-3 text-sm font-semibold tracking-tight group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
+        >
+          <span class="group-data-[collapsible=icon]:hidden">DeployCrate CE</span>
+          <span class="hidden group-data-[collapsible=icon]:inline">DC</span>
+        </Link>
+      {/if}
     </Sidebar.Header>
 
     <Sidebar.Content>
+      {#if resourceNavigation}
+        <Sidebar.Group>
+          <Sidebar.GroupLabel class="truncate" title={resourceNavigation.name}>{resourceNavigation.name}</Sidebar.GroupLabel>
+          <Sidebar.GroupContent>
+            <Sidebar.Menu>
+              <Sidebar.MenuItem>
+                <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceShow(resourceNavigation.id)} tooltipContent="Overview">
+                  {#snippet child({ props })}<Link {...props} href={routes.resourceShow(resourceNavigation.id)}><LayoutDashboardIcon /><span>Overview</span></Link>{/snippet}
+                </Sidebar.MenuButton>
+              </Sidebar.MenuItem>
+              {#if resourceNavigation.resourceType === 'database'}
+                <Sidebar.MenuItem>
+                  <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceDatabases(resourceNavigation.id)} tooltipContent="Databases">
+                    {#snippet child({ props })}<Link {...props} href={routes.resourceDatabases(resourceNavigation.id)}><DatabaseIcon /><span>Databases</span></Link>{/snippet}
+                  </Sidebar.MenuButton>
+                </Sidebar.MenuItem>
+              {/if}
+              {#if resourceNavigation.engine === 'postgresql'}
+                <Sidebar.MenuItem>
+                  <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceBackups(resourceNavigation.id)} tooltipContent="Backups">
+                    {#snippet child({ props })}<Link {...props} href={routes.resourceBackups(resourceNavigation.id)}><CloudIcon /><span>Backups</span></Link>{/snippet}
+                  </Sidebar.MenuButton>
+                </Sidebar.MenuItem>
+              {/if}
+              <Sidebar.MenuItem>
+                <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceEndpoints(resourceNavigation.id)} tooltipContent="Endpoints & access">
+                  {#snippet child({ props })}<Link {...props} href={routes.resourceEndpoints(resourceNavigation.id)}><NetworkIcon /><span>Endpoints & access</span></Link>{/snippet}
+                </Sidebar.MenuButton>
+              </Sidebar.MenuItem>
+              <Sidebar.MenuItem>
+                <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceCredentials(resourceNavigation.id)} tooltipContent="Credentials">
+                  {#snippet child({ props })}<Link {...props} href={routes.resourceCredentials(resourceNavigation.id)}><KeyRoundIcon /><span>Credentials</span></Link>{/snippet}
+                </Sidebar.MenuButton>
+              </Sidebar.MenuItem>
+              <Sidebar.MenuItem>
+                <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceRuntime(resourceNavigation.id)} tooltipContent="Runtime & storage">
+                  {#snippet child({ props })}<Link {...props} href={routes.resourceRuntime(resourceNavigation.id)}><ServerIcon /><span>Runtime & storage</span></Link>{/snippet}
+                </Sidebar.MenuButton>
+              </Sidebar.MenuItem>
+              <Sidebar.MenuItem>
+                <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceHealth(resourceNavigation.id)} tooltipContent="Health checks">
+                  {#snippet child({ props })}<Link {...props} href={routes.resourceHealth(resourceNavigation.id)}><ActivityIcon /><span>Health checks</span></Link>{/snippet}
+                </Sidebar.MenuButton>
+              </Sidebar.MenuItem>
+              <Sidebar.MenuItem>
+                <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceSettings(resourceNavigation.id)} tooltipContent="Settings">
+                  {#snippet child({ props })}<Link {...props} href={routes.resourceSettings(resourceNavigation.id)}><SettingsIcon /><span>Settings</span></Link>{/snippet}
+                </Sidebar.MenuButton>
+              </Sidebar.MenuItem>
+            </Sidebar.Menu>
+          </Sidebar.GroupContent>
+        </Sidebar.Group>
+      {:else}
       <Sidebar.Group>
         <Sidebar.GroupLabel>Dashboard</Sidebar.GroupLabel>
         <Sidebar.GroupContent>
@@ -248,6 +337,7 @@
           </Sidebar.Menu>
         </Sidebar.GroupContent>
       </Sidebar.Group>
+      {/if}
     </Sidebar.Content>
 
     <Sidebar.Footer class="border-t border-sidebar-border px-4 py-3 group-data-[collapsible=icon]:hidden">

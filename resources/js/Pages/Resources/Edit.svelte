@@ -169,10 +169,10 @@
 
 </script>
 
-<svelte:head><title>Edit {resource.name}</title></svelte:head>
-<DashboardLayout email={auth.email}>
+<svelte:head><title>Settings · {resource.name}</title></svelte:head>
+<DashboardLayout email={auth.email} resourceNavigation={resource}>
   <div class="mx-auto max-w-6xl space-y-8">
-    <header class="flex flex-wrap items-end justify-between gap-4"><div><p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">Resource configuration</p><h1 class="mt-3 text-3xl font-semibold">Edit {resource.name}</h1><p class="mt-2 max-w-2xl text-sm text-muted-foreground">Manage identity, Docker runtime, networking, credentials, storage, and health.</p></div><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.resourceShow(resource.id)}>Done editing</Link>{/snippet}</Button></header>
+    <header class="flex flex-wrap items-end justify-between gap-4"><div><p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">Resource configuration</p><h1 class="mt-3 text-3xl font-semibold">{resource.name}</h1><p class="mt-2 max-w-2xl text-sm text-muted-foreground">Settings</p></div><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.resourceShow(resource.id)}>Back to overview</Link>{/snippet}</Button></header>
 
     {#if Object.keys(errors).length > 0}<Alert.Root variant="destructive"><Alert.Title>The changes could not be saved</Alert.Title><Alert.Description><ul class="mt-2 list-disc pl-5">{#each Object.entries(errors) as [field, message]}<li>{field}: {message}</li>{/each}</ul></Alert.Description></Alert.Root>{/if}
 
