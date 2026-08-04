@@ -754,6 +754,7 @@ func (service *EnvironmentSetup) Options(ctx context.Context) (EnvironmentSetupO
 		Join("LEFT JOIN resource_installations AS installation ON installation.resource_id = resource.id AND installation.archived_at IS NULL").
 		Join("LEFT JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.metadata ->> 'purpose' = 'application' AND credential.archived_at IS NULL").
 		Where("resource.archived_at IS NULL").
+		Where("resource.system_managed = FALSE").
 		OrderExpr("resource.name, endpoint.role, credential.name").Scan(ctx, &options); err != nil {
 		return EnvironmentSetupOptions{}, err
 	}

@@ -79,6 +79,7 @@ func (resourceApplicationGrant) Create(ctx context.Context, db storage.Executor,
 func ResourceSelectableByEnvironment(ctx context.Context, db storage.Executor, resourceID, environmentID uuid.UUID) (bool, error) {
 	var allowed bool
 	err := db.NewSelect().TableExpr("resources AS resource").ColumnExpr(`CASE
+		WHEN resource.system_managed = TRUE THEN FALSE
 		WHEN resource.sharing_scope = 'global' THEN TRUE
 		WHEN resource.sharing_scope = 'environment' THEN EXISTS (
 				SELECT 1 FROM resource_environment_grants access_grant
