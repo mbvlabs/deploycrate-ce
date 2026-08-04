@@ -2,25 +2,52 @@ package services
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
+	"deploycrate-ce/clients/objectstorage"
+	"deploycrate-ce/config"
+	"deploycrate-ce/internal/secretcrypto"
 	"deploycrate-ce/internal/storage"
+	"deploycrate-ce/internal/validation"
 	"deploycrate-ce/models"
 
+	"filippo.io/age"
 	"github.com/google/uuid"
 )
 
 type DatabaseBackups struct {
 	db        storage.Pool
 	scheduler *BackupScheduler
+	config    config.Config
+	identity  Identity
 }
 
-func NewDatabaseBackups(db storage.Pool, scheduler *BackupScheduler) *DatabaseBackups {
-	return &DatabaseBackups{db: db, scheduler: scheduler}
+func NewDatabaseBackups(db storage.Pool, scheduler *BackupScheduler, configuration config.Config, identity Identity) *DatabaseBackups {
+	return &DatabaseBackups{db: db, scheduler: scheduler, config: configuration, identity: identity}
+}
+
+type ObjectStorageDestinationInput struct {
+	Name            string
+	Provider        string
+	Endpoint        string
+	Region          string
+	Bucket          string
+	Prefix          string
+	ForcePathStyle  bool
+	AccessKeyID     string
+	SecretAccessKey string
+}
+
+type ObjectStorageRecoveryMaterial struct {
+	ResticPassword string `json:"resticPassword"`
+	AgeIdentity    string `json:"ageIdentity"`
 }
 
 type DatabaseBackupPolicyInput struct {
@@ -69,6 +96,186 @@ func (service *DatabaseBackups) DetailsForResource(ctx context.Context, resource
 
 func (service *DatabaseBackups) Destinations(ctx context.Context) ([]models.BackupDestinationSummary, error) {
 	return models.BackupDestination.ActiveSummaries(ctx, service.db.Executor())
+}
+
+func (service *DatabaseBackups) Destination(ctx context.Context, id uuid.UUID) (models.BackupDestinationSummary, error) {
+	return models.BackupDestination.ActiveSummary(ctx, service.db.Executor(), id)
+}
+
+func (service *DatabaseBackups) CreateDestination(
+	ctx context.Context,
+	input ObjectStorageDestinationInput,
+) (models.BackupDestinationEntity, error) {
+	input.Name = strings.TrimSpace(input.Name)
+	input.Provider = strings.ToLower(strings.TrimSpace(input.Provider))
+	input.AccessKeyID = strings.TrimSpace(input.AccessKeyID)
+	input.SecretAccessKey = strings.TrimSpace(input.SecretAccessKey)
+
+	builder := validation.NewBuilder()
+	builder.Required("name", input.Name)
+	builder.Required("provider", input.Provider)
+	builder.Required("bucket", input.Bucket)
+	builder.Required("accessKeyId", input.AccessKeyID)
+	builder.Required("secretAccessKey", input.SecretAccessKey)
+	if len(input.Name) > 120 {
+		builder.Add("name", "too_long", "Destination name must be 120 characters or fewer")
+	}
+	if input.Provider != objectstorage.ProviderS3 && input.Provider != objectstorage.ProviderR2 {
+		builder.Add("provider", "unsupported", "Choose Amazon S3 or Cloudflare R2")
+	}
+	if input.Provider == objectstorage.ProviderS3 && strings.TrimSpace(input.Region) == "" {
+		builder.Add("region", "required", "S3 region is required")
+	}
+	if input.Provider == objectstorage.ProviderR2 && strings.TrimSpace(input.Endpoint) == "" {
+		builder.Add("endpoint", "required", "Cloudflare R2 endpoint is required")
+	}
+	if len(input.AccessKeyID) > 4096 {
+		builder.Add("accessKeyId", "too_long", "Access key ID is too large")
+	}
+	if len(input.SecretAccessKey) > 16384 {
+		builder.Add("secretAccessKey", "too_long", "Secret access key is too large")
+	}
+	if err := builder.Err(); err != nil {
+		return models.BackupDestinationEntity{}, errors.Join(models.ErrDomainValidation, err)
+	}
+
+	normalized, err := objectstorage.Normalize(objectstorage.Config{
+		Provider: input.Provider, Endpoint: input.Endpoint, Region: input.Region,
+		Bucket: input.Bucket, Prefix: input.Prefix, ForcePathStyle: input.ForcePathStyle,
+	})
+	if err != nil {
+		field := "endpoint"
+		switch {
+		case strings.Contains(err.Error(), "provider"):
+			field = "provider"
+		case strings.Contains(err.Error(), "bucket"):
+			field = "bucket"
+		case strings.Contains(err.Error(), "region"):
+			field = "region"
+		case strings.Contains(err.Error(), "prefix"):
+			field = "prefix"
+		}
+		return models.BackupDestinationEntity{}, domainError(field, "invalid", err.Error())
+	}
+
+	store, err := objectstorage.New(ctx, normalized, objectstorage.Credentials{
+		AccessKeyID: input.AccessKeyID, SecretAccessKey: input.SecretAccessKey,
+	})
+	if err != nil {
+		return models.BackupDestinationEntity{}, domainError("secretAccessKey", "unverified", "Object Storage credentials could not be configured")
+	}
+	if err := store.Probe(ctx, service.config.App.InstanceID); err != nil {
+		return models.BackupDestinationEntity{}, domainError("secretAccessKey", "unverified", "Credentials could not read and write the configured bucket")
+	}
+
+	resticPassword, err := backupRandomHex(32)
+	if err != nil {
+		return models.BackupDestinationEntity{}, fmt.Errorf("generate Object Storage recovery password: %w", err)
+	}
+	ageIdentity, err := age.GenerateX25519Identity()
+	if err != nil {
+		return models.BackupDestinationEntity{}, fmt.Errorf("generate Object Storage recovery identity: %w", err)
+	}
+	payload, err := json.Marshal(BackupCredentialPayload{
+		AccessKeyID: input.AccessKeyID, SecretAccessKey: input.SecretAccessKey,
+		ResticPassword: resticPassword, AgeIdentity: ageIdentity.String(),
+	})
+	if err != nil {
+		return models.BackupDestinationEntity{}, err
+	}
+	defer clear(payload)
+	encrypted, err := secretcrypto.Encrypt(payload, service.config.App.SessionEncryptionKey)
+	if err != nil {
+		return models.BackupDestinationEntity{}, fmt.Errorf("encrypt Object Storage credential: %w", err)
+	}
+	metadata, err := json.Marshal(map[string]any{
+		"schema_version": 1, "credential_kind": "object_storage_backup_access",
+		"instance_id": service.config.App.InstanceID, "provider": normalized.Provider,
+		"endpoint": normalized.Endpoint, "region": normalized.Region, "bucket": normalized.Bucket,
+		"prefix": normalized.Prefix, "force_path_style": normalized.ForcePathStyle,
+	})
+	if err != nil {
+		return models.BackupDestinationEntity{}, err
+	}
+
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return models.BackupDestinationEntity{}, err
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC()
+	credential, err := models.Credential.Create(ctx, tx, models.CreateCredentialData{
+		Name: input.Name, Provider: "backup_" + normalized.Provider, Metadata: metadata,
+		EncPayload: encrypted, VerifiedAt: sql.NullTime{Time: now, Valid: true},
+	})
+	if err != nil {
+		return models.BackupDestinationEntity{}, err
+	}
+	destination, err := models.BackupDestination.Create(ctx, tx, models.CreateBackupDestinationData{
+		Name: input.Name, Provider: normalized.Provider,
+		Endpoint:       sql.NullString{String: normalized.Endpoint, Valid: normalized.Endpoint != ""},
+		Region:         sql.NullString{String: normalized.Region, Valid: normalized.Region != ""},
+		Bucket:         normalized.Bucket,
+		Prefix:         sql.NullString{String: normalized.Prefix, Valid: normalized.Prefix != ""},
+		ForcePathStyle: normalized.ForcePathStyle, CredentialID: credential.ID,
+	})
+	if err != nil {
+		return models.BackupDestinationEntity{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return models.BackupDestinationEntity{}, err
+	}
+	return destination, nil
+}
+
+func (service *DatabaseBackups) RecoveryMaterial(
+	ctx context.Context,
+	destinationID, userID uuid.UUID,
+	password string,
+) (ObjectStorageRecoveryMaterial, error) {
+	if err := service.identity.VerifyUserPassword(ctx, userID, password); err != nil {
+		return ObjectStorageRecoveryMaterial{}, err
+	}
+	var row struct {
+		EncPayload []byte `bun:"enc_payload"`
+	}
+	err := service.db.Executor().NewSelect().TableExpr("backup_destinations AS destination").
+		ColumnExpr("credential.enc_payload").
+		Join("JOIN credentials AS credential ON credential.id = destination.credential_id").
+		Where("destination.id = ?", destinationID).
+		Where("destination.archived_at IS NULL").
+		Where("credential.archived_at IS NULL").
+		Where("credential.verified_at IS NOT NULL").
+		Where("credential.provider = 'backup_' || destination.provider").
+		Limit(1).
+		Scan(ctx, &row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ObjectStorageRecoveryMaterial{}, models.ErrNotFound
+	}
+	if err != nil {
+		return ObjectStorageRecoveryMaterial{}, err
+	}
+	plaintext, err := secretcrypto.Decrypt(row.EncPayload, service.config.App.SessionEncryptionKey)
+	if err != nil {
+		return ObjectStorageRecoveryMaterial{}, errors.New("Object Storage recovery material could not be decrypted")
+	}
+	defer clear(plaintext)
+	var credential BackupCredentialPayload
+	if json.Unmarshal(plaintext, &credential) != nil || credential.ResticPassword == "" || credential.AgeIdentity == "" {
+		return ObjectStorageRecoveryMaterial{}, errors.New("Object Storage recovery material is invalid")
+	}
+	return ObjectStorageRecoveryMaterial{
+		ResticPassword: credential.ResticPassword,
+		AgeIdentity:    credential.AgeIdentity,
+	}, nil
+}
+
+func backupRandomHex(size int) (string, error) {
+	value := make([]byte, size)
+	if _, err := rand.Read(value); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(value), nil
 }
 
 func (service *DatabaseBackups) CreateForResource(ctx context.Context, resourceID uuid.UUID, databaseName string, input DatabaseBackupPolicyInput) (models.BackupPolicyEntity, error) {

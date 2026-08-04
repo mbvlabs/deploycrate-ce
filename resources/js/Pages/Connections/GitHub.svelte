@@ -1,24 +1,25 @@
 <script lang="ts">
   import GithubIcon from '@lucide/svelte/icons/git-fork'
   import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw'
-  import ShieldCheckIcon from '@lucide/svelte/icons/shield-check'
   import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert'
   import { router, useForm } from '@inertiajs/svelte'
 
   import ConfirmActionDialog from '@/Components/ConfirmActionDialog.svelte'
   import FormField from '@/Components/FormField.svelte'
+  import PageHeader from '@/Components/PageHeader.svelte'
   import StatusBadge from '@/Components/StatusBadge.svelte'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
+  import * as Dialog from '@/Components/ui/dialog'
   import * as Empty from '@/Components/ui/empty'
   import { Input } from '@/Components/ui/input'
   import * as NativeSelect from '@/Components/ui/native-select'
   import { Spinner } from '@/Components/ui/spinner'
+  import * as Table from '@/Components/ui/table'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
   type NullableTime = { Time?: string; Valid?: boolean; time?: string; valid?: boolean } | string | null
-
   type Installation = {
     id: string
     accountLogin: string
@@ -30,7 +31,6 @@
     lastSyncedAt: NullableTime
     externalId: number
   }
-
   type Connection = {
     app: null | {
       name: string
@@ -49,14 +49,20 @@
 
   let { auth, connection }: { auth: { email: string }; connection: Connection } = $props()
   const setup = useForm({ ownerType: 'personal', ownerLogin: '' })
+  let setupDialogOpen = $state(false)
   let activeAction = $state('')
   let archiveDialogOpen = $state(false)
   let archiveTarget = $state<{ kind: 'app' | 'installation'; id?: string; name: string } | null>(null)
   let archiveError = $state('')
 
+  function openSetupDialog() {
+    $setup.reset()
+    setupDialogOpen = true
+  }
+
   function startSetup(event: SubmitEvent) {
     event.preventDefault()
-    $setup.post(routes.gitHubAppSetup())
+    $setup.post(routes.gitHubAppSetup(), { onError: () => (setupDialogOpen = true) })
   }
 
   function dateLabel(value: NullableTime) {
@@ -74,7 +80,7 @@
   function runAction(key: string, url: string) {
     if (activeAction) return
     activeAction = key
-    router.post(url, {}, { onFinish: () => (activeAction = '') })
+    router.post(url, {}, { preserveScroll: true, onFinish: () => (activeAction = '') })
   }
 
   function askToArchive(target: { kind: 'app' | 'installation'; id?: string; name: string }) {
@@ -89,6 +95,7 @@
     archiveError = ''
     const url = archiveTarget.kind === 'app' ? routes.gitHubAppDestroy() : routes.gitHubInstallationDestroy(archiveTarget.id ?? '')
     router.delete(url, {
+      preserveScroll: true,
       onSuccess: () => { archiveDialogOpen = false; archiveTarget = null },
       onError: (errors) => (archiveError = Object.values(errors).map(String).join('\n') || 'The connection could not be archived.'),
       onFinish: () => (activeAction = ''),
@@ -100,91 +107,86 @@
 
 <DashboardLayout email={auth.email}>
   <div class="space-y-8">
-    <section class="max-w-3xl">
-      <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">Connections</p>
-      <h1 class="mt-3 text-3xl font-semibold tracking-tight">GitHub App</h1>
-      <p class="mt-4 text-sm leading-6 text-muted-foreground">Connect one private GitHub App to discover repositories and accept signed push events.</p>
-    </section>
+    <PageHeader eyebrow="Connections" title="GitHub" description="Connect one private GitHub App to discover repositories and accept signed push events.">
+      {#snippet actions()}
+        {#if connection.app}
+          <Button type="button" disabled={Boolean(activeAction)} onclick={() => runAction('install', routes.gitHubInstall())}>{#if activeAction === 'install'}<Spinner />{/if}Install account</Button>
+        {:else}
+          <Button type="button" onclick={openSetupDialog}>Add GitHub App</Button>
+        {/if}
+      {/snippet}
+    </PageHeader>
 
-    {#if !connection.app}
-      <Card.Root class="max-w-2xl">
-        <Card.Header>
-          <GithubIcon class="mb-2 size-7 text-primary" />
-          <Card.Title>Create a private GitHub App</Card.Title>
-          <Card.Description>GitHub returns the private key and webhook secret directly to DeployCrate. Secret values are encrypted before persistence.</Card.Description>
-        </Card.Header>
-        <Card.Content>
-          <form class="grid gap-5" onsubmit={startSetup}>
-            <FormField label="App owner" error={$setup.errors.ownerType}>
-              <NativeSelect.Root bind:value={$setup.ownerType} class="w-full">
-                <NativeSelect.Option value="personal">Personal account</NativeSelect.Option>
-                <NativeSelect.Option value="organization">Organization</NativeSelect.Option>
-              </NativeSelect.Root>
-            </FormField>
-            {#if $setup.ownerType === 'organization'}
-              <FormField label="Organization login" error={$setup.errors.ownerLogin}><Input bind:value={$setup.ownerLogin} placeholder="acme" required /></FormField>
-            {/if}
-            <Button type="submit" disabled={$setup.processing} aria-busy={$setup.processing}>{#if $setup.processing}<Spinner />{/if}Continue to GitHub</Button>
-          </form>
-        </Card.Content>
-      </Card.Root>
-    {:else}
-      <Card.Root>
-        <Card.Header>
-          <Card.Action>
-            <span class="inline-flex items-center gap-1.5 text-xs">
-              {#if connection.degraded}<TriangleAlertIcon class="size-4" />{:else}<ShieldCheckIcon class="size-4" />{/if}
-              <StatusBadge status={connection.degraded ? 'degraded' : 'connected'} />
-            </span>
-          </Card.Action>
-          <Card.Title>{connection.app.name}</Card.Title>
-          <Card.Description>{connection.healthMessage}</Card.Description>
-        </Card.Header>
-        <Card.Content class="grid gap-4 text-sm sm:grid-cols-3">
-          <div><p class="text-xs text-muted-foreground">Owner</p><p class="mt-1 font-medium">{connection.app.ownerLogin} · {connection.app.ownerType}</p></div>
-          <div><p class="text-xs text-muted-foreground">Permissions</p><p class="mt-1 font-mono text-xs">contents: read · metadata: read</p></div>
-          <div><p class="text-xs text-muted-foreground">Events</p><p class="mt-1 font-mono text-xs">{connection.app.events.join(', ')}</p></div>
-        </Card.Content>
-        <Card.Footer class="flex-col items-stretch justify-between gap-3 border-t border-border sm:flex-row sm:items-center">
-          <a href={connection.app.htmlUrl} target="_blank" rel="noreferrer" class="text-xs text-primary hover:underline">Open GitHub App settings</a>
-          <div class="flex flex-wrap gap-2">
-            <Button variant="outline" disabled={Boolean(activeAction)} onclick={() => runAction('install', routes.gitHubInstall())}>{#if activeAction === 'install'}<Spinner />{/if}Install account</Button>
-            <Button variant="destructive" disabled={Boolean(activeAction)} onclick={() => askToArchive({ kind: 'app', name: connection.app?.name ?? 'GitHub connection' })}>Archive connection</Button>
-          </div>
-        </Card.Footer>
-      </Card.Root>
-
-      <section class="space-y-4">
-        <div><h2 class="text-xl font-semibold">Installed accounts</h2><p class="mt-1 text-sm text-muted-foreground">Repository grants are reconciled by stable GitHub IDs.</p></div>
-        {#if connection.installations.length === 0}
-          <Empty.Root class="border border-border">
-            <Empty.Header><Empty.Media variant="icon"><GithubIcon /></Empty.Media><Empty.Title>No GitHub accounts installed</Empty.Title><Empty.Description>Install an account to make its repositories available to Applications.</Empty.Description></Empty.Header>
-            <Empty.Content><Button variant="outline" disabled={Boolean(activeAction)} onclick={() => runAction('install', routes.gitHubInstall())}>{#if activeAction === 'install'}<Spinner />{/if}Install account</Button></Empty.Content>
+    <Card.Root>
+      <Card.Header><Card.Title>GitHub App</Card.Title><Card.Description>{connection.app ? connection.healthMessage : 'No private GitHub App is connected to this DeployCrate instance.'}</Card.Description></Card.Header>
+      <Card.Content>
+        {#if !connection.app}
+          <Empty.Root class="border border-dashed border-border py-12">
+            <Empty.Header><Empty.Media variant="icon"><GithubIcon /></Empty.Media><Empty.Title>No GitHub App</Empty.Title><Empty.Description>Create a private GitHub App to connect repositories and receive signed push events.</Empty.Description></Empty.Header>
           </Empty.Root>
         {:else}
-          <div class="grid gap-4 lg:grid-cols-2">
-            {#each connection.installations as installation (installation.id)}
-              <Card.Root>
-                <Card.Header>
-                  <Card.Action><StatusBadge status={isPresent(installation.suspendedAt) ? 'suspended' : 'active'} /></Card.Action>
-                  <Card.Title>{installation.accountLogin}</Card.Title>
-                  <Card.Description>{installation.accountType} · {installation.repositorySelection} repositories</Card.Description>
-                </Card.Header>
-                <Card.Content class="grid grid-cols-2 gap-4 text-sm">
-                  <div><p class="text-xs text-muted-foreground">Repositories</p><p class="mt-1 text-lg font-semibold">{installation.repositoryCount}</p></div>
-                  <div><p class="text-xs text-muted-foreground">Last synchronized</p><p class="mt-1 text-xs">{dateLabel(installation.lastSyncedAt)}</p></div>
-                </Card.Content>
-                <Card.Footer class="flex-wrap gap-2 border-t border-border">
-                  <Button size="sm" variant="outline" disabled={Boolean(activeAction)} onclick={() => runAction(`sync:${installation.id}`, routes.gitHubInstallationSync(installation.id))}>{#if activeAction === `sync:${installation.id}`}<Spinner />{:else}<RefreshCwIcon />{/if}Sync</Button>
-                  <Button size="sm" variant="outline" disabled={Boolean(activeAction)} onclick={() => runAction(`verify:${installation.id}`, routes.gitHubInstallationVerify(installation.id))}>{#if activeAction === `verify:${installation.id}`}<Spinner />{/if}Verify</Button>
-                  <Button size="sm" variant="destructive" disabled={Boolean(activeAction)} onclick={() => askToArchive({ kind: 'installation', id: installation.id, name: installation.accountLogin })}>Archive</Button>
-                </Card.Footer>
-              </Card.Root>
-            {/each}
+          <div class="overflow-hidden border border-border">
+            <Table.Root class="min-w-[900px]">
+              <Table.Header class="bg-muted/30"><Table.Row><Table.Head>App</Table.Head><Table.Head>Owner</Table.Head><Table.Head>Permissions</Table.Head><Table.Head>Events</Table.Head><Table.Head>Verified</Table.Head><Table.Head>Status</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header>
+              <Table.Body><Table.Row>
+                <Table.Cell><p class="font-medium">{connection.app.name}</p><p class="mt-1 font-mono text-[11px] text-muted-foreground">{connection.app.slug}</p></Table.Cell>
+                <Table.Cell><p>{connection.app.ownerLogin}</p><p class="mt-1 capitalize text-[11px] text-muted-foreground">{connection.app.ownerType}</p></Table.Cell>
+                <Table.Cell class="font-mono text-[11px]">contents: read<br />metadata: read</Table.Cell>
+                <Table.Cell class="font-mono text-[11px]">{connection.app.events.join(', ')}</Table.Cell>
+                <Table.Cell class="whitespace-nowrap">{dateLabel(connection.app.verifiedAt)}</Table.Cell>
+                <Table.Cell><div class="flex items-center gap-1.5">{#if connection.degraded}<TriangleAlertIcon class="size-4" />{/if}<StatusBadge status={connection.degraded ? 'degraded' : 'connected'} /></div></Table.Cell>
+                <Table.Cell><div class="flex justify-end gap-2"><Button size="sm" variant="outline">{#snippet child({ props })}<a {...props} href={connection.app.htmlUrl} target="_blank" rel="noreferrer">Settings</a>{/snippet}</Button><Button size="sm" variant="outline" disabled={Boolean(activeAction)} onclick={() => runAction('install', routes.gitHubInstall())}>{#if activeAction === 'install'}<Spinner />{/if}Install account</Button><Button size="sm" variant="destructive" disabled={Boolean(activeAction)} onclick={() => askToArchive({ kind: 'app', name: connection.app?.name ?? 'GitHub connection' })}>Archive</Button></div></Table.Cell>
+              </Table.Row></Table.Body>
+            </Table.Root>
           </div>
         {/if}
-      </section>
+      </Card.Content>
+    </Card.Root>
+
+    {#if connection.app}
+      <Card.Root>
+        <Card.Header><Card.Title>Installed accounts</Card.Title><Card.Description>{connection.installations.length} account installation{connection.installations.length === 1 ? '' : 's'} with repository grants reconciled by stable GitHub IDs.</Card.Description></Card.Header>
+        <Card.Content>
+          {#if connection.installations.length === 0}
+            <Empty.Root class="border border-dashed border-border py-12">
+              <Empty.Header><Empty.Media variant="icon"><GithubIcon /></Empty.Media><Empty.Title>No GitHub accounts installed</Empty.Title><Empty.Description>Install an account to make its repositories available to Applications.</Empty.Description></Empty.Header>
+            </Empty.Root>
+          {:else}
+            <div class="overflow-hidden border border-border">
+              <Table.Root class="min-w-[820px]">
+                <Table.Header class="bg-muted/30"><Table.Row><Table.Head>Account</Table.Head><Table.Head>Repository access</Table.Head><Table.Head>Repositories</Table.Head><Table.Head>Status</Table.Head><Table.Head>Last synchronized</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header>
+                <Table.Body>
+                  {#each connection.installations as installation (installation.id)}
+                    <Table.Row>
+                      <Table.Cell><p class="font-medium">{installation.accountLogin}</p><p class="mt-1 capitalize text-[11px] text-muted-foreground">{installation.accountType}</p></Table.Cell>
+                      <Table.Cell class="capitalize">{installation.repositorySelection}</Table.Cell>
+                      <Table.Cell class="tabular-nums">{installation.repositoryCount}</Table.Cell>
+                      <Table.Cell><StatusBadge status={isPresent(installation.suspendedAt) ? 'suspended' : 'active'} /></Table.Cell>
+                      <Table.Cell class="whitespace-nowrap">{dateLabel(installation.lastSyncedAt)}</Table.Cell>
+                      <Table.Cell><div class="flex justify-end gap-2"><Button size="sm" variant="outline" disabled={Boolean(activeAction)} onclick={() => runAction(`sync:${installation.id}`, routes.gitHubInstallationSync(installation.id))}>{#if activeAction === `sync:${installation.id}`}<Spinner />{:else}<RefreshCwIcon />{/if}Sync</Button><Button size="sm" variant="outline" disabled={Boolean(activeAction)} onclick={() => runAction(`verify:${installation.id}`, routes.gitHubInstallationVerify(installation.id))}>{#if activeAction === `verify:${installation.id}`}<Spinner />{/if}Verify</Button><Button size="sm" variant="destructive" disabled={Boolean(activeAction)} onclick={() => askToArchive({ kind: 'installation', id: installation.id, name: installation.accountLogin })}>Archive</Button></div></Table.Cell>
+                    </Table.Row>
+                  {/each}
+                </Table.Body>
+              </Table.Root>
+            </div>
+          {/if}
+        </Card.Content>
+      </Card.Root>
     {/if}
   </div>
+
+  <Dialog.Root bind:open={setupDialogOpen}>
+    <Dialog.Content class="sm:max-w-xl" showCloseButton={!$setup.processing}>
+      <form class="grid gap-5" onsubmit={startSetup}>
+        <Dialog.Header><Dialog.Title>Add GitHub App</Dialog.Title><Dialog.Description>GitHub returns the private key and webhook secret directly to DeployCrate. Secret values are encrypted before persistence.</Dialog.Description></Dialog.Header>
+        <FormField label="App owner" error={$setup.errors.ownerType}>
+          <NativeSelect.Root bind:value={$setup.ownerType} class="w-full" disabled={$setup.processing}><NativeSelect.Option value="personal">Personal account</NativeSelect.Option><NativeSelect.Option value="organization">Organization</NativeSelect.Option></NativeSelect.Root>
+        </FormField>
+        {#if $setup.ownerType === 'organization'}<FormField label="Organization login" error={$setup.errors.ownerLogin}><Input bind:value={$setup.ownerLogin} placeholder="acme" required disabled={$setup.processing} /></FormField>{/if}
+        <Dialog.Footer><Button type="button" variant="outline" disabled={$setup.processing} onclick={() => (setupDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={$setup.processing} aria-busy={$setup.processing}>{#if $setup.processing}<Spinner />{/if}Continue to GitHub</Button></Dialog.Footer>
+      </form>
+    </Dialog.Content>
+  </Dialog.Root>
+
   <ConfirmActionDialog bind:open={archiveDialogOpen} title={`Archive ${archiveTarget?.name ?? 'connection'}?`} description="This removes the connection from DeployCrate. Applications that depend on its repositories may no longer build." confirmLabel="Archive" destructive processing={activeAction.startsWith('archive:')} error={archiveError} onconfirm={archive} />
 </DashboardLayout>

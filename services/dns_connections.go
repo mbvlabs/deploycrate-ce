@@ -65,22 +65,25 @@ func (service *DNSConnections) List(ctx context.Context) ([]DNSConnectionSummary
 func (service *DNSConnections) Create(ctx context.Context, name, accountID, token string) (models.DNSConnectionEntity, error) {
 	name = strings.TrimSpace(name)
 	token = strings.TrimSpace(token)
-	if name == "" || token == "" {
-		return models.DNSConnectionEntity{}, errors.Join(models.ErrDomainValidation, errors.New("connection name and API token are required"))
+	if name == "" {
+		return models.DNSConnectionEntity{}, domainError("name", "required", "Connection name is required")
+	}
+	if token == "" {
+		return models.DNSConnectionEntity{}, domainError("token", "required", "Account-owned API token is required")
 	}
 	accountID, err := models.NormalizeCloudflareAccountID(accountID)
 	if err != nil {
 		return models.DNSConnectionEntity{}, err
 	}
 	if err := service.client.VerifyAccountToken(ctx, accountID, token); err != nil {
-		return models.DNSConnectionEntity{}, err
+		return models.DNSConnectionEntity{}, domainError("token", "unverified", "Cloudflare could not verify the account-owned API token")
 	}
 	zones, err := service.client.ListZones(ctx, accountID, token)
 	if err != nil {
-		return models.DNSConnectionEntity{}, err
+		return models.DNSConnectionEntity{}, domainError("token", "unverified", "The account-owned API token could not read Cloudflare zones")
 	}
 	if len(zones) == 0 {
-		return models.DNSConnectionEntity{}, errors.Join(models.ErrDomainValidation, errors.New("account-owned API token does not expose any Cloudflare zones"))
+		return models.DNSConnectionEntity{}, domainError("token", "unverified", "Account-owned API token does not expose any Cloudflare zones")
 	}
 	encrypted, err := secretcrypto.EncryptForPurpose([]byte(token), service.config.App.SessionEncryptionKey, cloudflareTokenEncryptionPurpose)
 	if err != nil {
@@ -148,18 +151,18 @@ func (service *DNSConnections) Synchronize(ctx context.Context, id uuid.UUID) er
 func (service *DNSConnections) RotateToken(ctx context.Context, id uuid.UUID, token string) error {
 	token = strings.TrimSpace(token)
 	if token == "" {
-		return errors.Join(models.ErrDomainValidation, errors.New("account-owned API token is required"))
+		return domainError("token", "required", "Account-owned API token is required")
 	}
 	connection, err := models.DNSConnection.Find(ctx, service.db.Executor(), id)
 	if err != nil || connection.ArchivedAt.Valid {
 		return errors.New("DNS connection is unavailable")
 	}
 	if err := service.client.VerifyAccountToken(ctx, connection.AccountID, token); err != nil {
-		return err
+		return domainError("token", "unverified", "Cloudflare could not verify the account-owned API token")
 	}
 	zones, err := service.client.ListZones(ctx, connection.AccountID, token)
 	if err != nil {
-		return err
+		return domainError("token", "unverified", "The account-owned API token could not read Cloudflare zones")
 	}
 	credential, err := models.Credential.Find(ctx, service.db.Executor(), connection.CredentialID)
 	if err != nil {

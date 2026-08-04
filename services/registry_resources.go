@@ -192,10 +192,10 @@ func (service *RegistryResources) CreateExternal(ctx context.Context, input Exte
 	}
 	authentication, err := service.registry.Authenticate(ctx, registryclient.Credentials{Endpoint: input.Endpoint, Username: input.Username, Password: input.AccessToken})
 	if err != nil {
-		return models.RegistryResourceEntity{}, fmt.Errorf("verify external Registry credentials: %w", err)
+		return models.RegistryResourceEntity{}, domainError("accessToken", "unverified", "Registry credentials could not be verified")
 	}
 	if err := authentication.Close(); err != nil {
-		return models.RegistryResourceEntity{}, fmt.Errorf("remove Registry verification credentials: %w", err)
+		return models.RegistryResourceEntity{}, domainError("accessToken", "unverified", "Registry credentials could not be verified")
 	}
 
 	host, port, protocol, tlsMode, err := registryEndpointParts(input.Endpoint)

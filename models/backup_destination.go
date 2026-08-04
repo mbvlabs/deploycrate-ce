@@ -31,15 +31,16 @@ type BackupDestinationEntity struct {
 }
 
 type BackupDestinationSummary struct {
-	ID         uuid.UUID  `bun:"id"`
-	Name       string     `bun:"name"`
-	Provider   string     `bun:"provider"`
-	Endpoint   string     `bun:"endpoint"`
-	Region     string     `bun:"region"`
-	Bucket     string     `bun:"bucket"`
-	Prefix     string     `bun:"prefix"`
-	VerifiedAt *time.Time `bun:"verified_at"`
-	LastUsedAt *time.Time `bun:"last_used_at"`
+	ID             uuid.UUID  `bun:"id"`
+	Name           string     `bun:"name"`
+	Provider       string     `bun:"provider"`
+	Endpoint       string     `bun:"endpoint"`
+	Region         string     `bun:"region"`
+	Bucket         string     `bun:"bucket"`
+	Prefix         string     `bun:"prefix"`
+	ForcePathStyle bool       `bun:"force_path_style"`
+	VerifiedAt     *time.Time `bun:"verified_at"`
+	LastUsedAt     *time.Time `bun:"last_used_at"`
 }
 
 func (bd backupDestination) ActiveSummaries(
@@ -49,7 +50,7 @@ func (bd backupDestination) ActiveSummaries(
 	items := make([]BackupDestinationSummary, 0)
 	err := db.NewSelect().
 		TableExpr("backup_destinations AS destination").
-		ColumnExpr("destination.id, destination.name, destination.provider").
+		ColumnExpr("destination.id, destination.name, destination.provider, destination.force_path_style").
 		ColumnExpr("COALESCE(destination.endpoint, '') AS endpoint, COALESCE(destination.region, '') AS region").
 		ColumnExpr("destination.bucket, COALESCE(destination.prefix, '') AS prefix").
 		ColumnExpr("credential.verified_at, credential.last_used_at").
@@ -61,6 +62,32 @@ func (bd backupDestination) ActiveSummaries(
 		OrderExpr("destination.name ASC").
 		Scan(ctx, &items)
 	return items, err
+}
+
+func (bd backupDestination) ActiveSummary(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (BackupDestinationSummary, error) {
+	var item BackupDestinationSummary
+	err := db.NewSelect().
+		TableExpr("backup_destinations AS destination").
+		ColumnExpr("destination.id, destination.name, destination.provider, destination.force_path_style").
+		ColumnExpr("COALESCE(destination.endpoint, '') AS endpoint, COALESCE(destination.region, '') AS region").
+		ColumnExpr("destination.bucket, COALESCE(destination.prefix, '') AS prefix").
+		ColumnExpr("credential.verified_at, credential.last_used_at").
+		Join("JOIN credentials AS credential ON credential.id = destination.credential_id").
+		Where("destination.id = ?", id).
+		Where("destination.archived_at IS NULL").
+		Where("credential.archived_at IS NULL").
+		Where("credential.verified_at IS NOT NULL").
+		Where("credential.provider = 'backup_' || destination.provider").
+		Limit(1).
+		Scan(ctx, &item)
+	if errors.Is(err, sql.ErrNoRows) {
+		return BackupDestinationSummary{}, ErrNotFound
+	}
+	return item, err
 }
 
 func (bd backupDestination) HasActivePolicyReferences(

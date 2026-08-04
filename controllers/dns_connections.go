@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"deploycrate-ce/internal/inertia"
+	"deploycrate-ce/internal/validation"
 	"deploycrate-ce/router"
 	"deploycrate-ce/router/cookies"
 	"deploycrate-ce/router/middleware"
@@ -70,6 +71,9 @@ func (controller DNSConnections) Create(etx *echo.Context) error {
 		return inertia.Page(etx, "Errors/BadRequest", inertia.Props{})
 	}
 	if _, err := controller.service.Create(etx.Request().Context(), payload.Name, payload.AccountID, payload.Token); err != nil {
+		if handled, response := controller.validationResponse(etx, err); handled {
+			return response
+		}
 		return controller.redirectError(etx, err)
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Cloudflare DNS connection created")
@@ -100,6 +104,9 @@ func (controller DNSConnections) RotateToken(etx *echo.Context) error {
 		err = controller.service.RotateToken(etx.Request().Context(), id, payload.Token)
 	}
 	if err != nil {
+		if handled, response := controller.validationResponse(etx, err); handled {
+			return response
+		}
 		return controller.redirectError(etx, err)
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Cloudflare account-owned API token rotated")
@@ -116,6 +123,20 @@ func (controller DNSConnections) Destroy(etx *echo.Context) error {
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Cloudflare DNS connection archived")
 	return inertia.Redirect(etx, routes.DnsConnections.URL(), http.StatusSeeOther)
+}
+
+func (controller DNSConnections) validationResponse(etx *echo.Context, operationErr error) (bool, error) {
+	validationErrors, ok := validation.As(operationErr)
+	if !ok {
+		return false, nil
+	}
+	connections, err := controller.service.List(etx.Request().Context())
+	if err != nil {
+		return true, inertia.Page(etx, "Errors/InternalError", inertia.Props{})
+	}
+	return true, inertia.Page(etx, "Connections/DNS", inertia.Props{
+		"auth": authProps(etx), "connections": connections, "flash": environmentFlashProps(etx),
+	}, inertia.WithValidationErrors(validationErrors.ToMap()))
 }
 
 func (controller DNSConnections) redirectError(etx *echo.Context, operationErr error) error {

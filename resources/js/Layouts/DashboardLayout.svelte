@@ -69,7 +69,9 @@
       ? [{ label: 'Connections' }, { label: 'Image Registry' }]
       : [{ label: 'Connections' }, { label: 'Image Registry', href: routes.registryResources() }, { label: 'Details' }]
     if (path.startsWith(routes.dnsConnections())) return [{ label: 'Connections' }, { label: 'DNS' }]
-    if (path.startsWith(routes.objectStorage())) return [{ label: 'Connections' }, { label: 'Object Storage' }]
+    if (path.startsWith(routes.objectStorage())) return path === routes.objectStorage()
+      ? [{ label: 'Connections' }, { label: 'Object Storage' }]
+      : [{ label: 'Connections' }, { label: 'Object Storage', href: routes.objectStorage() }, { label: 'Details' }]
     if (path.startsWith(routes.gitHubConnection())) return [{ label: 'Connections' }, { label: 'GitHub' }]
     if (path.startsWith(routes.systemTelemetry())) return [{ label: 'System', href: routes.systemOverview() }, { label: 'Telemetry' }]
     if (path.startsWith(routes.systemTasks())) return [{ label: 'System', href: routes.systemOverview() }, { label: 'Tasks' }]
