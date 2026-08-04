@@ -186,7 +186,7 @@
             <label class="flex items-start gap-3 border border-border p-4 sm:col-span-2"><Checkbox class="mt-1" bind:checked={buildFrontendAssets} /><span><span class="block text-sm font-medium">Build Node frontend assets</span><span class="mt-1 block text-xs text-muted-foreground">Requires a supported lockfile and build script.</span></span></label>
           </div>
         {:else}
-          <div class="grid gap-5 border-t border-border pt-5 sm:grid-cols-2"><FormField label="Registry"><NativeSelect.Root bind:value={registryResourceId} class="w-full" required><NativeSelect.Option value="">Select a Registry</NativeSelect.Option>{#each registries as registry}<NativeSelect.Option value={registry.id}>{registry.name} · {registry.endpoint}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField><FormField label="Repository"><Input bind:value={imageRepository} placeholder="team/application" required /></FormField><FormField label="Tag or digest"><Input bind:value={reference} placeholder="stable" required /></FormField></div>
+          <div class="grid gap-5 border-t border-border pt-5 sm:grid-cols-2"><FormField label="Registry"><NativeSelect.Root bind:value={registryResourceId} class="w-full" required><NativeSelect.Option value="">Select a Registry</NativeSelect.Option>{#each registries as registry}<NativeSelect.Option value={registry.id}>{registry.name} · {registry.endpoint}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField><FormField label="Repository"><Input bind:value={imageRepository} placeholder="team/application" required /></FormField><FormField label="Default tag or digest"><Input bind:value={reference} placeholder="stable" required /></FormField></div>
         {/if}
       </Card.Content>
     </Card.Root>
