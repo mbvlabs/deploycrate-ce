@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
+  import * as Dialog from '@/Components/ui/dialog'
   import * as Empty from '@/Components/ui/empty'
   import * as NativeSelect from '@/Components/ui/native-select'
   import * as Table from '@/Components/ui/table'
@@ -193,6 +194,7 @@
   let systemLogConnectionError = $state('')
   let followingSystemLogs = $state(true)
   let systemLogViewport: HTMLDivElement
+  let traceDialogOpen = $state(false)
   let selectedTraceID = $state('')
   let traceSpans = $state<TraceSpan[]>([])
   let traceLoading = $state(false)
@@ -295,7 +297,7 @@
     return log.scope || 'application'
   }
   const systemLogContext = (log: SystemLog) => Object.entries(log.attributes ?? {})
-    .filter(([key, value]) => value && key !== 'code.file.path' && key !== 'code.line.number'
+    .filter(([key, value]) => value && !key.startsWith('code.')
       && (key !== 'trace_id' || !log.traceId) && (key !== 'span_id' || !log.spanId))
     .sort(([left], [right]) => left.localeCompare(right))
 
@@ -319,6 +321,7 @@
 
   async function loadTrace(traceID: string) {
     selectedTraceID = traceID
+    traceDialogOpen = true
     traceSpans = []
     traceError = ''
     traceLoading = true
@@ -335,6 +338,12 @@
     } finally {
       traceLoading = false
     }
+  }
+
+  function closeTrace() {
+    selectedTraceID = ''
+    traceSpans = []
+    traceError = ''
   }
 
   function updateSystemLogFollow() {
@@ -583,36 +592,31 @@
       </Card.Root>
     </section>
 
-    {#if selectedTraceID}
-      <section aria-labelledby="trace-heading">
-        <Card.Root>
-          <Card.Header>
-            <Card.Action><Button size="sm" variant="ghost" onclick={() => { selectedTraceID = ''; traceSpans = []; traceError = '' }}>Close</Button></Card.Action>
-            <Card.Title id="trace-heading">Trace {selectedTraceID}</Card.Title>
-            <Card.Description>Correlated OpenTelemetry spans across every service that contributed to this trace.</Card.Description>
-          </Card.Header>
-          <Card.Content class="p-0">
-            {#if traceLoading}<p class="p-6 text-sm text-muted-foreground">Loading trace...</p>
-            {:else if traceError}<p class="p-6 text-sm text-destructive">{traceError}</p>
-            {:else if traceSpans.length}
-              <div class="overflow-x-auto">
-                <Table.Root class="min-w-[920px] text-xs">
-                  <Table.Header class="border-y border-border bg-muted/30"><Table.Row><Table.Head>Started</Table.Head><Table.Head>Service</Table.Head><Table.Head>Span</Table.Head><Table.Head>Span ID / parent</Table.Head><Table.Head>Duration</Table.Head><Table.Head>Status</Table.Head></Table.Row></Table.Header>
-                  <Table.Body>
-                    {#each traceSpans as span (span.spanId)}
-                      <Table.Row>
-                        <Table.Cell class="whitespace-nowrap">{stamp(span.startedAt)}</Table.Cell><Table.Cell><p class="font-medium">{span.serviceName}</p><p class="mt-1 text-muted-foreground">{span.kind || span.scope}</p></Table.Cell>
-                        <Table.Cell class="font-medium">{span.name}</Table.Cell><Table.Cell class="font-mono"><p>{span.spanId}</p><p class="mt-1 text-muted-foreground">{span.parentSpanId || 'root'}</p></Table.Cell>
-                        <Table.Cell>{formatSpanDuration(span.durationNs)}</Table.Cell><Table.Cell><StatusBadge status={span.statusCode || 'unset'} />{#if span.statusMessage}<p class="mt-1 text-muted-foreground">{span.statusMessage}</p>{/if}</Table.Cell>
-                      </Table.Row>
-                    {/each}
-                  </Table.Body>
-                </Table.Root>
-              </div>
-            {:else}<p class="p-6 text-sm text-muted-foreground">No spans were retained for this trace.</p>{/if}
-          </Card.Content>
-        </Card.Root>
-      </section>
-    {/if}
+    <Dialog.Root bind:open={traceDialogOpen} onOpenChange={(open) => { if (!open) closeTrace() }}>
+      <Dialog.Content class="sm:max-w-6xl">
+        <Dialog.Header>
+          <Dialog.Title>Trace {selectedTraceID}</Dialog.Title>
+          <Dialog.Description>Correlated OpenTelemetry spans across every service that contributed to this trace.</Dialog.Description>
+        </Dialog.Header>
+        {#if traceLoading}<p class="py-6 text-sm text-muted-foreground">Loading trace...</p>
+        {:else if traceError}<p class="py-6 text-sm text-destructive">{traceError}</p>
+        {:else if traceSpans.length}
+          <div class="overflow-x-auto border border-border">
+            <Table.Root class="min-w-[920px] text-xs">
+              <Table.Header class="border-b border-border bg-muted/30"><Table.Row><Table.Head>Started</Table.Head><Table.Head>Service</Table.Head><Table.Head>Span</Table.Head><Table.Head>Span ID / parent</Table.Head><Table.Head>Duration</Table.Head><Table.Head>Status</Table.Head></Table.Row></Table.Header>
+              <Table.Body>
+                {#each traceSpans as span (span.spanId)}
+                  <Table.Row>
+                    <Table.Cell class="whitespace-nowrap">{stamp(span.startedAt)}</Table.Cell><Table.Cell><p class="font-medium">{span.serviceName}</p><p class="mt-1 text-muted-foreground">{span.kind || span.scope}</p></Table.Cell>
+                    <Table.Cell class="font-medium">{span.name}</Table.Cell><Table.Cell class="font-mono"><p>{span.spanId}</p><p class="mt-1 text-muted-foreground">{span.parentSpanId || 'root'}</p></Table.Cell>
+                    <Table.Cell>{formatSpanDuration(span.durationNs)}</Table.Cell><Table.Cell><StatusBadge status={span.statusCode || 'unset'} />{#if span.statusMessage}<p class="mt-1 text-muted-foreground">{span.statusMessage}</p>{/if}</Table.Cell>
+                  </Table.Row>
+                {/each}
+              </Table.Body>
+            </Table.Root>
+          </div>
+        {:else}<p class="py-6 text-sm text-muted-foreground">No spans were retained for this trace.</p>{/if}
+      </Dialog.Content>
+    </Dialog.Root>
   </div>
 </DashboardLayout>
