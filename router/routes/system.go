@@ -52,6 +52,17 @@ var SystemResourceEndpointCreate = routing.NewRouteWithUUIDID(
 	SystemPrefix,
 )
 
+type SystemResourceCredentialParams struct {
+	ResourceID   string `param:"resourceID"`
+	CredentialID string `param:"credentialID"`
+}
+
+var SystemResourceCredentialReveal = routing.NewRouteWithParams[SystemResourceCredentialParams](
+	"/resources/:resourceID/credentials/:credentialID/reveal",
+	"system.resource.credential.reveal",
+	SystemPrefix,
+)
+
 var SystemResourceWireGuardDeviceCreate = routing.NewRouteWithUUIDID(
 	"/resources/:id/wireguard-devices",
 	"system.resource.wireguard-device.create",

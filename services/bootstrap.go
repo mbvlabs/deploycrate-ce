@@ -39,6 +39,8 @@ type BootstrapInput struct {
 	Architecture           string
 	SessionEncryptionKey   string
 	Capabilities           BootstrapCapabilitiesInput
+	ClickHouseUser         string
+	ClickHousePassword     string
 	DatabaseExternal       bool
 	DatabaseHost           string
 	DatabasePort           int
@@ -464,6 +466,7 @@ func (service BootstrapService) createGraph(
 	if err := createBootstrapClickHouseResource(
 		ctx,
 		tx,
+		input,
 		environment.ID,
 		server.ID,
 		network.ID,
@@ -589,16 +592,45 @@ func (service BootstrapService) createGraph(
 func createBootstrapClickHouseResource(
 	ctx context.Context,
 	exec storage.Executor,
+	input BootstrapInput,
 	environmentID, serverID, networkID uuid.UUID,
 ) error {
 	resource, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
 		Name:         "DeployCrate CE ClickHouse",
 		Slug:         "deploycrate-ce-clickhouse",
 		ResourceType: models.ResourceTypeDatabase, Configuration: json.RawMessage(`{"engine":"clickhouse","engine_version":"25.8.28.1","databases":[{"name":"deploycrate"}]}`),
-		SharingScope: models.ResourceSharingEnvironment, SystemManaged: true,
+		SystemManaged: true,
 	})
 	if err != nil {
 		return fmt.Errorf("create bootstrap ClickHouse resource: %w", err)
+	}
+	credentialPayload, err := json.Marshal(map[string]any{
+		"schema_version": 1, "values": map[string]string{"password": input.ClickHousePassword},
+	})
+	if err != nil {
+		return fmt.Errorf("encode bootstrap ClickHouse administrator credential: %w", err)
+	}
+	encryptedCredential, err := secretcrypto.EncryptForPurpose(
+		credentialPayload,
+		input.SessionEncryptionKey,
+		resourceCredentialPurpose,
+	)
+	if err != nil {
+		return fmt.Errorf("encrypt bootstrap ClickHouse administrator credential: %w", err)
+	}
+	credentialKey, err := hex.DecodeString(input.SessionEncryptionKey)
+	if err != nil || len(credentialKey) != 32 {
+		return errors.New("bootstrap ClickHouse credential digest key is invalid")
+	}
+	credentialDigest := hmac.New(sha256.New, credentialKey)
+	_, _ = credentialDigest.Write(credentialPayload)
+	credential, err := models.ResourceCredential.Create(ctx, exec, models.CreateResourceCredentialData{
+		Name: "Database administrator", Username: sql.NullString{String: input.ClickHouseUser, Valid: true},
+		Metadata:   json.RawMessage(`{"schema_version":1,"purpose":"administrator","superuser":true}`),
+		EncPayload: encryptedCredential, Digest: credentialDigest.Sum(nil), ResourceID: resource.ID,
+	})
+	if err != nil {
+		return fmt.Errorf("create bootstrap ClickHouse administrator credential: %w", err)
 	}
 	installation, err := models.ResourceInstallation.Create(
 		ctx,
@@ -655,20 +687,16 @@ func createBootstrapClickHouseResource(
 	}); err != nil {
 		return fmt.Errorf("create bootstrap ClickHouse WireGuard endpoint: %w", err)
 	}
-	if _, err := models.ResourceEnvironmentGrant.Create(ctx, exec, resource.ID, environmentID); err != nil {
-		return fmt.Errorf("grant bootstrap ClickHouse Resource: %w", err)
-	}
 	if _, err := models.EnvironmentResource.Create(
 		ctx,
 		exec,
 		models.CreateEnvironmentResourceData{
-			Alias: "telemetry",
-			Configuration: json.RawMessage(
-				`{"credential_source":"app_env","password_env":"CLICKHOUSE_PASSWORD"}`,
-			),
-			EnvironmentID:      environmentID,
-			ResourceID:         resource.ID,
-			ResourceEndpointID: endpoint.ID,
+			Alias:                "telemetry",
+			Configuration:        json.RawMessage(`{"credential_source":"managed","database":"deploycrate"}`),
+			EnvironmentID:        environmentID,
+			ResourceID:           resource.ID,
+			ResourceEndpointID:   endpoint.ID,
+			ResourceCredentialID: &credential.ID,
 		},
 	); err != nil {
 		return fmt.Errorf("bind bootstrap ClickHouse resource: %w", err)
@@ -690,7 +718,7 @@ func createBootstrapRegistryResource(
 		Name:         "DeployCrate CE Registry",
 		Slug:         "deploycrate-ce-registry",
 		ResourceType: models.ResourceTypeService, Configuration: json.RawMessage(`{"engine":"registry"}`),
-		SharingScope: models.ResourceSharingGlobal, SystemManaged: true,
+		SystemManaged: true,
 	})
 	if err != nil {
 		return fmt.Errorf("create bootstrap registry Resource: %w", err)
@@ -798,7 +826,7 @@ func createBootstrapDatabaseResource(
 		Name:         "DeployCrate CE PostgreSQL",
 		Slug:         "deploycrate-ce-postgresql",
 		ResourceType: models.ResourceTypeDatabase, Configuration: configuration,
-		SharingScope: models.ResourceSharingEnvironment, SystemManaged: true,
+		SystemManaged: true,
 	})
 	if err != nil {
 		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap PostgreSQL Resource: %w", err)
@@ -877,9 +905,6 @@ func createBootstrapDatabaseResource(
 		if err != nil {
 			return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap WireGuard PostgreSQL Resource endpoint: %w", err)
 		}
-	}
-	if _, err := models.ResourceEnvironmentGrant.Create(ctx, exec, resource.ID, environmentID); err != nil {
-		return bootstrapDatabaseTopology{}, fmt.Errorf("grant bootstrap Database Resource: %w", err)
 	}
 	binding, err := models.EnvironmentResource.Create(ctx, exec, models.CreateEnvironmentResourceData{
 		Alias:                "database",
@@ -1052,6 +1077,9 @@ func validateBootstrapInput(input BootstrapInput) error {
 	}
 	if strings.TrimSpace(input.DatabaseName) == "" || strings.TrimSpace(input.DatabaseUser) == "" || input.DatabasePassword == "" {
 		return errors.New("bootstrap database identity and administrator credential are required")
+	}
+	if strings.TrimSpace(input.ClickHouseUser) == "" || input.ClickHousePassword == "" {
+		return errors.New("bootstrap ClickHouse identity and administrator credential are required")
 	}
 	if strings.TrimSpace(input.WireGuard.Interface) == "" ||
 		strings.TrimSpace(input.WireGuard.Endpoint) == "" {

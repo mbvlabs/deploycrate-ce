@@ -268,7 +268,7 @@ func (controller Applications) Create(etx *echo.Context) error {
 		if _, err = controller.environments.Complete(
 			etx.Request().Context(), result.Application.ID, environment.Environment.ID, userID, prepared[index].setup,
 		); err != nil {
-			_ = controller.service.Archive(etx.Request().Context(), result.Application.ID)
+			_ = controller.environments.DeleteApplication(etx.Request().Context(), result.Application.ID)
 			return controller.renderCreationError(etx, err)
 		}
 	}
@@ -395,12 +395,12 @@ func (controller Applications) UpdateSource(etx *echo.Context) error {
 func (controller Applications) Destroy(etx *echo.Context) error {
 	id, err := uuid.Parse(etx.Param("id"))
 	if err == nil {
-		err = controller.service.Archive(etx.Request().Context(), id)
+		err = controller.environments.DeleteApplication(etx.Request().Context(), id)
 	}
 	if err != nil {
 		return controller.redirectWithError(etx, routes.ApplicationShow.URL(id), err)
 	}
-	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Application archived")
+	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Application permanently deleted")
 	return inertia.Redirect(etx, routes.Applications.URL(), http.StatusSeeOther)
 }
 
@@ -410,12 +410,14 @@ func (controller Applications) renderCreationError(etx *echo.Context, err error)
 	if optionsErr != nil || environmentOptionsErr != nil {
 		return controller.renderError(etx, errors.Join(err, optionsErr, environmentOptionsErr))
 	}
-	if validationErrors, ok := validation.As(err); ok {
-		return inertia.Page(etx, "Applications/New", inertia.Props{
-			"auth": authProps(etx), "options": applicationCreationOptionsProps(options, environmentOptions),
-		}, inertia.WithValidationErrors(validationErrors.ToMap()))
+	props := inertia.Props{
+		"auth": authProps(etx), "options": applicationCreationOptionsProps(options, environmentOptions),
 	}
-	return controller.redirectWithError(etx, routes.ApplicationNew.URL(), err)
+	if validationErrors, ok := validation.As(err); ok {
+		return inertia.Page(etx, "Applications/New", props, inertia.WithValidationErrors(validationErrors.ToMap()))
+	}
+	props["setupError"] = err.Error()
+	return inertia.Page(etx, "Applications/New", props)
 }
 
 func (controller Applications) redirectWithError(etx *echo.Context, location string, err error) error {

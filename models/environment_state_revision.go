@@ -52,7 +52,8 @@ type EnvironmentResourceState struct {
 	CredentialID          *uuid.UUID        `json:"credential_id,omitempty"`
 	Alias                 string            `json:"alias"`
 	Database              string            `json:"database,omitempty"`
-	Variables             map[string]string `json:"variables"`
+	EnvironmentKeys       map[string]string `json:"environment_keys,omitempty"`
+	Variables             map[string]string `json:"variables,omitempty"`
 }
 
 type EnvironmentDesiredState struct {
@@ -147,9 +148,32 @@ func validateEnvironmentDesiredState(state *EnvironmentDesiredState) error {
 	secretKeys := make(map[string]struct{}, len(state.Secrets))
 	secretIDs := make(map[uuid.UUID]struct{}, len(state.Secrets))
 	resourceConnectionIDs := make(map[uuid.UUID]struct{}, len(state.Resources))
+	resourceSecretKeys := make(map[uuid.UUID]map[string]struct{}, len(state.Resources))
+	resourceMappedKeys := make(map[string]uuid.UUID)
+	legacyVariableKeys := make(map[string]struct{})
 	for _, resource := range state.Resources {
 		if resource.EnvironmentResourceID != uuid.Nil {
 			resourceConnectionIDs[resource.EnvironmentResourceID] = struct{}{}
+		}
+		if len(resource.EnvironmentKeys) > 0 {
+			keys := make(map[string]struct{}, len(resource.EnvironmentKeys))
+			for _, key := range resource.EnvironmentKeys {
+				normalized := NormalizeEnvironmentSecretKey(key)
+				keys[normalized] = struct{}{}
+				if owner, exists := resourceMappedKeys[normalized]; exists && owner != resource.EnvironmentResourceID {
+					builder.Add("resources", "duplicate", "Resource Environment key mappings must be unique")
+				}
+				resourceMappedKeys[normalized] = resource.EnvironmentResourceID
+			}
+			resourceSecretKeys[resource.EnvironmentResourceID] = keys
+		}
+		for key := range resource.Variables {
+			legacyVariableKeys[NormalizeEnvironmentSecretKey(key)] = struct{}{}
+		}
+	}
+	for key := range resourceMappedKeys {
+		if _, exists := legacyVariableKeys[key]; exists {
+			builder.Add("resources", "duplicate", "Resource Environment key mapping conflicts with a legacy Resource variable")
 		}
 	}
 	for index := range state.Secrets {
@@ -169,12 +193,20 @@ func validateEnvironmentDesiredState(state *EnvironmentDesiredState) error {
 			if _, exists := resourceConnectionIDs[descriptor.SourceID]; !exists {
 				builder.Add(field+".sourceId", "ownership", "Resource-managed secret owner must be present in the same revision")
 			}
+			if keys, mapped := resourceSecretKeys[descriptor.SourceID]; mapped {
+				if _, exists := keys[descriptor.Key]; !exists {
+					builder.Add(field+".key", "ownership", "Resource-managed secret key must belong to its Resource mapping")
+				}
+			}
 		}
 		if !validEnvironmentSecretDigest(descriptor.Digest) {
 			builder.Add(field+".digest", "invalid", "secret digest descriptor is invalid")
 		}
 		if _, exists := secretKeys[descriptor.Key]; exists {
 			builder.Add(field+".key", "duplicate", "secret keys must be unique")
+		}
+		if _, exists := legacyVariableKeys[descriptor.Key]; exists {
+			builder.Add(field+".key", "duplicate", "secret key conflicts with a legacy Resource variable")
 		}
 		if _, exists := secretIDs[descriptor.ID]; exists {
 			builder.Add(field+".id", "duplicate", "secret identifiers must be unique")
@@ -193,6 +225,24 @@ func validateEnvironmentDesiredState(state *EnvironmentDesiredState) error {
 			builder.Add(field+".alias", "duplicate", "Resource aliases must be unique")
 		}
 		resourceAliases[alias] = struct{}{}
+		mappedKeys := make(map[string]struct{}, len(resource.EnvironmentKeys))
+		for logicalName, key := range resource.EnvironmentKeys {
+			normalized := NormalizeEnvironmentSecretKey(key)
+			if strings.TrimSpace(logicalName) == "" || normalized == "" {
+				builder.Add(field+".environmentKeys", "invalid", "Resource Environment key roles and names are required")
+				continue
+			}
+			if err := ValidateEnvironmentSecretKey(normalized, false); err != nil || normalized != key {
+				builder.Add(field+".environmentKeys", "invalid", "Resource Environment keys must be normalized and valid")
+			}
+			if _, exists := mappedKeys[normalized]; exists {
+				builder.Add(field+".environmentKeys", "duplicate", "Resource Environment keys must be unique")
+			}
+			mappedKeys[normalized] = struct{}{}
+		}
+		if len(resource.EnvironmentKeys) > 0 && len(resource.Variables) > 0 {
+			builder.Add(field+".variables", "secret", "Resource projections with owned key mappings must use Environment secrets")
+		}
 		for key := range resource.Variables {
 			normalized := NormalizeEnvironmentSecretKey(key)
 			lower := strings.ToLower(normalized)

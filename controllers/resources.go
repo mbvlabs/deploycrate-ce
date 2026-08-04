@@ -50,13 +50,7 @@ func (controller Resources) RegisterRoutes(r *router.Router) error {
 		{http.MethodGet, routes.ResourceEdit, controller.Edit},
 		{http.MethodPatch, routes.ResourceUpdate, controller.Update},
 		{http.MethodDelete, routes.ResourceDestroy, controller.Destroy},
-		{http.MethodPost, routes.ResourceConnectionCreate, controller.CreateConnection},
-		{http.MethodPatch, routes.ResourceConnectionUpdate, controller.UpdateConnection},
-		{http.MethodDelete, routes.ResourceConnectionDestroy, controller.DestroyConnection},
-		{http.MethodPost, routes.ResourceEnvironmentGrantCreate, controller.CreateEnvironmentGrant},
-		{http.MethodDelete, routes.ResourceEnvironmentGrantDestroy, controller.DestroyEnvironmentGrant},
-		{http.MethodPost, routes.ResourceApplicationGrantCreate, controller.CreateApplicationGrant},
-		{http.MethodDelete, routes.ResourceApplicationGrantDestroy, controller.DestroyApplicationGrant},
+		{http.MethodPatch, routes.ResourceConnectionEnvironmentKeysUpdate, controller.UpdateConnectionEnvironmentKeys},
 		{http.MethodPost, routes.ResourceEndpointCreate, controller.CreateEndpoint},
 		{http.MethodPatch, routes.ResourceEndpointUpdate, controller.UpdateEndpoint},
 		{http.MethodDelete, routes.ResourceEndpointDestroy, controller.DestroyEndpoint},
@@ -109,7 +103,6 @@ func (controller Resources) RegisterRoutes(r *router.Router) error {
 func (controller Resources) Index(etx *echo.Context) error {
 	filters := models.ResourceListFilters{
 		Search: etx.QueryParam("search"), Engine: etx.QueryParam("engine"), ResourceType: etx.QueryParam("resourceType"),
-		SharingScope: etx.QueryParam("sharingScope"),
 	}
 	items, err := controller.service.List(etx.Request().Context(), filters)
 	if err != nil {
@@ -118,7 +111,6 @@ func (controller Resources) Index(etx *echo.Context) error {
 	return inertia.Page(etx, "Resources/Index", inertia.Props{
 		"auth": authProps(etx), "resources": resourceListProps(items), "filters": inertia.Props{
 			"search": filters.Search, "engine": filters.Engine, "resourceType": filters.ResourceType,
-			"sharingScope": filters.SharingScope,
 		},
 	})
 }
@@ -136,7 +128,6 @@ type resourcePayload struct {
 	Slug          string          `json:"slug"`
 	ResourceType  string          `json:"resourceType"`
 	Configuration json.RawMessage `json:"configuration"`
-	SharingScope  string          `json:"sharingScope"`
 }
 
 func (payload resourcePayload) serviceInput() (services.ResourceInput, error) {
@@ -144,113 +135,10 @@ func (payload resourcePayload) serviceInput() (services.ResourceInput, error) {
 	if err != nil {
 		return services.ResourceInput{}, domainPayloadError("resourceType", "resource type is invalid")
 	}
-	sharingScope, err := models.ParseResourceSharingScopeEnum(strings.ToLower(strings.TrimSpace(payload.SharingScope)))
-	if err != nil {
-		return services.ResourceInput{}, domainPayloadError("sharingScope", "sharing scope is invalid")
-	}
 	return services.ResourceInput{
 		Name: payload.Name, Slug: payload.Slug, ResourceType: resourceType,
-		Configuration: payload.Configuration, SharingScope: sharingScope,
+		Configuration: payload.Configuration,
 	}, nil
-}
-
-type resourceConnectionPayload struct {
-	EnvironmentID        string          `json:"environmentId"`
-	Alias                string          `json:"alias"`
-	Configuration        json.RawMessage `json:"configuration"`
-	ResourceEndpointID   string          `json:"resourceEndpointId"`
-	ResourceCredentialID string          `json:"resourceCredentialId"`
-}
-
-func (payload resourceConnectionPayload) serviceInput() (services.ResourceConnectionInput, error) {
-	environmentID, err := uuid.Parse(payload.EnvironmentID)
-	if err != nil {
-		return services.ResourceConnectionInput{}, domainPayloadError("environmentId", "Environment is required")
-	}
-	endpointID, err := uuid.Parse(payload.ResourceEndpointID)
-	if err != nil {
-		return services.ResourceConnectionInput{}, domainPayloadError("resourceEndpointId", "endpoint is required")
-	}
-	credentialID, err := optionalUUID(payload.ResourceCredentialID)
-	if err != nil {
-		return services.ResourceConnectionInput{}, domainPayloadError("resourceCredentialId", "credential is invalid")
-	}
-	return services.ResourceConnectionInput{
-		EnvironmentID: environmentID, Alias: payload.Alias, Configuration: payload.Configuration,
-		ResourceEndpointID: endpointID, ResourceCredentialID: credentialID,
-	}, nil
-}
-
-func (controller Resources) CreateConnection(etx *echo.Context) error {
-	resourceID, err := uuid.Parse(etx.Param("id"))
-	var payload resourceConnectionPayload
-	if err == nil {
-		err = etx.Bind(&payload)
-	}
-	var input services.ResourceConnectionInput
-	if err == nil {
-		input, err = payload.serviceInput()
-	}
-	if err == nil {
-		_, err = controller.service.ConnectEnvironment(etx.Request().Context(), resourceID, input)
-	}
-	return controller.finishChildMutation(etx, resourceID, err, "Environment connected")
-}
-
-func (controller Resources) UpdateConnection(etx *echo.Context) error {
-	resourceID, connectionID, err := parseChildIDs(etx, "connectionID")
-	var payload resourceConnectionPayload
-	if err == nil {
-		err = etx.Bind(&payload)
-	}
-	var input services.ResourceConnectionInput
-	if err == nil {
-		input, err = payload.serviceInput()
-	}
-	if err == nil {
-		_, err = controller.service.UpdateEnvironmentConnection(etx.Request().Context(), resourceID, connectionID, input)
-	}
-	return controller.finishChildMutation(etx, resourceID, err, "Environment connection updated")
-}
-
-func (controller Resources) DestroyConnection(etx *echo.Context) error {
-	resourceID, connectionID, err := parseChildIDs(etx, "connectionID")
-	if err == nil {
-		err = controller.service.DisconnectEnvironment(etx.Request().Context(), resourceID, connectionID)
-	}
-	return controller.finishChildMutation(etx, resourceID, err, "Environment disconnected")
-}
-
-func (controller Resources) CreateEnvironmentGrant(etx *echo.Context) error {
-	resourceID, environmentID, err := parseChildIDs(etx, "environmentID")
-	if err == nil {
-		err = controller.service.GrantEnvironment(etx.Request().Context(), resourceID, environmentID)
-	}
-	return controller.finishChildMutation(etx, resourceID, err, "Environment granted Resource access")
-}
-
-func (controller Resources) DestroyEnvironmentGrant(etx *echo.Context) error {
-	resourceID, environmentID, err := parseChildIDs(etx, "environmentID")
-	if err == nil {
-		err = controller.service.RevokeEnvironmentGrant(etx.Request().Context(), resourceID, environmentID)
-	}
-	return controller.finishChildMutation(etx, resourceID, err, "Environment Resource grant revoked")
-}
-
-func (controller Resources) CreateApplicationGrant(etx *echo.Context) error {
-	resourceID, applicationID, err := parseChildIDs(etx, "applicationID")
-	if err == nil {
-		err = controller.service.GrantApplication(etx.Request().Context(), resourceID, applicationID)
-	}
-	return controller.finishChildMutation(etx, resourceID, err, "Application granted Resource access")
-}
-
-func (controller Resources) DestroyApplicationGrant(etx *echo.Context) error {
-	resourceID, applicationID, err := parseChildIDs(etx, "applicationID")
-	if err == nil {
-		err = controller.service.RevokeApplicationGrant(etx.Request().Context(), resourceID, applicationID)
-	}
-	return controller.finishChildMutation(etx, resourceID, err, "Application Resource grant revoked")
 }
 
 type resourceCreatePayload struct {
@@ -397,6 +285,26 @@ func (controller Resources) Destroy(etx *echo.Context) error {
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Resource archived")
 	return inertia.Redirect(etx, routes.Resources.URL(), http.StatusSeeOther)
+}
+
+func (controller Resources) UpdateConnectionEnvironmentKeys(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	connectionID, connectionErr := uuid.Parse(etx.Param("connectionID"))
+	if err == nil {
+		err = connectionErr
+	}
+	var payload struct {
+		EnvironmentKeys map[string]string `json:"environmentKeys"`
+	}
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	if err == nil {
+		err = controller.service.UpdateConnectionEnvironmentKeys(
+			etx.Request().Context(), resourceID, connectionID, payload.EnvironmentKeys,
+		)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Connection Environment keys updated")
 }
 
 type resourceEndpointPayload struct {

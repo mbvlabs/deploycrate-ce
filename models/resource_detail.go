@@ -12,22 +12,19 @@ type ResourceListFilters struct {
 	Search       string
 	ResourceType string
 	Engine       string
-	SharingScope string
 }
 
 type ResourceListItem struct {
-	ID                uuid.UUID                `bun:"id"`
-	Name              string                   `bun:"name"`
-	Slug              string                   `bun:"slug"`
-	ResourceType      ResourceTypeEnum         `bun:"resource_type"`
-	Engine            string                   `bun:"engine"`
-	DatabaseCount     int                      `bun:"database_count"`
-	SharingScope      ResourceSharingScopeEnum `bun:"sharing_scope"`
-	ConnectionCount   int                      `bun:"connection_count"`
-	GrantCount        int                      `bun:"grant_count"`
-	InstallationCount int                      `bun:"installation_count"`
-	EndpointCount     int                      `bun:"endpoint_count"`
-	Health            string                   `bun:"health"`
+	ID                uuid.UUID        `bun:"id"`
+	Name              string           `bun:"name"`
+	Slug              string           `bun:"slug"`
+	ResourceType      ResourceTypeEnum `bun:"resource_type"`
+	Engine            string           `bun:"engine"`
+	DatabaseCount     int              `bun:"database_count"`
+	ConnectionCount   int              `bun:"connection_count"`
+	InstallationCount int              `bun:"installation_count"`
+	EndpointCount     int              `bun:"endpoint_count"`
+	Health            string           `bun:"health"`
 }
 
 type ResourceInstallationDetail struct {
@@ -66,30 +63,15 @@ type ResourceHealthCheckDetail struct {
 }
 
 type ResourceDetails struct {
-	Resource          ResourceEntity
-	Connections       []ResourceConnectionDetail
-	EnvironmentGrants []ResourceEnvironmentGrantDetail
-	ApplicationGrants []ResourceApplicationGrantDetail
-	Endpoints         []ResourceEndpointEntity
-	Credentials       []ResourceCredentialEntity
-	Installations     []ResourceInstallationDetail
-	Volumes           []ResourceVolumeDetail
-	Mounts            []ResourceMountDetail
-	HealthChecks      []ResourceHealthCheckDetail
-	Databases         []ResourceDatabaseDefinition
-}
-
-type ResourceEnvironmentGrantDetail struct {
-	ResourceEnvironmentGrantEntity
-	EnvironmentName string    `bun:"environment_name"`
-	EnvironmentKind string    `bun:"environment_kind"`
-	ApplicationID   uuid.UUID `bun:"application_id"`
-	ApplicationName string    `bun:"application_name"`
-}
-
-type ResourceApplicationGrantDetail struct {
-	ResourceApplicationGrantEntity
-	ApplicationName string `bun:"application_name"`
+	Resource      ResourceEntity
+	Connections   []ResourceConnectionDetail
+	Endpoints     []ResourceEndpointEntity
+	Credentials   []ResourceCredentialEntity
+	Installations []ResourceInstallationDetail
+	Volumes       []ResourceVolumeDetail
+	Mounts        []ResourceMountDetail
+	HealthChecks  []ResourceHealthCheckDetail
+	Databases     []ResourceDatabaseDefinition
 }
 
 type ResourceBackupEligibility struct {
@@ -118,15 +100,17 @@ type ResourcePrivateAccessDetails struct {
 
 type ResourceConnectionDetail struct {
 	EnvironmentResourceEntity
-	EnvironmentName     string          `bun:"environment_name"`
-	EnvironmentKind     string          `bun:"environment_kind"`
-	EnvironmentArchived bool            `bun:"environment_archived"`
-	ApplicationName     string          `bun:"application_name"`
-	ApplicationSlug     string          `bun:"application_slug"`
-	ApplicationArchived bool            `bun:"application_archived"`
-	EndpointName        string          `bun:"endpoint_name"`
-	CredentialMetadata  json.RawMessage `bun:"credential_metadata"`
-	CredentialName      string          `bun:"credential_name"`
+	EnvironmentKeys         map[string]string `bun:"-"`
+	EnvironmentKeyOverrides map[string]string `bun:"-"`
+	EnvironmentName         string            `bun:"environment_name"`
+	EnvironmentKind         string            `bun:"environment_kind"`
+	EnvironmentArchived     bool              `bun:"environment_archived"`
+	ApplicationName         string            `bun:"application_name"`
+	ApplicationSlug         string            `bun:"application_slug"`
+	ApplicationArchived     bool              `bun:"application_archived"`
+	EndpointName            string            `bun:"endpoint_name"`
+	CredentialMetadata      json.RawMessage   `bun:"credential_metadata"`
+	CredentialName          string            `bun:"credential_name"`
 }
 
 type ResourceCredentialSummary struct {
@@ -137,14 +121,6 @@ type ResourceCredentialSummary struct {
 	Username            string
 	Metadata            json.RawMessage
 	HasEncryptedPayload bool
-}
-
-type ResourceEnvironmentOption struct {
-	ID              uuid.UUID `bun:"id"`
-	Name            string    `bun:"name"`
-	Kind            string    `bun:"kind"`
-	ApplicationID   uuid.UUID `bun:"application_id"`
-	ApplicationName string    `bun:"application_name"`
 }
 
 type ResourceServerOption struct {
@@ -168,7 +144,6 @@ type ResourceRegistryCredentialOption struct {
 type ResourceFormOptions struct {
 	Engines             []ResourceEngineDefinition
 	ResourceTypes       []ResourceTypeEnum
-	Environments        []ResourceEnvironmentOption
 	Servers             []ResourceServerOption
 	PrivateNetworks     []ResourceNetworkOption
 	RegistryCredentials []ResourceRegistryCredentialOption

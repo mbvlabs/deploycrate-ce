@@ -12,7 +12,6 @@ type systemResourceIndexProp struct {
 	Name          string `json:"name"`
 	ResourceType  string `json:"resourceType"`
 	Engine        string `json:"engine"`
-	SharingScope  string `json:"sharingScope"`
 	OriginAddress string `json:"originAddress"`
 	OriginPort    int32  `json:"originPort"`
 	Health        string `json:"health"`
@@ -23,8 +22,7 @@ func systemResourceIndexProps(items []models.SystemResourceIndexItem) []systemRe
 	for _, item := range items {
 		props = append(props, systemResourceIndexProp{
 			ID: item.ID, Name: item.Name, ResourceType: item.ResourceType, Engine: item.Engine,
-			SharingScope: item.SharingScope, OriginAddress: item.OriginAddress,
-			OriginPort: item.OriginPort, Health: item.Health,
+			OriginAddress: item.OriginAddress, OriginPort: item.OriginPort, Health: item.Health,
 		})
 	}
 	return props
@@ -147,7 +145,6 @@ type systemResourceDetailProp struct {
 	Name             string                            `json:"name"`
 	ResourceType     string                            `json:"resourceType"`
 	Engine           string                            `json:"engine"`
-	SharingScope     string                            `json:"sharingScope"`
 	Bindings         []systemResourceBindingProp       `json:"bindings"`
 	Endpoints        []systemResourceEndpointProp      `json:"endpoints"`
 	Credentials      []systemResourceCredentialProp    `json:"credentials"`
@@ -163,7 +160,6 @@ func systemResourceDetailProps(detail models.SystemResourceDetail) systemResourc
 	prop := systemResourceDetailProp{
 		ID: detail.ID, CreatedAt: detail.CreatedAt, UpdatedAt: detail.UpdatedAt,
 		Name: detail.Name, ResourceType: detail.ResourceType, Engine: detail.Engine,
-		SharingScope:     detail.SharingScope,
 		Bindings:         make([]systemResourceBindingProp, 0, len(detail.Bindings)),
 		Endpoints:        make([]systemResourceEndpointProp, 0, len(detail.Endpoints)),
 		Credentials:      make([]systemResourceCredentialProp, 0, len(detail.Credentials)),

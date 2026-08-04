@@ -25,27 +25,3 @@ func ParseResourceTypeEnum(value string) (ResourceTypeEnum, error) {
 	}
 	return resourceType, nil
 }
-
-type ResourceSharingScopeEnum string
-
-const (
-	ResourceSharingEnvironment ResourceSharingScopeEnum = "environment"
-	ResourceSharingApplication ResourceSharingScopeEnum = "application"
-	ResourceSharingGlobal      ResourceSharingScopeEnum = "global"
-)
-
-func (scope ResourceSharingScopeEnum) IsValid() bool {
-	return scope == ResourceSharingEnvironment || scope == ResourceSharingApplication || scope == ResourceSharingGlobal
-}
-
-func (scope ResourceSharingScopeEnum) String() string {
-	return string(scope)
-}
-
-func ParseResourceSharingScopeEnum(value string) (ResourceSharingScopeEnum, error) {
-	scope := ResourceSharingScopeEnum(value)
-	if !scope.IsValid() {
-		return "", errors.New("invalid Resource sharing scope")
-	}
-	return scope, nil
-}

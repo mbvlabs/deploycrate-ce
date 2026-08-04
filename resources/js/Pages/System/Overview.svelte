@@ -47,7 +47,6 @@
     name: string
     resourceType: string
     engine: string
-    sharingScope: string
     bindingAlias: string
     credentialSource: string
     hasCredential: boolean
@@ -377,10 +376,6 @@
                     <div>
                       <dt class="text-muted-foreground">Resource type</dt>
                       <dd class="mt-1 text-sm capitalize">{resource.resourceType}</dd>
-                    </div>
-                    <div>
-                      <dt class="text-muted-foreground">Sharing scope</dt>
-                      <dd class="mt-1 text-sm capitalize">{stateLabel(resource.sharingScope)}</dd>
                     </div>
                     <div>
                       <dt class="text-muted-foreground">Credential source</dt>

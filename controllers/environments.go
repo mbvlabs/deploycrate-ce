@@ -508,9 +508,18 @@ func (controller Environments) Update(etx *echo.Context) error {
 			data, dataErr := controller.setup.EditData(etx.Request().Context(), params.ApplicationID, params.EnvironmentID)
 			options, optionsErr := controller.setup.Options(etx.Request().Context())
 			if dataErr == nil && optionsErr == nil {
+				configuration := data.Configuration
+				configuration.Name = payload.Name
+				configuration.Slug = payload.Slug
+				configuration.Kind = payload.Kind
+				configuration.Hostname = payload.Hostname
+				configuration.ContainerPort = payload.ContainerPort
+				configuration.HealthPath = payload.HealthPath
+				configuration.BPGOTargets = payload.BPGOTargets
+				configuration.Resources = payload.Resources
 				return inertia.Page(etx, "Applications/Environments/Edit", inertia.Props{
 					"auth": authProps(etx), "environment": environmentOverviewProps(data.Overview),
-					"configuration": payload, "options": options,
+					"configuration": configuration, "options": options,
 				}, inertia.WithValidationErrors(validationErrors.ToMap()))
 			}
 		}

@@ -17,7 +17,6 @@ type SystemResourceIndexItem struct {
 	Name          string `bun:"name"`
 	ResourceType  string `bun:"resource_type"`
 	Engine        string `bun:"engine"`
-	SharingScope  string `bun:"sharing_scope"`
 	OriginAddress string `bun:"origin_address"`
 	OriginPort    int32  `bun:"origin_port"`
 	Health        string `bun:"health"`
@@ -57,7 +56,6 @@ func (application) FindSystemResourceIndex(ctx context.Context, db storage.Execu
 		ColumnExpr("resource.name AS name").
 		ColumnExpr("resource.resource_type AS resource_type").
 		ColumnExpr("resource.configuration ->> 'engine' AS engine").
-		ColumnExpr("resource.sharing_scope AS sharing_scope").
 		ColumnExpr("COALESCE(origin.address, '') AS origin_address").
 		ColumnExpr("COALESCE(origin.port, 0) AS origin_port").
 		ColumnExpr("COALESCE(installation_status.health, 'unknown') AS health").
@@ -215,7 +213,6 @@ type SystemResourceDetail struct {
 	Name             string                        `bun:"name"`
 	ResourceType     string                        `bun:"resource_type"`
 	Engine           string                        `bun:"engine"`
-	SharingScope     string                        `bun:"sharing_scope"`
 	Bindings         []SystemResourceBinding       `bun:"-"`
 	Endpoints        []SystemResourceEndpoint      `bun:"-"`
 	Credentials      []SystemResourceCredential    `bun:"-"`
@@ -230,7 +227,7 @@ type SystemResourceDetail struct {
 func (application) FindSystemResourceDetail(ctx context.Context, db storage.Executor, resourceID, currentUserID uuid.UUID) (SystemResourceDetail, error) {
 	var detail SystemResourceDetail
 	err := db.NewSelect().TableExpr("resources AS resource").
-		ColumnExpr("resource.id::text AS id, resource.created_at, resource.updated_at, resource.name, resource.configuration ->> 'engine' AS engine, resource.sharing_scope").
+		ColumnExpr("resource.id::text AS id, resource.created_at, resource.updated_at, resource.name, resource.configuration ->> 'engine' AS engine").
 		ColumnExpr("resource.resource_type AS resource_type").
 		Where("resource.id = ?", resourceID).
 		Where("resource.archived_at IS NULL").

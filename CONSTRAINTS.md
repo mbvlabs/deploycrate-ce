@@ -32,9 +32,9 @@ Rules local to one entity belong in `models/`. Rules involving multiple records,
 - An environment belongs to one application.
 - Application slugs are unique within the deployment's application scope.
 - Environment slugs are unique within an application.
-- An archived application cannot receive new environments or changes.
-- An archived environment cannot receive new desired-state changes, builds, deployments, bindings, routes, or secrets.
-- Archival preserves releases, changes, deployments, backups, and telemetry identities.
+- Deleting an application permanently removes every owned environment, source, domain, secret, desired-state revision, build, release, deployment, route, and attachment after external workload cleanup succeeds.
+- Deleting an environment permanently removes the same Environment-owned graph and deletes its application when no environments remain.
+- Shared Resources, Servers, credentials, registries, private networks, backup policies, and backup artifacts are not owned by an application deletion. Durable backup and restore changes are rehomed to the system Environment before deletion.
 
 ## Sources, source events, builds, and releases
 
@@ -120,7 +120,7 @@ Rules local to one entity belong in `models/`. Rules involving multiple records,
 - Sharing a server or resource never grants access to unrelated environments, endpoints, or services.
 - Applied and observed access state cannot claim success until the responsible target or server reports the intended rule.
 
-## Resources, Docker topology, grants, and connections
+## Resources, Docker topology, and Environment attachments
 
 - A Resource is the stable identity and lifecycle boundary for an independently managed Docker workload.
 - `resource_type` is a validated enum with `database`, `cache`, and `service` values.
@@ -131,12 +131,12 @@ Rules local to one entity belong in `models/`. Rules involving multiple records,
 - Resource Volumes and mounts provide durable storage to Resource Installations.
 - A Resource Endpoint belongs only to its Resource. It describes how a consumer interacts with the Resource and never owns or identifies an installation.
 - Resource health checks belong to the Resource and may select an endpoint and credential. They do not select an installation.
-- An Environment consumes a Resource only through an active `environment_resources` Resource Connection that selects one Resource Endpoint and an optional application credential.
-- `environment` scope requires an active grant for the selected Environment. `application` scope requires an active grant for the Environment's Application. `global` scope requires no grant.
-- Environment grants and Application grants are mutually exclusive according to sharing scope. A restricted Resource may have zero grants.
-- Scope changes and grant revocation serialize with connection changes and are blocked when an active connection would become ineligible.
-- Connection creation validates selection eligibility, endpoint ownership, application credential ownership, and private-network reachability in one transaction.
-- Administrator credentials are never selectable by Resource Connections and are never injected into Environment secrets.
+- An Environment consumes a Resource only through an active `environment_resources` attachment that selects one Resource Endpoint and an optional application credential.
+- Resource attachment and detachment are owned by Environment setup and edit workflows. Resource workflows report only attachments whose Environment and Application are active.
+- Resource configuration owns default Environment secret names. An attachment may store Resource-managed key overrides, edited only from the Resource screen, plus the last reconciled effective names.
+- Resource default changes reconcile every active attachment that inherits the changed role. Attachment overrides reconcile only that attachment. Endpoint and credential value changes reconcile every active attachment selecting that dependency using its effective names.
+- Attachment changes validate endpoint ownership, application credential ownership, selected runtime placement, and private-network reachability in one transaction.
+- Administrator credentials are never selectable by Environment attachments and are never injected into Environment secrets.
 
 ## Database Resources and credentials
 
@@ -154,7 +154,7 @@ Rules local to one entity belong in `models/`. Rules involving multiple records,
 ## Registry Resources
 
 - OCI registries are service Resources with `configuration.engine = registry`. A DeployCrate-operated Registry has a Docker Resource Installation; a registered external Registry has only its interaction endpoint.
-- Registry provider configuration remains in its typed backing where required. Resource owns identity, lifecycle, endpoint, access credential, health, and sharing policy.
+- Registry provider configuration remains in its typed backing where required. Resource owns identity, lifecycle, endpoint, access credential, and health.
 - A selectable Registry Resource has one active access credential with push and pull capability. The encrypted secret exists only in `resource_credentials`.
 - Buildpack configuration selects a Registry Resource and stores its image repository path separately. Environment Source owns source control only.
 - Build and deployment records retain the selected Registry Resource endpoint and credential identity for audit without snapshotting secret material.

@@ -394,6 +394,8 @@ func controlPlaneBootstrapStep(
 				DistributionVersion:  metadata["VERSION_ID"],
 				Architecture:         runtime.GOARCH,
 				SessionEncryptionKey: cfg.Secrets.SessionEncryptionKey,
+				ClickHouseUser:       "deploycrate",
+				ClickHousePassword:   cfg.Secrets.ClickHousePassword,
 				Capabilities: BootstrapCapabilitiesInput{
 					BuildpacksPackVersion: BuildpacksPackVersion,
 					CaddyVersion:          CaddyVersion,

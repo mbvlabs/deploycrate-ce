@@ -12,7 +12,7 @@
   import { routes } from '@/routes'
 
   type ResourceInput = { resourceId: string; endpointId: string; credentialId?: string; alias: string; database: string; credentialProjection: 'connection_url' | 'individual_parts' }
-  type ResourceOption = { id: string; name: string; engine: string; database: string; endpointId: string; endpoint: string; credentialId?: string; credential: string; serverId?: string; credentialFields: string[]; supportsConnectionUrl: boolean }
+  type ResourceOption = { id: string; name: string; engine: string; database: string; endpointId: string; endpoint: string; credentialId?: string; credential: string; serverId?: string; credentialFields: string[]; supportsConnectionUrl: boolean; environmentKeys: Record<string, string> }
   type Configuration = { name: string; slug: string; kind: string; hostname: string; containerPort: number; healthPath: string; bpGoTargets: string; resources: ResourceInput[]; serverIds: string[]; serverNames: string[] }
   type Environment = { applicationId: string; applicationName: string; sourceType: 'buildpacks' | 'image'; environment: { id: string; name: string; kind: string }; repository: string; reference: string; contextPath: string }
 
@@ -36,6 +36,15 @@
       resourceId: option.id, endpointId: option.endpointId, credentialId: option.credentialId,
       alias: resourceAlias(option.engine), database: option.database, credentialProjection: option.supportsConnectionUrl ? 'connection_url' : 'individual_parts',
     }]
+  }
+
+  function resourceManagedKeys(resource: ResourceInput) {
+    const option = attachedResourceOption(resource)
+    if (!option) return []
+    const logicalKeys = resource.credentialProjection === 'connection_url'
+      ? ['url']
+      : ['host', 'port', 'protocol', 'tls_mode', ...(resource.database ? ['database'] : []), ...(option.credentialId ? ['username', ...option.credentialFields] : [])]
+    return logicalKeys.map((logicalKey) => option.environmentKeys[logicalKey]).filter(Boolean)
   }
 
   function submit(event: SubmitEvent) {
@@ -80,15 +89,15 @@
     </Card.Root>
 
     <Card.Root>
-      <Card.Header><Card.Title>Resources</Card.Title><Card.Description>Replace the active Resource connections and their managed Environment variables.</Card.Description></Card.Header>
+      <Card.Header><Card.Title>Resources</Card.Title><Card.Description>Replace active Resource connections. Injected key names are managed from each Resource.</Card.Description></Card.Header>
       <Card.Content class="space-y-4">
         <div class="flex flex-col gap-2 sm:flex-row"><NativeSelect.Root bind:value={selectedResource} class="w-full flex-1"><NativeSelect.Option value="">Select a Resource</NativeSelect.Option>{#each availableResources as option}<NativeSelect.Option value={`${option.id}:${option.endpointId}:${option.credentialId ?? ''}`}>{option.name} · {option.engine}{option.database ? ` · ${option.database}` : ''} · {option.endpoint} · {option.credential || 'without credentials'}</NativeSelect.Option>{/each}</NativeSelect.Root><Button type="button" variant="outline" disabled={!selectedResource} onclick={addResource}>Attach</Button></div>
         {#each $form.resources as resource, index}
           <div class="grid gap-3 border border-border p-4 sm:grid-cols-2">
-            <FormField label="Alias" error={$form.errors[`resources.${index}.alias`]}><Input bind:value={resource.alias} /></FormField>
+            <FormField label="Connection alias" error={$form.errors[`resources.${index}.alias`]}><Input bind:value={resource.alias} /></FormField>
             {#if resource.database}<FormField label="Database"><Input bind:value={resource.database} readonly /></FormField>{/if}
             {#if attachedResourceOption(resource)?.supportsConnectionUrl}<FormField label="Connection format" error={$form.errors[`resources.${index}.credentialProjection`]}><NativeSelect.Root bind:value={resource.credentialProjection} class="w-full"><NativeSelect.Option value="connection_url">Connection URL</NativeSelect.Option><NativeSelect.Option value="individual_parts">Individual parts</NativeSelect.Option></NativeSelect.Root></FormField>{/if}
-            <div class="border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">{resource.credentialProjection === 'connection_url' ? `${resource.alias.trim().toUpperCase() || 'RESOURCE'}_URL` : ['HOST', 'PORT', 'PROTOCOL', 'TLS_MODE', ...(resource.database ? ['DATABASE'] : []), ...(attachedResourceOption(resource)?.credentialId ? ['USER', ...(attachedResourceOption(resource)?.credentialFields ?? []).map((field) => field.toUpperCase())] : [])].map((suffix) => `${resource.alias.trim().toUpperCase() || 'RESOURCE'}_${suffix}`).join(', ')}</div>
+            <div class="border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><span class="font-medium text-foreground">Resource-managed keys</span><span class="mt-1 block font-mono">{resourceManagedKeys(resource).join(', ') || 'No values projected'}</span></div>
             <Button type="button" variant="ghost" onclick={() => $form.resources = $form.resources.filter((_, itemIndex) => itemIndex !== index)}>Remove</Button>
           </div>
         {:else}<p class="text-sm text-muted-foreground">No Resources attached.</p>{/each}

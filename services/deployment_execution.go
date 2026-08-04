@@ -362,6 +362,19 @@ func (service *DeploymentExecution) composeEnvironment(ctx context.Context, scop
 	}
 	attachments := make([]containerclient.ResourceContainerAttachment, 0, len(scope.State.Resources))
 	dockerURLs := make(map[string]dockerEndpoint)
+	dockerSecretValues := make(map[string]string)
+	resourceSecretKeys := make(map[uuid.UUID]map[string]struct{})
+	for _, descriptor := range scope.State.Secrets {
+		if descriptor.SourceType != models.EnvironmentSecretSourceResource {
+			continue
+		}
+		keys := resourceSecretKeys[descriptor.SourceID]
+		if keys == nil {
+			keys = make(map[string]struct{})
+			resourceSecretKeys[descriptor.SourceID] = keys
+		}
+		keys[descriptor.Key] = struct{}{}
+	}
 	for _, resourceState := range scope.State.Resources {
 		connection, err := models.EnvironmentResource.Find(ctx, service.db.Executor(), resourceState.EnvironmentResourceID)
 		if err != nil || connection.EnvironmentID != scope.Environment.ID || connection.ResourceID != resourceState.ResourceID || connection.ResourceEndpointID != resourceState.EndpointID || connection.ArchivedAt.Valid {
@@ -408,18 +421,37 @@ func (service *DeploymentExecution) composeEnvironment(ctx context.Context, scop
 			attachment := containerclient.ResourceContainerAttachment{InstallationID: installation.ID, ContainerName: installation.ContainerName}
 			attachments = append(attachments, attachment)
 			projected = &dockerEndpoint{host: installation.ContainerName, port: mapping.ContainerPort}
-			var connectionConfiguration struct {
-				CredentialProjection string `json:"credential_projection"`
-			}
-			if json.Unmarshal(connection.Configuration, &connectionConfiguration) != nil {
-				return nil, nil, errors.New("Docker Resource credential projection is invalid")
-			}
-			switch connectionConfiguration.CredentialProjection {
-			case resourceCredentialProjectionConnectionURL:
-				dockerURLs[resourceState.Alias+"_URL"] = *projected
-			case resourceCredentialProjectionIndividualParts:
-			default:
-				return nil, nil, errors.New("Docker Resource credential projection is unsupported")
+			if len(resourceState.EnvironmentKeys) > 0 {
+				projectedSecretKeys := resourceSecretKeys[resourceState.EnvironmentResourceID]
+				if key := strings.TrimSpace(resourceState.EnvironmentKeys["host"]); key != "" {
+					if _, exists := projectedSecretKeys[key]; exists {
+						dockerSecretValues[key] = projected.host
+					}
+				}
+				if key := strings.TrimSpace(resourceState.EnvironmentKeys["port"]); key != "" {
+					if _, exists := projectedSecretKeys[key]; exists {
+						dockerSecretValues[key] = strconv.Itoa(int(projected.port))
+					}
+				}
+				if key := strings.TrimSpace(resourceState.EnvironmentKeys["url"]); key != "" {
+					if _, exists := projectedSecretKeys[key]; exists {
+						dockerURLs[key] = *projected
+					}
+				}
+			} else {
+				var connectionConfiguration struct {
+					CredentialProjection string `json:"credential_projection"`
+				}
+				if json.Unmarshal(connection.Configuration, &connectionConfiguration) != nil {
+					return nil, nil, errors.New("Docker Resource credential projection is invalid")
+				}
+				switch connectionConfiguration.CredentialProjection {
+				case resourceCredentialProjectionConnectionURL:
+					dockerURLs[resourceState.Alias+"_URL"] = *projected
+				case resourceCredentialProjectionIndividualParts:
+				default:
+					return nil, nil, errors.New("Docker Resource credential projection is unsupported")
+				}
 			}
 		} else if !errors.Is(installationErr, sql.ErrNoRows) {
 			return nil, nil, installationErr
@@ -440,6 +472,9 @@ func (service *DeploymentExecution) composeEnvironment(ctx context.Context, scop
 	}
 	for _, secret := range secrets {
 		value := secret.Value
+		if projectedValue, exists := dockerSecretValues[secret.Key]; exists {
+			value = projectedValue
+		}
 		if endpoint, exists := dockerURLs[secret.Key]; exists {
 			connectionURL, err := url.Parse(value)
 			if err != nil || connectionURL.Scheme == "" || connectionURL.User == nil {

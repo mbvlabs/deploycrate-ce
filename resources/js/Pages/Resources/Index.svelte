@@ -9,7 +9,7 @@
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
 
-  type Resource = { id: string; name: string; resourceType: string; engine: string; databaseCount: number; sharingScope: string; connectionCount: number; grantCount: number; installationCount: number; endpointCount: number; health: string }
+  type Resource = { id: string; name: string; resourceType: string; engine: string; databaseCount: number; connectionCount: number; installationCount: number; endpointCount: number; health: string }
   let { auth, resources }: { auth: { email: string }; resources: Resource[] } = $props()
 </script>
 
@@ -26,11 +26,11 @@
       <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {#each resources as resource (resource.id)}
           <Card.Root class="h-full">
-            <Card.Header><Card.Action><StatusBadge status={resource.health || 'unknown'} /></Card.Action><Card.Title>{resource.name}</Card.Title><Card.Description>{resource.resourceType === 'database' ? `${resource.databaseCount} ${resource.databaseCount === 1 ? 'database' : 'databases'} · ` : ''}{resource.connectionCount === 0 ? 'Unattached' : `${resource.connectionCount} connected ${resource.connectionCount === 1 ? 'environment' : 'environments'}`}</Card.Description></Card.Header>
+            <Card.Header><Card.Action><StatusBadge status={resource.health || 'unknown'} /></Card.Action><Card.Title>{resource.name}</Card.Title><Card.Description>{resource.resourceType === 'database' ? `${resource.databaseCount} ${resource.databaseCount === 1 ? 'database' : 'databases'} · ` : ''}{resource.connectionCount === 0 ? 'Unattached' : `${resource.connectionCount} attached ${resource.connectionCount === 1 ? 'environment' : 'environments'}`}</Card.Description></Card.Header>
             <Card.Content>
               <dl class="grid grid-cols-2 gap-x-6 gap-y-4 text-xs">
                 <div><dt class="text-muted-foreground">Engine</dt><dd class="mt-1 font-medium capitalize">{resource.engine}</dd></div>
-                <div><dt class="text-muted-foreground">Scope</dt><dd class="mt-1 font-medium capitalize">{resource.sharingScope}{resource.sharingScope === 'global' ? '' : ` · ${resource.grantCount} grants`}</dd></div>
+                <div><dt class="text-muted-foreground">Type</dt><dd class="mt-1 font-medium capitalize">{resource.resourceType}</dd></div>
                 <div><dt class="text-muted-foreground">Installations</dt><dd class="mt-1 font-medium">{resource.installationCount}</dd></div>
                 <div><dt class="text-muted-foreground">Endpoints</dt><dd class="mt-1 font-medium">{resource.endpointCount}</dd></div>
               </dl>

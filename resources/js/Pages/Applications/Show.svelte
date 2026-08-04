@@ -85,8 +85,8 @@
     telemetry: TelemetryRow[]
   } = $props()
 
-  let archiveDialogOpen = $state(false)
-  let archiveProcessing = $state(false)
+  let deleteDialogOpen = $state(false)
+  let deleteProcessing = $state(false)
 
   const staging = $derived(application.environments.find((environment) => environment.environmentKind === 'staging') ?? null)
   const production = $derived(application.environments.find((environment) => environment.environmentKind === 'production') ?? null)
@@ -173,12 +173,12 @@
     openEnvironment(environmentId)
   }
 
-  function archiveApplication() {
-    if (archiveProcessing) return
-    archiveProcessing = true
+  function deleteApplication() {
+    if (deleteProcessing) return
+    deleteProcessing = true
     router.delete(routes.applicationDestroy(application.id), {
-      onSuccess: () => (archiveDialogOpen = false),
-      onFinish: () => (archiveProcessing = false),
+      onSuccess: () => (deleteDialogOpen = false),
+      onFinish: () => (deleteProcessing = false),
     })
   }
 </script>
@@ -328,8 +328,8 @@
       {/if}
     </section>
 
-    <div><Button variant="destructive" onclick={() => (archiveDialogOpen = true)}>Archive application</Button></div>
+    <div><Button variant="destructive" onclick={() => (deleteDialogOpen = true)}>Delete application</Button></div>
   </div>
 
-  <ConfirmActionDialog bind:open={archiveDialogOpen} title="Archive application?" description={`Archive ${application.name} and remove it from active application workflows.`} confirmLabel="Archive application" destructive processing={archiveProcessing} onconfirm={archiveApplication} />
+  <ConfirmActionDialog bind:open={deleteDialogOpen} title="Permanently delete application?" description={`Delete ${application.name}, every Environment, deployment record, secret, domain, and runtime workload. Shared Resources and Servers are kept. This cannot be undone.`} confirmLabel="Delete application" destructive processing={deleteProcessing} onconfirm={deleteApplication} />
 </DashboardLayout>

@@ -1,8 +1,10 @@
 <script lang="ts">
   import { Link, router, useForm } from '@inertiajs/svelte'
+  import { toast } from 'svelte-sonner'
   import * as Card from '@/Components/ui/card'
   import { Button } from '@/Components/ui/button'
   import ConfirmActionDialog from '@/Components/ConfirmActionDialog.svelte'
+  import * as Dialog from '@/Components/ui/dialog'
   import FormField from '@/Components/FormField.svelte'
   import { Input } from '@/Components/ui/input'
   import JsonCode from '@/Components/JsonCode.svelte'
@@ -15,11 +17,12 @@
   type Binding = { id: string; createdAt: string; updatedAt: string; alias: string; configuration: unknown; environmentId: string; environmentName: string; environmentKind: string; endpointId: string; credentialId: string }
   type Endpoint = { id: string; createdAt: string; updatedAt: string; name: string; role: string; address: string; port: number; protocol: string; tlsMode: string; settings: Record<string, unknown>; privateNetworkId: string }
   type Credential = { id: string; name: string; username: string; metadata: unknown; hasEncryptedPayload: boolean }
+  type RevealedCredential = { id: string; name: string; username: string; values: Record<string, string> }
   type Installation = { id: string; createdAt: string; updatedAt: string; imageReference: string; imageDigest: string; containerName: string; restartPolicy: string; configuration: unknown; serverId: string; serverName: string; serverAddress: string; state: string; serviceState: string; health: string; healthReason: string; observedAt: string | null }
   type Volume = { id: string; name: string; driver: string; configuration: unknown; serverId: string; serverName: string; mounts: Array<{ id: string; mountPath: string; readOnly: boolean; installationId: string }> }
   type HealthCheck = { id: string; name: string; kind: string; configuration: unknown; intervalSeconds: number; timeoutSeconds: number; failureThreshold: number; successThreshold: number; enabled: boolean; state: string; message: string; observedAt: string | null }
   type DeviceGrant = { deviceId: string; deviceName: string; ownerEmail: string; privateAddress: string; grantId: string; grantedAt: string; applicationState: string; applicationError: string; latestHandshakeAt: string | null; observedAt: string | null }
-  type Resource = { id: string; createdAt: string; updatedAt: string; name: string; resourceType: string; engine: string; sharingScope: string; bindings: Binding[]; endpoints: Endpoint[]; credentials: Credential[]; installations: Installation[]; volumes: Volume[]; healthChecks: HealthCheck[]; deviceGrants: DeviceGrant[]; privateNetworks: Array<{ id: string; name: string }>; availableDevices: Array<{ id: string; name: string; privateAddress: string }> }
+  type Resource = { id: string; createdAt: string; updatedAt: string; name: string; resourceType: string; engine: string; bindings: Binding[]; endpoints: Endpoint[]; credentials: Credential[]; installations: Installation[]; volumes: Volume[]; healthChecks: HealthCheck[]; deviceGrants: DeviceGrant[]; privateNetworks: Array<{ id: string; name: string }>; availableDevices: Array<{ id: string; name: string; privateAddress: string }> }
   type Enrollment = { deviceId: string; grantId: string; clientConfiguration: string }
 
   let { auth, resource, enrollment = null }: { auth: { email: string }; resource: Resource; enrollment?: Enrollment | null } = $props()
@@ -29,6 +32,13 @@
   let revokeProcessing = $state(false)
   let revokeError = $state('')
   let pendingGrant = $state<DeviceGrant | null>(null)
+  let credentialPasswordDialogOpen = $state(false)
+  let revealedCredentialDialogOpen = $state(false)
+  let selectedCredential = $state<Credential | null>(null)
+  let currentPassword = $state('')
+  let credentialProcessing = $state(false)
+  let credentialError = $state('')
+  let revealedCredential = $state<RevealedCredential | null>(null)
   const label = (value: string) => value ? value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) : 'Unknown'
   const timestamp = (value: string | null) => value ? new Date(value).toLocaleString() : 'Not recorded'
   const wireguardEndpoint = $derived(resource.endpoints.find((endpoint) => endpoint.role === 'wireguard'))
@@ -58,6 +68,57 @@
     })
   }
   function retryGrant(deviceId: string) { router.post(routes.systemResourceWireGuardDeviceCreate(resource.id), { deviceId, name: '' }) }
+  function askForCredential(credential: Credential) {
+    selectedCredential = credential
+    currentPassword = ''
+    credentialError = ''
+    revealedCredential = null
+    credentialPasswordDialogOpen = true
+  }
+  async function revealCredential(event: SubmitEvent) {
+    event.preventDefault()
+    if (!selectedCredential || !currentPassword || credentialProcessing) return
+    credentialProcessing = true
+    credentialError = ''
+    try {
+      const response = await window.fetch(routes.systemResourceCredentialReveal(resource.id, selectedCredential.id), {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: currentPassword }),
+      })
+      const payload = await response.json().catch(() => ({})) as Partial<RevealedCredential> & { error?: string }
+      if (!response.ok || !payload.id || !payload.name || !payload.values || Object.keys(payload.values).length === 0) {
+        throw new Error(payload.error || 'System Resource credential could not be loaded')
+      }
+      revealedCredential = {
+        id: payload.id,
+        name: payload.name,
+        username: payload.username ?? '',
+        values: payload.values,
+      }
+      currentPassword = ''
+      credentialPasswordDialogOpen = false
+      revealedCredentialDialogOpen = true
+    } catch (error) {
+      credentialError = error instanceof Error ? error.message : 'System Resource credential could not be loaded'
+    } finally {
+      credentialProcessing = false
+    }
+  }
+  function closeRevealedCredential() {
+    revealedCredentialDialogOpen = false
+    revealedCredential = null
+    selectedCredential = null
+  }
+  async function copyCredential(value: string, name: string) {
+    try {
+      await navigator.clipboard.writeText(value)
+      toast.success(`${name} copied`)
+    } catch {
+      toast.error(`${name} could not be copied`)
+    }
+  }
 </script>
 
 <svelte:head><title>{resource.name}</title></svelte:head>
@@ -67,7 +128,7 @@
     <header>
       <Link class="text-xs text-muted-foreground hover:text-foreground" href={routes.systemResources()}>System resources</Link>
       <h1 class="mt-3 text-3xl font-semibold tracking-tight">{resource.name}</h1>
-      <p class="mt-3 text-sm text-muted-foreground">{label(resource.engine)} · {label(resource.sharingScope)} sharing · {resource.bindings.length} connected {resource.bindings.length === 1 ? 'Environment' : 'Environments'}</p>
+      <p class="mt-3 text-sm text-muted-foreground">{label(resource.engine)} · {resource.bindings.length} attached {resource.bindings.length === 1 ? 'Environment' : 'Environments'}</p>
     </header>
 
     {#if enrollment?.clientConfiguration}
@@ -83,8 +144,8 @@
     </Card.Root>
 
     <div class="grid gap-4 lg:grid-cols-2">
-      <Card.Root><Card.Header><Card.Title>Connected Environments</Card.Title></Card.Header><Card.Content class="space-y-4">{#if resource.bindings.length === 0}<p class="text-sm text-muted-foreground">No Connected Environments.</p>{:else}{#each resource.bindings as binding (binding.id)}<div class="border border-border p-4"><p class="font-medium">{binding.environmentName} · {binding.alias}</p><p class="mt-1 text-xs text-muted-foreground">{label(binding.environmentKind)} · endpoint {binding.endpointId}</p><div class="mt-3"><JsonCode value={binding.configuration} /></div></div>{/each}{/if}</Card.Content></Card.Root>
-      <Card.Root><Card.Header><Card.Title>Credentials metadata</Card.Title><Card.Description>Secret payloads are never returned.</Card.Description></Card.Header><Card.Content class="space-y-4">{#if resource.credentials.length === 0}<p class="text-sm text-muted-foreground">No Resource credential records.</p>{:else}{#each resource.credentials as credential (credential.id)}<div class="border border-border p-4"><p class="font-medium">{credential.name}</p><p class="text-xs text-muted-foreground">{credential.username || 'No username'} · {credential.hasEncryptedPayload ? 'encrypted payload stored' : 'no payload'}</p><div class="mt-3"><JsonCode value={credential.metadata} /></div></div>{/each}{/if}</Card.Content></Card.Root>
+      <Card.Root><Card.Header><Card.Title>Attached Environments</Card.Title></Card.Header><Card.Content class="space-y-4">{#if resource.bindings.length === 0}<p class="text-sm text-muted-foreground">No attached Environments.</p>{:else}{#each resource.bindings as binding (binding.id)}<div class="border border-border p-4"><p class="font-medium">{binding.environmentName} · {binding.alias}</p><p class="mt-1 text-xs text-muted-foreground">{label(binding.environmentKind)} · endpoint {binding.endpointId}</p><div class="mt-3"><JsonCode value={binding.configuration} /></div></div>{/each}{/if}</Card.Content></Card.Root>
+      <Card.Root><Card.Header><Card.Title>Credentials</Card.Title><Card.Description>Confirm your administrator password before revealing an encrypted credential.</Card.Description></Card.Header><Card.Content class="space-y-4">{#if resource.credentials.length === 0}<p class="text-sm text-muted-foreground">No Resource credential records.</p>{:else}{#each resource.credentials as credential (credential.id)}<div class="border border-border p-4"><div class="flex flex-wrap items-start justify-between gap-3"><div><p class="font-medium">{credential.name}</p><p class="text-xs text-muted-foreground">{credential.username || 'No username'} · {credential.hasEncryptedPayload ? 'encrypted payload stored' : 'no payload'}</p></div>{#if credential.hasEncryptedPayload}<Button type="button" size="sm" variant="outline" onclick={() => askForCredential(credential)}>View credentials</Button>{/if}</div><div class="mt-3"><JsonCode value={credential.metadata} /></div></div>{/each}{/if}</Card.Content></Card.Root>
     </div>
 
     <Card.Root><Card.Header><Card.Title>Endpoints</Card.Title><Card.Description>Origin and private WireGuard addresses. Credentials are managed separately.</Card.Description></Card.Header><Card.Content><div class="grid gap-4 lg:grid-cols-2">{#each resource.endpoints as endpoint (endpoint.id)}<div class="border border-border p-4"><div class="flex justify-between gap-4"><p class="font-medium">{endpoint.name}</p><span class="text-xs text-muted-foreground">{label(endpoint.role)}</span></div><p class="mt-2 font-mono text-xs">{endpoint.address}:{endpoint.port} · {endpoint.protocol} · TLS {endpoint.tlsMode}</p><div class="mt-3"><JsonCode value={endpoint.settings} /></div></div>{/each}</div>{#if connectionExample}<div class="mt-5"><p class="mb-2 text-xs text-muted-foreground">Connection example without credentials</p><pre class="overflow-x-auto border border-border bg-muted/30 p-3 font-mono text-xs">{connectionExample}</pre></div>{/if}</Card.Content></Card.Root>
@@ -111,4 +172,30 @@
   </div>
 
   <ConfirmActionDialog bind:open={revokeDialogOpen} title={`Remove access for ${pendingGrant?.deviceName ?? 'this device'}?`} description="The device-specific firewall rule will be removed. The device remains enrolled for other Resources." confirmLabel="Remove access" processing={revokeProcessing} error={revokeError} destructive onconfirm={revokeGrant} />
+
+  <Dialog.Root bind:open={credentialPasswordDialogOpen} onOpenChange={(open) => { if (!open && !credentialProcessing) { currentPassword = ''; credentialError = ''; selectedCredential = null } }}>
+    <Dialog.Content showCloseButton={!credentialProcessing}>
+      <form class="grid gap-4" onsubmit={revealCredential}>
+        <Dialog.Header><Dialog.Title>View Resource credential</Dialog.Title><Dialog.Description>Enter your current administrator password to reveal {selectedCredential?.name ?? 'this credential'}.</Dialog.Description></Dialog.Header>
+        <FormField label="Current password"><Input type="password" bind:value={currentPassword} autocomplete="current-password" autofocus required disabled={credentialProcessing} /></FormField>
+        {#if credentialError}<p class="border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive" role="alert">{credentialError}</p>{/if}
+        <Dialog.Footer><Button type="button" variant="outline" disabled={credentialProcessing} onclick={() => (credentialPasswordDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={!currentPassword || credentialProcessing}>{#if credentialProcessing}<Spinner />{/if}Continue</Button></Dialog.Footer>
+      </form>
+    </Dialog.Content>
+  </Dialog.Root>
+
+  <Dialog.Root bind:open={revealedCredentialDialogOpen} onOpenChange={(open) => { if (!open) closeRevealedCredential() }}>
+    <Dialog.Content class="sm:max-w-xl">
+      <Dialog.Header><Dialog.Title>{revealedCredential?.name ?? 'Resource credential'}</Dialog.Title><Dialog.Description>This decrypted credential is shown only until you close this dialog.</Dialog.Description></Dialog.Header>
+      {#if revealedCredential}
+        <div class="grid gap-4">
+          {#if revealedCredential.username}<div class="grid gap-2"><p class="text-xs font-medium">Username</p><div class="flex gap-2"><Input value={revealedCredential.username} readonly /><Button type="button" variant="outline" onclick={() => copyCredential(revealedCredential!.username, 'Username')}>Copy</Button></div></div>{/if}
+          {#each Object.entries(revealedCredential.values) as [name, value] (name)}
+            <div class="grid gap-2"><p class="text-xs font-medium">{label(name)}</p><div class="flex gap-2"><Input type="text" {value} readonly autocomplete="off" /><Button type="button" variant="outline" onclick={() => copyCredential(value, label(name))}>Copy</Button></div></div>
+          {/each}
+        </div>
+      {/if}
+      <Dialog.Footer><Button type="button" onclick={closeRevealedCredential}>Done</Button></Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
 </DashboardLayout>

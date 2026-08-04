@@ -12,7 +12,6 @@
     name: string
     resourceType: string
     engine: string
-    sharingScope: string
     originAddress: string
     originPort: number
     health: string

@@ -28,6 +28,7 @@ type System struct {
 	logs         *services.SystemLogs
 	appTelemetry *services.SystemApplicationTelemetry
 	access       *services.ResourcePrivateAccess
+	credentials  *services.SystemResourceCredentials
 }
 
 func NewSystem(
@@ -37,8 +38,9 @@ func NewSystem(
 	logs *services.SystemLogs,
 	appTelemetry *services.SystemApplicationTelemetry,
 	access *services.ResourcePrivateAccess,
+	credentials *services.SystemResourceCredentials,
 ) System {
-	return System{db: db, health: health, metric: metric, logs: logs, appTelemetry: appTelemetry, access: access}
+	return System{db: db, health: health, metric: metric, logs: logs, appTelemetry: appTelemetry, access: access, credentials: credentials}
 }
 
 func (s System) RegisterRoutes(r *router.Router) error {
@@ -58,6 +60,7 @@ func (s System) RegisterRoutes(r *router.Router) error {
 		{method: http.MethodGet, route: routes.SystemResources, handler: s.Resources},
 		{method: http.MethodGet, route: routes.SystemResource, handler: s.Resource},
 		{method: http.MethodPost, route: routes.SystemResourceEndpointCreate, handler: s.CreateResourceEndpoint},
+		{method: http.MethodPost, route: routes.SystemResourceCredentialReveal, handler: middleware.IPRateLimiter(5, routes.SystemResources)(s.RevealResourceCredential)},
 		{method: http.MethodPost, route: routes.SystemResourceWireGuardDeviceCreate, handler: s.CreateResourceWireGuardDevice},
 		{method: http.MethodDelete, route: routes.SystemResourceWireGuardDeviceDestroy, handler: s.DestroyResourceWireGuardDevice},
 	}
@@ -221,6 +224,40 @@ func (s System) Resource(etx *echo.Context) error {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
 	return s.renderResource(etx, resourceID, nil, nil)
+}
+
+func (s System) RevealResourceCredential(etx *echo.Context) error {
+	etx.Response().Header().Set("Cache-Control", "no-store")
+	etx.Response().Header().Set("Pragma", "no-cache")
+
+	resourceID, resourceErr := uuid.Parse(etx.Param("resourceID"))
+	credentialID, credentialErr := uuid.Parse(etx.Param("credentialID"))
+	if errors.Join(resourceErr, credentialErr) != nil {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "System Resource credential not found"})
+	}
+	var payload struct {
+		Password string `json:"password"`
+	}
+	if err := etx.Bind(&payload); err != nil || payload.Password == "" || len(payload.Password) > 4096 {
+		return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "Current password is required"})
+	}
+
+	credential, err := s.credentials.Reveal(
+		etx.Request().Context(), resourceID, credentialID,
+		cookies.ExtractFromCookieApp(etx).UserID, payload.Password,
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, services.ErrInvalidCredentials):
+			return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "Current password is incorrect"})
+		case errors.Is(err, services.ErrSystemResourceCredentialUnavailable):
+			return etx.JSON(http.StatusNotFound, map[string]string{"error": "System Resource credential not found"})
+		default:
+			slog.ErrorContext(etx.Request().Context(), "failed to reveal system Resource credential", "resource_id", resourceID, "credential_id", credentialID, "error", err)
+			return etx.JSON(http.StatusInternalServerError, map[string]string{"error": "System Resource credential could not be loaded"})
+		}
+	}
+	return etx.JSON(http.StatusOK, credential)
 }
 
 type systemResourceEndpointPayload struct {

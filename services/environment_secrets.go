@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"time"
 
@@ -254,13 +255,16 @@ func (service *EnvironmentSecrets) ResolveRevision(
 	return resolved, nil
 }
 
-func (service *EnvironmentSecrets) RotateManagedResource(
+func (service *EnvironmentSecrets) ReconcileManagedResource(
 	ctx context.Context,
 	db storage.Executor,
 	connection models.EnvironmentResourceEntity,
 	values map[string]string,
+	environmentKeys map[string]string,
+	environmentKeyOverrides map[string]string,
+	database string,
 ) error {
-	if connection.ArchivedAt.Valid || len(values) == 0 {
+	if connection.ArchivedAt.Valid || len(values) == 0 || len(environmentKeys) == 0 {
 		return errors.New("active Resource connection values are required")
 	}
 	environment, err := models.Environment.Lock(ctx, db, connection.EnvironmentID)
@@ -279,42 +283,171 @@ func (service *EnvironmentSecrets) RotateManagedResource(
 	if err != nil {
 		return err
 	}
-	replacements := make(map[uuid.UUID]models.EnvironmentSecretEntity)
-	previous := make(map[uuid.UUID]models.EnvironmentSecretEntity)
+	connectionConfiguration, err := parseEnvironmentResourceConfiguration(connection.Configuration)
+	if err != nil {
+		return err
+	}
+	resourceStateIndex := -1
+	for index := range state.Resources {
+		if state.Resources[index].EnvironmentResourceID == connection.ID {
+			resourceStateIndex = index
+			break
+		}
+	}
+	if resourceStateIndex < 0 {
+		return errors.New("Resource connection is missing from the current Environment revision")
+	}
+	currentDescriptors := make(map[string]models.EnvironmentSecretDescriptor)
+	currentEntities := make(map[string]models.EnvironmentSecretEntity)
 	for _, descriptor := range state.Secrets {
-		value, requested := values[descriptor.Key]
-		if !requested || descriptor.SourceType != models.EnvironmentSecretSourceResource || descriptor.SourceID != connection.ID {
+		if descriptor.SourceType != models.EnvironmentSecretSourceResource || descriptor.SourceID != connection.ID {
 			continue
 		}
 		current, findErr := models.EnvironmentSecret.FindForEnvironment(ctx, db, environment.ID, descriptor.ID)
-		if findErr != nil || current.ArchivedAt.Valid {
+		if findErr != nil {
 			return errors.New("active Resource-managed secret value is unavailable")
 		}
-		prepared, prepareErr := service.Prepare(environment.ID, descriptor.Key, value, models.EnvironmentSecretSourceResource, connection.ID)
+		currentDescriptors[descriptor.Key] = descriptor
+		currentEntities[descriptor.Key] = current
+	}
+	desiredKeys := make(map[string]struct{}, len(environmentKeys))
+	for _, key := range environmentKeys {
+		desiredKeys[models.NormalizeEnvironmentSecretKey(key)] = struct{}{}
+	}
+	for _, resourceState := range state.Resources {
+		if resourceState.EnvironmentResourceID == connection.ID {
+			continue
+		}
+		for key := range resourceState.Variables {
+			if _, conflicts := desiredKeys[models.NormalizeEnvironmentSecretKey(key)]; conflicts {
+				return errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{
+					Field: "configuration.environment_keys", Code: "duplicate",
+					Message: "Resource key " + key + " conflicts with a legacy value in Environment " + environment.Name,
+				}})
+			}
+		}
+		for _, key := range resourceState.EnvironmentKeys {
+			if _, conflicts := desiredKeys[models.NormalizeEnvironmentSecretKey(key)]; conflicts {
+				return errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{
+					Field: "configuration.environment_keys", Code: "duplicate",
+					Message: "Resource key " + key + " is already managed in Environment " + environment.Name,
+				}})
+			}
+		}
+	}
+	activeSecrets, err := models.EnvironmentSecret.ActiveForEnvironment(ctx, db, environment.ID)
+	if err != nil {
+		return err
+	}
+	for _, active := range activeSecrets {
+		if active.SourceType == models.EnvironmentSecretSourceResource && active.SourceID == connection.ID {
+			continue
+		}
+		if _, conflicts := desiredKeys[models.NormalizeEnvironmentSecretKey(active.Key)]; conflicts {
+			return errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{
+				Field: "configuration.environment_keys", Code: "duplicate",
+				Message: "Resource key " + active.Key + " conflicts in Environment " + environment.Name,
+			}})
+		}
+	}
+	preparedByKey := make(map[string]PreparedEnvironmentSecret, len(values))
+	unchanged := make(map[string]models.EnvironmentSecretDescriptor, len(values))
+	previousResourceState := state.Resources[resourceStateIndex]
+	resourceStateChanged := !maps.Equal(previousResourceState.EnvironmentKeys, environmentKeys) || previousResourceState.Database != database
+	connectionConfigurationChanged := !maps.Equal(connectionConfiguration.EnvironmentKeys, environmentKeys) ||
+		!maps.Equal(connectionConfiguration.EnvironmentKeyOverrides, environmentKeyOverrides)
+	changed := resourceStateChanged || len(currentDescriptors) != len(values)
+	for key, value := range values {
+		prepared, prepareErr := service.Prepare(environment.ID, key, value, models.EnvironmentSecretSourceResource, connection.ID)
 		if prepareErr != nil {
 			return prepareErr
 		}
-		if hmac.Equal(current.Digest, prepared.Digest) {
+		preparedByKey[key] = prepared
+		if current, exists := currentEntities[key]; exists && !current.ArchivedAt.Valid && hmac.Equal(current.Digest, prepared.Digest) {
+			unchanged[key] = currentDescriptors[key]
+		} else {
+			changed = true
+		}
+	}
+	connectionConfiguration.EnvironmentKeys = maps.Clone(environmentKeys)
+	connectionConfiguration.EnvironmentKeyOverrides = maps.Clone(environmentKeyOverrides)
+	encodedConfiguration, err := json.Marshal(connectionConfiguration)
+	if err != nil {
+		return err
+	}
+	if !changed {
+		if !connectionConfigurationChanged {
+			return nil
+		}
+		_, err := models.EnvironmentResource.Update(ctx, db, models.UpdateEnvironmentResourceData{
+			ID: connection.ID, Alias: connection.Alias, Configuration: encodedConfiguration,
+			ArchivedAt: connection.ArchivedAt, EnvironmentID: connection.EnvironmentID,
+			ResourceID: connection.ResourceID, ResourceEndpointID: connection.ResourceEndpointID,
+			ResourceCredentialID: connection.ResourceCredentialID,
+		})
+		return err
+	}
+	activeBuilds, err := db.NewSelect().TableExpr("builds").Where("environment_id = ?", environment.ID).
+		Where("status IN ('pending', 'running')").Count(ctx)
+	if err != nil {
+		return err
+	}
+	if activeBuilds > 0 {
+		return errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{
+			Field: "resource", Code: "build_active",
+			Message: "wait for active Builds in Environment " + environment.Name + " before changing this Resource",
+		}})
+	}
+	activeDeployments, err := db.NewSelect().TableExpr("deployments AS deployment").
+		Join("JOIN environment_targets AS target ON target.id = deployment.environment_target_id").
+		Where("target.environment_id = ?", environment.ID).Where("deployment.status IN ('queued', 'running')").Count(ctx)
+	if err != nil {
+		return err
+	}
+	if activeDeployments > 0 {
+		return errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{
+			Field: "resource", Code: "deployment_active",
+			Message: "wait for active deployments in Environment " + environment.Name + " before changing this Resource",
+		}})
+	}
+	for key, current := range currentEntities {
+		if _, keep := unchanged[key]; keep {
 			continue
 		}
-		if err := models.EnvironmentSecret.Archive(ctx, db, environment.ID, current.ID); err != nil {
-			return err
+		if !current.ArchivedAt.Valid {
+			if err := models.EnvironmentSecret.Archive(ctx, db, environment.ID, current.ID); err != nil {
+				return err
+			}
+		}
+	}
+	descriptors := make(map[string]models.EnvironmentSecretDescriptor, len(values))
+	maps.Copy(descriptors, unchanged)
+	created := make(map[string]models.EnvironmentSecretEntity)
+	for key, prepared := range preparedByKey {
+		if _, keep := unchanged[key]; keep {
+			continue
 		}
 		next, createErr := service.CreatePrepared(ctx, db, prepared)
 		if createErr != nil {
 			return createErr
 		}
-		previous[current.ID] = current
-		replacements[current.ID] = next
+		created[key] = next
+		descriptors[key] = models.EnvironmentSecretDescriptorFromEntity(next)
 	}
-	if len(replacements) == 0 {
-		return nil
-	}
-	for index, descriptor := range state.Secrets {
-		if replacement, exists := replacements[descriptor.ID]; exists {
-			state.Secrets[index] = models.EnvironmentSecretDescriptorFromEntity(replacement)
+	nextSecrets := make([]models.EnvironmentSecretDescriptor, 0, len(state.Secrets)-len(currentDescriptors)+len(descriptors))
+	for _, descriptor := range state.Secrets {
+		if descriptor.SourceType == models.EnvironmentSecretSourceResource && descriptor.SourceID == connection.ID {
+			continue
 		}
+		nextSecrets = append(nextSecrets, descriptor)
 	}
+	for _, descriptor := range descriptors {
+		nextSecrets = append(nextSecrets, descriptor)
+	}
+	state.Secrets = nextSecrets
+	state.Resources[resourceStateIndex].EnvironmentKeys = maps.Clone(environmentKeys)
+	state.Resources[resourceStateIndex].Database = database
+	state.Resources[resourceStateIndex].Variables = nil
 	canonical, err := models.CanonicalEnvironmentDesiredState(state)
 	if err != nil {
 		return err
@@ -325,20 +458,63 @@ func (service *EnvironmentSecrets) RotateManagedResource(
 		return err
 	}
 	change, err := models.Change.Create(ctx, db, models.CreateChangeData{
-		Sequence: sequence, Kind: "resource_secret_rotation", TriggerType: "system", ActorType: "system",
+		Sequence: sequence, Kind: "resource_projection", TriggerType: "system", ActorType: "system",
 		CauseSystem: sql.NullString{String: "resource", Valid: true}, CauseReference: sql.NullString{String: connection.ResourceID.String(), Valid: true},
-		CorrelationID: uuid.New(), Summary: "Rotate Resource-managed Environment secrets", Status: "committed",
+		CorrelationID: uuid.New(), Summary: "Update Resource-managed Environment secrets", Status: "committed",
 		RequestedAt: now, CommittedAt: sql.NullTime{Time: now, Valid: true}, EnvironmentID: environment.ID,
 	})
 	if err != nil {
 		return err
 	}
-	for oldID, replacement := range replacements {
-		oldValue, _ := json.Marshal(models.EnvironmentSecretDescriptorFromEntity(previous[oldID]))
-		newValue, _ := json.Marshal(models.EnvironmentSecretDescriptorFromEntity(replacement))
+	changeKeys := make(map[string]struct{}, len(currentDescriptors)+len(created))
+	for key := range currentDescriptors {
+		changeKeys[key] = struct{}{}
+	}
+	for key := range created {
+		changeKeys[key] = struct{}{}
+	}
+	for key := range changeKeys {
+		if _, keep := unchanged[key]; keep {
+			continue
+		}
+		previous, hadPrevious := currentDescriptors[key]
+		next, hasNext := descriptors[key]
+		action := "rotate"
+		subjectID := next.ID
+		if !hadPrevious {
+			action = "create"
+		} else if !hasNext {
+			action = "archive"
+			subjectID = previous.ID
+		}
+		oldValue := json.RawMessage(`null`)
+		newValue := json.RawMessage(`null`)
+		if hadPrevious {
+			oldValue, _ = json.Marshal(previous)
+		}
+		if hasNext {
+			newValue, _ = json.Marshal(next)
+		}
 		if _, err := models.ChangeItem.Create(ctx, db, models.CreateChangeItemData{
-			Action: "rotate", SubjectType: "environment_secret", SubjectID: replacement.ID,
+			Action: action, SubjectType: "environment_secret", SubjectID: subjectID,
 			PreviousValue: oldValue, RequestedValue: newValue, ChangeID: change.ID,
+		}); err != nil {
+			return err
+		}
+	}
+	if resourceStateChanged {
+		previousValue, _ := json.Marshal(previousResourceState)
+		requestedValue, _ := json.Marshal(state.Resources[resourceStateIndex])
+		if _, err := models.ChangeItem.Create(ctx, db, models.CreateChangeItemData{
+			Action: "update", SubjectType: "environment_resource", SubjectID: connection.ID,
+			PreviousValue: previousValue, RequestedValue: requestedValue, ChangeID: change.ID,
+		}); err != nil {
+			return err
+		}
+	} else if connectionConfigurationChanged {
+		if _, err := models.ChangeItem.Create(ctx, db, models.CreateChangeItemData{
+			Action: "update", SubjectType: "environment_resource", SubjectID: connection.ID,
+			PreviousValue: connection.Configuration, RequestedValue: encodedConfiguration, ChangeID: change.ID,
 		}); err != nil {
 			return err
 		}
@@ -355,6 +531,14 @@ func (service *EnvironmentSecrets) RotateManagedResource(
 	}
 	if _, err := db.NewUpdate().TableExpr("environment_target_states AS state").Set("desired_revision_id = ?", revision.ID).Set("state = 'pending'").Set("updated_at = ?", now).
 		Where("EXISTS (SELECT 1 FROM environment_targets target WHERE target.id = state.environment_target_id AND target.environment_id = ? AND target.detached_at IS NULL)", environment.ID).Exec(ctx); err != nil {
+		return err
+	}
+	if _, err := models.EnvironmentResource.Update(ctx, db, models.UpdateEnvironmentResourceData{
+		ID: connection.ID, Alias: connection.Alias, Configuration: encodedConfiguration,
+		ArchivedAt: connection.ArchivedAt, EnvironmentID: connection.EnvironmentID,
+		ResourceID: connection.ResourceID, ResourceEndpointID: connection.ResourceEndpointID,
+		ResourceCredentialID: connection.ResourceCredentialID,
+	}); err != nil {
 		return err
 	}
 	return service.queueRevisionDeployment(ctx, db, change, revision, state)
@@ -474,7 +658,7 @@ func (service *EnvironmentSecrets) queueRevisionDeployment(
 ) error {
 	var release models.ReleaseEntity
 	err := db.NewSelect().Model(&release).Where("environment_id = ?", revision.EnvironmentID).
-		Where("build_id IS NOT NULL").OrderExpr("created_at DESC").Limit(1).Scan(ctx)
+		OrderExpr("created_at DESC").Limit(1).Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}

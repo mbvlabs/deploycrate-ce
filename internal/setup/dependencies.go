@@ -36,6 +36,8 @@ type BootstrapInput struct {
 	Architecture           string
 	SessionEncryptionKey   string
 	Capabilities           BootstrapCapabilitiesInput
+	ClickHouseUser         string
+	ClickHousePassword     string
 	DatabaseExternal       bool
 	DatabaseHost           string
 	DatabasePort           int

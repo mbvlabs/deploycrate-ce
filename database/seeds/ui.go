@@ -397,7 +397,6 @@ func UI(ctx context.Context, exec storage.Executor) error {
 		factories.WithResourcesSlug("fake-deploycrate-ce-registry"),
 		factories.WithResourcesResourceType(models.ResourceTypeService),
 		factories.WithResourcesConfiguration(json.RawMessage(`{"engine":"registry"}`)),
-		factories.WithResourcesSharingScope(models.ResourceSharingGlobal),
 		factories.WithResourcesSystemManaged(true),
 		factories.WithResourcesArchivedAt(sql.NullTime{}),
 	)

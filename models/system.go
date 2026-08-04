@@ -101,7 +101,6 @@ type SystemResourceOverview struct {
 	Name             string `json:"name" bun:"name"`
 	ResourceType     string `json:"resourceType" bun:"resource_type"`
 	Engine           string `json:"engine" bun:"engine"`
-	SharingScope     string `json:"sharingScope" bun:"sharing_scope"`
 	BindingAlias     string `json:"bindingAlias" bun:"binding_alias"`
 	CredentialSource string `json:"credentialSource" bun:"credential_source"`
 	HasCredential    bool   `json:"hasCredential" bun:"has_credential"`
@@ -131,7 +130,6 @@ func (a application) FindSystemResources(
 		ColumnExpr("resource.name AS name").
 		ColumnExpr("resource.resource_type AS resource_type").
 		ColumnExpr("resource.configuration ->> 'engine' AS engine").
-		ColumnExpr("resource.sharing_scope AS sharing_scope").
 		ColumnExpr("binding.alias AS binding_alias").
 		ColumnExpr("COALESCE(binding.configuration ->> 'credential_source', '') AS credential_source").
 		ColumnExpr("binding.resource_credential_id IS NOT NULL AS has_credential").

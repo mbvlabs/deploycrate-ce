@@ -708,37 +708,6 @@ func validateRegistrySelection(ctx context.Context, db storage.Executor, resourc
 	return nil
 }
 
-func (service *ApplicationSetup) Archive(ctx context.Context, applicationID uuid.UUID) error {
-	application, err := models.Application.Find(ctx, service.db.Executor(), applicationID)
-	if err != nil {
-		return err
-	}
-	activeBuilds, err := service.db.Executor().NewSelect().TableExpr("builds AS build").Join("JOIN environments AS environment ON environment.id = build.environment_id").Where("environment.application_id = ?", application.ID).Where("build.status IN ('pending', 'running')").Count(ctx)
-	if err != nil {
-		return err
-	}
-	if activeBuilds > 0 {
-		return errors.New("application has active build work")
-	}
-	tx, err := service.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	now := time.Now().UTC()
-	if _, err := tx.NewUpdate().TableExpr("environment_sources AS source").Set("archived_at = ?", now).Set("updated_at = ?", now).Where("source.environment_id IN (SELECT id FROM environments WHERE application_id = ?)", application.ID).Exec(ctx); err != nil {
-		return err
-	}
-	if _, err := tx.NewUpdate().TableExpr("environments").Set("archived_at = ?", now).Set("updated_at = ?", now).Where("application_id = ?", application.ID).Exec(ctx); err != nil {
-		return err
-	}
-	_, err = models.Application.Update(ctx, tx, models.UpdateApplicationData{ID: application.ID, Name: application.Name, Slug: application.Slug, ArchivedAt: sql.NullTime{Time: now, Valid: true}})
-	if err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
 func (service *ApplicationSetup) validateRepository(ctx context.Context, installationID, repositoryID uuid.UUID) (models.GitHubRepositoryEntity, models.GitHubInstallationEntity, error) {
 	repository, err := models.GitHubRepository.Find(ctx, service.db.Executor(), repositoryID)
 	if err != nil || repository.RemovedAt.Valid || repository.GitHubInstallationID != installationID {

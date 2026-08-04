@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
+	"maps"
 	"strings"
 	"time"
 
@@ -46,15 +46,6 @@ type ResourceInput struct {
 	Slug          string
 	ResourceType  models.ResourceTypeEnum
 	Configuration json.RawMessage
-	SharingScope  models.ResourceSharingScopeEnum
-}
-
-type ResourceConnectionInput struct {
-	EnvironmentID        uuid.UUID
-	Alias                string
-	Configuration        json.RawMessage
-	ResourceEndpointID   uuid.UUID
-	ResourceCredentialID *uuid.UUID
 }
 
 type CreateResourceInput struct {
@@ -176,14 +167,9 @@ func (service *ResourceManagement) List(ctx context.Context, filters models.Reso
 	items := make([]models.ResourceListItem, 0)
 	query := service.db.Executor().NewSelect().
 		TableExpr("resources AS resource").
-		ColumnExpr("resource.id, resource.name, resource.slug, resource.resource_type, resource.configuration ->> 'engine' AS engine, resource.sharing_scope").
+		ColumnExpr("resource.id, resource.name, resource.slug, resource.resource_type, resource.configuration ->> 'engine' AS engine").
 		ColumnExpr("CASE WHEN resource.resource_type = 'database' THEN jsonb_array_length(COALESCE(resource.configuration -> 'databases', '[]'::jsonb)) ELSE 0 END AS database_count").
 		ColumnExpr("(SELECT count(*) FROM environment_resources AS connection WHERE connection.resource_id = resource.id AND connection.archived_at IS NULL) AS connection_count").
-		ColumnExpr(`CASE WHEN resource.sharing_scope = 'environment' THEN
-			(SELECT count(*) FROM resource_environment_grants AS access_grant WHERE access_grant.resource_id = resource.id AND access_grant.archived_at IS NULL)
-			WHEN resource.sharing_scope = 'application' THEN
-			(SELECT count(*) FROM resource_application_grants AS access_grant WHERE access_grant.resource_id = resource.id AND access_grant.archived_at IS NULL)
-			ELSE 0 END AS grant_count`).
 		ColumnExpr("(SELECT count(*) FROM resource_installations AS installation WHERE installation.resource_id = resource.id AND installation.archived_at IS NULL) AS installation_count").
 		ColumnExpr("(SELECT count(*) FROM resource_endpoints AS endpoint WHERE endpoint.resource_id = resource.id AND endpoint.archived_at IS NULL) AS endpoint_count").
 		ColumnExpr(`CASE
@@ -222,9 +208,6 @@ func (service *ResourceManagement) List(ctx context.Context, filters models.Reso
 	if filters.ResourceType != "" {
 		query = query.Where("resource.resource_type = ?", filters.ResourceType)
 	}
-	if filters.SharingScope != "" {
-		query = query.Where("resource.sharing_scope = ?", filters.SharingScope)
-	}
 	return items, query.Scan(ctx, &items)
 }
 
@@ -238,19 +221,11 @@ func (service *ResourceManagement) Options(ctx context.Context) (models.Resource
 	options := models.ResourceFormOptions{
 		Engines:             engines,
 		ResourceTypes:       []models.ResourceTypeEnum{models.ResourceTypeDatabase, models.ResourceTypeCache, models.ResourceTypeService},
-		Environments:        make([]models.ResourceEnvironmentOption, 0),
 		Servers:             make([]models.ResourceServerOption, 0),
 		PrivateNetworks:     make([]models.ResourceNetworkOption, 0),
 		RegistryCredentials: make([]models.ResourceRegistryCredentialOption, 0),
 	}
 	queries := []func() error{
-		func() error {
-			return service.db.Executor().NewSelect().TableExpr("environments AS environment").
-				ColumnExpr("environment.id, environment.name, environment.kind, application.id AS application_id, application.name AS application_name").
-				Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
-				Where("environment.archived_at IS NULL").Where("application.slug <> ?", models.SystemApplicationSlug).
-				OrderExpr("application.name, environment.name").Scan(ctx, &options.Environments)
-		},
 		func() error {
 			return service.db.Executor().NewSelect().TableExpr("servers AS server").
 				ColumnExpr("server.id, server.name, server.address").
@@ -312,37 +287,19 @@ func (service *ResourceManagement) Details(ctx context.Context, resourceID uuid.
 	}
 	detail := models.ResourceDetails{
 		Resource: resource, Connections: make([]models.ResourceConnectionDetail, 0),
-		EnvironmentGrants: make([]models.ResourceEnvironmentGrantDetail, 0), ApplicationGrants: make([]models.ResourceApplicationGrantDetail, 0),
 		Endpoints: make([]models.ResourceEndpointEntity, 0), Credentials: make([]models.ResourceCredentialEntity, 0),
 		Installations: make([]models.ResourceInstallationDetail, 0), Volumes: make([]models.ResourceVolumeDetail, 0),
 		Mounts: make([]models.ResourceMountDetail, 0), HealthChecks: make([]models.ResourceHealthCheckDetail, 0),
 	}
 	queries := []func() error{
 		func() error {
-			return service.db.Executor().NewSelect().TableExpr("resource_environment_grants AS access_grant").
-				ColumnExpr("access_grant.*").
-				ColumnExpr("environment.name AS environment_name, environment.kind AS environment_kind").
-				ColumnExpr("application.id AS application_id, application.name AS application_name").
-				Join("JOIN environments AS environment ON environment.id = access_grant.environment_id AND environment.archived_at IS NULL").
-				Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
-				Where("access_grant.resource_id = ?", resourceID).Where("access_grant.archived_at IS NULL").
-				OrderExpr("application.name, environment.name").Scan(ctx, &detail.EnvironmentGrants)
-		},
-		func() error {
-			return service.db.Executor().NewSelect().TableExpr("resource_application_grants AS access_grant").
-				ColumnExpr("access_grant.*, application.name AS application_name").
-				Join("JOIN applications AS application ON application.id = access_grant.application_id AND application.archived_at IS NULL").
-				Where("access_grant.resource_id = ?", resourceID).Where("access_grant.archived_at IS NULL").
-				OrderExpr("application.name").Scan(ctx, &detail.ApplicationGrants)
-		},
-		func() error {
 			return service.db.Executor().NewSelect().TableExpr("environment_resources AS connection").
 				ColumnExpr("connection.*").
 				ColumnExpr("environment.name AS environment_name, environment.kind AS environment_kind, environment.archived_at IS NOT NULL AS environment_archived").
 				ColumnExpr("application.name AS application_name, application.slug AS application_slug, application.archived_at IS NOT NULL AS application_archived").
 				ColumnExpr("endpoint.name AS endpoint_name, COALESCE(credential.metadata, '{}'::jsonb) AS credential_metadata, COALESCE(credential.name, '') AS credential_name").
-				Join("JOIN environments AS environment ON environment.id = connection.environment_id").
-				Join("JOIN applications AS application ON application.id = environment.application_id").
+				Join("JOIN environments AS environment ON environment.id = connection.environment_id AND environment.archived_at IS NULL").
+				Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
 				Join("JOIN resource_endpoints AS endpoint ON endpoint.id = connection.resource_endpoint_id AND endpoint.archived_at IS NULL").
 				Join("LEFT JOIN resource_credentials AS credential ON credential.id = connection.resource_credential_id AND credential.archived_at IS NULL").
 				Where("connection.resource_id = ?", resourceID).Where("connection.archived_at IS NULL").
@@ -388,6 +345,14 @@ func (service *ResourceManagement) Details(ctx context.Context, resourceID uuid.
 		}
 	}
 	detail.Databases = resource.Databases()
+	for index := range detail.Connections {
+		configuration, configurationErr := parseEnvironmentResourceConfiguration(detail.Connections[index].Configuration)
+		if configurationErr != nil {
+			return models.ResourceDetails{}, configurationErr
+		}
+		detail.Connections[index].EnvironmentKeyOverrides = maps.Clone(configuration.EnvironmentKeyOverrides)
+		detail.Connections[index].EnvironmentKeys = connectionEnvironmentKeys(resource, configuration)
+	}
 	for index := range detail.Installations {
 		service.observeInstallation(ctx, &detail.Installations[index])
 	}
@@ -413,7 +378,6 @@ func (service *ResourceManagement) CreateResource(ctx context.Context, input Cre
 		Name:         input.Resource.Name,
 		Slug:         input.Resource.Slug,
 		ResourceType: input.Resource.ResourceType, Configuration: normalizedJSON(input.Resource.Configuration),
-		SharingScope:  input.Resource.SharingScope,
 		SystemManaged: false,
 	})
 	if err != nil {
@@ -514,29 +478,20 @@ func (service *ResourceManagement) UpdateResource(ctx context.Context, resourceI
 	if err := service.validateResourceTransition(ctx, tx, resource, input); err != nil {
 		return models.ResourceEntity{}, err
 	}
-	if currentScope := resource.SharingScope; currentScope != input.SharingScope {
-		now := time.Now().UTC()
-		if input.SharingScope != models.ResourceSharingEnvironment {
-			if _, err := tx.NewUpdate().TableExpr("resource_environment_grants").Set("archived_at = ?", now).Set("updated_at = ?", now).
-				Where("resource_id = ?", resource.ID).Where("archived_at IS NULL").Exec(ctx); err != nil {
-				return models.ResourceEntity{}, err
-			}
-		}
-		if input.SharingScope != models.ResourceSharingApplication {
-			if _, err := tx.NewUpdate().TableExpr("resource_application_grants").Set("archived_at = ?", now).Set("updated_at = ?", now).
-				Where("resource_id = ?", resource.ID).Where("archived_at IS NULL").Exec(ctx); err != nil {
-				return models.ResourceEntity{}, err
-			}
-		}
-	}
 	updated, err := models.Resource.Update(ctx, tx, models.UpdateResourceData{
 		ID: resource.ID, Name: input.Name, Slug: input.Slug,
 		ResourceType: input.ResourceType, Configuration: normalizedJSON(input.Configuration),
-		SharingScope:  input.SharingScope,
 		SystemManaged: resource.SystemManaged, ArchivedAt: resource.ArchivedAt,
 	})
 	if err != nil {
 		return models.ResourceEntity{}, mapResourceConflict(err)
+	}
+	connections, err := service.activeEnvironmentResourceConnections(ctx, tx, "resource_id = ?", resource.ID)
+	if err != nil {
+		return models.ResourceEntity{}, err
+	}
+	if err := service.reconcileEnvironmentResourceConnections(ctx, tx, updated, connections); err != nil {
+		return models.ResourceEntity{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return models.ResourceEntity{}, mapResourceConflict(err)
@@ -690,26 +645,6 @@ func (service *ResourceManagement) validateResourceTransition(ctx context.Contex
 			return domainError("resourceType", "topology", "archive active endpoints, credentials, and health checks before changing Resource type or engine")
 		}
 	}
-	if current.SharingScope != input.SharingScope {
-		ineligibleConnections, err := db.NewSelect().TableExpr("environment_resources AS connection").
-			Join("JOIN environments AS environment ON environment.id = connection.environment_id AND environment.archived_at IS NULL").
-			Where("connection.resource_id = ?", current.ID).Where("connection.archived_at IS NULL").
-			Where(`NOT (CASE
-				WHEN ? = 'global' THEN TRUE
-				WHEN ? = 'environment' THEN EXISTS (
-					SELECT 1 FROM resource_environment_grants access_grant
-					WHERE access_grant.resource_id = connection.resource_id AND access_grant.environment_id = connection.environment_id AND access_grant.archived_at IS NULL)
-				WHEN ? = 'application' THEN EXISTS (
-					SELECT 1 FROM resource_application_grants access_grant
-					WHERE access_grant.resource_id = connection.resource_id AND access_grant.application_id = environment.application_id AND access_grant.archived_at IS NULL)
-				ELSE FALSE END)`, input.SharingScope, input.SharingScope, input.SharingScope).Count(ctx)
-		if err != nil {
-			return err
-		}
-		if ineligibleConnections != 0 {
-			return domainError("sharingScope", "connection", "disconnect or migrate Resource Connections that are not eligible under the new sharing scope")
-		}
-	}
 	return nil
 }
 
@@ -751,165 +686,6 @@ func mapResourceConflict(err error) error {
 		field = "mountPath"
 	}
 	return domainError(field, "unique", message)
-}
-
-func (service *ResourceManagement) ConnectEnvironment(ctx context.Context, resourceID uuid.UUID, input ResourceConnectionInput) (models.EnvironmentResourceEntity, error) {
-	tx, err := service.db.BeginTx(ctx, nil)
-	if err != nil {
-		return models.EnvironmentResourceEntity{}, err
-	}
-	defer tx.Rollback()
-	if _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
-		return models.EnvironmentResourceEntity{}, err
-	}
-	if err := service.validateConnectionTopology(ctx, tx, resourceID, input); err != nil {
-		return models.EnvironmentResourceEntity{}, err
-	}
-	connection, err := models.EnvironmentResource.Create(ctx, tx, models.CreateEnvironmentResourceData{
-		Alias: input.Alias, Configuration: normalizedJSON(input.Configuration),
-		EnvironmentID: input.EnvironmentID, ResourceID: resourceID,
-		ResourceEndpointID: input.ResourceEndpointID, ResourceCredentialID: input.ResourceCredentialID,
-	})
-	if err != nil {
-		return models.EnvironmentResourceEntity{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return models.EnvironmentResourceEntity{}, err
-	}
-	return connection, nil
-}
-
-func (service *ResourceManagement) UpdateEnvironmentConnection(ctx context.Context, resourceID, connectionID uuid.UUID, input ResourceConnectionInput) (models.EnvironmentResourceEntity, error) {
-	tx, err := service.db.BeginTx(ctx, nil)
-	if err != nil {
-		return models.EnvironmentResourceEntity{}, err
-	}
-	defer tx.Rollback()
-	if _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
-		return models.EnvironmentResourceEntity{}, err
-	}
-	var current models.EnvironmentResourceEntity
-	err = tx.NewSelect().Model(&current).Where("id = ?", connectionID).Where("resource_id = ?", resourceID).
-		Where("archived_at IS NULL").For("UPDATE").Scan(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return models.EnvironmentResourceEntity{}, models.ErrNotFound
-	}
-	if err != nil {
-		return models.EnvironmentResourceEntity{}, err
-	}
-	if err := service.validateConnectionTopology(ctx, tx, resourceID, input); err != nil {
-		return models.EnvironmentResourceEntity{}, err
-	}
-	connection, err := models.EnvironmentResource.Update(ctx, tx, models.UpdateEnvironmentResourceData{
-		ID: current.ID, Alias: input.Alias, Configuration: normalizedJSON(input.Configuration),
-		ArchivedAt: current.ArchivedAt, EnvironmentID: input.EnvironmentID, ResourceID: resourceID,
-		ResourceEndpointID: input.ResourceEndpointID, ResourceCredentialID: input.ResourceCredentialID,
-	})
-	if err != nil {
-		return models.EnvironmentResourceEntity{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return models.EnvironmentResourceEntity{}, err
-	}
-	return connection, nil
-}
-
-func (service *ResourceManagement) DisconnectEnvironment(ctx context.Context, resourceID, connectionID uuid.UUID) error {
-	tx, err := service.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := service.loadResource(ctx, tx, resourceID, true); err != nil {
-		return err
-	}
-	var connection models.EnvironmentResourceEntity
-	err = tx.NewSelect().Model(&connection).Where("id = ?", connectionID).Where("resource_id = ?", resourceID).
-		Where("archived_at IS NULL").For("UPDATE").Scan(ctx)
-	if errors.Is(err, sql.ErrNoRows) {
-		return models.ErrNotFound
-	}
-	if err != nil {
-		return err
-	}
-	dependencies, err := tx.NewSelect().TableExpr("environment_resources AS connection").Where("connection.id = ?", connectionID).
-		Where(`EXISTS (SELECT 1 FROM network_access_rules WHERE environment_resource_id = connection.id AND archived_at IS NULL)`).Count(ctx)
-	if err != nil {
-		return err
-	}
-	if dependencies > 0 {
-		return domainError("connection", "dependency", "Connected Environment is required by an active network rule, backup, or restore")
-	}
-	if err := models.EnvironmentResource.Archive(ctx, tx, connection.ID); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-func (service *ResourceManagement) validateConnectionTopology(ctx context.Context, db storage.Executor, resourceID uuid.UUID, input ResourceConnectionInput) error {
-	allowed, err := models.ResourceSelectableByEnvironment(ctx, db, resourceID, input.EnvironmentID)
-	if err != nil {
-		return err
-	}
-	if !allowed {
-		return domainError("environmentId", "grant", "Resource is not granted to this Environment")
-	}
-	environments, err := db.NewSelect().TableExpr("environments AS environment").
-		Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
-		Where("environment.id = ?", input.EnvironmentID).Where("environment.archived_at IS NULL").Count(ctx)
-	if err != nil {
-		return err
-	}
-	if err := requireChild(environments, "environmentId", "Environment is unavailable"); err != nil {
-		return err
-	}
-	var endpoint struct {
-		PrivateNetworkID *uuid.UUID `bun:"private_network_id"`
-	}
-	err = db.NewSelect().TableExpr("resource_endpoints").ColumnExpr("private_network_id").
-		Where("id = ?", input.ResourceEndpointID).Where("resource_id = ?", resourceID).
-		Where("archived_at IS NULL").Scan(ctx, &endpoint)
-	if errors.Is(err, sql.ErrNoRows) {
-		return domainError("resourceEndpointId", "unavailable", "endpoint must be active and belong to this Resource")
-	}
-	if err != nil {
-		return err
-	}
-	if input.ResourceCredentialID != nil {
-		var credential struct {
-			Purpose string `bun:"purpose"`
-		}
-		err := db.NewSelect().TableExpr("resource_credentials").ColumnExpr("COALESCE(metadata ->> 'purpose', '') AS purpose").
-			Where("id = ?", *input.ResourceCredentialID).Where("resource_id = ?", resourceID).
-			Where("archived_at IS NULL").Scan(ctx, &credential)
-		if errors.Is(err, sql.ErrNoRows) {
-			return domainError("resourceCredentialId", "unavailable", "application credential must be active and belong to this Resource")
-		}
-		if err != nil {
-			return err
-		}
-		if credential.Purpose != "application" {
-			return domainError("resourceCredentialId", "purpose", "only application credentials can be injected into Environments")
-		}
-	}
-	if endpoint.PrivateNetworkID != nil {
-		networks, err := db.NewSelect().TableExpr("private_networks").Where("id = ?", *endpoint.PrivateNetworkID).Where("archived_at IS NULL").Count(ctx)
-		if err != nil {
-			return err
-		}
-		if err := requireChild(networks, "resourceEndpointId", "endpoint private network is unavailable"); err != nil {
-			return err
-		}
-		access, err := db.NewSelect().TableExpr("environment_networks").Where("environment_id = ?", input.EnvironmentID).
-			Where("private_network_id = ?", *endpoint.PrivateNetworkID).Where("removed_at IS NULL").Count(ctx)
-		if err != nil {
-			return err
-		}
-		if err := requireChild(access, "environmentId", "Environment cannot reach the endpoint private network"); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func normalizedJSON(value json.RawMessage) json.RawMessage {
@@ -1235,7 +1011,7 @@ func (service *ResourceManagement) CreateDatabase(ctx context.Context, resourceI
 	}
 	updated, err := models.Resource.Update(ctx, tx, models.UpdateResourceData{
 		ID: resource.ID, Name: resource.Name, Slug: resource.Slug, ResourceType: resource.ResourceType,
-		Configuration: encoded, SharingScope: resource.SharingScope, SystemManaged: resource.SystemManaged, ArchivedAt: resource.ArchivedAt,
+		Configuration: encoded, SystemManaged: resource.SystemManaged, ArchivedAt: resource.ArchivedAt,
 	})
 	if err != nil {
 		if created {
@@ -1541,6 +1317,13 @@ func (service *ResourceManagement) UpdateEndpoint(ctx context.Context, resourceI
 	if err != nil {
 		return models.ResourceEndpointEntity{}, mapResourceConflict(err)
 	}
+	connections, err := service.activeEnvironmentResourceConnections(ctx, tx, "resource_endpoint_id = ?", endpointID)
+	if err != nil {
+		return models.ResourceEndpointEntity{}, err
+	}
+	if err := service.reconcileEnvironmentResourceConnections(ctx, tx, resource, connections); err != nil {
+		return models.ResourceEndpointEntity{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return models.ResourceEndpointEntity{}, mapResourceConflict(err)
 	}
@@ -1780,10 +1563,12 @@ func (service *ResourceManagement) updateCredential(ctx context.Context, resourc
 	if err != nil {
 		return models.ResourceCredentialEntity{}, errors.Join(mapResourceConflict(err), compensatePostgreSQL(service.db.Executor()))
 	}
-	if rotate && resource.Engine() == "postgresql" {
-		if err := service.rotateEnvironmentResourceProjections(ctx, tx, updated); err != nil {
-			return models.ResourceCredentialEntity{}, errors.Join(err, compensatePostgreSQL(service.db.Executor()))
-		}
+	connections, err := service.activeEnvironmentResourceConnections(ctx, tx, "resource_credential_id = ?", credentialID)
+	if err != nil {
+		return models.ResourceCredentialEntity{}, errors.Join(err, compensatePostgreSQL(service.db.Executor()))
+	}
+	if err := service.reconcileEnvironmentResourceConnections(ctx, tx, resource, connections); err != nil {
+		return models.ResourceCredentialEntity{}, errors.Join(err, compensatePostgreSQL(service.db.Executor()))
 	}
 	if err := tx.Commit(); err != nil {
 		return models.ResourceCredentialEntity{}, errors.Join(mapResourceConflict(err), compensatePostgreSQL(service.db.Executor()))
@@ -1791,37 +1576,168 @@ func (service *ResourceManagement) updateCredential(ctx context.Context, resourc
 	return updated, nil
 }
 
-func (service *ResourceManagement) rotateEnvironmentResourceProjections(ctx context.Context, db storage.Executor, credential models.ResourceCredentialEntity) error {
-	secretValues, err := service.credentialSecretValues(credential)
+func (service *ResourceManagement) activeEnvironmentResourceConnections(
+	ctx context.Context,
+	db storage.Executor,
+	condition string,
+	value uuid.UUID,
+) ([]models.EnvironmentResourceEntity, error) {
+	connections := make([]models.EnvironmentResourceEntity, 0)
+	err := db.NewSelect().Model(&connections).
+		Join("JOIN environments AS environment ON environment.id = environment_resources.environment_id AND environment.archived_at IS NULL").
+		Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
+		Where(condition, value).Where("environment_resources.archived_at IS NULL").
+		OrderExpr("environment_resources.environment_id, environment_resources.id").Scan(ctx)
+	return connections, err
+}
+
+func connectionEnvironmentKeys(
+	resource models.ResourceEntity,
+	configuration environmentResourceConfiguration,
+) map[string]string {
+	keys := resource.EnvironmentKeys()
+	maps.Copy(keys, configuration.EnvironmentKeyOverrides)
+	return keys
+}
+
+func normalizeConnectionEnvironmentKeys(
+	resource models.ResourceEntity,
+	requested map[string]string,
+) (map[string]string, map[string]string, error) {
+	configuration := resource.ParsedConfiguration()
+	configuration.EnvironmentKeys = maps.Clone(requested)
+	encoded, err := json.Marshal(configuration)
+	if err != nil {
+		return nil, nil, err
+	}
+	candidate := resource
+	candidate.Configuration = encoded
+	if err := validation.Validate(&candidate); err != nil {
+		return nil, nil, errors.Join(models.ErrDomainValidation, err)
+	}
+	effective := candidate.EnvironmentKeys()
+	defaults := resource.EnvironmentKeys()
+	overrides := make(map[string]string)
+	for logicalName, key := range effective {
+		if defaults[logicalName] != key {
+			overrides[logicalName] = key
+		}
+	}
+	return effective, overrides, nil
+}
+
+func (service *ResourceManagement) UpdateConnectionEnvironmentKeys(
+	ctx context.Context,
+	resourceID, connectionID uuid.UUID,
+	requested map[string]string,
+) error {
+	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	password := secretValues["password"]
-	if password == "" || !credential.Username.Valid {
-		return errors.New("rotated PostgreSQL credential is incomplete")
-	}
-	connections := make([]models.EnvironmentResourceEntity, 0)
-	if err := db.NewSelect().Model(&connections).Where("resource_credential_id = ?", credential.ID).Where("archived_at IS NULL").OrderExpr("created_at").Scan(ctx); err != nil {
+	defer tx.Rollback()
+	resource, err := service.loadResource(ctx, tx, resourceID, true)
+	if err != nil {
 		return err
 	}
+	var connection models.EnvironmentResourceEntity
+	if err := tx.NewSelect().Model(&connection).
+		Join("JOIN environments AS environment ON environment.id = environment_resources.environment_id AND environment.archived_at IS NULL").
+		Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
+		Where("environment_resources.id = ?", connectionID).
+		Where("environment_resources.resource_id = ?", resourceID).
+		Where("environment_resources.archived_at IS NULL").For("UPDATE").Scan(ctx); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return errors.Join(models.ErrDomainValidation, errors.New("Resource connection is unavailable"))
+		}
+		return err
+	}
+	effectiveKeys, overrides, err := normalizeConnectionEnvironmentKeys(resource, requested)
+	if err != nil {
+		return err
+	}
+	configuration, err := parseEnvironmentResourceConfiguration(connection.Configuration)
+	if err != nil {
+		return err
+	}
+	endpoint, err := models.ResourceEndpoint.Find(ctx, tx, connection.ResourceEndpointID)
+	if err != nil || endpoint.ArchivedAt.Valid || endpoint.ResourceID != resource.ID {
+		return errors.New("Environment Resource endpoint is unavailable during projection")
+	}
+	var credential *models.ResourceCredentialEntity
+	credentialValues := make(map[string]string)
+	if connection.ResourceCredentialID != nil {
+		selected, findErr := models.ResourceCredential.Find(ctx, tx, *connection.ResourceCredentialID)
+		if findErr != nil || selected.ArchivedAt.Valid || selected.ResourceID != resource.ID {
+			return errors.New("Environment Resource credential is unavailable during projection")
+		}
+		credentialValues, err = service.credentialSecretValues(selected)
+		if err != nil {
+			return err
+		}
+		credential = &selected
+	}
+	values, projectedKeys, err := resourceProjectionValues(
+		resource, endpoint, credential, credentialValues, configuration.CredentialProjection, effectiveKeys,
+	)
+	if err != nil {
+		return err
+	}
+	database := ""
+	if credential != nil {
+		database = resourceCredentialMetadataDatabase(credential.Metadata)
+	}
+	if err := service.secrets.ReconcileManagedResource(ctx, tx, connection, values, projectedKeys, overrides, database); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (service *ResourceManagement) reconcileEnvironmentResourceConnections(
+	ctx context.Context,
+	db storage.Executor,
+	resource models.ResourceEntity,
+	connections []models.EnvironmentResourceEntity,
+) error {
 	for _, connection := range connections {
+		if connection.ResourceID != resource.ID {
+			return errors.New("Environment Resource connection does not belong to the changed Resource")
+		}
 		endpoint, err := models.ResourceEndpoint.Find(ctx, db, connection.ResourceEndpointID)
-		if err != nil || endpoint.ArchivedAt.Valid || endpoint.ResourceID != connection.ResourceID {
-			return errors.New("Environment Resource endpoint is unavailable during credential rotation")
+		if err != nil || endpoint.ArchivedAt.Valid || endpoint.ResourceID != resource.ID {
+			return errors.New("Environment Resource endpoint is unavailable during projection")
 		}
-		databaseName := resourceCredentialMetadataDatabase(credential.Metadata)
-		if databaseName == "" {
-			return errors.New("Environment Resource credential Database selection is invalid")
+		var credential *models.ResourceCredentialEntity
+		credentialValues := make(map[string]string)
+		if connection.ResourceCredentialID != nil {
+			selected, findErr := models.ResourceCredential.Find(ctx, db, *connection.ResourceCredentialID)
+			if findErr != nil || selected.ArchivedAt.Valid || selected.ResourceID != resource.ID {
+				return errors.New("Environment Resource credential is unavailable during projection")
+			}
+			credentialValues, err = service.credentialSecretValues(selected)
+			if err != nil {
+				return err
+			}
+			credential = &selected
 		}
-		uri := &url.URL{Scheme: "postgresql", Host: fmt.Sprintf("%s:%d", endpoint.Address, endpoint.Port), Path: "/" + databaseName, User: url.UserPassword(credential.Username.String, password)}
-		query := uri.Query()
-		query.Set("sslmode", endpoint.TlsMode)
-		uri.RawQuery = query.Encode()
-		prefix := strings.ToUpper(connection.Alias)
-		if err := service.secrets.RotateManagedResource(ctx, db, connection, map[string]string{
-			prefix + "_PASSWORD": password,
-			prefix + "_URL":      uri.String(),
-		}); err != nil {
+		configuration, err := parseEnvironmentResourceConfiguration(connection.Configuration)
+		if err != nil {
+			return err
+		}
+		effectiveKeys := connectionEnvironmentKeys(resource, configuration)
+		values, environmentKeys, err := resourceProjectionValues(
+			resource, endpoint, credential, credentialValues, configuration.CredentialProjection, effectiveKeys,
+		)
+		if err != nil {
+			return err
+		}
+		database := ""
+		if credential != nil {
+			database = resourceCredentialMetadataDatabase(credential.Metadata)
+		}
+		if err := service.secrets.ReconcileManagedResource(
+			ctx, db, connection, values, environmentKeys, configuration.EnvironmentKeyOverrides, database,
+		); err != nil {
 			return err
 		}
 	}

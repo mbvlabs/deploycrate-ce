@@ -130,6 +130,8 @@ func bootstrapSetupControlPlane(ctx context.Context, input setup.BootstrapInput)
 		Distribution: input.Distribution, DistributionVersion: input.DistributionVersion,
 		Architecture:         input.Architecture,
 		SessionEncryptionKey: input.SessionEncryptionKey,
+		ClickHouseUser:       input.ClickHouseUser,
+		ClickHousePassword:   input.ClickHousePassword,
 		Capabilities: services.BootstrapCapabilitiesInput{
 			BuildpacksPackVersion: input.Capabilities.BuildpacksPackVersion,
 			CaddyVersion:          input.Capabilities.CaddyVersion,

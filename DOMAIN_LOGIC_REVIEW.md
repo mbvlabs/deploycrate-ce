@@ -309,7 +309,7 @@ Application
                          initial Build job
 ```
 
-The revision is the deployable contract. Mutable tables still provide identity and operational metadata, but deployment validates them against the exact revision.
+The revision is the deployable contract. Mutable tables still provide identity and operational metadata, but deployment validates them against the exact revision. Application deletion removes external routes, workloads, jobs, and build caches before one database transaction deletes the Application-owned graph. Resource and Server records remain shared infrastructure.
 
 ### Important files
 
@@ -326,7 +326,7 @@ The revision is the deployable contract. Mutable tables still provide identity a
 
 - [ ] Verify an environment cannot be partially configured or configured twice under concurrency.
 - [ ] Verify edits create the right requested and result revisions and do not silently mutate deployable history.
-- [ ] Verify archived applications/environments cannot still build, deploy, receive webhooks, or retain public routes.
+- [ ] Verify deleted applications/environments cannot still build, deploy, receive webhooks, or retain public routes.
 - [ ] Verify build-server, runtime-server, Resource, and network placement capability checks.
 - [ ] Verify environment deletion ordering and compensation across Docker, Caddy, jobs, and database records.
 - [ ] Verify all environment mutation routes should be available to every authenticated user.
@@ -575,7 +575,7 @@ Ongoing remote operations use a five-minute SSH user certificate and the pinned 
 
 ### What it does
 
-A `Resource` is a deployable dependency such as PostgreSQL, MySQL, Redis, ClickHouse, an OCI registry, HTTP, or TCP. It may be managed by DeployCrate or external. Separate records describe installation, endpoint, credential, volume, mount, health check, grants, and environment connections.
+A `Resource` is a deployable dependency such as PostgreSQL, MySQL, Redis, ClickHouse, an OCI registry, HTTP, or TCP. It may be managed by DeployCrate or external. Separate records describe installation, endpoint, credential, volume, mount, health check, and Environment attachments.
 
 ```text
 Resource
@@ -585,10 +585,9 @@ Resource
    +--> ResourceEndpoint -> optional PrivateNetwork
    +--> ResourceCredential -> encrypted secret values
    +--> ResourceHealthCheck -> latest expiring status
-   +--> environment/application grants
-   `--> EnvironmentResource connection
+   `--> EnvironmentResource attachment
                |
-               +--> variables in desired-state revision
+               +--> Resource-managed key overrides
                `--> projected secrets in desired-state revision
 ```
 
@@ -597,18 +596,19 @@ Private device access creates a WireGuard device, Resource grant, host listener,
 ### Important files
 
 - [`models/resource_kind.go`](models/resource_kind.go): supported kinds, protocols, ports, credentials, and health checks.
-- [`services/resource_management.go`](services/resource_management.go): Resource CRUD, deployment, credentials, connections, and dependency checks.
-- [`services/resource_grants.go`](services/resource_grants.go): sharing-scope grants.
+- [`services/resource_management.go`](services/resource_management.go): Resource CRUD, deployment, credentials, and dependency checks.
+- [`services/environment_setup.go`](services/environment_setup.go): Environment-owned Resource attachment workflow.
 - [`services/resource_health.go`](services/resource_health.go): due-check selection, probes, thresholds, and expiring status.
 - [`services/resource_private_access.go`](services/resource_private_access.go): device enrollment, listeners, firewall rules, revoke, observe.
 - [`services/registry_resources.go`](services/registry_resources.go): external registry specialization.
-- [`models/resource.go`](models/resource.go): Resource identity and management/sharing mode.
+- [`models/resource.go`](models/resource.go): Resource identity and management mode.
 - [`controllers/resources.go`](controllers/resources.go): admin Resource surface.
 - [`internal/resourceaccess/`](internal/resourceaccess/): host-side listener and firewall commands.
 
 ### Review checklist
 
-- [ ] Verify `management_mode`, `sharing_scope`, grants, and connections form one coherent authorization model.
+- [ ] Verify Environment attachment changes preserve Resource endpoint, credential, placement, and network invariants.
+- [ ] Verify Resource defaults and attachment-specific key overrides reconcile only their affected Environments and retain secret deployment state.
 - [ ] Verify create/update/archive dependency checks are repeated inside a transaction where concurrency matters.
 - [ ] Verify host effects are compensated when database persistence fails, and vice versa.
 - [ ] Verify container names, port mappings, mount paths, image references, and server placement cannot escape managed scope.

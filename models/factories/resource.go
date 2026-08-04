@@ -26,7 +26,6 @@ func BuildResource(opts ...ResourceOption) models.ResourceEntity {
 			Slug:          faker.Word(),
 			ResourceType:  models.ResourceTypeDatabase,
 			Configuration: json.RawMessage(`{"engine":"postgresql"}`),
-			SharingScope:  models.ResourceSharingEnvironment,
 			SystemManaged: false,
 			ArchivedAt:    sql.NullTime{Time: time.Now(), Valid: true},
 		},
@@ -47,7 +46,6 @@ func CreateResource(ctx context.Context, exec storage.Executor, opts ...Resource
 		Slug:          built.Slug,
 		ResourceType:  built.ResourceType,
 		Configuration: built.Configuration,
-		SharingScope:  built.SharingScope,
 		SystemManaged: built.SystemManaged,
 		ArchivedAt:    built.ArchivedAt,
 	})
@@ -93,12 +91,6 @@ func WithResourcesResourceType(value models.ResourceTypeEnum) ResourceOption {
 func WithResourcesConfiguration(value json.RawMessage) ResourceOption {
 	return func(f *ResourceFactory) {
 		f.ResourceEntity.Configuration = value
-	}
-}
-
-func WithResourcesSharingScope(value models.ResourceSharingScopeEnum) ResourceOption {
-	return func(f *ResourceFactory) {
-		f.ResourceEntity.SharingScope = value
 	}
 }
 

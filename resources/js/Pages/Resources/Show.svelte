@@ -19,7 +19,8 @@
   import { routes } from '@/routes'
 
   type CredentialField = { name: string; label: string; required: boolean; secret: boolean }
-  type Engine = { engine: string; label: string; resourceType: string; protocols: string[]; endpointRoles: string[]; tlsModes: string[]; credentialFields: CredentialField[]; healthCheckKinds: string[]; defaultPort: number; defaultProtocol: string; defaultTlsMode: string }
+  type EnvironmentKey = { name: string; label: string; defaultKey: string }
+  type Engine = { engine: string; label: string; resourceType: string; protocols: string[]; endpointRoles: string[]; tlsModes: string[]; credentialFields: CredentialField[]; environmentKeys: EnvironmentKey[]; healthCheckKinds: string[]; defaultPort: number; defaultProtocol: string; defaultTlsMode: string }
   type PrivateNetwork = { id: string; name: string; serverIds: string[]; serverAddresses: Record<string, string> }
   type Options = { engines: Engine[]; servers: Array<{ id: string; name: string; address: string }>; privateNetworks: PrivateNetwork[]; registryCredentials: Array<{ id: string; name: string }> }
   type Enrollment = { deviceId: string; grantId: string; clientConfiguration: string }
@@ -81,6 +82,7 @@
   let volumeDialogOpen = $state(false)
   let mountDialogOpen = $state(false)
   let healthDialogOpen = $state(false)
+  let connectionKeysDialogOpen = $state(false)
   let destructiveActionDialogOpen = $state(false)
   let restoreDialogOpen = $state(false)
   let wireGuardConfigurationDialogOpen = $state(false)
@@ -107,6 +109,8 @@
   let backupPolicy = $state(initialBackupPolicy())
   let restoreBackup = $state<BackupHistory | null>(null)
   let restoreConfirmation = $state('')
+  let connectionKeysConnection = $state<any>(null)
+  let connectionKeys = $state({} as Record<string, string>)
 
   onMount(() => {
     const restoreInterval = window.setInterval(() => {
@@ -197,6 +201,29 @@
   function createVolume() { if (dialogAction) return; submit(() => { const configuration = json(volume.configurationText); dialogAction = 'volume'; router.post(routes.resourceVolumeCreate(resource.id), { ...volume, configuration }, { onSuccess: () => (volumeDialogOpen = false), onError: () => (volumeDialogOpen = true), onFinish: () => (dialogAction = '') }) }) }
   function createMount() { if (dialogAction) return; dialogAction = 'mount'; router.post(routes.resourceMountCreate(resource.id), mount, { onSuccess: () => (mountDialogOpen = false), onError: () => (mountDialogOpen = true), onFinish: () => (dialogAction = '') }) }
   function createHealth() { if (dialogAction) return; submit(() => { const configuration = json(health.configurationText); dialogAction = 'health'; router.post(routes.resourceHealthCheckCreate(resource.id), { ...health, configuration }, { onSuccess: () => (healthDialogOpen = false), onError: () => (healthDialogOpen = true), onFinish: () => (dialogAction = '') }) }) }
+  function openConnectionKeys(connection: any) {
+    connectionKeysConnection = connection
+    connectionKeys = { ...connection.environmentKeys }
+    connectionKeysDialogOpen = true
+  }
+  function connectionKeyDefinitions(connection: any) {
+    if (connection?.configuration?.credential_projection === 'connection_url') {
+      return definition.environmentKeys.filter((key) => key.name === 'url')
+    }
+    return definition.environmentKeys.filter((key) => key.name !== 'url')
+  }
+  function resourceDefaultEnvironmentKey(key: EnvironmentKey) {
+    return resource.configuration?.environment_keys?.[key.name] ?? key.defaultKey
+  }
+  function saveConnectionKeys() {
+    if (!connectionKeysConnection || dialogAction) return
+    dialogAction = 'connection-keys'
+    router.patch(routes.resourceConnectionEnvironmentKeysUpdate(resource.id, connectionKeysConnection.id), { environmentKeys: connectionKeys }, {
+      onSuccess: () => (connectionKeysDialogOpen = false),
+      onError: () => (connectionKeysDialogOpen = true),
+      onFinish: () => (dialogAction = ''),
+    })
+  }
   function databaseRouteName(name: string) { return encodeURIComponent(name) }
   function saveBackupPolicy() {
     if (!selectedBackups) return
@@ -338,8 +365,8 @@
       <div>
         <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">{resource.engine} · {resource.resourceType}</p>
         <h1 class="mt-3 text-3xl font-semibold">{resource.name}</h1>
-        <p class="mt-2 text-sm capitalize text-muted-foreground">Docker · {resource.sharingScope} sharing</p>
-		{#if databaseBacked}<p class="mt-1 text-xs text-muted-foreground">{resource.databases.length} {resource.databases.length === 1 ? 'Database' : 'Databases'}</p>{/if}
+        <p class="mt-2 text-sm text-muted-foreground">Docker Resource</p>
+        {#if databaseBacked}<p class="mt-1 text-xs text-muted-foreground">{resource.databases.length} {resource.databases.length === 1 ? 'Database' : 'Databases'}</p>{/if}
       </div>
       <div class="flex gap-2">
         <Button variant="outline" onclick={() => router.reload({ only: ['resource'] })}>Refresh status</Button>
@@ -362,7 +389,7 @@
         </div>
         <div class="grid grid-cols-2 gap-5 border-t border-border bg-muted/20 p-6 text-sm lg:grid-cols-1 lg:border-l lg:border-t-0">
           <DataField label="Installations" value={String(resource.installations.length)} />
-          <DataField label="Connected Environments" value={String(resource.connectionCount)} />
+          <DataField label="Attached Environments" value={String(resource.connectionCount)} />
         </div>
       </Card.Content>
     </Card.Root>
@@ -579,10 +606,15 @@
     </div>
 
     <Card.Root>
-      <Card.Header><Card.Action><span class="text-xs text-muted-foreground">{resource.connectionCount} connected</span></Card.Action><Card.Title>Connected Environments</Card.Title><Card.Description>Connections are managed from Environment pages.</Card.Description></Card.Header>
+      <Card.Header><Card.Action><span class="text-xs text-muted-foreground">{resource.connectionCount} attached</span></Card.Action><Card.Title>Attached Environments</Card.Title><Card.Description>Attach Resources from Environment pages. Manage injected key names here on the Resource.</Card.Description></Card.Header>
       <Card.Content class="space-y-3">
-        {#if resource.connections.length === 0}<p class="text-sm text-muted-foreground">This Resource is not connected to an Environment.</p>{/if}
-        {#each resource.connections as item}<div class="grid gap-3 border border-border p-3 sm:grid-cols-[1fr_auto]"><div><p class="font-medium">{item.applicationName} / {item.environmentName}</p><p class="mt-1 text-xs text-muted-foreground">Database {item.database || 'Not specified'} · Alias {item.alias} · Endpoint {item.endpointName}{item.credentialName ? ` · Credential ${item.credentialName}` : ''}</p></div>{#if item.environmentArchived || item.applicationArchived}<span class="text-xs text-destructive">Archived owner</span>{/if}</div>{/each}
+        {#if resource.connections.length === 0}<p class="text-sm text-muted-foreground">This Resource is not attached to an Environment.</p>{/if}
+        {#each resource.connections as item}
+          <div class="grid gap-3 border border-border p-3 sm:grid-cols-[1fr_auto]">
+            <div><p class="font-medium">{item.applicationName} / {item.environmentName}</p><p class="mt-1 text-xs text-muted-foreground">Database {item.database || 'Not specified'} · Alias {item.alias} · Endpoint {item.endpointName}{item.credentialName ? ` · Credential ${item.credentialName}` : ''}</p><p class="mt-2 font-mono text-xs text-muted-foreground">{Object.values(item.configuration.environment_keys ?? {}).join(' · ')}</p></div>
+            <div class="flex items-start gap-2"><span class="pt-2 text-xs text-muted-foreground">{Object.keys(item.environmentKeyOverrides ?? {}).length === 0 ? 'Using defaults' : `${Object.keys(item.environmentKeyOverrides ?? {}).length} overridden`}</span><Button size="sm" variant="outline" onclick={() => openConnectionKeys(item)}>Edit injected keys</Button></div>
+          </div>
+        {/each}
       </Card.Content>
     </Card.Root>
 
@@ -670,6 +702,23 @@
           <div class="border border-border bg-muted/20 px-3 py-2"><p class="text-[10px] uppercase tracking-wider text-muted-foreground">Docker installation</p><p class="mt-1 text-sm">{resource.installations[0]?.containerName ?? 'Not installed'}</p></div>
         </div>
         <Dialog.Footer><Button type="button" variant="outline" disabled={dialogAction === 'endpoint'} onclick={() => (endpointDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'endpoint'} aria-busy={dialogAction === 'endpoint'}>{#if dialogAction === 'endpoint'}<Spinner />{/if}Create endpoint</Button></Dialog.Footer>
+      </form>
+    </Dialog.Content>
+  </Dialog.Root>
+
+  <Dialog.Root bind:open={connectionKeysDialogOpen}>
+    <Dialog.Content class="sm:max-w-2xl">
+      <form class="space-y-5" onsubmit={(event) => { event.preventDefault(); saveConnectionKeys() }}>
+        <Dialog.Header><Dialog.Title>Injected keys for {connectionKeysConnection?.applicationName} / {connectionKeysConnection?.environmentName}</Dialog.Title><Dialog.Description>These Resource-managed names apply only to this connection. Entering the Resource default restores inheritance for that key.</Dialog.Description></Dialog.Header>
+        <div class="grid gap-4 sm:grid-cols-2">
+          {#each connectionKeyDefinitions(connectionKeysConnection) as key}
+            <FormField label={key.label} error={errors[`configuration.environment_keys.${key.name}`]}>
+              <Input value={connectionKeys[key.name] ?? resourceDefaultEnvironmentKey(key)} oninput={(event) => connectionKeys[key.name] = event.currentTarget.value} placeholder={resourceDefaultEnvironmentKey(key)} required autocomplete="off" />
+              <p class="mt-1 text-[11px] text-muted-foreground">Default: <span class="font-mono">{resourceDefaultEnvironmentKey(key)}</span></p>
+            </FormField>
+          {/each}
+        </div>
+        <Dialog.Footer><Button type="button" variant="outline" disabled={dialogAction === 'connection-keys'} onclick={() => (connectionKeysDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'connection-keys'} aria-busy={dialogAction === 'connection-keys'}>{#if dialogAction === 'connection-keys'}<Spinner />{/if}Save connection keys</Button></Dialog.Footer>
       </form>
     </Dialog.Content>
   </Dialog.Root>

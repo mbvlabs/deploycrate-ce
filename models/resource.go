@@ -16,22 +16,22 @@ import (
 
 type ResourceEntity struct {
 	bun.BaseModel `bun:"table:resources,alias:resources"`
-	ID            uuid.UUID                `bun:"id,pk,type:uuid"`
-	CreatedAt     time.Time                `bun:"created_at"`
-	UpdatedAt     time.Time                `bun:"updated_at"`
-	Name          string                   `bun:"name"`
-	Slug          string                   `bun:"slug"`
-	ResourceType  ResourceTypeEnum         `bun:"resource_type"`
-	Configuration json.RawMessage          `bun:"configuration,type:jsonb"`
-	SharingScope  ResourceSharingScopeEnum `bun:"sharing_scope"`
-	SystemManaged bool                     `bun:"system_managed"`
-	ArchivedAt    sql.NullTime             `bun:"archived_at"`
+	ID            uuid.UUID        `bun:"id,pk,type:uuid"`
+	CreatedAt     time.Time        `bun:"created_at"`
+	UpdatedAt     time.Time        `bun:"updated_at"`
+	Name          string           `bun:"name"`
+	Slug          string           `bun:"slug"`
+	ResourceType  ResourceTypeEnum `bun:"resource_type"`
+	Configuration json.RawMessage  `bun:"configuration,type:jsonb"`
+	SystemManaged bool             `bun:"system_managed"`
+	ArchivedAt    sql.NullTime     `bun:"archived_at"`
 }
 
 type ResourceConfiguration struct {
-	Engine        string                       `json:"engine"`
-	EngineVersion string                       `json:"engine_version,omitempty"`
-	Databases     []ResourceDatabaseDefinition `json:"databases,omitempty"`
+	Engine          string                       `json:"engine"`
+	EngineVersion   string                       `json:"engine_version,omitempty"`
+	Databases       []ResourceDatabaseDefinition `json:"databases,omitempty"`
+	EnvironmentKeys map[string]string            `json:"environment_keys"`
 }
 
 type ResourceDatabaseDefinition struct {
@@ -40,10 +40,20 @@ type ResourceDatabaseDefinition struct {
 	Collation string `json:"collation,omitempty"`
 }
 
+var resourceEnvironmentReservedKeys = map[string]struct{}{
+	"PORT":                       {},
+	"DEPLOYCRATE_APPLICATION_ID": {},
+	"DEPLOYCRATE_ENVIRONMENT_ID": {},
+	"DEPLOYCRATE_RELEASE_ID":     {},
+}
+
 func (e ResourceEntity) ParsedConfiguration() ResourceConfiguration {
 	var configuration ResourceConfiguration
 	_ = json.Unmarshal(e.Configuration, &configuration)
 	configuration.Engine = strings.ToLower(strings.TrimSpace(configuration.Engine))
+	if definition, ok := FindResourceEngine(configuration.Engine); ok && len(configuration.EnvironmentKeys) == 0 {
+		configuration.EnvironmentKeys = definition.DefaultEnvironmentKeys()
+	}
 	return configuration
 }
 
@@ -56,6 +66,15 @@ func (e ResourceEntity) Databases() []ResourceDatabaseDefinition {
 		return nil
 	}
 	return e.ParsedConfiguration().Databases
+}
+
+func (e ResourceEntity) EnvironmentKeys() map[string]string {
+	configuration := e.ParsedConfiguration()
+	keys := make(map[string]string, len(configuration.EnvironmentKeys))
+	for logicalName, key := range configuration.EnvironmentKeys {
+		keys[logicalName] = NormalizeEnvironmentSecretKey(key)
+	}
+	return keys
 }
 
 func validSlug(value string) bool {
@@ -85,9 +104,6 @@ func (e *ResourceEntity) Validate() error {
 	e.Name = strings.TrimSpace(e.Name)
 	e.Slug = strings.ToLower(strings.TrimSpace(e.Slug))
 	e.ResourceType = ResourceTypeEnum(strings.ToLower(strings.TrimSpace(e.ResourceType.String())))
-	e.SharingScope = ResourceSharingScopeEnum(
-		strings.ToLower(strings.TrimSpace(e.SharingScope.String())),
-	)
 	builder := validation.NewBuilder()
 	builder.Required("name", e.Name)
 	builder.Required("slug", e.Slug)
@@ -103,15 +119,63 @@ func (e *ResourceEntity) Validate() error {
 	}
 	if !validJSONObject(e.Configuration) {
 		builder.Add("configuration", "invalid", "configuration must be a JSON object")
-	} else if settingsContainSecret(e.Configuration) {
+	} else if resourceConfigurationContainsSecret(e.Configuration) {
 		builder.Add("configuration", "secret", "configuration must not contain raw credentials")
-	} else if definition, ok := FindResourceEngine(e.Engine()); !ok || definition.ResourceType != e.ResourceType {
-		builder.Add("configuration.engine", "unsupported", "engine is not supported by this resource type")
-	}
-	if !e.SharingScope.IsValid() {
-		builder.Add("sharingScope", "unsupported", "sharing scope is not supported")
+	} else {
+		configuration := e.ParsedConfiguration()
+		definition, ok := FindResourceEngine(configuration.Engine)
+		if !ok || definition.ResourceType != e.ResourceType {
+			builder.Add("configuration.engine", "unsupported", "engine is not supported by this resource type")
+		} else {
+			normalized := make(map[string]string, len(configuration.EnvironmentKeys))
+			seen := make(map[string]string, len(configuration.EnvironmentKeys))
+			supported := make(map[string]struct{}, len(definition.EnvironmentKeys))
+			for _, keyDefinition := range definition.EnvironmentKeys {
+				supported[keyDefinition.Name] = struct{}{}
+				value := NormalizeEnvironmentSecretKey(configuration.EnvironmentKeys[keyDefinition.Name])
+				field := "configuration.environment_keys." + keyDefinition.Name
+				if value == "" {
+					builder.Add(field, "required", keyDefinition.Label+" key is required")
+					continue
+				}
+				if err := ValidateEnvironmentSecretKey(value, false); err != nil {
+					builder.Add(field, "format", "key must match [A-Z_][A-Z0-9_]* and must not be reserved")
+				}
+				if _, reserved := resourceEnvironmentReservedKeys[value]; reserved {
+					builder.Add(field, "reserved", "key is reserved by the platform")
+				}
+				if previous, exists := seen[value]; exists {
+					builder.Add(field, "duplicate", "key is already used by "+previous)
+				}
+				seen[value] = keyDefinition.Label
+				normalized[keyDefinition.Name] = value
+			}
+			for logicalName := range configuration.EnvironmentKeys {
+				if _, exists := supported[logicalName]; !exists {
+					builder.Add("configuration.environment_keys."+logicalName, "unsupported", "key role is not supported by this Resource engine")
+				}
+			}
+			if err := builder.Err(); err == nil {
+				var raw map[string]any
+				_ = json.Unmarshal(e.Configuration, &raw)
+				raw["environment_keys"] = normalized
+				if encoded, err := json.Marshal(raw); err == nil {
+					e.Configuration = encoded
+				}
+			}
+		}
 	}
 	return builder.Err()
+}
+
+func resourceConfigurationContainsSecret(configuration json.RawMessage) bool {
+	var values map[string]any
+	if json.Unmarshal(configuration, &values) != nil {
+		return false
+	}
+	delete(values, "environment_keys")
+	filtered, err := json.Marshal(values)
+	return err == nil && settingsContainSecret(filtered)
 }
 
 func (r resource) Find(
@@ -135,7 +199,6 @@ type CreateResourceData struct {
 	Slug          string
 	ResourceType  ResourceTypeEnum
 	Configuration json.RawMessage
-	SharingScope  ResourceSharingScopeEnum
 	SystemManaged bool
 	ArchivedAt    sql.NullTime
 }
@@ -153,7 +216,6 @@ func (r resource) Create(
 		Slug:          data.Slug,
 		ResourceType:  data.ResourceType,
 		Configuration: data.Configuration,
-		SharingScope:  data.SharingScope,
 		ArchivedAt:    data.ArchivedAt,
 		SystemManaged: data.SystemManaged,
 	}
@@ -182,7 +244,6 @@ type UpdateResourceData struct {
 	Slug          string
 	ResourceType  ResourceTypeEnum
 	Configuration json.RawMessage
-	SharingScope  ResourceSharingScopeEnum
 	SystemManaged bool
 	ArchivedAt    sql.NullTime
 }
@@ -199,7 +260,6 @@ func (r resource) Update(
 		Slug:          data.Slug,
 		ResourceType:  data.ResourceType,
 		Configuration: data.Configuration,
-		SharingScope:  data.SharingScope,
 		ArchivedAt:    data.ArchivedAt,
 		SystemManaged: data.SystemManaged,
 	}
@@ -221,7 +281,6 @@ func (r resource) Update(
 		Column("slug").
 		Column("resource_type").
 		Column("configuration").
-		Column("sharing_scope").
 		Column("system_managed").
 		Column("archived_at").
 		WherePK().
@@ -317,7 +376,6 @@ func (r resource) Upsert(
 		Slug:          data.Slug,
 		ResourceType:  data.ResourceType,
 		Configuration: data.Configuration,
-		SharingScope:  data.SharingScope,
 		ArchivedAt:    data.ArchivedAt,
 		SystemManaged: data.SystemManaged,
 	}
@@ -339,7 +397,6 @@ func (r resource) Upsert(
 		Set("slug = excluded.slug").
 		Set("resource_type = excluded.resource_type").
 		Set("configuration = excluded.configuration").
-		Set("sharing_scope = excluded.sharing_scope").
 		Set("system_managed = excluded.system_managed").
 		Set("archived_at = excluded.archived_at").
 		Returning("*").

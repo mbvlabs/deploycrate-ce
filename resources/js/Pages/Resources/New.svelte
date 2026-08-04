@@ -13,7 +13,8 @@
   import { routes } from '@/routes'
 
   type CredentialField = { name: string; label: string; required: boolean; secret: boolean }
-  type Engine = { engine: string; label: string; resourceType: 'database' | 'cache' | 'service'; protocols: string[]; endpointRoles: string[]; tlsModes: string[]; credentialFields: CredentialField[]; healthCheckKinds: string[]; defaultPort: number; defaultProtocol: string; defaultTlsMode: string }
+  type EnvironmentKey = { name: string; label: string; defaultKey: string }
+  type Engine = { engine: string; label: string; resourceType: 'database' | 'cache' | 'service'; protocols: string[]; endpointRoles: string[]; tlsModes: string[]; credentialFields: CredentialField[]; environmentKeys: EnvironmentKey[]; healthCheckKinds: string[]; defaultPort: number; defaultProtocol: string; defaultTlsMode: string }
   type Server = { id: string; name: string; address: string }
   type PrivateNetwork = { id: string; name: string; serverIds: string[]; serverAddresses: Record<string, string> }
   type Options = { engines: Engine[]; resourceTypes: string[]; servers: Server[]; privateNetworks: PrivateNetwork[]; registryCredentials: Array<{ id: string; name: string }> }
@@ -40,7 +41,8 @@
 
   function initialForm() {
     return {
-      name: '', slug: '', sharingScope: 'environment', privateNetworkId: '',
+      name: '', slug: '', privateNetworkId: '',
+      environmentKeys: {} as Record<string, string>,
       installation: { imageReference: '', imageDigest: '', containerName: '', restartPolicy: 'unless-stopped', configuration: {}, hostPort: 1, serverId: '', registryCredentialId: '' },
       volume: { name: '', driver: 'local', configuration: {}, serverId: '' },
       mountPath: '/data',
@@ -57,6 +59,7 @@
     form.volume.name = ''
     form.mountPath = selectedPreset?.mountPath ?? '/data'
     form.administrator.username = engine.engine === 'postgresql' ? 'resource_admin' : ''
+    form.environmentKeys = Object.fromEntries(engine.environmentKeys.map((key) => [key.name, key.defaultKey]))
   }
 
   function chooseServer(serverId: string) {
@@ -85,8 +88,7 @@
       name: form.name,
       slug: form.slug,
       resourceType: definition.resourceType,
-      configuration: { engine: definition.engine },
-      sharingScope: form.sharingScope,
+      configuration: { engine: definition.engine, environment_keys: form.environmentKeys },
       privateNetworkId: form.privateNetworkId,
       installation: { ...form.installation, portMappings },
       volume: includeVolume ? { ...form.volume, serverId: form.installation.serverId } : null,
@@ -125,7 +127,9 @@
 
       {#if Object.keys(errors).length > 0}<Alert.Root variant="destructive"><Alert.Title>The Resource could not be created</Alert.Title><Alert.Description><ul class="mt-2 list-disc space-y-1 pl-5">{#each Object.entries(errors) as [field, message]}<li>{field}: {message}</li>{/each}</ul></Alert.Description></Alert.Root>{/if}
 
-      <Card.Root><Card.Header><Card.Title>Resource identity</Card.Title><Card.Description>The slug follows the name until you customize it.</Card.Description></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2"><FormField label="Name" error={errors.name}><Input value={form.name} oninput={(event) => updateName(event.currentTarget.value)} required /></FormField><FormField label="Slug" error={errors.slug}><Input value={form.slug} oninput={(event) => updateSlug(event.currentTarget.value)} placeholder="shared-postgresql" required /></FormField><FormField label="Sharing scope" error={errors.sharingScope}><NativeSelect.Root class="w-full" bind:value={form.sharingScope}><NativeSelect.Option value="environment">Environment policy</NativeSelect.Option><NativeSelect.Option value="application">Application policy</NativeSelect.Option><NativeSelect.Option value="global">Global policy</NativeSelect.Option></NativeSelect.Root></FormField></Card.Content></Card.Root>
+      <Card.Root><Card.Header><Card.Title>Resource identity</Card.Title><Card.Description>The slug follows the name until you customize it.</Card.Description></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2"><FormField label="Name" error={errors.name}><Input value={form.name} oninput={(event) => updateName(event.currentTarget.value)} required /></FormField><FormField label="Slug" error={errors.slug}><Input value={form.slug} oninput={(event) => updateSlug(event.currentTarget.value)} placeholder="shared-postgresql" required /></FormField></Card.Content></Card.Root>
+
+      <Card.Root><Card.Header><Card.Title>Environment secret names</Card.Title><Card.Description>These names are owned by the Resource. Attached Environments receive the values as Resource-managed secrets.</Card.Description></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2">{#each definition.environmentKeys as key}<FormField label={key.label} error={errors[`configuration.environment_keys.${key.name}`]}><Input bind:value={form.environmentKeys[key.name]} placeholder={key.defaultKey} autocomplete="off" required /></FormField>{/each}</Card.Content></Card.Root>
 
       <Card.Root><Card.Header><Card.Title>Docker installation</Card.Title><Card.Description>The container is the Resource runtime. Start, stop, restart, and endpoint controls remain available after creation.</Card.Description></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2"><FormField label="Server" error={errors['installation.serverId']}><NativeSelect.Root class="w-full" bind:value={form.installation.serverId} onchange={(event) => chooseServer(event.currentTarget.value)} required><NativeSelect.Option value="">Select a Server</NativeSelect.Option>{#each options.servers as server}<NativeSelect.Option value={server.id}>{server.name} · {server.address}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField><FormField label="Private network" error={errors.privateNetworkId}><NativeSelect.Root class="w-full" bind:value={form.privateNetworkId} disabled={!form.installation.serverId}><NativeSelect.Option value="">Do not attach</NativeSelect.Option>{#each availableNetworks as network}<NativeSelect.Option value={network.id}>{network.name}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField><FormField label="Image reference" error={errors['installation.imageReference']}><Input bind:value={form.installation.imageReference} placeholder="registry.example.com/image:tag" required /></FormField><FormField label="Container name" error={errors['installation.containerName']}><Input bind:value={form.installation.containerName} placeholder={form.slug || 'resource-container'} required /></FormField><FormField label="Restart policy" error={errors['installation.restartPolicy']}><NativeSelect.Root class="w-full" bind:value={form.installation.restartPolicy}><NativeSelect.Option value="no">No restart</NativeSelect.Option><NativeSelect.Option value="always">Always</NativeSelect.Option><NativeSelect.Option value="on-failure">On failure</NativeSelect.Option><NativeSelect.Option value="unless-stopped">Unless stopped</NativeSelect.Option></NativeSelect.Root></FormField><FormField label="Registry credential"><NativeSelect.Root class="w-full" bind:value={form.installation.registryCredentialId}><NativeSelect.Option value="">None</NativeSelect.Option>{#each options.registryCredentials as credential}<NativeSelect.Option value={credential.id}>{credential.name}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField><FormField label="Published host port" error={errors['installation.portMappings.0.hostPort']}><Input type="number" bind:value={form.installation.hostPort} min="1" max="65535" required /></FormField><div class="border border-border bg-muted/20 px-3 py-2"><p class="text-[10px] uppercase tracking-wider text-muted-foreground">Container port</p><p class="mt-1 font-mono text-sm">{definition.defaultPort}/tcp</p></div></Card.Content></Card.Root>
 

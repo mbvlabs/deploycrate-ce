@@ -17,7 +17,7 @@
   type Repository = { id: string; githubInstallationId: string; fullName: string; defaultBranch: string }
   type Registry = { id: string; name: string; endpoint: string }
   type Server = { id: string; name: string; kind: string; address: string }
-  type ResourceOption = { id: string; name: string; engine: string; database: string; endpointId: string; endpoint: string; credentialId?: string; credential: string; serverId?: string; credentialFields: string[]; supportsConnectionUrl: boolean }
+  type ResourceOption = { id: string; name: string; engine: string; database: string; endpointId: string; endpoint: string; credentialId?: string; credential: string; serverId?: string; credentialFields: string[]; supportsConnectionUrl: boolean; environmentKeys: Record<string, string> }
   type EnvironmentResource = { resourceId: string; endpointId: string; credentialId?: string; alias: string; database: string; credentialProjection: 'connection_url' | 'individual_parts' }
   type EnvironmentSecret = { key: string; value: string }
   type EnvironmentForm = {
@@ -44,7 +44,7 @@
   }
   type Options = { installations: Installation[]; repositories: Repository[]; registries: Registry[]; buildServers: Server[]; servers: Server[]; resources: ResourceOption[] }
 
-  let { auth, options, errors = {} }: { auth: { email: string }; options: Options; errors?: Record<string, string> } = $props()
+  let { auth, options, errors = {}, setupError = '' }: { auth: { email: string }; options: Options; errors?: Record<string, string>; setupError?: string } = $props()
   const installations = $derived(options.installations ?? [])
   const repositories = $derived(options.repositories ?? [])
   const registries = $derived(options.registries ?? [])
@@ -145,6 +145,15 @@
     environment.secrets = [...environment.secrets, { key: '', value: '' }]
   }
 
+  function resourceManagedKeys(resource: EnvironmentResource) {
+    const option = attachedResourceOption(resource)
+    if (!option) return []
+    const logicalKeys = resource.credentialProjection === 'connection_url'
+      ? ['url']
+      : ['host', 'port', 'protocol', 'tls_mode', ...(resource.database ? ['database'] : []), ...(option.credentialId ? ['username', ...option.credentialFields] : [])]
+    return logicalKeys.map((logicalKey) => option.environmentKeys[logicalKey]).filter(Boolean)
+  }
+
   function openBulkSecrets(environment: EnvironmentForm) {
     bulkSecretEnvironment = environment
     bulkSecretDialogOpen = true
@@ -153,12 +162,7 @@
   function reservedSecretKeys(environment: EnvironmentForm) {
     const keys = ['PORT']
     for (const resource of environment.resources) {
-      const option = attachedResourceOption(resource)
-      const alias = resource.alias.trim().toUpperCase() || resourceAlias(option?.engine ?? 'RESOURCE')
-      const suffixes = resource.credentialProjection === 'connection_url'
-        ? ['URL']
-        : ['HOST', 'PORT', 'PROTOCOL', 'TLS_MODE', ...(resource.database ? ['DATABASE'] : []), ...(option?.credentialId ? ['USER', ...(option.credentialFields ?? []).map((field) => field.toUpperCase())] : [])]
-      keys.push(...suffixes.map((suffix) => `${alias}_${suffix}`))
+      keys.push(...resourceManagedKeys(resource))
     }
     return keys
   }
@@ -277,7 +281,7 @@
         <p class="text-sm font-medium">Resources</p>
         <div class="flex flex-col gap-2 sm:flex-row"><NativeSelect.Root value={environment.selectedResource} onchange={(event) => environment.selectedResource = event.currentTarget.value} class="w-full flex-1"><NativeSelect.Option value="">Select a Resource</NativeSelect.Option>{#each availableResources(environment) as option}<NativeSelect.Option value={`${option.id}:${option.endpointId}:${option.credentialId ?? ''}`}>{option.name} · {option.engine}{option.database ? ` · ${option.database}` : ''} · {option.endpoint} · {option.credential || 'without credentials'}</NativeSelect.Option>{/each}</NativeSelect.Root><Button type="button" variant="outline" disabled={!environment.selectedResource} onclick={() => addResource(environment)}>Attach</Button></div>
         {#each environment.resources as resource, index}
-          <div class="grid gap-3 border border-border p-4 sm:grid-cols-2"><FormField label="Alias"><Input bind:value={resource.alias} /></FormField>{#if resource.database}<FormField label="Database"><Input bind:value={resource.database} readonly /></FormField>{/if}{#if attachedResourceOption(resource)?.supportsConnectionUrl}<FormField label="Connection format"><NativeSelect.Root bind:value={resource.credentialProjection} class="w-full"><NativeSelect.Option value="connection_url">Connection URL</NativeSelect.Option><NativeSelect.Option value="individual_parts">Individual parts</NativeSelect.Option></NativeSelect.Root></FormField>{/if}<Button type="button" variant="ghost" onclick={() => environment.resources = environment.resources.filter((_, itemIndex) => itemIndex !== index)}>Remove</Button></div>
+          <div class="grid gap-3 border border-border p-4 sm:grid-cols-2"><FormField label="Connection alias"><Input bind:value={resource.alias} /></FormField>{#if resource.database}<FormField label="Database"><Input bind:value={resource.database} readonly /></FormField>{/if}{#if attachedResourceOption(resource)?.supportsConnectionUrl}<FormField label="Connection format"><NativeSelect.Root bind:value={resource.credentialProjection} class="w-full"><NativeSelect.Option value="connection_url">Connection URL</NativeSelect.Option><NativeSelect.Option value="individual_parts">Individual parts</NativeSelect.Option></NativeSelect.Root></FormField>{/if}<div class="border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground"><span class="font-medium text-foreground">Resource-managed keys</span><span class="mt-1 block font-mono">{resourceManagedKeys(resource).join(', ') || 'No values projected'}</span></div><Button type="button" variant="ghost" onclick={() => environment.resources = environment.resources.filter((_, itemIndex) => itemIndex !== index)}>Remove</Button></div>
         {:else}<p class="text-xs text-muted-foreground">No Resources attached.</p>{/each}
       </section>
 
@@ -299,7 +303,7 @@
   <form class="mx-auto max-w-5xl space-y-6" onsubmit={submit}>
     <header><p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">Applications</p><h1 class="mt-3 text-3xl font-semibold">Set up a new application</h1><p class="mt-2 max-w-2xl text-sm text-muted-foreground">Configure the application, optional Staging Environment, and required Production Environment on one page.</p></header>
 
-    {#if Object.keys(displayedErrors).length > 0}<div class="border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive"><p class="font-medium">The application could not be created.</p>{#each [...new Set(Object.values(displayedErrors))] as error}<p class="mt-1">{error}</p>{/each}</div>{/if}
+    {#if setupError || Object.keys(displayedErrors).length > 0}<div class="border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive"><p class="font-medium">The application could not be created.</p>{#if setupError}<p class="mt-1">{setupError}</p>{/if}{#each [...new Set(Object.values(displayedErrors))] as error}<p class="mt-1">{error}</p>{/each}</div>{/if}
     {#if registries.length === 0}<div class="border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">Connect a Registry Resource before creating an application.</div>{/if}
 
     <Card.Root>

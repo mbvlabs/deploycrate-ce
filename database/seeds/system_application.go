@@ -150,7 +150,6 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		factories.WithResourcesSlug("deploycrate-ce-postgresql"),
 		factories.WithResourcesResourceType(models.ResourceTypeDatabase),
 		factories.WithResourcesConfiguration(json.RawMessage(`{"engine":"postgresql","engine_version":"17","databases":[{"name":"deploycrate"}]}`)),
-		factories.WithResourcesSharingScope(models.ResourceSharingEnvironment),
 		factories.WithResourcesSystemManaged(true),
 		factories.WithResourcesArchivedAt(sql.NullTime{}),
 	)
@@ -203,9 +202,6 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	if err != nil {
 		return fmt.Errorf("create DeployCrate CE WireGuard Database Resource endpoint: %w", err)
 	}
-	if _, err := models.ResourceEnvironmentGrant.Create(ctx, exec, resource.ID, environment.ID); err != nil {
-		return fmt.Errorf("grant DeployCrate CE Database Resource: %w", err)
-	}
 	if _, err := factories.CreateEnvironmentResource(
 		ctx,
 		exec,
@@ -227,7 +223,6 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		factories.WithResourcesSlug("deploycrate-ce-clickhouse"),
 		factories.WithResourcesResourceType(models.ResourceTypeDatabase),
 		factories.WithResourcesConfiguration(json.RawMessage(`{"engine":"clickhouse","engine_version":"25.8.28.1","databases":[{"name":"deploycrate"}]}`)),
-		factories.WithResourcesSharingScope(models.ResourceSharingEnvironment),
 		factories.WithResourcesSystemManaged(true),
 		factories.WithResourcesArchivedAt(sql.NullTime{}),
 	)
@@ -274,9 +269,6 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	)
 	if err != nil {
 		return fmt.Errorf("create DeployCrate CE ClickHouse endpoint: %w", err)
-	}
-	if _, err := models.ResourceEnvironmentGrant.Create(ctx, exec, clickHouse.ID, environment.ID); err != nil {
-		return fmt.Errorf("grant DeployCrate CE ClickHouse Resource: %w", err)
 	}
 	if _, err := factories.CreateEnvironmentResource(
 		ctx,

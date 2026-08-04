@@ -57,8 +57,6 @@ type (
 	backupPolicy                 struct{}
 	backup                       struct{}
 	resourceRestore              struct{}
-	resourceEnvironmentGrant     struct{}
-	resourceApplicationGrant     struct{}
 	outboxEvent                  struct{}
 	environmentStateRevision     struct{}
 	environmentTargetState       struct{}
@@ -127,8 +125,6 @@ var (
 	BackupPolicy                 backupPolicy
 	Backup                       backup
 	ResourceRestore              resourceRestore
-	ResourceEnvironmentGrant     resourceEnvironmentGrant
-	ResourceApplicationGrant     resourceApplicationGrant
 	OutboxEvent                  outboxEvent
 	EnvironmentStateRevision     environmentStateRevision
 	EnvironmentTargetState       environmentTargetState
