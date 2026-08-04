@@ -79,6 +79,7 @@ func NewProcessor(params ProcessorParams) (Processor, error) {
 			jobs.BackupQueue:         {MaxWorkers: 1},
 			jobs.BuildQueue:          {MaxWorkers: 1},
 			jobs.DeploymentQueue:     {MaxWorkers: 1},
+			jobs.DNSQueue:            {MaxWorkers: 4},
 			jobs.NodeEnrollmentQueue: {MaxWorkers: 1},
 		},
 		RescueStuckJobsAfter: 13 * time.Hour,

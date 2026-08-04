@@ -76,6 +76,7 @@ type EnvironmentSetup struct {
 	github     *GitHubConnection
 	secrets    *EnvironmentSecrets
 	resources  *ResourceManagement
+	dns        *EnvironmentDNS
 	caddy      CaddyRouteService
 	workloads  *WorkloadExecution
 	buildpacks buildpacksclient.Client
@@ -92,6 +93,7 @@ func NewEnvironmentSetup(
 	github *GitHubConnection,
 	secrets *EnvironmentSecrets,
 	resources *ResourceManagement,
+	dns *EnvironmentDNS,
 	caddy CaddyRouteService,
 	workloads *WorkloadExecution,
 	servers *ServerExecution,
@@ -100,7 +102,7 @@ func NewEnvironmentSetup(
 ) *EnvironmentSetup {
 	return &EnvironmentSetup{
 		db: db, queue: queue, jobControl: jobControl, github: github, secrets: secrets,
-		resources: resources, caddy: caddy, workloads: workloads, buildpacks: buildpacksclient.New(), servers: servers,
+		resources: resources, dns: dns, caddy: caddy, workloads: workloads, buildpacks: buildpacksclient.New(), servers: servers,
 		builds: builds, registry: registryclient.New(), config: cfg,
 	}
 }
@@ -137,14 +139,16 @@ type EnvironmentSetupInput struct {
 	Resources     []EnvironmentSetupResourceInput
 	Secrets       []EnvironmentSetupSecretInput
 	Deploy        bool
+	DNS           EnvironmentDNSInput
 }
 
 type EnvironmentSetupResult struct {
-	Environment models.EnvironmentEntity              `json:"environment"`
-	Revision    models.EnvironmentStateRevisionEntity `json:"revision"`
-	Build       models.BuildEntity                    `json:"build"`
-	Release     models.ReleaseEntity                  `json:"release"`
-	Deployment  models.DeploymentEntity               `json:"deployment"`
+	Environment        models.EnvironmentEntity              `json:"environment"`
+	Revision           models.EnvironmentStateRevisionEntity `json:"revision"`
+	Build              models.BuildEntity                    `json:"build"`
+	Release            models.ReleaseEntity                  `json:"release"`
+	Deployment         models.DeploymentEntity               `json:"deployment"`
+	DeploymentDeferred bool                                  `json:"deploymentDeferred"`
 }
 
 type EnvironmentSetupResourceOption struct {
@@ -173,6 +177,7 @@ type EnvironmentSetupServerOption struct {
 type EnvironmentSetupOptions struct {
 	Resources []EnvironmentSetupResourceOption `json:"resources"`
 	Servers   []EnvironmentSetupServerOption   `json:"servers"`
+	DNSZones  []EnvironmentDNSOption           `json:"dnsZones"`
 }
 
 type EnvironmentEditConfiguration struct {
@@ -186,6 +191,8 @@ type EnvironmentEditConfiguration struct {
 	Resources     []EnvironmentSetupResourceInput `json:"resources"`
 	ServerIDs     []uuid.UUID                     `json:"serverIds"`
 	ServerNames   []string                        `json:"serverNames"`
+	DNSMode       string                          `json:"dnsMode"`
+	DNSZoneID     *uuid.UUID                      `json:"dnsZoneId"`
 }
 
 type EnvironmentEditData struct {
@@ -202,6 +209,7 @@ type EnvironmentEditInput struct {
 	HealthPath    string
 	BPGOTargets   string
 	Resources     []EnvironmentSetupResourceInput
+	DNS           EnvironmentDNSInput
 }
 
 type EnvironmentOverview struct {
@@ -227,6 +235,7 @@ type EnvironmentOverview struct {
 	Deployments      []EnvironmentDeploymentActivity `json:"deployments"`
 	Instances        []EnvironmentInstanceActivity   `json:"instances"`
 	APITokenPrefix   string                          `json:"apiTokenPrefix"`
+	DNS              EnvironmentDNSStatus            `json:"dns"`
 }
 
 type EnvironmentListItem struct {
@@ -430,6 +439,10 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 	}
 	var domain string
 	_ = service.db.Executor().NewSelect().TableExpr("environment_domains").ColumnExpr("hostname").Where("environment_id = ?", environmentID).Where("is_primary = TRUE").Where("archived_at IS NULL").Limit(1).Scan(ctx, &domain)
+	dnsStatus, err := service.dns.Status(ctx, environmentID)
+	if err != nil {
+		return EnvironmentOverview{}, err
+	}
 	type runtimeServer struct {
 		ID   uuid.UUID `bun:"id"`
 		Name string    `bun:"name"`
@@ -487,6 +500,7 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 		Deployability: deployability, Secrets: secretActivity, Variables: variables, Domain: domain,
 		Resources: resources, Builds: builds, Releases: releases, Deployments: deployments, Instances: instances,
 		APITokenPrefix: environment.APITokenPrefix.String,
+		DNS:            dnsStatus,
 	}, nil
 }
 
@@ -680,6 +694,7 @@ func (service *EnvironmentSetup) EditData(
 			Hostname: state.Domain.Hostname, ContainerPort: state.Runtime.ContainerPort,
 			HealthPath: state.Runtime.HealthPath, BPGOTargets: state.Runtime.BPGOTargets, Resources: resources,
 			ServerIDs: overview.RuntimeServerIDs, ServerNames: overview.RuntimeServers,
+			DNSMode: overview.DNS.Mode, DNSZoneID: overview.DNS.ZoneID,
 		},
 	}, nil
 }
@@ -832,7 +847,11 @@ func (service *EnvironmentSetup) Options(ctx context.Context) (EnvironmentSetupO
 		OrderExpr("CASE WHEN server.kind = 'self_hosted' THEN 0 ELSE 1 END, server.name").Scan(ctx, &servers); err != nil {
 		return EnvironmentSetupOptions{}, err
 	}
-	return EnvironmentSetupOptions{Resources: options, Servers: servers}, nil
+	dnsZones, err := service.dns.Options(ctx)
+	if err != nil {
+		return EnvironmentSetupOptions{}, err
+	}
+	return EnvironmentSetupOptions{Resources: options, Servers: servers, DNSZones: dnsZones}, nil
 }
 
 type environmentSetupSource struct {
@@ -889,9 +908,11 @@ func (service *EnvironmentSetup) Complete(
 	if source.EnvironmentArchivedAt.Valid || source.SetupComplete {
 		return EnvironmentSetupResult{}, errors.Join(models.ErrDomainValidation, errors.New("Environment is unavailable or setup is already complete"))
 	}
+	managedDNS := strings.EqualFold(strings.TrimSpace(input.DNS.Mode), DNSModeCloudflare)
+	deployNow := input.Deploy && !managedDNS
 	revisionSHA := ""
 	var imageArtifact resolvedImageArtifact
-	if input.Deploy {
+	if deployNow {
 		if source.Kind == "image" {
 			imageArtifact, err = service.resolveImageArtifact(ctx, source, "")
 			if err != nil {
@@ -986,6 +1007,10 @@ func (service *EnvironmentSetup) Complete(
 	if err != nil {
 		return EnvironmentSetupResult{}, err
 	}
+	dnsResult, err := service.dns.ConfigureTx(ctx, tx, domain, input.DNS, true, input.Deploy, input.Deploy, &userID)
+	if err != nil {
+		return EnvironmentSetupResult{}, err
+	}
 	resourceStates := make([]models.EnvironmentResourceState, 0, len(preparedResources))
 	secretEntities := make([]models.EnvironmentSecretEntity, 0, len(preparedUserSecrets)+len(preparedResources))
 	for _, prepared := range preparedResources {
@@ -1060,14 +1085,14 @@ func (service *EnvironmentSetup) Complete(
 			return EnvironmentSetupResult{}, err
 		}
 	}
-	if !input.Deploy {
+	if !deployNow {
 		if err := models.Change.MarkCompleted(ctx, tx, change.ID, now); err != nil {
 			return EnvironmentSetupResult{}, err
 		}
 		if err := tx.Commit(); err != nil {
 			return EnvironmentSetupResult{}, err
 		}
-		return EnvironmentSetupResult{Environment: environment, Revision: revision}, nil
+		return EnvironmentSetupResult{Environment: environment, Revision: revision, DeploymentDeferred: dnsResult.DeploymentDeferred}, nil
 	}
 	if source.Kind == "image" {
 		if err := models.Change.MarkCompleted(ctx, tx, change.ID, now); err != nil {
@@ -1123,9 +1148,10 @@ func (service *EnvironmentSetup) Complete(
 }
 
 type SourceDeploymentResult struct {
-	Build      *models.BuildEntity      `json:"build,omitempty"`
-	Release    *models.ReleaseEntity    `json:"release,omitempty"`
-	Deployment *models.DeploymentEntity `json:"deployment,omitempty"`
+	Build              *models.BuildEntity      `json:"build,omitempty"`
+	Release            *models.ReleaseEntity    `json:"release,omitempty"`
+	Deployment         *models.DeploymentEntity `json:"deployment,omitempty"`
+	DeploymentDeferred bool                     `json:"deploymentDeferred"`
 }
 
 type resolvedImageArtifact struct {
@@ -1178,6 +1204,45 @@ func (service *EnvironmentSetup) AuthenticateAPIToken(ctx context.Context, envir
 		return models.EnvironmentEntity{}, errors.New("invalid Environment API token")
 	}
 	return environment, nil
+}
+
+func (service *EnvironmentSetup) RequestSourceDeployment(
+	ctx context.Context,
+	applicationID, environmentID uuid.UUID,
+	actorID *uuid.UUID,
+	triggerType, reference string,
+) (SourceDeploymentResult, error) {
+	source, _, _, err := service.loadSource(ctx, applicationID, environmentID)
+	if err != nil {
+		return SourceDeploymentResult{}, err
+	}
+	if source.Kind != "image" && strings.TrimSpace(reference) != "" {
+		return SourceDeploymentResult{}, errors.Join(models.ErrDomainValidation, errors.New("Buildpacks deployments do not accept an image reference override"))
+	}
+	if source.Kind != "image" && actorID == nil {
+		return SourceDeploymentResult{}, errors.Join(models.ErrDomainValidation, errors.New("Buildpacks API deployments are not supported"))
+	}
+	deployability, err := models.Environment.Deployability(ctx, service.db.Executor(), environmentID)
+	if err != nil {
+		return SourceDeploymentResult{}, err
+	}
+	blocking := make([]string, 0, len(deployability.Missing))
+	for _, missing := range deployability.Missing {
+		if missing != "managed_dns" {
+			blocking = append(blocking, missing)
+		}
+	}
+	if len(blocking) > 0 {
+		return SourceDeploymentResult{}, errors.Join(models.ErrDomainValidation, fmt.Errorf("Environment is not deployable: %s", strings.Join(blocking, ", ")))
+	}
+	deferred, err := service.dns.PrepareDeployment(ctx, environmentID, actorID, triggerType, reference)
+	if err != nil {
+		return SourceDeploymentResult{}, err
+	}
+	if deferred {
+		return SourceDeploymentResult{DeploymentDeferred: true}, nil
+	}
+	return service.QueueSourceDeployment(ctx, applicationID, environmentID, actorID, triggerType, reference)
 }
 
 func (service *EnvironmentSetup) QueueSourceDeployment(
@@ -1466,6 +1531,13 @@ func (service *EnvironmentSetup) QueueReleaseDeployment(
 	ctx context.Context,
 	applicationID, environmentID, releaseID, userID uuid.UUID,
 ) (models.DeploymentEntity, error) {
+	deployability, err := models.Environment.Deployability(ctx, service.db.Executor(), environmentID)
+	if err != nil {
+		return models.DeploymentEntity{}, err
+	}
+	if !deployability.Deployable {
+		return models.DeploymentEntity{}, errors.Join(models.ErrDomainValidation, fmt.Errorf("Environment is not deployable: %s", strings.Join(deployability.Missing, ", ")))
+	}
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return models.DeploymentEntity{}, err
@@ -1711,7 +1783,7 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	}
 	configuration := EnvironmentSetupInput{
 		Hostname: input.Hostname, ContainerPort: input.ContainerPort,
-		HealthPath: input.HealthPath, BPGOTargets: input.BPGOTargets, Resources: input.Resources,
+		HealthPath: input.HealthPath, BPGOTargets: input.BPGOTargets, Resources: input.Resources, DNS: input.DNS,
 	}
 	if err := validateEnvironmentSetupInput(configuration); err != nil {
 		return err
@@ -1751,15 +1823,6 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	if err != nil || !setupComplete {
 		return errors.New("Environment setup is incomplete")
 	}
-	baseRevision, err := models.EnvironmentStateRevision.LatestCommitted(ctx, tx, environmentID)
-	if err != nil {
-		return err
-	}
-	baseState, err := models.ParseEnvironmentDesiredState(baseRevision.State)
-	if err != nil {
-		return err
-	}
-	buildRequired := baseState.Runtime.BPGOTargets != input.BPGOTargets
 	activeBuilds, err := tx.NewSelect().TableExpr("builds").Where("environment_id = ?", environmentID).
 		Where("status IN ('pending', 'running')").Count(ctx)
 	if err != nil {
@@ -1815,6 +1878,13 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 		ID: domain.ID, Hostname: input.Hostname, IsPrimary: true,
 		ArchivedAt: domain.ArchivedAt, EnvironmentID: environmentID,
 	})
+	if err != nil {
+		return err
+	}
+	_, err = service.dns.ConfigureTx(
+		ctx, tx, updatedDomain, input.DNS,
+		domain.Hostname != updatedDomain.Hostname, false, false, nil,
+	)
 	if err != nil {
 		return err
 	}
@@ -1941,19 +2011,10 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 		Exec(ctx); err != nil {
 		return err
 	}
-	if !buildRequired {
-		if err := service.secrets.queueRevisionDeployment(ctx, tx, change, revision, state); err != nil {
-			return err
-		}
-	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	if !buildRequired {
-		return nil
-	}
-	_, err = service.QueueSourceDeployment(ctx, applicationID, environmentID, &userID, "user", "")
-	return err
+	return nil
 }
 
 func (service *EnvironmentSetup) cleanupEnvironment(ctx context.Context, environmentID uuid.UUID) error {
@@ -2083,6 +2144,9 @@ func (service *EnvironmentSetup) DeleteEnvironment(
 	if err != nil || locked.ApplicationID != applicationID {
 		return errors.New("Environment is unavailable")
 	}
+	if err := service.dns.RemoveForEnvironment(ctx, environmentID); err != nil {
+		return fmt.Errorf("remove managed Environment DNS: %w", err)
+	}
 	if err := service.cleanupEnvironment(ctx, environmentID); err != nil {
 		return err
 	}
@@ -2128,6 +2192,9 @@ func (service *EnvironmentSetup) DeleteApplication(ctx context.Context, applicat
 		return err
 	}
 	for _, environmentID := range lockedEnvironmentIDs {
+		if err := service.dns.RemoveForEnvironment(ctx, environmentID); err != nil {
+			return fmt.Errorf("remove managed DNS for Environment %s: %w", environmentID, err)
+		}
 		if err := service.cleanupEnvironment(ctx, environmentID); err != nil {
 			return fmt.Errorf("clean up Environment %s: %w", environmentID, err)
 		}

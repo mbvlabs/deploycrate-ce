@@ -125,6 +125,7 @@ func (e environment) Deployability(
 		RuntimeReady      bool `bun:"runtime_ready"`
 		TargetReady       bool `bun:"target_ready"`
 		DomainReady       bool `bun:"domain_ready"`
+		DNSReady          bool `bun:"dns_ready"`
 		RevisionReady     bool `bun:"revision_ready"`
 		ResourcesReady    bool `bun:"resources_ready"`
 	}
@@ -169,6 +170,14 @@ func (e environment) Deployability(
 				SELECT 1 FROM environment_domains ed
 				WHERE ed.environment_id = e.id AND ed.is_primary AND ed.archived_at IS NULL
 			) AS domain_ready,
+			NOT EXISTS (
+				SELECT 1
+				FROM environment_domains ed
+				JOIN environment_dns_bindings binding ON binding.environment_domain_id = ed.id
+				WHERE ed.environment_id = e.id AND ed.is_primary AND ed.archived_at IS NULL
+				AND binding.archived_at IS NULL
+				AND (binding.state <> 'applied' OR binding.applied_generation <> binding.generation)
+			) AS dns_ready,
 			EXISTS (
 				SELECT 1 FROM environment_state_revisions esr
 				JOIN changes c ON c.id = esr.change_id AND c.committed_at IS NOT NULL AND c.cancelled_at IS NULL
@@ -202,6 +211,7 @@ func (e environment) Deployability(
 		{"runtime_configuration", checks.RuntimeReady},
 		{"environment_target", checks.TargetReady},
 		{"primary_domain", checks.DomainReady},
+		{"managed_dns", checks.DNSReady},
 		{"committed_state_revision", checks.RevisionReady},
 		{"resource_connections", checks.ResourcesReady},
 	} {

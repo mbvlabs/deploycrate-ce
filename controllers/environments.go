@@ -7,10 +7,12 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"deploycrate-ce/internal/inertia"
 	"deploycrate-ce/internal/request"
 	"deploycrate-ce/internal/validation"
+	"deploycrate-ce/models"
 	"deploycrate-ce/router"
 	"deploycrate-ce/router/cookies"
 	"deploycrate-ce/router/middleware"
@@ -27,6 +29,7 @@ type Environments struct {
 	applications *services.ApplicationSetup
 	metric       services.MetricRollupService
 	logs         *services.EnvironmentLogs
+	dns          *services.EnvironmentDNS
 }
 
 func NewEnvironments(
@@ -35,8 +38,9 @@ func NewEnvironments(
 	applications *services.ApplicationSetup,
 	metric services.MetricRollupService,
 	logs *services.EnvironmentLogs,
+	dns *services.EnvironmentDNS,
 ) Environments {
-	return Environments{setup: setup, secrets: secrets, applications: applications, metric: metric, logs: logs}
+	return Environments{setup: setup, secrets: secrets, applications: applications, metric: metric, logs: logs, dns: dns}
 }
 
 func (controller Environments) RegisterRoutes(router *router.Router) error {
@@ -68,6 +72,8 @@ func (controller Environments) RegisterRoutes(router *router.Router) error {
 		{http.MethodPost, routes.EnvironmentReleaseDeploymentsCreate, controller.RedeployRelease},
 		{http.MethodPost, routes.EnvironmentDeploymentRetry, controller.RetryDeployment},
 		{http.MethodPost, routes.EnvironmentAPITokenRotate, controller.RotateAPIToken},
+		{http.MethodPost, routes.EnvironmentDNSAdopt, controller.AdoptDNS},
+		{http.MethodPost, routes.EnvironmentDNSRetry, controller.RetryDNS},
 		{http.MethodPost, routes.EnvironmentSecretsCreate, controller.CreateSecret},
 		{http.MethodPost, routes.EnvironmentSecretRotate, controller.RotateSecret},
 		{http.MethodDelete, routes.EnvironmentSecretDestroy, controller.ArchiveSecret},
@@ -223,8 +229,9 @@ func (controller Environments) Create(etx *echo.Context) error {
 	if err == nil {
 		created, err = controller.applications.CreateEnvironment(etx.Request().Context(), applicationID, prepared.source)
 	}
+	var completed services.EnvironmentSetupResult
 	if err == nil {
-		_, err = controller.setup.Complete(
+		completed, err = controller.setup.Complete(
 			etx.Request().Context(),
 			applicationID,
 			created.Environment.ID,
@@ -241,17 +248,10 @@ func (controller Environments) Create(etx *echo.Context) error {
 	if err != nil {
 		return controller.newEnvironmentPage(etx, applicationID, err)
 	}
-	if payload.Deploy {
-		userID := cookies.ExtractFromCookieApp(etx).UserID
-		if _, deployErr := controller.setup.QueueSourceDeployment(
-			etx.Request().Context(), applicationID, created.Environment.ID, &userID, "user", "",
-		); deployErr != nil {
-			_ = cookies.AddFlash(etx, cookies.FlashError, "Environment created, but the initial deployment could not be queued: "+deployErr.Error())
-			return inertia.Redirect(etx, routes.EnvironmentShow.URL(environmentPathIDs{ApplicationID: applicationID, EnvironmentID: created.Environment.ID}.routeParams()), http.StatusSeeOther)
-		}
-	}
 	message := "Environment created"
-	if payload.Deploy {
+	if payload.Deploy && completed.DeploymentDeferred {
+		message = "Environment created; deployment will start after managed DNS is ready"
+	} else if payload.Deploy {
 		message = "Environment created and deployment queued"
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, message)
@@ -304,6 +304,7 @@ func (controller Environments) RetryDeployment(etx *echo.Context) error {
 
 func (controller Environments) Deploy(etx *echo.Context) error {
 	params, err := environmentPathParams(etx)
+	deferred := false
 	var payload struct {
 		Reference string `json:"reference"`
 	}
@@ -312,12 +313,18 @@ func (controller Environments) Deploy(etx *echo.Context) error {
 	}
 	if err == nil {
 		userID := cookies.ExtractFromCookieApp(etx).UserID
-		_, err = controller.setup.QueueSourceDeployment(etx.Request().Context(), params.ApplicationID, params.EnvironmentID, &userID, "user", payload.Reference)
+		var result services.SourceDeploymentResult
+		result, err = controller.setup.RequestSourceDeployment(etx.Request().Context(), params.ApplicationID, params.EnvironmentID, &userID, "user", payload.Reference)
+		deferred = result.DeploymentDeferred
 	}
 	if err != nil {
 		_ = cookies.AddFlash(etx, cookies.FlashError, err.Error())
 	} else {
-		_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Deployment queued")
+		message := "Deployment queued"
+		if deferred {
+			message = "DNS reconciliation queued; deployment will start when DNS is ready"
+		}
+		_ = cookies.AddFlash(etx, cookies.FlashSuccess, message)
 	}
 	return inertia.Redirect(etx, routes.EnvironmentShow.URL(params.routeParams()), http.StatusSeeOther)
 }
@@ -409,6 +416,7 @@ func environmentOverviewProps(overview services.EnvironmentOverview) map[string]
 		"deployments":      overview.Deployments,
 		"instances":        overview.Instances,
 		"apiTokenPrefix":   overview.APITokenPrefix,
+		"dns":              overview.DNS,
 	}
 }
 
@@ -471,7 +479,7 @@ func (controller Environments) Edit(etx *echo.Context) error {
 	}
 	return inertia.Page(etx, "Applications/Environments/Edit", inertia.Props{
 		"auth": authProps(etx), "environment": environmentOverviewProps(data.Overview),
-		"configuration": data.Configuration, "options": options,
+		"configuration": data.Configuration, "options": options, "flash": environmentFlashProps(etx),
 	})
 }
 
@@ -484,24 +492,38 @@ type environmentEditPayload struct {
 	HealthPath    string                                   `json:"healthPath"`
 	BPGOTargets   string                                   `json:"bpGoTargets"`
 	Resources     []services.EnvironmentSetupResourceInput `json:"resources"`
+	DNSMode       string                                   `json:"dnsMode"`
+	DNSZoneID     string                                   `json:"dnsZoneId"`
 }
 
 func (controller Environments) Update(etx *echo.Context) error {
 	params, err := environmentPathParams(etx)
 	var payload environmentEditPayload
+	var dnsZoneID *uuid.UUID
 	if err == nil {
 		err = etx.Bind(&payload)
 	}
 	if err == nil {
-		err = controller.setup.UpdateEnvironment(
-			etx.Request().Context(), params.ApplicationID, params.EnvironmentID,
-			cookies.ExtractFromCookieApp(etx).UserID,
-			services.EnvironmentEditInput{
-				Name: payload.Name, Slug: payload.Slug, Kind: payload.Kind, Hostname: payload.Hostname,
-				ContainerPort: payload.ContainerPort, HealthPath: payload.HealthPath,
-				BPGOTargets: payload.BPGOTargets, Resources: payload.Resources,
-			},
-		)
+		if strings.EqualFold(strings.TrimSpace(payload.DNSMode), services.DNSModeCloudflare) {
+			parsed, parseErr := uuid.Parse(payload.DNSZoneID)
+			if parseErr != nil {
+				err = errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: "dnsZoneId", Code: "required", Message: "select a Cloudflare DNS zone"}})
+			} else {
+				dnsZoneID = &parsed
+			}
+		}
+		if err == nil {
+			err = controller.setup.UpdateEnvironment(
+				etx.Request().Context(), params.ApplicationID, params.EnvironmentID,
+				cookies.ExtractFromCookieApp(etx).UserID,
+				services.EnvironmentEditInput{
+					Name: payload.Name, Slug: payload.Slug, Kind: payload.Kind, Hostname: payload.Hostname,
+					ContainerPort: payload.ContainerPort, HealthPath: payload.HealthPath,
+					BPGOTargets: payload.BPGOTargets, Resources: payload.Resources,
+					DNS: services.EnvironmentDNSInput{Mode: payload.DNSMode, ZoneID: dnsZoneID},
+				},
+			)
+		}
 	}
 	if err != nil {
 		if validationErrors, ok := validation.As(err); ok {
@@ -517,6 +539,8 @@ func (controller Environments) Update(etx *echo.Context) error {
 				configuration.HealthPath = payload.HealthPath
 				configuration.BPGOTargets = payload.BPGOTargets
 				configuration.Resources = payload.Resources
+				configuration.DNSMode = payload.DNSMode
+				configuration.DNSZoneID = dnsZoneID
 				return inertia.Page(etx, "Applications/Environments/Edit", inertia.Props{
 					"auth": authProps(etx), "environment": environmentOverviewProps(data.Overview),
 					"configuration": configuration, "options": options,
@@ -526,7 +550,33 @@ func (controller Environments) Update(etx *echo.Context) error {
 		_ = cookies.AddFlash(etx, cookies.FlashError, err.Error())
 		return inertia.Redirect(etx, routes.EnvironmentEdit.URL(params.routeParams()), http.StatusSeeOther)
 	}
-	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Environment updated and replacement rollout queued")
+	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Environment changes saved")
+	return inertia.Redirect(etx, routes.EnvironmentShow.URL(params.routeParams()), http.StatusSeeOther)
+}
+
+func (controller Environments) AdoptDNS(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	if err == nil {
+		err = controller.dns.ConfirmAdoption(etx.Request().Context(), params.EnvironmentID)
+	}
+	if err != nil {
+		_ = cookies.AddFlash(etx, cookies.FlashError, err.Error())
+	} else {
+		_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Existing DNS records will be adopted and replaced")
+	}
+	return inertia.Redirect(etx, routes.EnvironmentShow.URL(params.routeParams()), http.StatusSeeOther)
+}
+
+func (controller Environments) RetryDNS(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	if err == nil {
+		err = controller.dns.Retry(etx.Request().Context(), params.EnvironmentID)
+	}
+	if err != nil {
+		_ = cookies.AddFlash(etx, cookies.FlashError, err.Error())
+	} else {
+		_ = cookies.AddFlash(etx, cookies.FlashSuccess, "DNS reconciliation queued")
+	}
 	return inertia.Redirect(etx, routes.EnvironmentShow.URL(params.routeParams()), http.StatusSeeOther)
 }
 

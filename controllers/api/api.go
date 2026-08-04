@@ -65,11 +65,14 @@ func (a API) DeployEnvironment(etx *echo.Context) error {
 	if err := etx.Bind(&payload); err != nil {
 		return etx.JSON(http.StatusBadRequest, map[string]string{"error": "Request body is invalid"})
 	}
-	result, err := a.environments.QueueSourceDeployment(etx.Request().Context(), environment.ApplicationID, environment.ID, nil, "api", payload.Reference)
+	result, err := a.environments.RequestSourceDeployment(etx.Request().Context(), environment.ApplicationID, environment.ID, nil, "api", payload.Reference)
 	if err != nil {
 		return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 	}
 	response := map[string]any{"environmentId": environment.ID}
+	if result.DeploymentDeferred {
+		response["deploymentDeferred"] = true
+	}
 	if result.Release != nil {
 		response["releaseId"] = result.Release.ID
 	}

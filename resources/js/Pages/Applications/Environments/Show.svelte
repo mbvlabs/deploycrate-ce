@@ -29,6 +29,7 @@
   type EnvironmentLog = { id: string; message: string; stream: string; container: string; deployment: string; instance: string; release: string; occurredAt: string }
   type EnvironmentLogSnapshot = { logs: EnvironmentLog[]; nextCursor: string; hasMore: boolean }
   type Instance = { id: string; state: string; slot: string; ports: { host?: string; http?: number }; releaseId: string; observedAt: string }
+  type DNSStatus = { mode: 'manual' | 'cloudflare'; bindingId?: string; zoneId?: string; zoneName: string; connectionName: string; state: string; generation: number; appliedGeneration: number; lastError: string; reconciliationQueued: boolean; records: { type: string; name: string; content: string }[] }
   type TelemetryPoint = { observedAt: string; cpuCores: number; memoryBytes: number; diskReadBytesPerSecond: number; diskWriteBytesPerSecond: number; networkReceiveBytesPerSecond: number; networkTransmitBytesPerSecond: number; cpuAvailable: boolean; memoryAvailable: boolean; diskReadAvailable: boolean; diskWriteAvailable: boolean; networkReceiveAvailable: boolean; networkTransmitAvailable: boolean }
   type TelemetryRow = {
     application: string; environment: string; release: string; deployment: string; target: string; instance: string
@@ -61,6 +62,7 @@
     deployments: Deployment[]
     instances: Instance[]
     apiTokenPrefix: string
+    dns: DNSStatus
   }
   let { auth, environment, telemetry }: { auth: { email: string }; environment: Overview; telemetry: TelemetryRow[] } = $props()
   let key = $state('')
@@ -72,6 +74,7 @@
   let apiTokenConfirmOpen = $state(false)
   let apiTokenProcessing = $state(false)
   let deploymentCreationProcessing = $state(false)
+  let dnsActionProcessing = $state(false)
   let secretCreationProcessing = $state(false)
   let deploymentRetrying = $state('')
   let liveBuilds = $state<Build[] | null>(null)
@@ -108,6 +111,11 @@
   const builds = $derived(liveBuilds ?? environment.builds)
   const deployments = $derived(liveDeployments ?? environment.deployments)
   const activeDeployment = $derived(deployments.find((deployment) => deployment.active) ?? null)
+  const deploymentRequestReady = $derived(
+    environment.deployability.missing.every((missing) => missing === 'managed_dns')
+      && !environment.dns.reconciliationQueued
+      && (environment.dns.mode === 'manual' || ['applied', 'pending', 'reconciling', 'removing'].includes(environment.dns.state)),
+  )
   const activeInstance = $derived(environment.instances.find((instance) => instance.state === 'serving') ?? null)
   const activeTelemetry = $derived(
     activeDeployment && activeInstance
@@ -175,6 +183,22 @@
         expandedBuildId = ''
       },
       onFinish: () => (deploymentCreationProcessing = false),
+    })
+  }
+  function adoptDNS() {
+    if (dnsActionProcessing) return
+    dnsActionProcessing = true
+    router.post(routes.environmentDNSAdopt(environment.applicationId, environment.environment.id), {}, {
+      preserveScroll: true,
+      onFinish: () => (dnsActionProcessing = false),
+    })
+  }
+  function retryDNS() {
+    if (dnsActionProcessing) return
+    dnsActionProcessing = true
+    router.post(routes.environmentDNSRetry(environment.applicationId, environment.environment.id), {}, {
+      preserveScroll: true,
+      onFinish: () => (dnsActionProcessing = false),
     })
   }
   async function rotateAPIToken() {
@@ -442,6 +466,16 @@
   })
 
   $effect(() => {
+    const dnsState = environment.dns.state
+    if (!environment.dns.reconciliationQueued && dnsState !== 'reconciling') return
+
+    const timer = window.setInterval(() => {
+      router.reload({ only: ['environment'], preserveScroll: true })
+    }, 2000)
+    return () => window.clearInterval(timer)
+  })
+
+  $effect(() => {
     const deploymentId = expandedDeploymentId
     const deploymentStatus = expandedDeploymentStatus
     if (!deploymentId || (deploymentStatus !== 'queued' && deploymentStatus !== 'running')) return
@@ -484,13 +518,24 @@
   <div class="space-y-8">
     <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div><p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">{environment.applicationName} · {environment.environment.kind}</p><h1 class="mt-3 text-3xl font-semibold">{environment.environment.name}</h1></div>
-      <div class="flex flex-wrap gap-2"><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentEdit(environment.applicationId, environment.environment.id)}>Edit environment</Link>{/snippet}</Button><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentSourceEdit(environment.applicationId, environment.environment.id)}>Edit source</Link>{/snippet}</Button>{#if environment.sourceType === 'buildpacks'}<Button disabled={deploymentCreationProcessing || !environment.deployability.deployable} aria-busy={deploymentCreationProcessing} onclick={buildAndDeploy}>{#if deploymentCreationProcessing}<Spinner />{/if}Build & deploy</Button>{/if}<EnvironmentDeleteDialog applicationId={environment.applicationId} environmentId={environment.environment.id} environmentName={environment.environment.name} /></div>
+      <div class="flex flex-wrap gap-2"><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentEdit(environment.applicationId, environment.environment.id)}>Edit environment</Link>{/snippet}</Button><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentSourceEdit(environment.applicationId, environment.environment.id)}>Edit source</Link>{/snippet}</Button>{#if environment.sourceType === 'buildpacks'}<Button disabled={deploymentCreationProcessing || !deploymentRequestReady} aria-busy={deploymentCreationProcessing} onclick={buildAndDeploy}>{#if deploymentCreationProcessing}<Spinner />{/if}Build & deploy</Button>{/if}<EnvironmentDeleteDialog applicationId={environment.applicationId} environmentId={environment.environment.id} environmentName={environment.environment.name} /></div>
     </header>
 
     <Card.Root><Card.Header><Card.Action><StatusBadge status={environment.deployability.deployable ? 'ready' : 'blocked'} /></Card.Action><Card.Title>Desired state</Card.Title></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><DataField label="Repository" value={environment.repository} /><DataField label="Reference" value={environment.reference} /><DataField label="Build context" value={environment.contextPath} /><DataField label="Domain" value={environment.domain} /><DataField label="Runtime Server targets" value={environment.runtimeServers.join(', ')} /><DataField label="Registry" value={environment.registryName} /><DataField label="Registry endpoint" value={environment.registryEndpoint} />{#if !environment.deployability.deployable}<DataField label="Missing" value={environment.deployability.missing.join(', ')} />{/if}</Card.Content></Card.Root>
 
+    <Card.Root>
+      <Card.Header><Card.Action><StatusBadge status={environment.dns.state} label={environment.dns.mode === 'manual' ? 'Manual' : environment.dns.state.replaceAll('_', ' ')} /></Card.Action><Card.Title>DNS</Card.Title><Card.Description>{environment.dns.mode === 'manual' ? 'DeployCrate does not change DNS records for this Environment.' : `${environment.dns.connectionName} · ${environment.dns.zoneName}`}</Card.Description></Card.Header>
+      <Card.Content class="space-y-4">
+        {#if environment.dns.lastError}<p class="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">{environment.dns.lastError}</p>{/if}
+        {#if environment.dns.mode === 'cloudflare' && !environment.dns.reconciliationQueued && ['pending', 'removing'].includes(environment.dns.state)}<p class="border border-border bg-muted/20 p-3 text-sm text-muted-foreground">DNS changes are staged. Use the deployment action when you are ready to apply DNS and deploy this desired state.</p>{/if}
+        {#if environment.dns.records.length > 0}<div class="space-y-2">{#each environment.dns.records as record}<div class="grid gap-1 border border-border p-3 font-mono text-sm sm:grid-cols-[auto_1fr_1fr]"><span>{record.type}</span><span>{record.name}</span><span>{record.content}</span></div>{/each}</div>{/if}
+        {#if environment.dns.state === 'conflict'}<div class="flex flex-wrap items-center justify-between gap-3"><p class="text-sm text-muted-foreground">Existing records are unmanaged. Confirm adoption to replace them with this Environment's server addresses.</p><Button disabled={dnsActionProcessing} onclick={adoptDNS}>{#if dnsActionProcessing}<Spinner />{/if}Adopt and replace</Button></div>{/if}
+        {#if environment.dns.state === 'failed' || environment.dns.state === 'removal_failed'}<div class="flex flex-wrap items-center justify-between gap-3"><p class="text-sm text-muted-foreground">The Environment stays saved, but deployment remains blocked until the DNS operation succeeds.</p><Button variant="outline" disabled={dnsActionProcessing} onclick={retryDNS}>{#if dnsActionProcessing}<Spinner />{/if}Retry DNS</Button></div>{/if}
+      </Card.Content>
+    </Card.Root>
+
     {#if environment.sourceType === 'image'}
-      <Card.Root><Card.Header><Card.Title>Deploy image version</Card.Title><Card.Description>Use the configured reference or override it with another tag or sha256 digest.</Card.Description></Card.Header><Card.Content class="flex flex-col gap-3 sm:flex-row"><Input bind:value={imageReference} placeholder="latest" /><Button disabled={deploymentCreationProcessing || !imageReference.trim() || !environment.deployability.deployable} aria-busy={deploymentCreationProcessing} onclick={buildAndDeploy}>{#if deploymentCreationProcessing}<Spinner />{/if}Resolve & deploy</Button></Card.Content></Card.Root>
+      <Card.Root><Card.Header><Card.Title>Deploy image version</Card.Title><Card.Description>Use the configured reference or override it with another tag or sha256 digest.</Card.Description></Card.Header><Card.Content class="flex flex-col gap-3 sm:flex-row"><Input bind:value={imageReference} placeholder="latest" /><Button disabled={deploymentCreationProcessing || !imageReference.trim() || !deploymentRequestReady} aria-busy={deploymentCreationProcessing} onclick={buildAndDeploy}>{#if deploymentCreationProcessing}<Spinner />{/if}Resolve & deploy</Button></Card.Content></Card.Root>
     {/if}
 
     {#if environment.sourceType === 'image'}

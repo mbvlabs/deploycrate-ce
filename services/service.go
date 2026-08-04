@@ -3,6 +3,7 @@ package services
 
 import (
 	caddyclients "deploycrate-ce/clients/caddy"
+	cloudflareclient "deploycrate-ce/clients/cloudflare"
 	githubclient "deploycrate-ce/clients/github"
 
 	"go.uber.org/fx"
@@ -18,6 +19,9 @@ var Module = fx.Module(
 		NewSystemLogs,
 		NewSystemApplicationTelemetry,
 		NewSystemResourceCredentials,
+		func() CloudflareDNSClient { return cloudflareclient.NewDNS() },
+		NewDNSConnections,
+		NewEnvironmentDNS,
 		func() CaddyClient { return caddyclients.New("") },
 		NewCaddyRouteService,
 		NewSSHCAService,

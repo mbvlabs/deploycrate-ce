@@ -19,10 +19,11 @@
   type Repository = { id: string; githubInstallationId: string; fullName: string; defaultBranch: string }
   type Registry = { id: string; name: string; endpoint: string }
   type Server = { id: string; name: string; kind: string; address: string }
+  type DNSZone = { zoneId: string; zoneName: string; connectionId: string; connectionName: string }
   type ResourceOption = { id: string; name: string; engine: string; database: string; endpointId: string; endpoint: string; credentialId?: string; credential: string; serverId?: string; credentialFields: string[]; supportsConnectionUrl: boolean; environmentKeys: Record<string, string> }
   type EnvironmentResource = { resourceId: string; endpointId: string; credentialId?: string; alias: string; database: string; credentialProjection: 'connection_url' | 'individual_parts' }
   type EnvironmentSecret = { key: string; value: string }
-  type Options = { installations: Installation[]; repositories: Repository[]; registries: Registry[]; buildServers: Server[]; servers: Server[]; resources: ResourceOption[] }
+  type Options = { installations: Installation[]; repositories: Repository[]; registries: Registry[]; buildServers: Server[]; servers: Server[]; resources: ResourceOption[]; dnsZones: DNSZone[] }
   type Application = { id: string; name: string; slug: string }
 
   let { auth, application, options, errors = {}, setupError = '' }: { auth: { email: string }; application: Application; options: Options; errors?: Record<string, string>; setupError?: string } = $props()
@@ -32,6 +33,7 @@
   const buildServers = $derived(options.buildServers ?? [])
   const servers = $derived(options.servers ?? [])
   const resourceOptions = $derived(options.resources ?? [])
+  const dnsZones = $derived(options.dnsZones ?? [])
 
   let environmentName = $state('')
   let environmentSlug = $state('')
@@ -49,6 +51,8 @@
   let buildServerId = $state(untrack(() => buildServers[0]?.id ?? ''))
   let serverIds = $state<string[]>([])
   let hostname = $state('')
+  let dnsMode = $state<'manual' | 'cloudflare'>('manual')
+  let dnsZoneId = $state('')
   let containerPort = $state(8080)
   let healthPath = $state('/health')
   let bpGoTargets = $state('')
@@ -139,6 +143,8 @@
       buildServerId,
       serverIds,
       hostname,
+      dnsMode,
+      dnsZoneId,
       containerPort,
       healthPath,
       bpGoTargets,
@@ -199,7 +205,14 @@
       <Card.Header><Card.Title>Target servers</Card.Title></Card.Header>
       <Card.Content class="space-y-5">
         {#if servers.length === 0}<div class="flex flex-col items-start justify-between gap-4 border border-dashed border-border p-4 sm:flex-row sm:items-center"><p class="text-sm text-muted-foreground">No runtime target servers are available.</p><Button type="button" href={routes.nodeNew()} variant="outline">Add node</Button></div>{:else}<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">{#each servers as server}<label class={`flex cursor-pointer gap-3 border p-4 transition-colors hover:border-primary/60 ${serverIds.includes(server.id) ? 'border-primary bg-primary/5' : 'border-border'}`}><Checkbox class="mt-1" checked={serverIds.includes(server.id)} onCheckedChange={(selected) => toggleServer(server.id, selected === true)} /><span><span class="block text-sm font-medium">{server.name}</span><span class="mt-1 block text-xs text-muted-foreground">{server.kind === 'worker' ? server.address : 'Control plane'}</span></span></label>{/each}</div>{/if}
-        <div class="grid gap-5 sm:grid-cols-2"><FormField label="Domain"><Input bind:value={hostname} placeholder="qa.example.com" required /></FormField><FormField label="Container port"><Input type="number" min="1" max="65535" bind:value={containerPort} required /></FormField><FormField label="Health path"><Input bind:value={healthPath} placeholder="/health" /></FormField>{#if sourceType === 'buildpacks'}<FormField label="Target"><Input bind:value={bpGoTargets} placeholder="./cmd/server" /></FormField>{/if}</div>
+        <div class="grid gap-5 sm:grid-cols-2">
+          <FormField label="Domain" error={displayedErrors.hostname}><Input bind:value={hostname} placeholder="qa.example.com" required /></FormField>
+          <FormField label="DNS management"><NativeSelect.Root bind:value={dnsMode} class="w-full"><NativeSelect.Option value="manual">Manual DNS</NativeSelect.Option><NativeSelect.Option value="cloudflare" disabled={dnsZones.length === 0}>Cloudflare managed</NativeSelect.Option></NativeSelect.Root></FormField>
+          {#if dnsMode === 'cloudflare'}<FormField label="Cloudflare zone" error={displayedErrors.dnsZoneId}><NativeSelect.Root bind:value={dnsZoneId} class="w-full" required><NativeSelect.Option value="">Select a zone</NativeSelect.Option>{#each dnsZones as zone}<NativeSelect.Option value={zone.zoneId}>{zone.zoneName} · {zone.connectionName}</NativeSelect.Option>{/each}</NativeSelect.Root><p class="mt-2 text-xs text-muted-foreground">The hostname must be this zone or one of its subdomains.</p></FormField>{/if}
+          <FormField label="Container port"><Input type="number" min="1" max="65535" bind:value={containerPort} required /></FormField>
+          <FormField label="Health path"><Input bind:value={healthPath} placeholder="/health" /></FormField>
+          {#if sourceType === 'buildpacks'}<FormField label="Target"><Input bind:value={bpGoTargets} placeholder="./cmd/server" /></FormField>{/if}
+        </div>
       </Card.Content>
     </Card.Root>
 

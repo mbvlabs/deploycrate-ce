@@ -44,6 +44,7 @@
     if (path.startsWith(routes.registryResources())) return path === routes.registryResources()
       ? [{ label: 'Connections' }, { label: 'Image Registry' }]
       : [{ label: 'Connections' }, { label: 'Image Registry', href: routes.registryResources() }, { label: 'Details' }]
+    if (path.startsWith(routes.dnsConnections())) return [{ label: 'Connections' }, { label: 'DNS' }]
     if (path.startsWith(routes.objectStorage())) return [{ label: 'Connections' }, { label: 'Object Storage' }]
     if (path.startsWith(routes.gitHubConnection())) return [{ label: 'Connections' }, { label: 'GitHub' }]
     if (path.startsWith(routes.systemTelemetry())) return [{ label: 'System', href: routes.systemOverview() }, { label: 'Telemetry' }]
@@ -157,6 +158,11 @@
             <Sidebar.MenuItem>
               <Sidebar.MenuButton isActive={$page.url.startsWith(routes.objectStorage())} tooltipContent="Object Storage">
                 {#snippet child({ props })}<Link {...props} href={routes.objectStorage()} aria-current={$page.url.startsWith(routes.objectStorage()) ? 'page' : undefined}><CloudIcon /><span>Object Storage</span></Link>{/snippet}
+              </Sidebar.MenuButton>
+            </Sidebar.MenuItem>
+            <Sidebar.MenuItem>
+              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.dnsConnections())} tooltipContent="DNS">
+                {#snippet child({ props })}<Link {...props} href={routes.dnsConnections()} aria-current={$page.url.startsWith(routes.dnsConnections()) ? 'page' : undefined}><NetworkIcon /><span>DNS</span></Link>{/snippet}
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
             <Sidebar.MenuItem>

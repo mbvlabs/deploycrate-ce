@@ -79,6 +79,13 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	if err != nil {
 		return fail(err)
 	}
+	deployability, err := models.Environment.Deployability(ctx, service.db.Executor(), scope.Environment.ID)
+	if err != nil {
+		return err
+	}
+	if !deployability.Deployable {
+		return fail(fmt.Errorf("Environment is not deployable: %s", strings.Join(deployability.Missing, ", ")))
+	}
 	if err := service.advance(ctx, deploymentID, "resolving_secrets"); err != nil {
 		return err
 	}

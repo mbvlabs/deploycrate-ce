@@ -17,6 +17,7 @@
   type Repository = { id: string; githubInstallationId: string; fullName: string; defaultBranch: string }
   type Registry = { id: string; name: string; endpoint: string }
   type Server = { id: string; name: string; kind: string; address: string }
+  type DNSZone = { zoneId: string; zoneName: string; connectionId: string; connectionName: string }
   type ResourceOption = { id: string; name: string; engine: string; database: string; endpointId: string; endpoint: string; credentialId?: string; credential: string; serverId?: string; credentialFields: string[]; supportsConnectionUrl: boolean; environmentKeys: Record<string, string> }
   type EnvironmentResource = { resourceId: string; endpointId: string; credentialId?: string; alias: string; database: string; credentialProjection: 'connection_url' | 'individual_parts' }
   type EnvironmentSecret = { key: string; value: string }
@@ -34,6 +35,8 @@
     buildServerId: string
     serverIds: string[]
     hostname: string
+    dnsMode: 'manual' | 'cloudflare'
+    dnsZoneId: string
     containerPort: number
     healthPath: string
     bpGoTargets: string
@@ -42,7 +45,7 @@
     deploy: boolean
     selectedResource: string
   }
-  type Options = { installations: Installation[]; repositories: Repository[]; registries: Registry[]; buildServers: Server[]; servers: Server[]; resources: ResourceOption[] }
+  type Options = { installations: Installation[]; repositories: Repository[]; registries: Registry[]; buildServers: Server[]; servers: Server[]; resources: ResourceOption[]; dnsZones: DNSZone[] }
 
   let { auth, options, errors = {}, setupError = '' }: { auth: { email: string }; options: Options; errors?: Record<string, string>; setupError?: string } = $props()
   const installations = $derived(options.installations ?? [])
@@ -51,6 +54,7 @@
   const buildServers = $derived(options.buildServers ?? [])
   const servers = $derived(options.servers ?? [])
   const resources = $derived(options.resources ?? [])
+  const dnsZones = $derived(options.dnsZones ?? [])
   let applicationName = $state('')
   let applicationSlug = $state('')
   let slugCustomized = $state(false)
@@ -78,6 +82,8 @@
       buildServerId: buildServers[0]?.id ?? '',
       serverIds: [],
       hostname: '',
+      dnsMode: 'manual',
+      dnsZoneId: '',
       containerPort: 8080,
       healthPath: '/health',
       bpGoTargets: '',
@@ -187,6 +193,8 @@
       buildServerId: environment.buildServerId,
       serverIds: environment.serverIds,
       hostname: environment.hostname,
+      dnsMode: environment.dnsMode,
+      dnsZoneId: environment.dnsZoneId,
       containerPort: environment.containerPort,
       healthPath: environment.healthPath,
       bpGoTargets: environment.bpGoTargets,
@@ -271,6 +279,8 @@
         {/if}
         <div class="grid gap-5 sm:grid-cols-2">
           <FormField label="Domain"><Input value={environment.hostname} oninput={(event) => environment.hostname = event.currentTarget.value} placeholder={`${environment.kind}.example.com`} required /></FormField>
+          <FormField label="DNS management"><NativeSelect.Root value={environment.dnsMode} onchange={(event) => environment.dnsMode = event.currentTarget.value as 'manual' | 'cloudflare'} class="w-full"><NativeSelect.Option value="manual">Manual DNS</NativeSelect.Option><NativeSelect.Option value="cloudflare" disabled={dnsZones.length === 0}>Cloudflare managed</NativeSelect.Option></NativeSelect.Root></FormField>
+          {#if environment.dnsMode === 'cloudflare'}<FormField label="Cloudflare zone"><NativeSelect.Root value={environment.dnsZoneId} onchange={(event) => environment.dnsZoneId = event.currentTarget.value} class="w-full" required><NativeSelect.Option value="">Select a zone</NativeSelect.Option>{#each dnsZones as zone}<NativeSelect.Option value={zone.zoneId}>{zone.zoneName} · {zone.connectionName}</NativeSelect.Option>{/each}</NativeSelect.Root><p class="mt-2 text-xs text-muted-foreground">The domain must be this zone or one of its subdomains.</p></FormField>{/if}
           <FormField label="Container port"><Input type="number" min="1" max="65535" value={environment.containerPort} oninput={(event) => environment.containerPort = Number(event.currentTarget.value)} required /></FormField>
           <FormField label="Health path"><Input value={environment.healthPath} oninput={(event) => environment.healthPath = event.currentTarget.value} placeholder="/health" /></FormField>
           {#if environment.sourceType === 'buildpacks'}<FormField label="Target"><Input value={environment.bpGoTargets} oninput={(event) => environment.bpGoTargets = event.currentTarget.value} placeholder="./cmd/server" /></FormField>{/if}

@@ -81,6 +81,19 @@ func (e *CredentialEntity) Validate() error {
 			builder.Add("metadata", "invalid", "GitHub App credential metadata is incomplete or incompatible")
 		}
 	}
+	if e.Provider == CloudflareAccountAPITokenProvider {
+		var metadata struct {
+			SchemaVersion  int    `json:"schema_version"`
+			CredentialKind string `json:"credential_kind"`
+			AccountID      string `json:"account_id"`
+		}
+		if json.Unmarshal(e.Metadata, &metadata) != nil ||
+			metadata.SchemaVersion != CloudflareCredentialSchemaVersion ||
+			metadata.CredentialKind != "cloudflare_account_api_token" ||
+			!cloudflareAccountIDPattern.MatchString(metadata.AccountID) {
+			builder.Add("metadata", "invalid", "Cloudflare account-owned API token metadata is incomplete or incompatible")
+		}
+	}
 	if e.ArchivedAt.Valid && e.VerifiedAt.Valid && e.VerifiedAt.Time.After(e.ArchivedAt.Time) {
 		builder.Add("verified_at", "invalid", "archived credentials cannot be verified after archival")
 	}

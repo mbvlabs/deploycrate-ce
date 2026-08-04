@@ -5,6 +5,8 @@ type (
 	user                         struct{}
 	token                        struct{}
 	credential                   struct{}
+	dnsConnection                struct{}
+	dnsZone                      struct{}
 	application                  struct{}
 	server                       struct{}
 	serverSSHCredential          struct{}
@@ -37,6 +39,8 @@ type (
 	resourceVolume               struct{}
 	resourceVolumeMount          struct{}
 	environmentDomain            struct{}
+	environmentDNSBinding        struct{}
+	environmentDNSRecord         struct{}
 	environmentHealthCheck       struct{}
 	sourceEvent                  struct{}
 	change                       struct{}
@@ -73,6 +77,8 @@ var (
 	User                         user
 	Token                        token
 	Credential                   credential
+	DNSConnection                dnsConnection
+	DNSZone                      dnsZone
 	Application                  application
 	Server                       server
 	ServerSSHCredential          serverSSHCredential
@@ -105,6 +111,8 @@ var (
 	ResourceVolume               resourceVolume
 	ResourceVolumeMount          resourceVolumeMount
 	EnvironmentDomain            environmentDomain
+	EnvironmentDNSBinding        environmentDNSBinding
+	EnvironmentDNSRecord         environmentDNSRecord
 	EnvironmentHealthCheck       environmentHealthCheck
 	SourceEvent                  sourceEvent
 	Change                       change

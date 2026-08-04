@@ -113,6 +113,7 @@ func applicationCreationOptionsProps(
 	props := applicationSetupOptionsProps(options)
 	props["resources"] = environmentOptions.Resources
 	props["servers"] = environmentOptions.Servers
+	props["dnsZones"] = environmentOptions.DNSZones
 	return props
 }
 
@@ -186,6 +187,8 @@ type applicationEnvironmentCreationPayload struct {
 	Resources            []services.EnvironmentSetupResourceInput `json:"resources"`
 	Secrets              []services.EnvironmentSetupSecretInput   `json:"secrets"`
 	Deploy               bool                                     `json:"deploy"`
+	DNSMode              string                                   `json:"dnsMode"`
+	DNSZoneID            string                                   `json:"dnsZoneId"`
 }
 
 type applicationCreationPayload struct {
@@ -224,12 +227,21 @@ func (payload applicationEnvironmentCreationPayload) prepare(
 		}
 		serverIDs = append(serverIDs, serverID)
 	}
+	var dnsZoneID *uuid.UUID
+	if strings.EqualFold(strings.TrimSpace(payload.DNSMode), services.DNSModeCloudflare) {
+		parsed, err := uuid.Parse(payload.DNSZoneID)
+		if err != nil {
+			return preparedApplicationEnvironmentCreation{}, errors.New("select a Cloudflare DNS zone")
+		}
+		dnsZoneID = &parsed
+	}
 	return preparedApplicationEnvironmentCreation{
 		source: source,
 		setup: services.EnvironmentSetupInput{
 			ServerIDs: serverIDs, Hostname: payload.Hostname, ContainerPort: payload.ContainerPort,
 			HealthPath: payload.HealthPath, BPGOTargets: payload.BPGOTargets,
-			Resources: payload.Resources, Secrets: payload.Secrets,
+			Resources: payload.Resources, Secrets: payload.Secrets, Deploy: payload.Deploy,
+			DNS: services.EnvironmentDNSInput{Mode: payload.DNSMode, ZoneID: dnsZoneID},
 		},
 		deploy: payload.Deploy,
 	}, nil
@@ -264,30 +276,27 @@ func (controller Applications) Create(etx *echo.Context) error {
 		return controller.renderCreationError(etx, err)
 	}
 	userID := cookies.ExtractFromCookieApp(etx).UserID
+	setupResults := make([]services.EnvironmentSetupResult, 0, len(result.Environments))
 	for index, environment := range result.Environments {
-		if _, err = controller.environments.Complete(
+		completed, completeErr := controller.environments.Complete(
 			etx.Request().Context(), result.Application.ID, environment.Environment.ID, userID, prepared[index].setup,
-		); err != nil {
+		)
+		if completeErr != nil {
+			err = completeErr
 			_ = controller.environments.DeleteApplication(etx.Request().Context(), result.Application.ID)
 			return controller.renderCreationError(etx, err)
 		}
-	}
-	deploymentsQueued := 0
-	for index, environment := range result.Environments {
-		if !prepared[index].deploy {
-			continue
-		}
-		if _, err = controller.environments.QueueSourceDeployment(
-			etx.Request().Context(), result.Application.ID, environment.Environment.ID, &userID, "user", "",
-		); err != nil {
-			_ = cookies.AddFlash(etx, cookies.FlashError, "Application created, but an initial deployment could not be queued: "+err.Error())
-			return inertia.Redirect(etx, routes.ApplicationShow.URL(result.Application.ID), http.StatusSeeOther)
-		}
-		deploymentsQueued++
+		setupResults = append(setupResults, completed)
 	}
 	message := "Application created"
-	if deploymentsQueued > 0 {
-		message = "Application created and selected deployments queued"
+	for index, completed := range setupResults {
+		if prepared[index].deploy && completed.DeploymentDeferred {
+			message = "Application created; selected deployments will start after managed DNS is ready"
+			break
+		}
+		if prepared[index].deploy {
+			message = "Application created and selected deployments queued"
+		}
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, message)
 	return inertia.Redirect(etx, routes.ApplicationShow.URL(result.Application.ID), http.StatusSeeOther)

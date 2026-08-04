@@ -13,12 +13,13 @@
 
   type ResourceInput = { resourceId: string; endpointId: string; credentialId?: string; alias: string; database: string; credentialProjection: 'connection_url' | 'individual_parts' }
   type ResourceOption = { id: string; name: string; engine: string; database: string; endpointId: string; endpoint: string; credentialId?: string; credential: string; serverId?: string; credentialFields: string[]; supportsConnectionUrl: boolean; environmentKeys: Record<string, string> }
-  type Configuration = { name: string; slug: string; kind: string; hostname: string; containerPort: number; healthPath: string; bpGoTargets: string; resources: ResourceInput[]; serverIds: string[]; serverNames: string[] }
+  type DNSZone = { zoneId: string; zoneName: string; connectionId: string; connectionName: string }
+  type Configuration = { name: string; slug: string; kind: string; hostname: string; containerPort: number; healthPath: string; bpGoTargets: string; resources: ResourceInput[]; serverIds: string[]; serverNames: string[]; dnsMode: 'manual' | 'cloudflare'; dnsZoneId?: string | null }
   type Environment = { applicationId: string; applicationName: string; sourceType: 'buildpacks' | 'image'; environment: { id: string; name: string; kind: string }; repository: string; reference: string; contextPath: string }
 
-  let { auth, environment, configuration, options }: { auth: { email: string }; environment: Environment; configuration: Configuration; options: { resources: ResourceOption[] } } = $props()
+  let { auth, environment, configuration, options }: { auth: { email: string }; environment: Environment; configuration: Configuration; options: { resources: ResourceOption[]; dnsZones: DNSZone[] } } = $props()
   let selectedResource = $state('')
-  const form = useForm(() => ({ ...configuration, resources: configuration.resources.map((resource) => ({ ...resource })) }))
+  const form = useForm(() => ({ ...configuration, dnsZoneId: configuration.dnsZoneId ?? '', resources: configuration.resources.map((resource) => ({ ...resource })) }))
   const availableResources = $derived(options.resources.filter((resource) => !resource.serverId || configuration.serverIds.includes(resource.serverId)))
 
   function attachedResourceOption(resource: ResourceInput) {
@@ -58,7 +59,7 @@
 <DashboardLayout email={auth.email}>
   <form class="mx-auto max-w-4xl space-y-8" onsubmit={submit}>
     <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-      <div><p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">{environment.applicationName} · Environment</p><h1 class="mt-3 text-3xl font-semibold">Edit {environment.environment.name}</h1><p class="mt-2 text-sm text-muted-foreground">Saving creates a new desired-state revision and queues a replacement Build.</p></div>
+      <div><p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">{environment.applicationName} · Environment</p><h1 class="mt-3 text-3xl font-semibold">Edit {environment.environment.name}</h1><p class="mt-2 text-sm text-muted-foreground">Saving updates desired state. Deploy explicitly when you are ready.</p></div>
       <div class="flex flex-wrap gap-2"><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentSourceEdit(environment.applicationId, environment.environment.id)}>Edit source and registry</Link>{/snippet}</Button><Button variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentShow(environment.applicationId, environment.environment.id)}>Cancel</Link>{/snippet}</Button><EnvironmentDeleteDialog applicationId={environment.applicationId} environmentId={environment.environment.id} environmentName={environment.environment.name} /></div>
     </header>
 
@@ -73,8 +74,10 @@
 
     <Card.Root>
       <Card.Header><Card.Title>Domain</Card.Title><Card.Description>Edit the Environment's primary public domain. HTTPS and Caddy routing are managed from this value.</Card.Description></Card.Header>
-      <Card.Content>
+      <Card.Content class="grid gap-5 sm:grid-cols-2">
         <FormField label="Domain hostname" error={$form.errors.hostname}><Input bind:value={$form.hostname} placeholder="app.example.com" required /></FormField>
+        <FormField label="DNS management"><NativeSelect.Root bind:value={$form.dnsMode} class="w-full"><NativeSelect.Option value="manual">Manual DNS</NativeSelect.Option><NativeSelect.Option value="cloudflare" disabled={(options.dnsZones ?? []).length === 0}>Cloudflare managed</NativeSelect.Option></NativeSelect.Root></FormField>
+        {#if $form.dnsMode === 'cloudflare'}<FormField label="Cloudflare zone" error={$form.errors.dnsZoneId}><NativeSelect.Root bind:value={$form.dnsZoneId} class="w-full" required><NativeSelect.Option value="">Select a zone</NativeSelect.Option>{#each options.dnsZones ?? [] as zone}<NativeSelect.Option value={zone.zoneId}>{zone.zoneName} · {zone.connectionName}</NativeSelect.Option>{/each}</NativeSelect.Root><p class="mt-2 text-xs text-muted-foreground">Hostname and zone changes stay staged until the next explicit deployment.</p></FormField>{/if}
       </Card.Content>
     </Card.Root>
 
@@ -109,6 +112,6 @@
       <Card.Content class="grid gap-4 sm:grid-cols-2"><div class="border border-border p-4"><p class="font-medium">GitHub and Buildpacks</p><p class="mt-1 text-sm text-muted-foreground">{environment.repository} at {environment.reference}, context {environment.contextPath}</p><Button class="mt-4" type="button" variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentSourceEdit(environment.applicationId, environment.environment.id)}>Edit source</Link>{/snippet}</Button></div><div class="border border-border p-4"><p class="font-medium">Environment secrets</p><p class="mt-1 text-sm text-muted-foreground">Add, rotate, and delete write-only values from the Environment page.</p><Button class="mt-4" type="button" variant="outline">{#snippet child({ props })}<Link {...props} href={routes.environmentShow(environment.applicationId, environment.environment.id)}>Manage secrets</Link>{/snippet}</Button></div></Card.Content>
     </Card.Root>
 
-    <div class="flex justify-end"><Button type="submit" disabled={$form.processing} aria-busy={$form.processing}>{#if $form.processing}<Spinner />{/if}Save and deploy</Button></div>
+    <div class="flex justify-end"><Button type="submit" disabled={$form.processing} aria-busy={$form.processing}>{#if $form.processing}<Spinner />{/if}Save changes</Button></div>
   </form>
 </DashboardLayout>
