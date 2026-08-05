@@ -240,7 +240,7 @@
     {/if}
 
     {#if caddyRoutes.length === 0}
-      <Empty.Root class="border border-dashed border-border py-14"><Empty.Header><Empty.Media><RouteIcon /></Empty.Media><Empty.Title>No Caddy routes</Empty.Title><Empty.Description>Create a route to send an Environment domain to its active release.</Empty.Description></Empty.Header><Empty.Content><Button onclick={() => showCreate = true}><PlusIcon />New route</Button></Empty.Content></Empty.Root>
+      <Empty.Root class="border border-dashed border-border py-14"><Empty.Header><Empty.Media variant="icon"><RouteIcon /></Empty.Media><Empty.Title>No Caddy routes</Empty.Title><Empty.Description>Create a route to send an Environment domain to its active release.</Empty.Description></Empty.Header></Empty.Root>
     {:else}
       <div class="space-y-4">
         {#each caddyRoutes as route (route.id)}

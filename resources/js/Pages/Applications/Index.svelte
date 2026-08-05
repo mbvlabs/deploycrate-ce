@@ -25,7 +25,7 @@
       {#snippet actions()}<Button>{#snippet child({ props })}<Link {...props} href={routes.applicationNew()}>New application</Link>{/snippet}</Button>{/snippet}
     </PageHeader>
     {#if applications.length === 0}
-      <Empty.Root class="border border-dashed border-border py-14"><Empty.Header><Empty.Media variant="icon"><AppWindowIcon /></Empty.Media><Empty.Title>No applications yet</Empty.Title><Empty.Description>Create an application to configure its source, environments, and deployment targets.</Empty.Description></Empty.Header><Empty.Content><Button>{#snippet child({ props })}<Link {...props} href={routes.applicationNew()}>New application</Link>{/snippet}</Button></Empty.Content></Empty.Root>
+      <Empty.Root class="border border-dashed border-border py-14"><Empty.Header><Empty.Media variant="icon"><AppWindowIcon /></Empty.Media><Empty.Title>No applications yet</Empty.Title><Empty.Description>Create an application to configure its source, environments, and deployment targets.</Empty.Description></Empty.Header></Empty.Root>
     {:else}
       <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {#each applications as application (application.id)}

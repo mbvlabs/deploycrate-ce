@@ -35,7 +35,7 @@
     </PageHeader>
 
     {#if environments.length === 0}
-      <Empty.Root class="border border-dashed border-border py-14"><Empty.Header><Empty.Media variant="icon"><BoxesIcon /></Empty.Media><Empty.Title>No environments yet</Empty.Title><Empty.Description>Create an application with its production and optional staging environment.</Empty.Description></Empty.Header><Empty.Content><Button>{#snippet child({ props })}<Link {...props} href={routes.applicationNew()}>New application</Link>{/snippet}</Button></Empty.Content></Empty.Root>
+      <Empty.Root class="border border-dashed border-border py-14"><Empty.Header><Empty.Media variant="icon"><BoxesIcon /></Empty.Media><Empty.Title>No environments yet</Empty.Title><Empty.Description>Create an application with its production and optional staging environment.</Empty.Description></Empty.Header></Empty.Root>
     {:else}
       <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         {#each environments as environment (environment.id)}
