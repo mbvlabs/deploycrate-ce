@@ -301,7 +301,9 @@ DeployCrate queries `systemctl is-active` for both slot services. It refuses to 
 
 Development builds use the fixed `https://get-dev.deploycrate.com/dc-ce-app/deploycrate-ce` object and its `.sha256` file. The updater executes the checksum-verified binary's `version` command to identify the target. Builds named `dev` or `development-*` select this source automatically. Other versions require an explicit Cloudflare R2 base URL in `DEPLOYCRATE_CE_RELEASE_BASE_URL`.
 
-During an update, DeployCrate installs the checksum-verified binary in a new immutable release directory, runs that binary's embedded database migrations, repoints only the inactive slot symlink, starts that slot, and checks its database-backed health endpoint. It then switches Caddy weights from `100/0` to `0/100`, verifies the public health endpoint, and updates systemd boot state. Database checkpoints record each external side effect so a surviving slot can complete a healthy cutover or restore traffic, service enablement, service state, and the previous inactive-slot symlink after interruption. Success is recorded only after the old service is inactive and the persisted topology is committed.
+During an update, DeployCrate installs the checksum-verified binary in a new immutable release directory, runs that binary's embedded database migrations, repoints only the inactive slot symlink, starts that slot, and checks its database-backed health endpoint. It writes the desired `100/0` to `0/100` traffic switch to PostgreSQL, reconciles that desired route into Caddy, waits until Caddy's admin API reports the selected slot, and requires the public health response to identify the target slot and version. Only then does it update systemd boot state and stop the previous slot. Database checkpoints record each external side effect so a surviving slot can complete a healthy cutover or restore traffic, service enablement, service state, and the previous inactive-slot symlink after interruption. Success is recorded only after the old service is inactive and the persisted topology is committed.
+
+The running `SelfUpdate` service also reconciles the system route and slot services every 30 seconds. An unresolved update checkpoint is authoritative during a cutover. Outside a cutover, the active database backend is authoritative. The reconciler starts and verifies the database-selected slot, applies its database route to Caddy, confirms the public response came from that slot, enables it for boot, and only then stops the other slot.
 
 Self-update migrations must follow expand-and-contract compatibility because the previous binary remains available during cutover and database migrations are not automatically reversed.
 
@@ -317,6 +319,33 @@ readlink -f /opt/deploycrate-ce/slots/green/deploycrate-ce
 ```
 
 The green `readlink` command has no target until the first update has staged a release into that slot.
+
+### Manual Self-update Recovery
+
+If the dashboard becomes unavailable during a cutover, first inspect both slots and their recent logs:
+
+```bash
+sudo systemctl status deploycrate-ce@blue.service deploycrate-ce@green.service
+sudo journalctl -u deploycrate-ce@blue.service -u deploycrate-ce@green.service -n 200 --no-pager
+curl -fsS -D - -o /dev/null http://127.0.0.1:8080/api/health
+curl -fsS -D - -o /dev/null http://127.0.0.1:8081/api/health
+```
+
+Healthy responses include `X-DeployCrate-Slot` and `X-DeployCrate-Version`. If at least one slot is healthy, start both units and allow the surviving process to reconcile the durable checkpoint and database route:
+
+```bash
+sudo systemctl start deploycrate-ce@blue.service deploycrate-ce@green.service
+```
+
+Wait at least 30 seconds, then inspect the units, the public health identity, and Caddy's managed routes:
+
+```bash
+sudo systemctl is-active deploycrate-ce@blue.service deploycrate-ce@green.service
+curl -fsS -D - -o /dev/null https://deploycrate.example/api/health
+curl -fsS http://127.0.0.1:2019/config/apps/http/servers/srv0/routes
+```
+
+Do not stop either slot until the public health headers identify the intended healthy slot. If automatic reconciliation continues to fail, keep the healthy slot running and preserve the service logs, `/var/lib/deploycrate-ce/runtime/self-update.json`, both slot symlink targets, and the Caddy route response before making further changes.
 
 ## Project Structure
 
