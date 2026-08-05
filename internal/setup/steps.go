@@ -156,6 +156,7 @@ func DefaultSteps(operations Operations) []Step {
 				return map[string]string{"CLICKHOUSE_PASSWORD": cfg.Secrets.ClickHousePassword}
 			},
 		),
+		clickHouseMigrationStep(operations.RunClickHouseMigrations),
 		scriptSetupStep(
 			"otel-collector-"+OpenTelemetryCollectorVersion+"-authenticated-otlp-v5",
 			"Install durable logs, traces, and metrics collection",
@@ -567,6 +568,31 @@ func migrationStep(runMigrations func(context.Context, string) error) Step {
 				return errors.New("database migration operation is unavailable")
 			}
 			return runMigrations(ctx, cfg.DatabaseURL())
+		},
+	}
+}
+
+func clickHouseMigrationStep(
+	runMigrations func(context.Context, ClickHouseMigrationInput) error,
+) Step {
+	return setupStep{
+		id: "clickhouse-migrations-v1", description: "Apply embedded ClickHouse migrations",
+		apply: func(ctx context.Context, cfg Config, runtime Runtime, report Reporter) error {
+			if runtime.DryRun {
+				report(Event{
+					Kind: EventLog, StepID: "clickhouse-migrations-v1",
+					Line: "dry run: ClickHouse migrations skipped",
+				})
+				return nil
+			}
+			if runMigrations == nil {
+				return errors.New("ClickHouse migration operation is unavailable")
+			}
+			return runMigrations(ctx, ClickHouseMigrationInput{
+				Protocol: "http", Host: "127.0.0.1", Port: "8123",
+				Database: "deploycrate", User: "deploycrate",
+				Password: cfg.Secrets.ClickHousePassword,
+			})
 		},
 	}
 }

@@ -12,6 +12,31 @@ import (
 )
 
 func ApplyMigrations(ctx context.Context, db storage.Pool) (returnErr error) {
+	return withMigrationLock(ctx, db, func() error {
+		if err := storage.RunMigrations(ctx, db.Conn(), Migrations, "migrations"); err != nil {
+			return fmt.Errorf("database: apply PostgreSQL migrations: %w", err)
+		}
+		return nil
+	})
+}
+
+func ApplyAllMigrations(ctx context.Context, db storage.Pool, clickHouse *ClickHouse) error {
+	return withMigrationLock(ctx, db, func() error {
+		if err := storage.RunMigrations(ctx, db.Conn(), Migrations, "migrations"); err != nil {
+			return fmt.Errorf("database: apply PostgreSQL migrations: %w", err)
+		}
+		if err := ApplyClickHouseMigrations(ctx, clickHouse.Conn()); err != nil {
+			return fmt.Errorf("database: apply ClickHouse migrations: %w", err)
+		}
+		return nil
+	})
+}
+
+func withMigrationLock(
+	ctx context.Context,
+	db storage.Pool,
+	run func() error,
+) (returnErr error) {
 	locker, err := lock.NewPostgresSessionLocker()
 	if err != nil {
 		return fmt.Errorf("database: create migration lock: %w", err)
@@ -32,8 +57,5 @@ func ApplyMigrations(ctx context.Context, db storage.Pool) (returnErr error) {
 		}
 	}()
 
-	if err := storage.RunMigrations(ctx, db.Conn(), Migrations, "migrations"); err != nil {
-		return fmt.Errorf("database: apply migrations: %w", err)
-	}
-	return nil
+	return run()
 }

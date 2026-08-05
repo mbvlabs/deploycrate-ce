@@ -13,9 +13,19 @@ type Operations struct {
 	ValidateRemoteServices  func(context.Context, Config) error
 	ValidateDatabase        func(context.Context, string) error
 	RunMigrations           func(context.Context, string) error
+	RunClickHouseMigrations func(context.Context, ClickHouseMigrationInput) error
 	EnsureAdmin             func(context.Context, AdminInput) error
 	BootstrapControlPlane   func(context.Context, BootstrapInput) (string, error)
 	VerifyControlPlaneRoute func(context.Context, string, string) error
+}
+
+type ClickHouseMigrationInput struct {
+	Protocol string
+	Host     string
+	Port     string
+	Database string
+	User     string
+	Password string
 }
 
 type AdminInput struct {

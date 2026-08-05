@@ -9,6 +9,7 @@ import (
 
 	caddyclients "deploycrate-ce/clients/caddy"
 	"deploycrate-ce/clients/objectstorage"
+	"deploycrate-ce/config"
 	"deploycrate-ce/database"
 	"deploycrate-ce/internal/setup"
 	"deploycrate-ce/internal/storage"
@@ -22,10 +23,30 @@ func newSetupOperations() setup.Operations {
 		ValidateRemoteServices:  validateSetupRemoteServices,
 		ValidateDatabase:        validateSetupDatabase,
 		RunMigrations:           runSetupMigrations,
+		RunClickHouseMigrations: runSetupClickHouseMigrations,
 		EnsureAdmin:             ensureSetupAdmin,
 		BootstrapControlPlane:   bootstrapSetupControlPlane,
 		VerifyControlPlaneRoute: verifySetupControlPlaneRoute,
 	}
+}
+
+func runSetupClickHouseMigrations(
+	ctx context.Context,
+	input setup.ClickHouseMigrationInput,
+) error {
+	db, err := database.NewClickHouse(ctx, config.Config{ClickHouse: config.ClickHouse{
+		Protocol: input.Protocol,
+		Host:     input.Host,
+		Port:     input.Port,
+		Database: input.Database,
+		User:     input.User,
+		Password: input.Password,
+	}})
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return database.ApplyClickHouseMigrations(ctx, db.Conn())
 }
 
 func normalizeSetupObjectStorage(input setup.S3Config) (setup.S3Config, error) {

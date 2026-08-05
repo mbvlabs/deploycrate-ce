@@ -70,4 +70,10 @@ func (p *Postgres) Close() error {
 	return p.conn.Close()
 }
 
-var Module = fx.Module("database", fx.Provide(fx.Annotate(NewPostgres, fx.As(new(storage.Pool)))))
+var Module = fx.Module(
+	"database",
+	fx.Provide(
+		fx.Annotate(NewPostgres, fx.As(new(storage.Pool))),
+		NewClickHouse,
+	),
+)

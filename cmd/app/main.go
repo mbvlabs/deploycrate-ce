@@ -130,7 +130,12 @@ func runCommand(ctx context.Context, arguments []string) error {
 			return err
 		}
 		defer db.Close()
-		if err := database.ApplyMigrations(ctx, db); err != nil {
+		clickHouse, err := database.NewClickHouse(ctx, cfg)
+		if err != nil {
+			return err
+		}
+		defer clickHouse.Close()
+		if err := database.ApplyAllMigrations(ctx, db, clickHouse); err != nil {
 			return fmt.Errorf("run database migrations: %w", err)
 		}
 		return nil
@@ -160,10 +165,14 @@ func runCommand(ctx context.Context, arguments []string) error {
 	}
 }
 
-func runMigrationsOnStartup(lc fx.Lifecycle, db storage.Pool) {
+func runMigrationsOnStartup(
+	lc fx.Lifecycle,
+	db storage.Pool,
+	clickHouse *database.ClickHouse,
+) {
 	lc.Append(fx.Hook{
 		OnStart: func(ctx context.Context) error {
-			if err := database.ApplyMigrations(ctx, db); err != nil {
+			if err := database.ApplyAllMigrations(ctx, db, clickHouse); err != nil {
 				return fmt.Errorf("run startup database migrations: %w", err)
 			}
 			return nil
