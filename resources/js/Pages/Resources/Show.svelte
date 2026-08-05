@@ -561,12 +561,12 @@
       </Card.Root>
     {/if}
 
-    {#if section === 'backups' && resource.engine === 'postgresql'}
+    {#if section === 'backups' && resource.resourceType === 'database'}
       <div class="space-y-6">
         <Card.Root>
           <Card.Header>
             <Card.Title>Backups</Card.Title>
-            <Card.Description>Manage encrypted PostgreSQL backups by Database.</Card.Description>
+            <Card.Description>Manage encrypted logical backups by Database.</Card.Description>
           </Card.Header>
           <Card.Content>
             {#if configuredBackups.length === 0}

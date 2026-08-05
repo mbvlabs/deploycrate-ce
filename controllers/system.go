@@ -29,6 +29,7 @@ type System struct {
 	appTelemetry *services.SystemApplicationTelemetry
 	access       *services.ResourcePrivateAccess
 	credentials  *services.ResourceCredentials
+	backups      *services.DatabaseBackups
 }
 
 func NewSystem(
@@ -39,8 +40,9 @@ func NewSystem(
 	appTelemetry *services.SystemApplicationTelemetry,
 	access *services.ResourcePrivateAccess,
 	credentials *services.ResourceCredentials,
+	backups *services.DatabaseBackups,
 ) System {
-	return System{db: db, health: health, metric: metric, logs: logs, appTelemetry: appTelemetry, access: access, credentials: credentials}
+	return System{db: db, health: health, metric: metric, logs: logs, appTelemetry: appTelemetry, access: access, credentials: credentials, backups: backups}
 }
 
 func (s System) RegisterRoutes(r *router.Router) error {
@@ -59,6 +61,11 @@ func (s System) RegisterRoutes(r *router.Router) error {
 		{method: http.MethodGet, route: routes.SystemDeployments, handler: s.Deployments},
 		{method: http.MethodGet, route: routes.SystemResources, handler: s.Resources},
 		{method: http.MethodGet, route: routes.SystemResource, handler: s.Resource},
+		{method: http.MethodGet, route: routes.SystemResourceBackups, handler: s.ResourceBackups},
+		{method: http.MethodGet, route: routes.SystemResourceEndpoints, handler: s.ResourceEndpoints},
+		{method: http.MethodGet, route: routes.SystemResourceCredentials, handler: s.ResourceCredentials},
+		{method: http.MethodGet, route: routes.SystemResourceHealth, handler: s.ResourceHealth},
+		{method: http.MethodGet, route: routes.SystemResourceAccess, handler: s.ResourceAccess},
 		{method: http.MethodPost, route: routes.SystemResourceEndpointCreate, handler: s.CreateResourceEndpoint},
 		{method: http.MethodPost, route: routes.SystemResourceCredentialReveal, handler: middleware.IPRateLimiter(5, routes.SystemResources)(s.RevealResourceCredential)},
 		{method: http.MethodPost, route: routes.SystemResourceWireGuardDeviceCreate, handler: s.CreateResourceWireGuardDevice},
@@ -214,11 +221,35 @@ func (s System) Resources(etx *echo.Context) error {
 }
 
 func (s System) Resource(etx *echo.Context) error {
+	return s.resourceSection(etx, "overview")
+}
+
+func (s System) ResourceBackups(etx *echo.Context) error {
+	return s.resourceSection(etx, "backups")
+}
+
+func (s System) ResourceEndpoints(etx *echo.Context) error {
+	return s.resourceSection(etx, "endpoints")
+}
+
+func (s System) ResourceCredentials(etx *echo.Context) error {
+	return s.resourceSection(etx, "credentials")
+}
+
+func (s System) ResourceHealth(etx *echo.Context) error {
+	return s.resourceSection(etx, "health")
+}
+
+func (s System) ResourceAccess(etx *echo.Context) error {
+	return s.resourceSection(etx, "access")
+}
+
+func (s System) resourceSection(etx *echo.Context, section string) error {
 	resourceID, err := uuid.Parse(etx.Param("id"))
 	if err != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
-	return s.renderResource(etx, resourceID, nil, nil)
+	return s.renderResource(etx, resourceID, section, nil, nil)
 }
 
 func (s System) RevealResourceCredential(etx *echo.Context) error {
@@ -302,12 +333,12 @@ func (s System) CreateResourceEndpoint(etx *echo.Context) error {
 	}
 	if err != nil {
 		if validationErrors, ok := validation.As(err); ok {
-			return s.renderResource(etx, resourceID, nil, inertia.WithValidationErrors(validationErrors.ToMap()))
+			return s.renderResource(etx, resourceID, "endpoints", nil, inertia.WithValidationErrors(validationErrors.ToMap()))
 		}
-		return s.redirectResourceError(etx, resourceID, err)
+		return s.redirectResourceError(etx, resourceID, "endpoints", err)
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Resource endpoint added")
-	return inertia.Redirect(etx, routes.SystemResource.URL(resourceID), http.StatusSeeOther)
+	return inertia.Redirect(etx, routes.SystemResourceEndpoints.URL(resourceID), http.StatusSeeOther)
 }
 
 type systemResourceWireGuardPayload struct {
@@ -333,9 +364,9 @@ func (s System) CreateResourceWireGuardDevice(etx *echo.Context) error {
 	}
 	if err != nil {
 		if validationErrors, ok := validation.As(err); ok {
-			return s.renderResource(etx, resourceID, nil, inertia.WithValidationErrors(validationErrors.ToMap()))
+			return s.renderResource(etx, resourceID, "access", nil, inertia.WithValidationErrors(validationErrors.ToMap()))
 		}
-		return s.redirectResourceError(etx, resourceID, err)
+		return s.redirectResourceError(etx, resourceID, "access", err)
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "WireGuard resource access granted")
 	etx.Response().Header().Set("Cache-Control", "no-store")
@@ -343,7 +374,7 @@ func (s System) CreateResourceWireGuardDevice(etx *echo.Context) error {
 		"deviceId": result.DeviceID.String(), "grantId": result.GrantID.String(),
 		"clientConfiguration": result.ClientConfiguration,
 	}
-	return s.renderResource(etx, resourceID, enrollment, nil)
+	return s.renderResource(etx, resourceID, "access", enrollment, nil)
 }
 
 func (s System) DestroyResourceWireGuardDevice(etx *echo.Context) error {
@@ -354,13 +385,13 @@ func (s System) DestroyResourceWireGuardDevice(etx *echo.Context) error {
 		err = s.access.RevokeGrant(etx.Request().Context(), resourceID, deviceID)
 	}
 	if err != nil {
-		return s.redirectResourceError(etx, resourceID, err)
+		return s.redirectResourceError(etx, resourceID, "access", err)
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "WireGuard resource access revoked")
-	return inertia.Redirect(etx, routes.SystemResource.URL(resourceID), http.StatusSeeOther)
+	return inertia.Redirect(etx, routes.SystemResourceAccess.URL(resourceID), http.StatusSeeOther)
 }
 
-func (s System) renderResource(etx *echo.Context, resourceID uuid.UUID, enrollment inertia.Props, option inertia.PageOption) error {
+func (s System) renderResource(etx *echo.Context, resourceID uuid.UUID, section string, enrollment inertia.Props, option inertia.PageOption) error {
 	if err := s.access.ObserveResource(etx.Request().Context(), resourceID); err != nil {
 		slog.WarnContext(etx.Request().Context(), "failed to observe WireGuard device handshakes", "resource_id", resourceID, "error", err)
 	}
@@ -371,7 +402,17 @@ func (s System) renderResource(etx *echo.Context, resourceID uuid.UUID, enrollme
 	if err != nil {
 		return s.renderLoadError(etx, "resource", err)
 	}
-	props := inertia.Props{"auth": s.authProps(etx), "resource": systemResourceDetailProps(detail)}
+	backups := models.ResourceBackupCatalog{}
+	if section == "backups" && detail.ResourceType == "database" {
+		backups, err = s.backups.DetailsForResource(etx.Request().Context(), resourceID)
+		if err != nil {
+			return s.renderLoadError(etx, "resource backups", err)
+		}
+	}
+	props := inertia.Props{
+		"auth": s.authProps(etx), "resource": systemResourceDetailProps(detail),
+		"section": section, "backups": resourceBackupProps(backups),
+	}
 	if enrollment != nil {
 		props["enrollment"] = enrollment
 	}
@@ -381,7 +422,7 @@ func (s System) renderResource(etx *echo.Context, resourceID uuid.UUID, enrollme
 	return inertia.Page(etx, "System/Resources/Show", props)
 }
 
-func (s System) redirectResourceError(etx *echo.Context, resourceID uuid.UUID, err error) error {
+func (s System) redirectResourceError(etx *echo.Context, resourceID uuid.UUID, section string, err error) error {
 	message := "Resource operation failed"
 	if err != nil && strings.TrimSpace(err.Error()) != "" {
 		message = err.Error()
@@ -392,7 +433,24 @@ func (s System) redirectResourceError(etx *echo.Context, resourceID uuid.UUID, e
 	if resourceID == uuid.Nil {
 		return inertia.Redirect(etx, routes.SystemResources.URL(), http.StatusSeeOther)
 	}
-	return inertia.Redirect(etx, routes.SystemResource.URL(resourceID), http.StatusSeeOther)
+	return inertia.Redirect(etx, systemResourceSectionURL(resourceID, section), http.StatusSeeOther)
+}
+
+func systemResourceSectionURL(resourceID uuid.UUID, section string) string {
+	switch section {
+	case "backups":
+		return routes.SystemResourceBackups.URL(resourceID)
+	case "endpoints":
+		return routes.SystemResourceEndpoints.URL(resourceID)
+	case "credentials":
+		return routes.SystemResourceCredentials.URL(resourceID)
+	case "health":
+		return routes.SystemResourceHealth.URL(resourceID)
+	case "access":
+		return routes.SystemResourceAccess.URL(resourceID)
+	default:
+		return routes.SystemResource.URL(resourceID)
+	}
 }
 
 func optionalUUID(value string) (*uuid.UUID, error) {

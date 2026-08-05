@@ -46,6 +46,36 @@ var SystemResource = routing.NewRouteWithUUIDID(
 	SystemPrefix,
 )
 
+var SystemResourceBackups = routing.NewRouteWithUUIDID(
+	"/resources/:id/backups",
+	"system.resource.backups",
+	SystemPrefix,
+)
+
+var SystemResourceEndpoints = routing.NewRouteWithUUIDID(
+	"/resources/:id/endpoints",
+	"system.resource.endpoints",
+	SystemPrefix,
+)
+
+var SystemResourceCredentials = routing.NewRouteWithUUIDID(
+	"/resources/:id/credentials",
+	"system.resource.credentials",
+	SystemPrefix,
+)
+
+var SystemResourceHealth = routing.NewRouteWithUUIDID(
+	"/resources/:id/health",
+	"system.resource.health",
+	SystemPrefix,
+)
+
+var SystemResourceAccess = routing.NewRouteWithUUIDID(
+	"/resources/:id/access",
+	"system.resource.access",
+	SystemPrefix,
+)
+
 var SystemResourceEndpointCreate = routing.NewRouteWithUUIDID(
 	"/resources/:id/endpoints",
 	"system.resource.endpoint.create",

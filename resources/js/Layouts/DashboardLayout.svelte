@@ -32,11 +32,37 @@
     name: string
     engine: string
     resourceType: string
+	systemManaged?: boolean
   }
 
   let { children, email, version, resourceNavigation = null }: { children: Snippet; email: string; version?: string; resourceNavigation?: ResourceNavigation | null } = $props()
   const appVersion = $derived(version ?? String($page.props.appVersion ?? 'dev'))
   const environmentPage = $derived($page.url.startsWith(routes.environments()) || /^\/applications\/[^/]+\/environments(?:\/|$)/.test($page.url))
+	const contextualResourceRoutes = $derived.by((): Record<string, string> | null => {
+		if (!resourceNavigation) return null
+		if (resourceNavigation.systemManaged) {
+			return {
+				overview: routes.systemResource(resourceNavigation.id),
+				backups: routes.systemResourceBackups(resourceNavigation.id),
+				endpoints: routes.systemResourceEndpoints(resourceNavigation.id),
+				credentials: routes.systemResourceCredentials(resourceNavigation.id),
+				health: routes.systemResourceHealth(resourceNavigation.id),
+				access: routes.systemResourceAccess(resourceNavigation.id),
+			}
+		}
+		return {
+			overview: routes.resourceShow(resourceNavigation.id),
+			databases: routes.resourceDatabases(resourceNavigation.id),
+			backups: routes.resourceBackups(resourceNavigation.id),
+			endpoints: routes.resourceEndpoints(resourceNavigation.id),
+			credentials: routes.resourceCredentials(resourceNavigation.id),
+			health: routes.resourceHealth(resourceNavigation.id),
+			settings: routes.resourceSettings(resourceNavigation.id),
+		}
+	})
+	function contextualResourceURL(section: string) {
+		return contextualResourceRoutes?.[section] ?? routes.resources()
+	}
   const breadcrumbs = $derived.by(() => {
     const path = $page.url.split('?')[0]
     const leaf = path.endsWith('/new') ? 'New' : path.endsWith('/edit') ? 'Edit' : path.includes('/source') ? 'Source' : 'Details'
@@ -44,22 +70,26 @@
     if (path === routes.homePage()) return []
     if (environmentPage) return [{ label: 'Applications', href: routes.applications() }, { label: path === routes.environments() ? 'Environments' : leaf }]
     if (path.startsWith(routes.applications())) return [{ label: 'Applications', href: routes.applications() }, ...(path === routes.applications() ? [] : [{ label: leaf }])]
+    if (resourceNavigation && contextualResourceRoutes && Object.values(contextualResourceRoutes).includes(path)) {
+		const resourceSections: Record<string, string> = {
+			[contextualResourceRoutes.overview]: 'Overview',
+			[contextualResourceURL('backups')]: 'Backups',
+			[contextualResourceURL('endpoints')]: 'Endpoints',
+			[contextualResourceURL('credentials')]: 'Credentials',
+			[contextualResourceURL('health')]: 'Health checks',
+			[contextualResourceURL('databases')]: 'Databases',
+			[contextualResourceURL('settings')]: 'Settings',
+			[contextualResourceURL('access')]: 'Access',
+		}
+		return [
+			{ label: 'Resources', href: routes.resources() },
+			{ label: resourceNavigation.name, href: contextualResourceRoutes.overview },
+			{ label: resourceSections[path] ?? 'Overview' },
+		]
+	}
     if (path.startsWith(routes.resources())) {
       if (!resourceNavigation) return [{ label: 'Resources', href: routes.resources() }, ...(path === routes.resources() ? [] : [{ label: leaf }])]
-      const resourceSections: Record<string, string> = {
-        [routes.resourceShow(resourceNavigation.id)]: 'Overview',
-        [routes.resourceDatabases(resourceNavigation.id)]: 'Databases',
-        [routes.resourceBackups(resourceNavigation.id)]: 'Backups',
-        [routes.resourceEndpoints(resourceNavigation.id)]: 'Endpoints',
-        [routes.resourceCredentials(resourceNavigation.id)]: 'Credentials',
-        [routes.resourceHealth(resourceNavigation.id)]: 'Health checks',
-        [routes.resourceSettings(resourceNavigation.id)]: 'Settings',
-      }
-      return [
-        { label: 'Resources', href: routes.resources() },
-        { label: resourceNavigation.name, href: routes.resourceShow(resourceNavigation.id) },
-        { label: resourceSections[path] ?? 'Overview' },
-      ]
+		return [{ label: 'Resources', href: routes.resources() }, { label: resourceNavigation.name }]
     }
     if (path.startsWith(routes.nodes())) return [{ label: 'Nodes', href: routes.nodes() }, ...(path === routes.nodes() ? [] : [{ label: leaf }])]
     if (path.startsWith(routes.networks())) return [{ label: 'Networks' }]
@@ -127,44 +157,52 @@
           <Sidebar.GroupContent>
             <Sidebar.Menu>
               <Sidebar.MenuItem>
-                <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceShow(resourceNavigation.id)} tooltipContent="Overview">
-                  {#snippet child({ props })}<Link {...props} href={routes.resourceShow(resourceNavigation.id)}><LayoutDashboardIcon /><span>Overview</span></Link>{/snippet}
+                <Sidebar.MenuButton isActive={$page.url.split('?')[0] === contextualResourceURL('overview')} tooltipContent="Overview">
+                  {#snippet child({ props })}<Link {...props} href={contextualResourceURL('overview')}><LayoutDashboardIcon /><span>Overview</span></Link>{/snippet}
                 </Sidebar.MenuButton>
               </Sidebar.MenuItem>
+              {#if resourceNavigation.resourceType === 'database' && !resourceNavigation.systemManaged}
+                <Sidebar.MenuItem>
+                  <Sidebar.MenuButton isActive={$page.url.split('?')[0] === contextualResourceURL('databases')} tooltipContent="Databases">
+                    {#snippet child({ props })}<Link {...props} href={contextualResourceURL('databases')}><DatabaseIcon /><span>Databases</span></Link>{/snippet}
+                  </Sidebar.MenuButton>
+                </Sidebar.MenuItem>
+              {/if}
               {#if resourceNavigation.resourceType === 'database'}
                 <Sidebar.MenuItem>
-                  <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceDatabases(resourceNavigation.id)} tooltipContent="Databases">
-                    {#snippet child({ props })}<Link {...props} href={routes.resourceDatabases(resourceNavigation.id)}><DatabaseIcon /><span>Databases</span></Link>{/snippet}
-                  </Sidebar.MenuButton>
-                </Sidebar.MenuItem>
-              {/if}
-              {#if resourceNavigation.engine === 'postgresql'}
-                <Sidebar.MenuItem>
-                  <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceBackups(resourceNavigation.id)} tooltipContent="Backups">
-                    {#snippet child({ props })}<Link {...props} href={routes.resourceBackups(resourceNavigation.id)}><CloudIcon /><span>Backups</span></Link>{/snippet}
+                  <Sidebar.MenuButton isActive={$page.url.split('?')[0] === contextualResourceURL('backups')} tooltipContent="Backups">
+                    {#snippet child({ props })}<Link {...props} href={contextualResourceURL('backups')}><CloudIcon /><span>Backups</span></Link>{/snippet}
                   </Sidebar.MenuButton>
                 </Sidebar.MenuItem>
               {/if}
               <Sidebar.MenuItem>
-                <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceEndpoints(resourceNavigation.id)} tooltipContent="Endpoints">
-                  {#snippet child({ props })}<Link {...props} href={routes.resourceEndpoints(resourceNavigation.id)}><NetworkIcon /><span>Endpoints</span></Link>{/snippet}
+                <Sidebar.MenuButton isActive={$page.url.split('?')[0] === contextualResourceURL('endpoints')} tooltipContent="Endpoints">
+                  {#snippet child({ props })}<Link {...props} href={contextualResourceURL('endpoints')}><NetworkIcon /><span>Endpoints</span></Link>{/snippet}
                 </Sidebar.MenuButton>
               </Sidebar.MenuItem>
               <Sidebar.MenuItem>
-                <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceCredentials(resourceNavigation.id)} tooltipContent="Credentials">
-                  {#snippet child({ props })}<Link {...props} href={routes.resourceCredentials(resourceNavigation.id)}><KeyRoundIcon /><span>Credentials</span></Link>{/snippet}
+                <Sidebar.MenuButton isActive={$page.url.split('?')[0] === contextualResourceURL('credentials')} tooltipContent="Credentials">
+                  {#snippet child({ props })}<Link {...props} href={contextualResourceURL('credentials')}><KeyRoundIcon /><span>Credentials</span></Link>{/snippet}
                 </Sidebar.MenuButton>
               </Sidebar.MenuItem>
               <Sidebar.MenuItem>
-                <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceHealth(resourceNavigation.id)} tooltipContent="Health checks">
-                  {#snippet child({ props })}<Link {...props} href={routes.resourceHealth(resourceNavigation.id)}><ActivityIcon /><span>Health checks</span></Link>{/snippet}
+                <Sidebar.MenuButton isActive={$page.url.split('?')[0] === contextualResourceURL('health')} tooltipContent="Health checks">
+                  {#snippet child({ props })}<Link {...props} href={contextualResourceURL('health')}><ActivityIcon /><span>Health checks</span></Link>{/snippet}
                 </Sidebar.MenuButton>
               </Sidebar.MenuItem>
-              <Sidebar.MenuItem>
-                <Sidebar.MenuButton isActive={$page.url.split('?')[0] === routes.resourceSettings(resourceNavigation.id)} tooltipContent="Settings">
-                  {#snippet child({ props })}<Link {...props} href={routes.resourceSettings(resourceNavigation.id)}><SettingsIcon /><span>Settings</span></Link>{/snippet}
-                </Sidebar.MenuButton>
-              </Sidebar.MenuItem>
+              {#if resourceNavigation.systemManaged}
+				<Sidebar.MenuItem>
+					<Sidebar.MenuButton isActive={$page.url.split('?')[0] === contextualResourceURL('access')} tooltipContent="Access">
+						{#snippet child({ props })}<Link {...props} href={contextualResourceURL('access')}><ShieldCheckIcon /><span>Access</span></Link>{/snippet}
+					</Sidebar.MenuButton>
+				</Sidebar.MenuItem>
+			  {:else}
+				<Sidebar.MenuItem>
+					<Sidebar.MenuButton isActive={$page.url.split('?')[0] === contextualResourceURL('settings')} tooltipContent="Settings">
+						{#snippet child({ props })}<Link {...props} href={contextualResourceURL('settings')}><SettingsIcon /><span>Settings</span></Link>{/snippet}
+					</Sidebar.MenuButton>
+				</Sidebar.MenuItem>
+			  {/if}
             </Sidebar.Menu>
           </Sidebar.GroupContent>
         </Sidebar.Group>
