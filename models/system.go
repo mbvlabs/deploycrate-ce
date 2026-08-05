@@ -218,7 +218,7 @@ func (a application) FindSystemDeployments(
 		ColumnExpr("deployment.updated_at AS updated_at").
 		ColumnExpr("deployment.attempt AS attempt").
 		ColumnExpr("deployment.strategy AS strategy").
-		ColumnExpr("deployment.runtime_configuration AS runtime_configuration").
+		ColumnExpr("deployment.process_configuration AS runtime_configuration").
 		ColumnExpr("deployment.status AS status").
 		ColumnExpr("COALESCE(deployment.current_step, '') AS current_step").
 		ColumnExpr("deployment.started_at AS started_at").

@@ -22,7 +22,8 @@ type DeploymentEntity struct {
 	UpdatedAt            time.Time       `bun:"updated_at"`
 	Attempt              int32           `bun:"attempt"`
 	Strategy             json.RawMessage `bun:"strategy,type:jsonb"`
-	RuntimeConfiguration json.RawMessage `bun:"runtime_configuration,type:jsonb"`
+	ProcessConfiguration json.RawMessage `bun:"process_configuration,type:jsonb"`
+	RuntimeConfiguration json.RawMessage `bun:"-"`
 	Status               string          `bun:"status"`
 	CurrentStep          sql.NullString  `bun:"current_step"`
 	StartedAt            sql.NullTime    `bun:"started_at"`
@@ -44,7 +45,7 @@ func (e *DeploymentEntity) Validate() error {
 	if !slices.Contains([]string{"queued", "running", "succeeded", "failed"}, e.Status) {
 		builder.Add("status", "invalid", "Deployment status is invalid")
 	}
-	if !json.Valid(e.Strategy) || !json.Valid(e.RuntimeConfiguration) {
+	if !json.Valid(e.Strategy) || !json.Valid(e.ProcessConfiguration) {
 		builder.Add("configuration", "invalid", "Deployment configuration must be valid JSON")
 	}
 	return builder.Err()
@@ -63,6 +64,7 @@ func (d deployment) Find(
 		return DeploymentEntity{}, err
 	}
 
+	entity.RuntimeConfiguration = entity.ProcessConfiguration
 	return entity, nil
 }
 
@@ -93,7 +95,7 @@ func (d deployment) MarkFailed(ctx context.Context, db storage.Executor, id uuid
 type CreateDeploymentData struct {
 	Attempt              int32
 	Strategy             json.RawMessage
-	RuntimeConfiguration json.RawMessage
+	ProcessConfiguration json.RawMessage
 	Status               string
 	CurrentStep          sql.NullString
 	StartedAt            sql.NullTime
@@ -115,7 +117,7 @@ func (d deployment) Create(
 		UpdatedAt:            time.Now(),
 		Attempt:              data.Attempt,
 		Strategy:             data.Strategy,
-		RuntimeConfiguration: data.RuntimeConfiguration,
+		ProcessConfiguration: data.ProcessConfiguration,
 		Status:               data.Status,
 		CurrentStep:          data.CurrentStep,
 		StartedAt:            data.StartedAt,
@@ -142,7 +144,7 @@ type UpdateDeploymentData struct {
 	UpdatedAt            time.Time
 	Attempt              int32
 	Strategy             json.RawMessage
-	RuntimeConfiguration json.RawMessage
+	ProcessConfiguration json.RawMessage
 	Status               string
 	CurrentStep          sql.NullString
 	StartedAt            sql.NullTime
@@ -163,7 +165,7 @@ func (d deployment) Update(
 		UpdatedAt:            time.Now(),
 		Attempt:              data.Attempt,
 		Strategy:             data.Strategy,
-		RuntimeConfiguration: data.RuntimeConfiguration,
+		ProcessConfiguration: data.ProcessConfiguration,
 		Status:               data.Status,
 		CurrentStep:          data.CurrentStep,
 		StartedAt:            data.StartedAt,
@@ -183,7 +185,7 @@ func (d deployment) Update(
 		Column("updated_at").
 		Column("attempt").
 		Column("strategy").
-		Column("runtime_configuration").
+		Column("process_configuration").
 		Column("status").
 		Column("current_step").
 		Column("started_at").
@@ -283,7 +285,7 @@ func (d deployment) Upsert(
 		UpdatedAt:            time.Now(),
 		Attempt:              data.Attempt,
 		Strategy:             data.Strategy,
-		RuntimeConfiguration: data.RuntimeConfiguration,
+		ProcessConfiguration: data.ProcessConfiguration,
 		Status:               data.Status,
 		CurrentStep:          data.CurrentStep,
 		StartedAt:            data.StartedAt,
@@ -303,7 +305,7 @@ func (d deployment) Upsert(
 		On("CONFLICT (id) DO UPDATE").
 		Set("attempt = excluded.attempt").
 		Set("strategy = excluded.strategy").
-		Set("runtime_configuration = excluded.runtime_configuration").
+		Set("process_configuration = excluded.process_configuration").
 		Set("status = excluded.status").
 		Set("current_step = excluded.current_step").
 		Set("started_at = excluded.started_at").
@@ -348,7 +350,7 @@ type UnresolvedSystemUpdate struct {
 	PreviousReleaseID    uuid.UUID       `bun:"previous_release_id"`
 	EnvironmentID        uuid.UUID       `bun:"environment_id"`
 	EnvironmentTargetID  uuid.UUID       `bun:"environment_target_id"`
-	RuntimeConfig        json.RawMessage `bun:"runtime_configuration"`
+	ProcessConfiguration json.RawMessage `bun:"process_configuration"`
 	EventSequence        int64           `bun:"event_sequence"`
 }
 
@@ -375,7 +377,7 @@ func (d deployment) FindUnresolvedSystemUpdate(
 		ColumnExpr("previous_instance.release_id AS previous_release_id").
 		ColumnExpr("environment.id AS environment_id").
 		ColumnExpr("deployment.environment_target_id AS environment_target_id").
-		ColumnExpr("deployment.runtime_configuration AS runtime_configuration").
+		ColumnExpr("deployment.process_configuration AS process_configuration").
 		ColumnExpr("(SELECT COALESCE(MAX(event.sequence), 0) FROM deployment_events AS event WHERE event.deployment_id = deployment.id) AS event_sequence").
 		Join("JOIN changes AS change ON change.id = deployment.change_id").
 		Join("JOIN releases AS release ON release.id = deployment.release_id").
@@ -412,7 +414,7 @@ func (d deployment) SaveSystemUpdateCheckpoint(
 	}
 	_, err = db.NewUpdate().
 		TableExpr("deployments").
-		Set("runtime_configuration = ?", json.RawMessage(content)).
+		Set("process_configuration = ?", json.RawMessage(content)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
 		Exec(ctx)
@@ -457,7 +459,7 @@ func (d deployment) FinishSystemUpdate(
 		Set("current_step = ?", step).
 		Set("finished_at = ?", at).
 		Set("error = ?", failure).
-		Set("runtime_configuration = ?", json.RawMessage(content)).
+		Set("process_configuration = ?", json.RawMessage(content)).
 		Set("updated_at = ?", at).
 		Where("id = ?", id).
 		Exec(ctx)

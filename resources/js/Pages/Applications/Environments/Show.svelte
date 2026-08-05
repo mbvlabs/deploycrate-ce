@@ -26,9 +26,12 @@
   type Deployment = { id: string; status: string; currentStep: string; error: string; releaseId: string; createdAt: string; active: boolean }
   type DeploymentEvent = { id: string; sequence: number; eventType: string; status: string; step: string; message: string; error: string; occurredAt: string }
   type DeploymentEventSnapshot = { deployment: Deployment; events: DeploymentEvent[]; nextSequence: number; hasMore: boolean }
-  type EnvironmentLog = { id: string; message: string; stream: string; container: string; deployment: string; instance: string; release: string; occurredAt: string }
+  type EnvironmentLog = { id: string; message: string; stream: string; container: string; deployment: string; instance: string; release: string; processName: string; processKind: string; processReplica: string; occurredAt: string }
   type EnvironmentLogSnapshot = { logs: EnvironmentLog[]; nextCursor: string; hasMore: boolean }
-  type Instance = { id: string; state: string; slot: string; ports: { host?: string; http?: number }; releaseId: string; observedAt: string }
+  type Process = { name: string; kind: 'web' | 'worker' | 'release'; command?: string | null; arguments: string[]; replicas: number; container_port?: number; health_path?: string; timeout_seconds?: number }
+  type Instance = { id: string; state: string; slot: string; processName: string; processKind: 'web' | 'worker'; replicaKey: string; ports: { host?: string; http?: number }; releaseId: string; deploymentId: string; targetId: string; targetName: string; observedAt: string }
+  type ReleaseCommand = { id: string; status: 'queued' | 'running' | 'succeeded' | 'failed' | 'ambiguous'; attempt: number; externalId: string; exitCode?: number; startedAt?: string; finishedAt?: string; error: string; releaseId: string; targetId: string; targetName: string; command: string; arguments: string[]; timeoutSeconds: number; createdAt: string }
+  type ReleaseCommandLog = { id: string; attempt: number; sequence: number; stream: 'system' | 'stdout' | 'stderr'; message: string; occurredAt: string }
   type DNSStatus = { mode: 'manual' | 'cloudflare'; bindingId?: string; zoneId?: string; zoneName: string; connectionName: string; state: string; generation: number; appliedGeneration: number; lastError: string; reconciliationQueued: boolean; records: { type: string; name: string; content: string }[] }
   type TelemetryPoint = { observedAt: string; cpuCores: number; memoryBytes: number; diskReadBytesPerSecond: number; diskWriteBytesPerSecond: number; networkReceiveBytesPerSecond: number; networkTransmitBytesPerSecond: number; cpuAvailable: boolean; memoryAvailable: boolean; diskReadAvailable: boolean; diskWriteAvailable: boolean; networkReceiveAvailable: boolean; networkTransmitAvailable: boolean }
   type TelemetryRow = {
@@ -51,6 +54,7 @@
     registryName: string
     registryEndpoint: string
     runtimeServerIds: string[]
+    runtimeTargetIds: string[]
     runtimeServers: string[]
     domain: string
     deployability: { deployable: boolean; missing: string[] }
@@ -61,6 +65,8 @@
     releases: Release[]
     deployments: Deployment[]
     instances: Instance[]
+    processes: Process[]
+    releaseCommands: ReleaseCommand[]
     apiTokenPrefix: string
     dns: DNSStatus
   }
@@ -106,6 +112,14 @@
   let secretActionError = $state('')
   let archiveSecretDialogOpen = $state(false)
   let archivingSecret = $state<Secret | null>(null)
+  let expandedReleaseCommandId = $state('')
+  let releaseCommandLogs = $state<Record<string, ReleaseCommandLog[]>>({})
+  let releaseCommandLoading = $state('')
+  let releaseCommandRetrying = $state('')
+  let releaseCommandRetryTargets = $state<Record<string, string>>({})
+  let releaseCommandRetryDialogOpen = $state(false)
+  let pendingReleaseCommandRetry = $state<ReleaseCommand | null>(null)
+  let releaseCommandRetryError = $state('')
   const loadingBuilds = new Set<string>()
   const loadingDeployments = new Set<string>()
   const builds = $derived(liveBuilds ?? environment.builds)
@@ -116,7 +130,7 @@
       && !environment.dns.reconciliationQueued
       && (environment.dns.mode === 'manual' || ['applied', 'pending', 'reconciling', 'removing'].includes(environment.dns.state)),
   )
-  const activeInstance = $derived(environment.instances.find((instance) => instance.state === 'serving') ?? null)
+  const activeInstance = $derived(environment.instances.find((instance) => instance.state === 'serving' && instance.processKind === 'web') ?? null)
   const activeTelemetry = $derived(
     activeDeployment && activeInstance
       ? telemetry.find((row) => row.deployment === activeDeployment.id && row.instance === activeInstance.id) ?? null
@@ -149,6 +163,51 @@
       preserveScroll: true,
       onSuccess: () => { key = ''; value = '' },
       onFinish: () => (secretCreationProcessing = false),
+    })
+  }
+
+  async function loadReleaseCommandLogs(executionId: string) {
+    releaseCommandLoading = executionId
+    try {
+      const response = await window.fetch(routes.environmentReleaseCommandLogs(environment.applicationId, environment.environment.id, executionId), { headers: { Accept: 'application/json' } })
+      if (!response.ok) throw new Error('Release command logs are unavailable')
+      const payload = await response.json() as { logs: ReleaseCommandLog[] }
+      releaseCommandLogs = { ...releaseCommandLogs, [executionId]: payload.logs }
+    } finally {
+      releaseCommandLoading = ''
+    }
+  }
+
+  async function toggleReleaseCommandLogs(executionId: string) {
+    if (expandedReleaseCommandId === executionId) {
+      expandedReleaseCommandId = ''
+      return
+    }
+    expandedReleaseCommandId = executionId
+    if (!releaseCommandLogs[executionId]) await loadReleaseCommandLogs(executionId)
+  }
+
+  function askToRetryReleaseCommand(execution: ReleaseCommand) {
+    pendingReleaseCommandRetry = execution
+    releaseCommandRetryError = ''
+    releaseCommandRetryDialogOpen = true
+  }
+
+  function releaseCommandRetryTarget(execution: ReleaseCommand) {
+    const selected = releaseCommandRetryTargets[execution.id] ?? execution.targetId
+    return environment.runtimeTargetIds.includes(selected) ? selected : environment.runtimeTargetIds[0] ?? ''
+  }
+
+  function retryReleaseCommand() {
+    const execution = pendingReleaseCommandRetry
+    if (!execution) return
+    releaseCommandRetrying = execution.id
+    releaseCommandRetryError = ''
+    router.post(routes.environmentReleaseCommandRetry(environment.applicationId, environment.environment.id, execution.id), { targetId: releaseCommandRetryTarget(execution) }, {
+      preserveScroll: true,
+      onSuccess: () => (releaseCommandRetryDialogOpen = false),
+      onError: (errors) => (releaseCommandRetryError = Object.values(errors).map(String).join('\n') || 'The release command could not be retried.'),
+      onFinish: () => (releaseCommandRetrying = ''),
     })
   }
   function askToRotate(secret: Secret) {
@@ -476,6 +535,16 @@
   })
 
   $effect(() => {
+    const activeReleaseCommand = environment.releaseCommands.find((execution) => execution.status === 'queued' || execution.status === 'running')
+    if (!activeReleaseCommand) return
+    const timer = window.setInterval(() => {
+      if (expandedReleaseCommandId === activeReleaseCommand.id) void loadReleaseCommandLogs(activeReleaseCommand.id)
+      router.reload({ only: ['environment'], preserveScroll: true })
+    }, 2000)
+    return () => window.clearInterval(timer)
+  })
+
+  $effect(() => {
     const deploymentId = expandedDeploymentId
     const deploymentStatus = expandedDeploymentStatus
     if (!deploymentId || (deploymentStatus !== 'queued' && deploymentStatus !== 'running')) return
@@ -522,6 +591,20 @@
     </header>
 
     <Card.Root><Card.Header><Card.Action><StatusBadge status={environment.deployability.deployable ? 'ready' : 'blocked'} /></Card.Action><Card.Title>Desired state</Card.Title></Card.Header><Card.Content class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"><DataField label="Repository" value={environment.repository} /><DataField label="Reference" value={environment.reference} /><DataField label="Build context" value={environment.contextPath} /><DataField label="Domain" value={environment.domain} /><DataField label="Runtime Server targets" value={environment.runtimeServers.join(', ')} /><DataField label="Registry" value={environment.registryName} /><DataField label="Registry endpoint" value={environment.registryEndpoint} />{#if !environment.deployability.deployable}<DataField label="Missing" value={environment.deployability.missing.join(', ')} />{/if}</Card.Content></Card.Root>
+
+    <Card.Root>
+      <Card.Header><Card.Title>Process formation</Card.Title><Card.Description>The immutable process configuration used by the next Release rollout.</Card.Description></Card.Header>
+      <Card.Content class="space-y-2">
+        {#each environment.processes as process}
+          <div class="grid gap-2 border border-border p-3 text-sm sm:grid-cols-[8rem_8rem_minmax(0,1fr)_auto]">
+            <div><p class="font-mono font-medium">{process.name}</p><StatusBadge status={process.kind} /></div>
+            <p>{process.kind === 'release' ? 'one-off' : `${process.replicas} replica${process.replicas === 1 ? '' : 's'}`}</p>
+            <p class="break-all font-mono text-xs text-muted-foreground">{process.command ? [process.command, ...process.arguments].join(' ') : 'OCI image default command'}</p>
+            <p class="text-xs text-muted-foreground">{process.kind === 'web' ? `Port ${process.container_port}${process.health_path ? ` · ${process.health_path}` : ''}` : process.kind === 'release' ? `${process.timeout_seconds}s timeout` : 'Private'}</p>
+          </div>
+        {/each}
+      </Card.Content>
+    </Card.Root>
 
     <Card.Root>
       <Card.Header><Card.Action><StatusBadge status={environment.dns.state} label={environment.dns.mode === 'manual' ? 'Manual' : environment.dns.state.replaceAll('_', ' ')} /></Card.Action><Card.Title>DNS</Card.Title><Card.Description>{environment.dns.mode === 'manual' ? 'DeployCrate does not change DNS records for this Environment.' : `${environment.dns.connectionName} · ${environment.dns.zoneName}`}</Card.Description></Card.Header>
@@ -609,7 +692,7 @@
             <div class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 py-1" class:text-destructive={log.stream === 'stderr'}>
               <span class="select-none whitespace-nowrap text-muted-foreground">{stamp(log.occurredAt)}</span>
               <div class="min-w-0">
-                <p class="select-none text-[10px] text-muted-foreground">{log.stream} · {log.container || 'container'} · deployment {short(log.deployment)} · instance {short(log.instance)}</p>
+                <p class="select-none text-[10px] text-muted-foreground">{log.stream} · {log.processKind || 'process'} {log.processName || 'unknown'}{log.processReplica ? ` · ${log.processReplica}` : ''} · {log.container || 'container'} · deployment {short(log.deployment)} · instance {short(log.instance)}</p>
                 <pre class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
               </div>
             </div>
@@ -681,6 +764,36 @@
     </div>
 
     <Card.Root>
+      <Card.Header><Card.Title>Release commands</Card.Title><Card.Description>One-off commands gate target creation. Ambiguous outcomes are never rerun automatically.</Card.Description></Card.Header>
+      <Card.Content class="space-y-2">
+        {#each environment.releaseCommands as execution}
+          <div class="border border-border text-sm">
+            <div class="grid gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+              <button type="button" class="min-w-0 text-left" onclick={() => toggleReleaseCommandLogs(execution.id)} aria-expanded={expandedReleaseCommandId === execution.id}>
+                <div class="flex flex-wrap items-center gap-2"><span class="font-mono">{short(execution.id)}</span><StatusBadge status={execution.status} /><span class="text-xs text-muted-foreground">Attempt {execution.attempt} · Release {short(execution.releaseId)} · {execution.targetName}</span></div>
+                <p class="mt-2 break-all font-mono text-xs text-muted-foreground">{[execution.command, ...execution.arguments].join(' ')}</p>
+                {#if execution.error}<p class="mt-2 text-xs text-destructive">{execution.error}</p>{/if}
+              </button>
+              {#if execution.status === 'failed' || execution.status === 'ambiguous'}
+                <div class="flex flex-wrap items-center gap-2">
+                  <select class="h-8 border border-input bg-background px-2 text-xs" value={releaseCommandRetryTarget(execution)} onchange={(event) => releaseCommandRetryTargets = { ...releaseCommandRetryTargets, [execution.id]: event.currentTarget.value }} aria-label="Release command retry target">
+                    {#each environment.runtimeTargetIds as targetId, index}<option value={targetId}>{environment.runtimeServers[index]}</option>{/each}
+                  </select>
+                  <Button size="sm" variant="outline" disabled={Boolean(releaseCommandRetrying) || environment.runtimeTargetIds.length === 0} onclick={() => askToRetryReleaseCommand(execution)}>Review retry</Button>
+                </div>
+              {/if}
+            </div>
+            {#if expandedReleaseCommandId === execution.id}
+              <div class="max-h-96 overflow-auto border-t border-border bg-black/30 p-3 font-mono text-[11px] leading-relaxed">
+                {#each releaseCommandLogs[execution.id] ?? [] as log (log.id)}<div class:text-destructive={log.stream === 'stderr'} class:text-primary={log.stream === 'system'}><span class="text-muted-foreground">{stamp(log.occurredAt)} · attempt {log.attempt} · {log.stream}</span><pre class="whitespace-pre-wrap break-words font-mono">{log.message}</pre></div>{:else}<p class="text-muted-foreground">{releaseCommandLoading === execution.id ? 'Loading release command output...' : 'No release command output was persisted.'}</p>{/each}
+              </div>
+            {/if}
+          </div>
+        {:else}<p class="border border-dashed border-border p-4 text-sm text-muted-foreground">No Release has required a release command yet.</p>{/each}
+      </Card.Content>
+    </Card.Root>
+
+    <Card.Root>
       <Card.Header><Card.Title>Deployments</Card.Title><Card.Description>Durable blue-green rollout attempts and recovery actions.</Card.Description></Card.Header>
       <Card.Content class="space-y-2">
         {#if deploymentEventConnectionError}<p class="text-xs text-warning">{deploymentEventConnectionError}</p>{/if}
@@ -716,8 +829,19 @@
       </Card.Content>
     </Card.Root>
 
-    <Card.Root><Card.Header><Card.Title>Active instance</Card.Title></Card.Header><Card.Content>{#if activeInstance}<div class="grid items-center gap-2 border border-border p-3 text-sm sm:grid-cols-4"><span class="font-mono">{short(activeInstance.id)}</span><StatusBadge status={activeInstance.state} /><span>{activeInstance.slot}</span><span class="text-muted-foreground">{activeInstance.ports?.http ? `${activeInstance.ports.host || '127.0.0.1'}:${activeInstance.ports.http}` : 'No observed port'}</span></div>{:else}<p class="border border-dashed border-border p-4 text-sm text-muted-foreground">No active Instance yet.</p>{/if}</Card.Content></Card.Root>
+    <Card.Root><Card.Header><Card.Title>Process instances</Card.Title><Card.Description>Current and candidate formation grouped by target, process, and stable replica identity.</Card.Description></Card.Header><Card.Content class="space-y-4">{#each environment.runtimeTargetIds as targetId, targetIndex}<div class="space-y-2"><p class="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{environment.runtimeServers[targetIndex]}</p>{#each environment.instances.filter((instance) => instance.targetId === targetId) as instance}<div class="grid items-center gap-2 border border-border p-3 text-sm sm:grid-cols-[minmax(0,1fr)_8rem_8rem_minmax(0,1fr)]"><div><p class="font-mono">{instance.processName}</p><p class="text-xs text-muted-foreground">{instance.replicaKey}</p></div><StatusBadge status={instance.processKind} /><StatusBadge status={instance.state} /><span class="text-muted-foreground">{instance.processKind === 'web' && instance.ports?.http ? `${instance.ports.host || '127.0.0.1'}:${instance.ports.http}` : 'No public port'}</span></div>{:else}<p class="border border-dashed border-border p-3 text-sm text-muted-foreground">No Instances on this target.</p>{/each}</div>{/each}</Card.Content></Card.Root>
   </div>
+
+  <ConfirmActionDialog
+    bind:open={releaseCommandRetryDialogOpen}
+    title="Retry release command?"
+    description={`This starts attempt ${(pendingReleaseCommandRetry?.attempt ?? 0) + 1} for the same immutable Release and Environment revision. Review prior output first. An ambiguous attempt may already have changed external state, so retry only after confirming it is safe.`}
+    confirmLabel="Retry release command"
+    destructive
+    processing={Boolean(releaseCommandRetrying)}
+    error={releaseCommandRetryError}
+    onconfirm={retryReleaseCommand}
+  />
 
   <ConfirmActionDialog
     bind:open={buildActionDialogOpen}

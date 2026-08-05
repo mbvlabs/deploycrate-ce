@@ -2,7 +2,6 @@ package models
 
 import (
 	"context"
-	"database/sql"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
 	"encoding/json"
@@ -20,10 +19,6 @@ type RuntimeConfigurationEntity struct {
 	CreatedAt      time.Time       `bun:"created_at"`
 	UpdatedAt      time.Time       `bun:"updated_at"`
 	Runtime        string          `bun:"runtime"`
-	Command        sql.NullString  `bun:"command"`
-	Arguments      json.RawMessage `bun:"arguments,type:jsonb"`
-	Replicas       int32           `bun:"replicas"`
-	Ports          json.RawMessage `bun:"ports,type:jsonb"`
 	ResourceLimits json.RawMessage `bun:"resource_limits,type:jsonb"`
 	RestartPolicy  string          `bun:"restart_policy"`
 	Settings       json.RawMessage `bun:"settings,type:jsonb"`
@@ -37,22 +32,13 @@ func (e *RuntimeConfigurationEntity) Validate() error {
 	if e.Runtime != "go" {
 		builder.Add("runtime", "unsupported", "only the Go runtime is supported")
 	}
-	if e.Replicas != 1 {
-		builder.Add("replicas", "unsupported", "this release supports exactly one replica")
-	}
 	if e.RestartPolicy != "unless-stopped" {
 		builder.Add("restartPolicy", "unsupported", "restart policy must be unless-stopped")
 	}
-	for field, value := range map[string]json.RawMessage{"arguments": e.Arguments, "ports": e.Ports, "resourceLimits": e.ResourceLimits, "settings": e.Settings} {
+	for field, value := range map[string]json.RawMessage{"resourceLimits": e.ResourceLimits, "settings": e.Settings} {
 		if len(value) == 0 || !json.Valid(value) {
 			builder.Add(field, "invalid", field+" must be valid JSON")
 		}
-	}
-	var ports struct {
-		HTTP int32 `json:"http"`
-	}
-	if json.Unmarshal(e.Ports, &ports) != nil || ports.HTTP < 1 || ports.HTTP > 65535 {
-		builder.Add("ports", "invalid", "runtime must define a valid HTTP container port")
 	}
 	if e.EnvironmentID == uuid.Nil {
 		builder.Add("environmentId", "required", "Environment is required")
@@ -98,10 +84,6 @@ func (rc runtimeConfiguration) Find(
 
 type CreateRuntimeConfigurationData struct {
 	Runtime        string
-	Command        sql.NullString
-	Arguments      json.RawMessage
-	Replicas       int32
-	Ports          json.RawMessage
 	ResourceLimits json.RawMessage
 	RestartPolicy  string
 	Settings       json.RawMessage
@@ -117,10 +99,6 @@ func (rc runtimeConfiguration) Create(
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 		Runtime:        data.Runtime,
-		Command:        data.Command,
-		Arguments:      data.Arguments,
-		Replicas:       data.Replicas,
-		Ports:          data.Ports,
 		ResourceLimits: data.ResourceLimits,
 		RestartPolicy:  data.RestartPolicy,
 		Settings:       data.Settings,
@@ -145,10 +123,6 @@ type UpdateRuntimeConfigurationData struct {
 	ID             int32
 	UpdatedAt      time.Time
 	Runtime        string
-	Command        sql.NullString
-	Arguments      json.RawMessage
-	Replicas       int32
-	Ports          json.RawMessage
 	ResourceLimits json.RawMessage
 	RestartPolicy  string
 	Settings       json.RawMessage
@@ -164,10 +138,6 @@ func (rc runtimeConfiguration) Update(
 		ID:             data.ID,
 		UpdatedAt:      time.Now(),
 		Runtime:        data.Runtime,
-		Command:        data.Command,
-		Arguments:      data.Arguments,
-		Replicas:       data.Replicas,
-		Ports:          data.Ports,
 		ResourceLimits: data.ResourceLimits,
 		RestartPolicy:  data.RestartPolicy,
 		Settings:       data.Settings,
@@ -185,10 +155,6 @@ func (rc runtimeConfiguration) Update(
 		Model(&entity).
 		Column("updated_at").
 		Column("runtime").
-		Column("command").
-		Column("arguments").
-		Column("replicas").
-		Column("ports").
 		Column("resource_limits").
 		Column("restart_policy").
 		Column("settings").
@@ -285,10 +251,6 @@ func (rc runtimeConfiguration) Upsert(
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 		Runtime:        data.Runtime,
-		Command:        data.Command,
-		Arguments:      data.Arguments,
-		Replicas:       data.Replicas,
-		Ports:          data.Ports,
 		ResourceLimits: data.ResourceLimits,
 		RestartPolicy:  data.RestartPolicy,
 		Settings:       data.Settings,
@@ -306,10 +268,6 @@ func (rc runtimeConfiguration) Upsert(
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").
 		Set("runtime = excluded.runtime").
-		Set("command = excluded.command").
-		Set("arguments = excluded.arguments").
-		Set("replicas = excluded.replicas").
-		Set("ports = excluded.ports").
 		Set("resource_limits = excluded.resource_limits").
 		Set("restart_policy = excluded.restart_policy").
 		Set("settings = excluded.settings").

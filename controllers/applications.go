@@ -9,6 +9,7 @@ import (
 
 	"deploycrate-ce/internal/inertia"
 	"deploycrate-ce/internal/validation"
+	"deploycrate-ce/models"
 	"deploycrate-ce/router"
 	"deploycrate-ce/router/cookies"
 	"deploycrate-ce/router/middleware"
@@ -184,6 +185,7 @@ type applicationEnvironmentCreationPayload struct {
 	ContainerPort        int32                                    `json:"containerPort"`
 	HealthPath           string                                   `json:"healthPath"`
 	BPGOTargets          string                                   `json:"bpGoTargets"`
+	Processes            []models.EnvironmentProcessInput         `json:"processes"`
 	Resources            []services.EnvironmentSetupResourceInput `json:"resources"`
 	Secrets              []services.EnvironmentSetupSecretInput   `json:"secrets"`
 	Deploy               bool                                     `json:"deploy"`
@@ -239,7 +241,7 @@ func (payload applicationEnvironmentCreationPayload) prepare(
 		source: source,
 		setup: services.EnvironmentSetupInput{
 			ServerIDs: serverIDs, Hostname: payload.Hostname, ContainerPort: payload.ContainerPort,
-			HealthPath: payload.HealthPath, BPGOTargets: payload.BPGOTargets,
+			HealthPath: payload.HealthPath, BPGOTargets: payload.BPGOTargets, Processes: payload.Processes,
 			Resources: payload.Resources, Secrets: payload.Secrets, Deploy: payload.Deploy,
 			DNS: services.EnvironmentDNSInput{Mode: payload.DNSMode, ZoneID: dnsZoneID},
 		},

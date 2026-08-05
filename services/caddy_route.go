@@ -89,9 +89,13 @@ func (service CaddyRouteService) Reconcile(ctx context.Context, routeID uuid.UUI
 		return "", errors.New("cannot reconcile a Caddy route for an archived domain")
 	}
 	var healthPath string
-	err = service.db.Executor().NewSelect().TableExpr("runtime_configurations").
-		ColumnExpr("COALESCE(settings ->> 'health_path', '')").
-		Where("environment_id = ?", domain.EnvironmentID).OrderExpr("created_at DESC").Limit(1).
+	err = service.db.Executor().NewSelect().TableExpr("caddy_route_backends AS backend").
+		ColumnExpr("COALESCE(process.value ->> 'health_path', runtime.settings ->> 'health_path', '')").
+		Join("JOIN instances AS instance ON instance.id = backend.instance_id AND instance.process_kind = 'web'").
+		Join("JOIN deployments AS deployment ON deployment.id = instance.deployment_id").
+		Join("LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(deployment.process_configuration) = 'array' THEN deployment.process_configuration ELSE '[]'::jsonb END) AS process(value) ON process.value ->> 'kind' = 'web'").
+		Join("LEFT JOIN LATERAL (SELECT settings FROM runtime_configurations WHERE environment_id = ? ORDER BY created_at DESC LIMIT 1) AS runtime ON TRUE", domain.EnvironmentID).
+		Where("backend.caddy_route_id = ?", routeID).Where("backend.removed_at IS NULL").OrderExpr("backend.weight DESC, backend.id DESC").Limit(1).
 		Scan(ctx, &healthPath)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("load Environment route health path: %w", err)
@@ -542,7 +546,7 @@ func (service CaddyRouteService) RouteDetail(ctx context.Context, externalID str
 				State: route.State, LastError: route.LastError,
 				Source: route.ResourceName + " / " + route.EndpointName, Target: route.Origin,
 				AppliedAt: route.AppliedAt, ObservedAt: route.ObservedAt,
-				Backends: []ManagedCaddyRouteBackend{{Address: route.Origin, Weight: 100}},
+				Backends:      []ManagedCaddyRouteBackend{{Address: route.Origin, Weight: 100}},
 				ResourceRoute: &route,
 			}
 			break
@@ -583,13 +587,14 @@ func (service CaddyRouteService) ManagementSnapshot(ctx context.Context) (Manage
 		ColumnExpr("domain.hostname, environment.id AS environment_id, environment.name AS environment_name, application.name AS application_name").
 		ColumnExpr("server.name AS server_name").
 		ColumnExpr("COALESCE(NULLIF(release.version, ''), release.artifact_reference) AS release_label").
-		ColumnExpr("COALESCE(configuration.settings ->> 'health_path', '/api/health') AS health_path").
+		ColumnExpr("COALESCE(process.health_path, configuration.settings ->> 'health_path', '/api/health') AS health_path").
 		Join("JOIN environment_domains AS domain ON domain.id = route.environment_domain_id").
 		Join("JOIN environments AS environment ON environment.id = domain.environment_id").
 		Join("JOIN applications AS application ON application.id = environment.application_id").
 		Join("JOIN environment_targets AS target ON target.id = route.environment_target_id").
 		Join("JOIN servers AS server ON server.id = target.server_id").
 		Join("JOIN releases AS release ON release.id = route.release_id").
+		Join("LEFT JOIN LATERAL (SELECT process.value ->> 'health_path' AS health_path FROM caddy_route_backends backend JOIN instances instance ON instance.id = backend.instance_id AND instance.process_kind = 'web' JOIN deployments deployment ON deployment.id = instance.deployment_id LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(deployment.process_configuration) = 'array' THEN deployment.process_configuration ELSE '[]'::jsonb END) AS process(value) ON process.value ->> 'kind' = 'web' WHERE backend.caddy_route_id = route.id AND backend.removed_at IS NULL ORDER BY backend.weight DESC, backend.id DESC LIMIT 1) AS process ON TRUE").
 		Join("LEFT JOIN LATERAL (SELECT settings FROM runtime_configurations WHERE environment_id = environment.id ORDER BY created_at DESC LIMIT 1) AS configuration ON TRUE").
 		Where("route.removed_at IS NULL OR route.state = 'removal_pending'").
 		OrderExpr("domain.hostname ASC").

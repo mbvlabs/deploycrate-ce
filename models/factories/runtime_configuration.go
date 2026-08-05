@@ -2,7 +2,6 @@ package factories
 
 import (
 	"context"
-	"database/sql"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
 	"encoding/json"
@@ -25,10 +24,6 @@ func BuildRuntimeConfiguration(environmentID uuid.UUID, opts ...RuntimeConfigura
 	f := &RuntimeConfigurationFactory{
 		RuntimeConfigurationEntity: models.RuntimeConfigurationEntity{
 			Runtime:        faker.Word(),
-			Command:        sql.NullString{String: faker.Word(), Valid: true},
-			Arguments:      json.RawMessage{},
-			Replicas:       randomInt(1, 1000, 100),
-			Ports:          json.RawMessage{},
 			ResourceLimits: json.RawMessage{},
 			RestartPolicy:  faker.Word(),
 			Settings:       json.RawMessage{},
@@ -51,10 +46,6 @@ func CreateRuntimeConfiguration(ctx context.Context, exec storage.Executor, envi
 		CreatedAt:      time.Now(),
 		UpdatedAt:      time.Now(),
 		Runtime:        built.Runtime,
-		Command:        built.Command,
-		Arguments:      built.Arguments,
-		Replicas:       built.Replicas,
-		Ports:          built.Ports,
 		ResourceLimits: built.ResourceLimits,
 		RestartPolicy:  built.RestartPolicy,
 		Settings:       built.Settings,
@@ -85,30 +76,6 @@ func CreateRuntimeConfigurations(ctx context.Context, exec storage.Executor, env
 func WithRuntimeConfigurationsRuntime(value string) RuntimeConfigurationOption {
 	return func(f *RuntimeConfigurationFactory) {
 		f.RuntimeConfigurationEntity.Runtime = value
-	}
-}
-
-func WithRuntimeConfigurationsCommand(value sql.NullString) RuntimeConfigurationOption {
-	return func(f *RuntimeConfigurationFactory) {
-		f.RuntimeConfigurationEntity.Command = value
-	}
-}
-
-func WithRuntimeConfigurationsArguments(value json.RawMessage) RuntimeConfigurationOption {
-	return func(f *RuntimeConfigurationFactory) {
-		f.RuntimeConfigurationEntity.Arguments = value
-	}
-}
-
-func WithRuntimeConfigurationsReplicas(value int32) RuntimeConfigurationOption {
-	return func(f *RuntimeConfigurationFactory) {
-		f.RuntimeConfigurationEntity.Replicas = value
-	}
-}
-
-func WithRuntimeConfigurationsPorts(value json.RawMessage) RuntimeConfigurationOption {
-	return func(f *RuntimeConfigurationFactory) {
-		f.RuntimeConfigurationEntity.Ports = value
 	}
 }
 

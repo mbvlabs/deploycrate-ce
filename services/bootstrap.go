@@ -539,7 +539,7 @@ func (service BootstrapService) createGraph(
 				bootstrapGreenPort,
 			),
 		),
-		RuntimeConfiguration: json.RawMessage(
+		ProcessConfiguration: json.RawMessage(
 			`{"service_template":"deploycrate-ce@.service","active_slot":"blue"}`,
 		),
 		Status:              "succeeded",
@@ -556,6 +556,8 @@ func (service BootstrapService) createGraph(
 	instance, err := models.Instance.Create(ctx, tx, models.CreateInstanceData{
 		ExternalID:          "deploycrate-ce@blue.service",
 		Slot:                "blue",
+		ProcessName:         models.EnvironmentProcessWeb,
+		ProcessKind:         models.EnvironmentProcessWeb,
 		ReplicaKey:          "primary",
 		State:               "serving",
 		Ports:               json.RawMessage(fmt.Sprintf(`{"http":%d}`, bootstrapBluePort)),

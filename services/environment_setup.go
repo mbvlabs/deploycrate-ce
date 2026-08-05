@@ -87,6 +87,7 @@ type EnvironmentSetup struct {
 	builds     *BuildExecution
 	registry   registryclient.Client
 	telemetry  *TelemetryIdentity
+	releases   *ReleaseDeployment
 	config     config.Config
 }
 
@@ -103,12 +104,13 @@ func NewEnvironmentSetup(
 	servers *ServerExecution,
 	builds *BuildExecution,
 	telemetry *TelemetryIdentity,
+	releases *ReleaseDeployment,
 	cfg config.Config,
 ) *EnvironmentSetup {
 	return &EnvironmentSetup{
 		db: db, queue: queue, jobControl: jobControl, github: github, secrets: secrets,
 		resources: resources, dns: dns, caddy: caddy, workloads: workloads, buildpacks: buildpacksclient.New(), servers: servers,
-		builds: builds, registry: registryclient.New(), telemetry: telemetry, config: cfg,
+		builds: builds, registry: registryclient.New(), telemetry: telemetry, releases: releases, config: cfg,
 	}
 }
 
@@ -141,6 +143,7 @@ type EnvironmentSetupInput struct {
 	ContainerPort int32
 	HealthPath    string
 	BPGOTargets   string
+	Processes     []models.EnvironmentProcessInput
 	Resources     []EnvironmentSetupResourceInput
 	Secrets       []EnvironmentSetupSecretInput
 	Deploy        bool
@@ -186,18 +189,19 @@ type EnvironmentSetupOptions struct {
 }
 
 type EnvironmentEditConfiguration struct {
-	Name          string                          `json:"name"`
-	Slug          string                          `json:"slug"`
-	Kind          string                          `json:"kind"`
-	Hostname      string                          `json:"hostname"`
-	ContainerPort int32                           `json:"containerPort"`
-	HealthPath    string                          `json:"healthPath"`
-	BPGOTargets   string                          `json:"bpGoTargets"`
-	Resources     []EnvironmentSetupResourceInput `json:"resources"`
-	ServerIDs     []uuid.UUID                     `json:"serverIds"`
-	ServerNames   []string                        `json:"serverNames"`
-	DNSMode       string                          `json:"dnsMode"`
-	DNSZoneID     *uuid.UUID                      `json:"dnsZoneId"`
+	Name          string                           `json:"name"`
+	Slug          string                           `json:"slug"`
+	Kind          string                           `json:"kind"`
+	Hostname      string                           `json:"hostname"`
+	ContainerPort int32                            `json:"containerPort"`
+	HealthPath    string                           `json:"healthPath"`
+	BPGOTargets   string                           `json:"bpGoTargets"`
+	Processes     []models.EnvironmentProcessInput `json:"processes"`
+	Resources     []EnvironmentSetupResourceInput  `json:"resources"`
+	ServerIDs     []uuid.UUID                      `json:"serverIds"`
+	ServerNames   []string                         `json:"serverNames"`
+	DNSMode       string                           `json:"dnsMode"`
+	DNSZoneID     *uuid.UUID                       `json:"dnsZoneId"`
 }
 
 type EnvironmentEditData struct {
@@ -213,34 +217,38 @@ type EnvironmentEditInput struct {
 	ContainerPort int32
 	HealthPath    string
 	BPGOTargets   string
+	Processes     []models.EnvironmentProcessInput
 	Resources     []EnvironmentSetupResourceInput
 	DNS           EnvironmentDNSInput
 }
 
 type EnvironmentOverview struct {
-	ApplicationID    uuid.UUID                       `json:"applicationId"`
-	ApplicationName  string                          `json:"applicationName"`
-	SourceType       string                          `json:"sourceType"`
-	Environment      models.EnvironmentEntity        `json:"environment"`
-	SetupComplete    bool                            `json:"setupComplete"`
-	Repository       string                          `json:"repository"`
-	Reference        string                          `json:"reference"`
-	ContextPath      string                          `json:"contextPath"`
-	RegistryName     string                          `json:"registryName"`
-	RegistryEndpoint string                          `json:"registryEndpoint"`
-	RuntimeServerIDs []uuid.UUID                     `json:"runtimeServerIds"`
-	RuntimeServers   []string                        `json:"runtimeServers"`
-	Deployability    models.EnvironmentDeployability `json:"deployability"`
-	Secrets          []EnvironmentSecretActivity     `json:"secrets"`
-	Variables        []EnvironmentVariableActivity   `json:"variables"`
-	Domain           string                          `json:"domain"`
-	Resources        []EnvironmentResourceActivity   `json:"resources"`
-	Builds           []EnvironmentBuildActivity      `json:"builds"`
-	Releases         []EnvironmentReleaseActivity    `json:"releases"`
-	Deployments      []EnvironmentDeploymentActivity `json:"deployments"`
-	Instances        []EnvironmentInstanceActivity   `json:"instances"`
-	APITokenPrefix   string                          `json:"apiTokenPrefix"`
-	DNS              EnvironmentDNSStatus            `json:"dns"`
+	ApplicationID    uuid.UUID                           `json:"applicationId"`
+	ApplicationName  string                              `json:"applicationName"`
+	SourceType       string                              `json:"sourceType"`
+	Environment      models.EnvironmentEntity            `json:"environment"`
+	SetupComplete    bool                                `json:"setupComplete"`
+	Repository       string                              `json:"repository"`
+	Reference        string                              `json:"reference"`
+	ContextPath      string                              `json:"contextPath"`
+	RegistryName     string                              `json:"registryName"`
+	RegistryEndpoint string                              `json:"registryEndpoint"`
+	RuntimeServerIDs []uuid.UUID                         `json:"runtimeServerIds"`
+	RuntimeTargetIDs []uuid.UUID                         `json:"runtimeTargetIds"`
+	RuntimeServers   []string                            `json:"runtimeServers"`
+	Deployability    models.EnvironmentDeployability     `json:"deployability"`
+	Secrets          []EnvironmentSecretActivity         `json:"secrets"`
+	Variables        []EnvironmentVariableActivity       `json:"variables"`
+	Domain           string                              `json:"domain"`
+	Resources        []EnvironmentResourceActivity       `json:"resources"`
+	Builds           []EnvironmentBuildActivity          `json:"builds"`
+	Releases         []EnvironmentReleaseActivity        `json:"releases"`
+	Deployments      []EnvironmentDeploymentActivity     `json:"deployments"`
+	Instances        []EnvironmentInstanceActivity       `json:"instances"`
+	Processes        []models.EnvironmentProcessState    `json:"processes"`
+	ReleaseCommands  []EnvironmentReleaseCommandActivity `json:"releaseCommands"`
+	APITokenPrefix   string                              `json:"apiTokenPrefix"`
+	DNS              EnvironmentDNSStatus                `json:"dns"`
 }
 
 type EnvironmentListItem struct {
@@ -374,12 +382,36 @@ type EnvironmentDeploymentEventSnapshot struct {
 }
 
 type EnvironmentInstanceActivity struct {
-	ID         uuid.UUID       `json:"id" bun:"id"`
-	State      string          `json:"state" bun:"state"`
-	Slot       string          `json:"slot" bun:"slot"`
-	Ports      json.RawMessage `json:"ports" bun:"ports"`
-	ReleaseID  uuid.UUID       `json:"releaseId" bun:"release_id"`
-	ObservedAt time.Time       `json:"observedAt" bun:"observed_at"`
+	ID           uuid.UUID       `json:"id" bun:"id"`
+	State        string          `json:"state" bun:"state"`
+	Slot         string          `json:"slot" bun:"slot"`
+	ProcessName  string          `json:"processName" bun:"process_name"`
+	ProcessKind  string          `json:"processKind" bun:"process_kind"`
+	ReplicaKey   string          `json:"replicaKey" bun:"replica_key"`
+	Ports        json.RawMessage `json:"ports" bun:"ports"`
+	ReleaseID    uuid.UUID       `json:"releaseId" bun:"release_id"`
+	DeploymentID uuid.UUID       `json:"deploymentId" bun:"deployment_id"`
+	TargetID     uuid.UUID       `json:"targetId" bun:"target_id"`
+	TargetName   string          `json:"targetName" bun:"target_name"`
+	ObservedAt   time.Time       `json:"observedAt" bun:"observed_at"`
+}
+
+type EnvironmentReleaseCommandActivity struct {
+	ID             uuid.UUID       `json:"id" bun:"id"`
+	Status         string          `json:"status" bun:"status"`
+	Attempt        int32           `json:"attempt" bun:"attempt"`
+	ExternalID     string          `json:"externalId" bun:"external_id"`
+	ExitCode       *int32          `json:"exitCode" bun:"exit_code"`
+	StartedAt      *time.Time      `json:"startedAt" bun:"started_at"`
+	FinishedAt     *time.Time      `json:"finishedAt" bun:"finished_at"`
+	Error          string          `json:"error" bun:"error"`
+	ReleaseID      uuid.UUID       `json:"releaseId" bun:"release_id"`
+	TargetID       uuid.UUID       `json:"targetId" bun:"target_id"`
+	TargetName     string          `json:"targetName" bun:"target_name"`
+	Command        string          `json:"command" bun:"command"`
+	Arguments      json.RawMessage `json:"arguments" bun:"arguments"`
+	TimeoutSeconds int32           `json:"timeoutSeconds" bun:"timeout_seconds"`
+	CreatedAt      time.Time       `json:"createdAt" bun:"created_at"`
 }
 
 func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, environmentID uuid.UUID) (EnvironmentOverview, error) {
@@ -420,6 +452,7 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 	}
 	secretActivity := make([]EnvironmentSecretActivity, 0)
 	variables := make([]EnvironmentVariableActivity, 0)
+	processes := make([]models.EnvironmentProcessState, 0)
 	if setupComplete {
 		secretActivity, err = service.environmentSecretActivity(ctx, environmentID)
 		if err != nil {
@@ -433,6 +466,7 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 		if stateErr != nil {
 			return EnvironmentOverview{}, stateErr
 		}
+		processes = state.Processes
 		for _, resource := range state.Resources {
 			for key, value := range resource.Variables {
 				variables = append(variables, EnvironmentVariableActivity{
@@ -449,22 +483,25 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 		return EnvironmentOverview{}, err
 	}
 	type runtimeServer struct {
-		ID   uuid.UUID `bun:"id"`
-		Name string    `bun:"name"`
+		ID       uuid.UUID `bun:"id"`
+		TargetID uuid.UUID `bun:"target_id"`
+		Name     string    `bun:"name"`
 	}
 	runtimeServers := make([]runtimeServer, 0)
 	if setupComplete {
 		if err := service.db.Executor().NewSelect().TableExpr("environment_targets AS target").
-			ColumnExpr("server.id, server.name").
+			ColumnExpr("server.id, target.id AS target_id, server.name").
 			Join("JOIN servers AS server ON server.id = target.server_id").
 			Where("target.environment_id = ?", environmentID).Where("target.detached_at IS NULL").OrderExpr("server.name").Scan(ctx, &runtimeServers); err != nil {
 			return EnvironmentOverview{}, err
 		}
 	}
 	runtimeServerIDs := make([]uuid.UUID, 0, len(runtimeServers))
+	runtimeTargetIDs := make([]uuid.UUID, 0, len(runtimeServers))
 	runtimeServerNames := make([]string, 0, len(runtimeServers))
 	for _, server := range runtimeServers {
 		runtimeServerIDs = append(runtimeServerIDs, server.ID)
+		runtimeTargetIDs = append(runtimeTargetIDs, server.TargetID)
 		runtimeServerNames = append(runtimeServerNames, server.Name)
 	}
 	resources := make([]EnvironmentResourceActivity, 0)
@@ -494,16 +531,21 @@ func (service *EnvironmentSetup) Overview(ctx context.Context, applicationID, en
 		return EnvironmentOverview{}, err
 	}
 	instances := make([]EnvironmentInstanceActivity, 0)
-	if err := service.db.Executor().NewSelect().TableExpr("instances AS instance").ColumnExpr("instance.id, instance.state, instance.slot, instance.ports, instance.release_id, instance.observed_at").Join("JOIN releases AS release ON release.id = instance.release_id").Where("release.environment_id = ?", environmentID).Where("release.registry_resource_id IS NOT NULL").Where("instance.removed_at IS NULL").OrderExpr("instance.created_at DESC").Limit(30).Scan(ctx, &instances); err != nil {
+	if err := service.db.Executor().NewSelect().TableExpr("instances AS instance").ColumnExpr("instance.id, instance.state, instance.slot, instance.process_name, instance.process_kind, instance.replica_key, instance.ports, instance.release_id, instance.deployment_id, instance.environment_target_id AS target_id, server.name AS target_name, instance.observed_at").Join("JOIN releases AS release ON release.id = instance.release_id").Join("JOIN environment_targets AS target ON target.id = instance.environment_target_id").Join("JOIN servers AS server ON server.id = target.server_id").Where("release.environment_id = ?", environmentID).Where("release.registry_resource_id IS NOT NULL").Where("instance.removed_at IS NULL").OrderExpr("target.attached_at, instance.process_kind, instance.process_name, instance.replica_key, instance.created_at DESC").Limit(200).Scan(ctx, &instances); err != nil {
+		return EnvironmentOverview{}, err
+	}
+	releaseCommands := make([]EnvironmentReleaseCommandActivity, 0)
+	if err := service.db.Executor().NewSelect().TableExpr("release_command_executions AS execution").ColumnExpr("execution.id, execution.status, execution.attempt, COALESCE(execution.external_id, '') AS external_id, execution.exit_code, execution.started_at, execution.finished_at, COALESCE(execution.error, '') AS error, execution.release_id, execution.environment_target_id AS target_id, server.name AS target_name, execution.configuration ->> 'command' AS command, execution.configuration -> 'arguments' AS arguments, (execution.configuration ->> 'timeout_seconds')::integer AS timeout_seconds, execution.created_at").Join("JOIN releases AS release ON release.id = execution.release_id").Join("JOIN environment_targets AS target ON target.id = execution.environment_target_id").Join("JOIN servers AS server ON server.id = target.server_id").Where("release.environment_id = ?", environmentID).OrderExpr("execution.created_at DESC").Limit(20).Scan(ctx, &releaseCommands); err != nil {
 		return EnvironmentOverview{}, err
 	}
 	return EnvironmentOverview{
 		ApplicationID: applicationID, ApplicationName: source.ApplicationName, Environment: environment, SetupComplete: setupComplete,
 		SourceType: source.SourceType, Repository: source.Repository, Reference: source.Reference, ContextPath: source.ContextPath,
 		RegistryName: source.RegistryName, RegistryEndpoint: source.RegistryEndpoint,
-		RuntimeServerIDs: runtimeServerIDs, RuntimeServers: runtimeServerNames,
+		RuntimeServerIDs: runtimeServerIDs, RuntimeTargetIDs: runtimeTargetIDs, RuntimeServers: runtimeServerNames,
 		Deployability: deployability, Secrets: secretActivity, Variables: variables, Domain: domain,
 		Resources: resources, Builds: builds, Releases: releases, Deployments: deployments, Instances: instances,
+		Processes: processes, ReleaseCommands: releaseCommands,
 		APITokenPrefix: environment.APITokenPrefix.String,
 		DNS:            dnsStatus,
 	}, nil
@@ -694,12 +736,14 @@ func (service *EnvironmentSetup) EditData(
 			CredentialProjection: configuration.CredentialProjection,
 		})
 	}
+	processes := processInputsFromState(state.Processes)
+	web, _ := state.WebProcess()
 	return EnvironmentEditData{
 		Overview: overview,
 		Configuration: EnvironmentEditConfiguration{
 			Name: overview.Environment.Name, Slug: overview.Environment.Slug, Kind: overview.Environment.Kind,
-			Hostname: state.Domain.Hostname, ContainerPort: state.Runtime.ContainerPort,
-			HealthPath: state.Runtime.HealthPath, BPGOTargets: state.Runtime.BPGOTargets, Resources: resources,
+			Hostname: state.Domain.Hostname, ContainerPort: web.ContainerPort,
+			HealthPath: web.HealthPath, BPGOTargets: state.Runtime.BPGOTargets, Processes: processes, Resources: resources,
 			ServerIDs: overview.RuntimeServerIDs, ServerNames: overview.RuntimeServers,
 			DNSMode: overview.DNS.Mode, DNSZoneID: overview.DNS.ZoneID,
 		},
@@ -907,6 +951,8 @@ func (service *EnvironmentSetup) Complete(
 ) (EnvironmentSetupResult, error) {
 	input.HealthPath = strings.TrimSpace(input.HealthPath)
 	input.BPGOTargets = strings.TrimSpace(input.BPGOTargets)
+	processes := normalizedProcessFormation(input.Processes, input.ContainerPort, input.HealthPath)
+	input.Processes = processes
 	if err := validateEnvironmentSetupInput(input); err != nil {
 		return EnvironmentSetupResult{}, err
 	}
@@ -985,13 +1031,14 @@ func (service *EnvironmentSetup) Complete(
 	if environment.ApplicationID != applicationID || setupComplete || environment.ArchivedAt.Valid {
 		return EnvironmentSetupResult{}, errors.Join(models.ErrDomainValidation, errors.New("Environment is unavailable or setup is already complete"))
 	}
-	runtimeSettings, _ := json.Marshal(map[string]any{"schema_version": 1, "health_path": input.HealthPath, "bp_go_targets": input.BPGOTargets})
+	runtimeSettings, _ := json.Marshal(map[string]any{"schema_version": 2, "bp_go_targets": input.BPGOTargets})
 	if _, err := models.RuntimeConfiguration.Create(ctx, tx, models.CreateRuntimeConfigurationData{
-		Runtime: "go", Arguments: json.RawMessage(`[]`), Replicas: 1,
-		Ports:          json.RawMessage(fmt.Sprintf(`{"http":%d}`, input.ContainerPort)),
-		ResourceLimits: json.RawMessage(`{}`), RestartPolicy: "unless-stopped", Settings: runtimeSettings,
+		Runtime: "go", ResourceLimits: json.RawMessage(`{}`), RestartPolicy: "unless-stopped", Settings: runtimeSettings,
 		EnvironmentID: environment.ID,
 	}); err != nil {
+		return EnvironmentSetupResult{}, err
+	}
+	if _, err := models.EnvironmentProcess.ReplaceActive(ctx, tx, environment.ID, processes); err != nil {
 		return EnvironmentSetupResult{}, err
 	}
 	if _, err := models.EnvironmentNetwork.Create(ctx, tx, models.CreateEnvironmentNetworkData{Role: "primary", EnvironmentID: environment.ID, PrivateNetworkID: networkID}); err != nil {
@@ -1083,7 +1130,8 @@ func (service *EnvironmentSetup) Complete(
 	}
 	state := models.EnvironmentDesiredState{
 		SchemaVersion: models.EnvironmentStateSchemaVersion,
-		Runtime:       models.EnvironmentRuntimeState{Runtime: "go", ContainerPort: input.ContainerPort, HealthPath: input.HealthPath, BPGOTargets: input.BPGOTargets, Replicas: 1, RestartPolicy: "unless-stopped"},
+		Runtime:       models.EnvironmentRuntimeState{Runtime: "go", BPGOTargets: input.BPGOTargets, RestartPolicy: "unless-stopped"},
+		Processes:     processStatesFromInputs(processes),
 		Domain:        models.EnvironmentDomainState{ID: domain.ID, Hostname: domain.Hostname, Primary: true},
 		Resources:     resourceStates, Secrets: descriptors,
 	}
@@ -1383,10 +1431,6 @@ func (service *EnvironmentSetup) queueImageDeploymentTx(
 	if active > 0 {
 		return models.ReleaseEntity{}, models.DeploymentEntity{}, errors.Join(models.ErrDomainValidation, errors.New("Environment already has an active Deployment"))
 	}
-	state, err := models.ParseEnvironmentDesiredState(revision.State)
-	if err != nil {
-		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
-	}
 	now := time.Now().UTC()
 	sequence, err := models.Change.NextSequence(ctx, tx, source.EnvironmentID)
 	if err != nil {
@@ -1420,49 +1464,11 @@ func (service *EnvironmentSetup) queueImageDeploymentTx(
 	if _, err := models.ChangeStateRevision.Create(ctx, tx, models.CreateChangeStateRevisionData{Role: "result", ChangeID: change.ID, EnvironmentStateRevisionID: revision.ID}); err != nil {
 		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
 	}
-	if _, err := tx.NewUpdate().TableExpr("environment_target_states").Set("desired_revision_id = ?", revision.ID).Set("state = 'pending'").Set("updated_at = ?", now).
-		Where("environment_target_id IN (SELECT id FROM environment_targets WHERE environment_id = ? AND detached_at IS NULL)", source.EnvironmentID).Exec(ctx); err != nil {
+	result, err := service.releases.OrchestrateTx(ctx, tx, release, change, revision)
+	if err != nil {
 		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
 	}
-	runtimeSnapshot, _ := json.Marshal(state.Runtime)
-	var firstDeployment models.DeploymentEntity
-	for index, target := range targets {
-		deployment, queueErr := service.queueDeploymentForTargetTx(ctx, tx, change.ID, release.ID, target.ID, runtimeSnapshot, now)
-		if queueErr != nil {
-			return models.ReleaseEntity{}, models.DeploymentEntity{}, queueErr
-		}
-		if index == 0 {
-			firstDeployment = deployment
-		}
-	}
-	return release, firstDeployment, nil
-}
-
-func (service *EnvironmentSetup) queueDeploymentForTargetTx(
-	ctx context.Context,
-	tx bun.Tx,
-	changeID, releaseID, targetID uuid.UUID,
-	runtimeSnapshot json.RawMessage,
-	now time.Time,
-) (models.DeploymentEntity, error) {
-	deployment, err := models.Deployment.Create(ctx, tx, models.CreateDeploymentData{
-		Attempt: 1, Strategy: json.RawMessage(`{"type":"blue_green","replicas":1}`), RuntimeConfiguration: runtimeSnapshot,
-		Status: "queued", CurrentStep: sql.NullString{String: "queued", Valid: true}, ChangeID: changeID,
-		ReleaseID: releaseID, EnvironmentTargetID: targetID,
-	})
-	if err != nil {
-		return models.DeploymentEntity{}, err
-	}
-	if _, err := models.Instance.Create(ctx, tx, models.CreateInstanceData{
-		ExternalID: "pending:" + deployment.ID.String(), Slot: "candidate", ReplicaKey: "primary", State: "candidate",
-		Ports: json.RawMessage(`{}`), ObservedAt: now, DeploymentID: deployment.ID, ReleaseID: releaseID, EnvironmentTargetID: targetID,
-	}); err != nil {
-		return models.DeploymentEntity{}, err
-	}
-	if _, err := service.queue.InsertTx(ctx, tx.Tx, jobs.DeployReleaseArgs{DeploymentID: deployment.ID}, jobs.DeployReleaseInsertOpts(deployment.ID)); err != nil {
-		return models.DeploymentEntity{}, err
-	}
-	return deployment, nil
+	return release, result.Deployment, nil
 }
 
 func (service *EnvironmentSetup) QueueManualDeploy(
@@ -1589,10 +1595,6 @@ func (service *EnvironmentSetup) QueueReleaseDeployment(
 	if err != nil {
 		return models.DeploymentEntity{}, err
 	}
-	state, err := models.ParseEnvironmentDesiredState(revision.State)
-	if err != nil {
-		return models.DeploymentEntity{}, err
-	}
 	now := time.Now().UTC()
 	sequence, err := models.Change.NextSequence(ctx, tx, environmentID)
 	if err != nil {
@@ -1613,25 +1615,14 @@ func (service *EnvironmentSetup) QueueReleaseDeployment(
 	if _, err := models.ChangeStateRevision.Create(ctx, tx, models.CreateChangeStateRevisionData{Role: "result", ChangeID: change.ID, EnvironmentStateRevisionID: revision.ID}); err != nil {
 		return models.DeploymentEntity{}, err
 	}
-	if _, err := tx.NewUpdate().TableExpr("environment_target_states").Set("desired_revision_id = ?", revision.ID).Set("state = 'pending'").
-		Set("updated_at = ?", now).Where("environment_target_id IN (SELECT id FROM environment_targets WHERE environment_id = ? AND detached_at IS NULL)", environmentID).Exec(ctx); err != nil {
+	result, err := service.releases.OrchestrateTx(ctx, tx, release, change, revision)
+	if err != nil {
 		return models.DeploymentEntity{}, err
-	}
-	runtimeSnapshot, _ := json.Marshal(state.Runtime)
-	var firstDeployment models.DeploymentEntity
-	for index, target := range targets {
-		deployment, queueErr := service.queueDeploymentForTargetTx(ctx, tx, change.ID, release.ID, target.ID, runtimeSnapshot, now)
-		if queueErr != nil {
-			return models.DeploymentEntity{}, queueErr
-		}
-		if index == 0 {
-			firstDeployment = deployment
-		}
 	}
 	if err := tx.Commit(); err != nil {
 		return models.DeploymentEntity{}, err
 	}
-	return firstDeployment, nil
+	return result.Deployment, nil
 }
 
 func (service *EnvironmentSetup) StartBuild(
@@ -1796,12 +1787,14 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	input.Kind = strings.TrimSpace(input.Kind)
 	input.HealthPath = strings.TrimSpace(input.HealthPath)
 	input.BPGOTargets = strings.TrimSpace(input.BPGOTargets)
+	processes := normalizedProcessFormation(input.Processes, input.ContainerPort, input.HealthPath)
+	input.Processes = processes
 	if input.Name == "" || input.Slug == "" || input.Kind == "" {
 		return errors.Join(models.ErrDomainValidation, errors.New("Environment name, slug, and kind are required"))
 	}
 	configuration := EnvironmentSetupInput{
 		Hostname: input.Hostname, ContainerPort: input.ContainerPort,
-		HealthPath: input.HealthPath, BPGOTargets: input.BPGOTargets, Resources: input.Resources, DNS: input.DNS,
+		HealthPath: input.HealthPath, BPGOTargets: input.BPGOTargets, Processes: processes, Resources: input.Resources, DNS: input.DNS,
 	}
 	if err := validateEnvironmentSetupInput(configuration); err != nil {
 		return err
@@ -1852,8 +1845,12 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	if err != nil {
 		return err
 	}
-	if activeBuilds > 0 || activeDeployments > 0 {
-		return errors.New("stop active Build and Deployment work before editing the Environment")
+	activeReleaseCommands, err := tx.NewSelect().TableExpr("release_command_executions AS execution").Join("JOIN releases AS release ON release.id = execution.release_id").Where("release.environment_id = ?", environmentID).Where("execution.status IN ('queued', 'running')").Count(ctx)
+	if err != nil {
+		return err
+	}
+	if activeBuilds > 0 || activeDeployments > 0 || activeReleaseCommands > 0 {
+		return errors.New("stop active Build, release command, and Deployment work before editing the Environment")
 	}
 	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "environment-slug:"+applicationID.String()+":"+input.Slug); err != nil {
 		return err
@@ -1877,14 +1874,14 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	if err := tx.NewSelect().Model(&runtime).Where("environment_id = ?", environmentID).Limit(1).Scan(ctx); err != nil {
 		return err
 	}
-	runtimeSettings, _ := json.Marshal(map[string]any{
-		"schema_version": 1, "health_path": input.HealthPath, "bp_go_targets": input.BPGOTargets,
-	})
+	runtimeSettings, _ := json.Marshal(map[string]any{"schema_version": 2, "bp_go_targets": input.BPGOTargets})
 	if _, err := models.RuntimeConfiguration.Update(ctx, tx, models.UpdateRuntimeConfigurationData{
-		ID: runtime.ID, Runtime: "go", Command: runtime.Command, Arguments: runtime.Arguments, Replicas: 1,
-		Ports: json.RawMessage(fmt.Sprintf(`{"http":%d}`, input.ContainerPort)), ResourceLimits: runtime.ResourceLimits,
+		ID: runtime.ID, Runtime: "go", ResourceLimits: runtime.ResourceLimits,
 		RestartPolicy: "unless-stopped", Settings: runtimeSettings, EnvironmentID: environmentID,
 	}); err != nil {
+		return err
+	}
+	if _, err := models.EnvironmentProcess.ReplaceActive(ctx, tx, environmentID, processes); err != nil {
 		return err
 	}
 	var domain models.EnvironmentDomainEntity
@@ -2036,9 +2033,9 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	state := models.EnvironmentDesiredState{
 		SchemaVersion: models.EnvironmentStateSchemaVersion,
 		Runtime: models.EnvironmentRuntimeState{
-			Runtime: "go", ContainerPort: input.ContainerPort, HealthPath: input.HealthPath,
-			BPGOTargets: input.BPGOTargets, Replicas: 1, RestartPolicy: "unless-stopped",
+			Runtime: "go", BPGOTargets: input.BPGOTargets, RestartPolicy: "unless-stopped",
 		},
+		Processes: processStatesFromInputs(processes),
 		Domain:    models.EnvironmentDomainState{ID: updatedDomain.ID, Hostname: updatedDomain.Hostname, Primary: true},
 		Resources: resourceStates, Secrets: secretDescriptors,
 	}
@@ -2086,7 +2083,12 @@ func (service *EnvironmentSetup) cleanupEnvironment(ctx context.Context, environ
 				SELECT 1 FROM deployments AS deployment
 				JOIN environment_targets AS target ON target.id = deployment.environment_target_id
 				WHERE target.environment_id = ? AND deployment.id::text = job.args ->> 'deployment_id'
-			))`, environmentID, environmentID).
+			)) OR
+			(job.kind = 'release_command' AND EXISTS (
+				SELECT 1 FROM release_command_executions AS execution
+				JOIN releases AS release ON release.id = execution.release_id
+				WHERE release.environment_id = ? AND execution.id::text = job.args ->> 'release_command_execution_id'
+			))`, environmentID, environmentID, environmentID).
 		Scan(ctx, &jobsToDelete); err != nil {
 		return fmt.Errorf("load Environment background jobs: %w", err)
 	}
@@ -2383,22 +2385,8 @@ func (service *EnvironmentSetup) RetryDeployment(
 	if _, err := models.ChangeStateRevision.Create(ctx, tx, models.CreateChangeStateRevisionData{Role: "result", ChangeID: change.ID, EnvironmentStateRevisionID: revision.ID}); err != nil {
 		return models.DeploymentEntity{}, err
 	}
-	runtimeSnapshot, _ := json.Marshal(state.Runtime)
-	deployment, err := models.Deployment.Create(ctx, tx, models.CreateDeploymentData{
-		Attempt: previous.Attempt + 1, Strategy: previous.Strategy, RuntimeConfiguration: runtimeSnapshot,
-		Status: "queued", CurrentStep: sql.NullString{String: "queued", Valid: true}, ChangeID: change.ID,
-		ReleaseID: release.ID, EnvironmentTargetID: target.ID,
-	})
+	deployment, err := service.releases.QueueTargetTx(ctx, tx, change.ID, release.ID, target.ID, previous.Attempt+1, previous.Strategy, state.Processes, now)
 	if err != nil {
-		return models.DeploymentEntity{}, err
-	}
-	if _, err := models.Instance.Create(ctx, tx, models.CreateInstanceData{
-		ExternalID: "pending:" + deployment.ID.String(), Slot: "candidate", ReplicaKey: "primary", State: "candidate",
-		Ports: json.RawMessage(`{}`), ObservedAt: now, DeploymentID: deployment.ID, ReleaseID: release.ID, EnvironmentTargetID: target.ID,
-	}); err != nil {
-		return models.DeploymentEntity{}, err
-	}
-	if _, err := service.queue.InsertTx(ctx, tx.Tx, jobs.DeployReleaseArgs{DeploymentID: deployment.ID}, jobs.DeployReleaseInsertOpts(deployment.ID)); err != nil {
 		return models.DeploymentEntity{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -2409,11 +2397,8 @@ func (service *EnvironmentSetup) RetryDeployment(
 
 func validateEnvironmentSetupInput(input EnvironmentSetupInput) error {
 	builder := validation.NewBuilder()
-	if input.ContainerPort < 1 || input.ContainerPort > 65535 {
-		builder.Add("containerPort", "range", "container port must be between 1 and 65535")
-	}
-	if input.HealthPath != "" && (!strings.HasPrefix(input.HealthPath, "/") || strings.ContainsAny(input.HealthPath, " \t\r\n")) {
-		builder.Add("healthPath", "format", "health path must be an absolute HTTP path")
+	if _, err := models.ValidateEnvironmentProcessFormation(normalizedProcessFormation(input.Processes, input.ContainerPort, input.HealthPath)); err != nil {
+		return err
 	}
 	if input.BPGOTargets != "" && (!goTargetsPattern.MatchString(input.BPGOTargets) || strings.Contains(input.BPGOTargets, "..")) {
 		builder.Add("bpGoTargets", "format", "Target must contain repository-relative Go targets")
@@ -2422,6 +2407,49 @@ func validateEnvironmentSetupInput(input EnvironmentSetupInput) error {
 		builder.Add("resources", "max_items", "Environment setup exceeds the supported item count")
 	}
 	return builder.Err()
+}
+
+func normalizedProcessFormation(configured []models.EnvironmentProcessInput, containerPort int32, healthPath string) []models.EnvironmentProcessInput {
+	if len(configured) == 0 {
+		return []models.EnvironmentProcessInput{{Name: models.EnvironmentProcessWeb, Kind: models.EnvironmentProcessWeb, Arguments: []string{}, Replicas: 1, ContainerPort: &containerPort, HealthPath: strings.TrimSpace(healthPath)}}
+	}
+	normalized, err := models.ValidateEnvironmentProcessFormation(configured)
+	if err != nil {
+		return configured
+	}
+	return normalized
+}
+
+func processStatesFromInputs(inputs []models.EnvironmentProcessInput) []models.EnvironmentProcessState {
+	states := make([]models.EnvironmentProcessState, 0, len(inputs))
+	for _, input := range inputs {
+		state := models.EnvironmentProcessState{Name: input.Name, Kind: input.Kind, Command: input.Command, Arguments: input.Arguments, Replicas: input.Replicas, HealthPath: input.HealthPath}
+		if input.ContainerPort != nil {
+			state.ContainerPort = *input.ContainerPort
+		}
+		if input.TimeoutSeconds != nil {
+			state.TimeoutSeconds = *input.TimeoutSeconds
+		}
+		states = append(states, state)
+	}
+	return states
+}
+
+func processInputsFromState(states []models.EnvironmentProcessState) []models.EnvironmentProcessInput {
+	inputs := make([]models.EnvironmentProcessInput, 0, len(states))
+	for _, state := range states {
+		input := models.EnvironmentProcessInput{Name: state.Name, Kind: state.Kind, Command: state.Command, Arguments: state.Arguments, Replicas: state.Replicas, HealthPath: state.HealthPath}
+		if state.Kind == models.EnvironmentProcessWeb {
+			port := state.ContainerPort
+			input.ContainerPort = &port
+		}
+		if state.Kind == models.EnvironmentProcessRelease {
+			timeout := state.TimeoutSeconds
+			input.TimeoutSeconds = &timeout
+		}
+		inputs = append(inputs, input)
+	}
+	return inputs
 }
 
 func (service *EnvironmentSetup) loadSource(ctx context.Context, applicationID, environmentID uuid.UUID) (environmentSetupSource, models.GitHubRepositoryEntity, models.GitHubInstallationEntity, error) {

@@ -82,13 +82,16 @@ type LogCursor struct {
 }
 
 type EnvironmentLog struct {
-	Cursor     LogCursor
-	Message    string
-	Stream     string
-	Container  string
-	Deployment string
-	Instance   string
-	Release    string
+	Cursor         LogCursor
+	Message        string
+	Stream         string
+	Container      string
+	Deployment     string
+	Instance       string
+	Release        string
+	ProcessName    string
+	ProcessKind    string
+	ProcessReplica string
 }
 
 type EnvironmentLogPage struct {
@@ -455,8 +458,9 @@ func (client Client) EnvironmentLogs(
 	after *LogCursor,
 	limit uint64,
 ) (EnvironmentLogPage, error) {
-	const initialQuery = "SELECT toString(toUnixTimestamp64Nano(Timestamp)) AS timestamp_nanoseconds, Body AS message, LogAttributes['log.iostream'] AS stream, LogAttributes['container.name'] AS container, LogAttributes['deploycrate.deployment.id'] AS deployment, LogAttributes['deploycrate.instance.id'] AS instance, LogAttributes['deploycrate.release.id'] AS release, LogAttributes['deploycrate.log.epoch'] AS epoch, LogAttributes['deploycrate.log.ordinal'] AS ordinal FROM otel_logs WHERE LogAttributes['deploycrate.environment.id'] = {environment:String} ORDER BY Timestamp DESC, epoch DESC, toUInt64OrZero(LogAttributes['deploycrate.log.ordinal']) DESC LIMIT {limit:UInt64} FORMAT JSONEachRow"
-	const incrementalQuery = "SELECT toString(toUnixTimestamp64Nano(Timestamp)) AS timestamp_nanoseconds, Body AS message, LogAttributes['log.iostream'] AS stream, LogAttributes['container.name'] AS container, LogAttributes['deploycrate.deployment.id'] AS deployment, LogAttributes['deploycrate.instance.id'] AS instance, LogAttributes['deploycrate.release.id'] AS release, LogAttributes['deploycrate.log.epoch'] AS epoch, LogAttributes['deploycrate.log.ordinal'] AS ordinal FROM otel_logs WHERE LogAttributes['deploycrate.environment.id'] = {environment:String} AND (Timestamp, LogAttributes['deploycrate.log.epoch'], toUInt64OrZero(LogAttributes['deploycrate.log.ordinal'])) > (fromUnixTimestamp64Nano({after_nanoseconds:Int64}), {after_epoch:String}, {after_ordinal:UInt64}) ORDER BY Timestamp, epoch, toUInt64OrZero(LogAttributes['deploycrate.log.ordinal']) LIMIT {limit:UInt64} FORMAT JSONEachRow"
+	const columns = "toString(toUnixTimestamp64Nano(Timestamp)) AS timestamp_nanoseconds, Body AS message, LogAttributes['log.iostream'] AS stream, LogAttributes['container.name'] AS container, LogAttributes['deploycrate.deployment.id'] AS deployment, LogAttributes['deploycrate.instance.id'] AS instance, LogAttributes['deploycrate.release.id'] AS release, LogAttributes['deploycrate.process.name'] AS process_name, LogAttributes['deploycrate.process.kind'] AS process_kind, LogAttributes['deploycrate.process.replica'] AS process_replica, LogAttributes['deploycrate.log.epoch'] AS epoch, LogAttributes['deploycrate.log.ordinal'] AS ordinal"
+	const initialQuery = "SELECT " + columns + " FROM otel_logs WHERE LogAttributes['deploycrate.environment.id'] = {environment:String} ORDER BY Timestamp DESC, epoch DESC, toUInt64OrZero(LogAttributes['deploycrate.log.ordinal']) DESC LIMIT {limit:UInt64} FORMAT JSONEachRow"
+	const incrementalQuery = "SELECT " + columns + " FROM otel_logs WHERE LogAttributes['deploycrate.environment.id'] = {environment:String} AND (Timestamp, LogAttributes['deploycrate.log.epoch'], toUInt64OrZero(LogAttributes['deploycrate.log.ordinal'])) > (fromUnixTimestamp64Nano({after_nanoseconds:Int64}), {after_epoch:String}, {after_ordinal:UInt64}) ORDER BY Timestamp, epoch, toUInt64OrZero(LogAttributes['deploycrate.log.ordinal']) LIMIT {limit:UInt64} FORMAT JSONEachRow"
 
 	endpoint, err := url.Parse(client.baseURL)
 	if err != nil {
@@ -506,6 +510,9 @@ func (client Client) EnvironmentLogs(
 			Deployment           string `json:"deployment"`
 			Instance             string `json:"instance"`
 			Release              string `json:"release"`
+			ProcessName          string `json:"process_name"`
+			ProcessKind          string `json:"process_kind"`
+			ProcessReplica       string `json:"process_replica"`
 			Epoch                string `json:"epoch"`
 			Ordinal              string `json:"ordinal"`
 		}
@@ -530,6 +537,7 @@ func (client Client) EnvironmentLogs(
 			},
 			Message: row.Message, Stream: row.Stream, Container: row.Container,
 			Deployment: row.Deployment, Instance: row.Instance, Release: row.Release,
+			ProcessName: row.ProcessName, ProcessKind: row.ProcessKind, ProcessReplica: row.ProcessReplica,
 		})
 	}
 	if after == nil {

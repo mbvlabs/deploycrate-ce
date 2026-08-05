@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/uptrace/bun"
 )
 
 type PermanentDeploymentError struct{ Err error }
@@ -33,6 +34,7 @@ type deploymentScope struct {
 	Revision             models.EnvironmentStateRevisionEntity
 	State                models.EnvironmentDesiredState
 	Instance             models.InstanceEntity
+	Instances            []models.InstanceEntity
 	Domain               models.EnvironmentDomainEntity
 	Runtime              models.RuntimeConfigurationEntity
 	ApplicationID        uuid.UUID
@@ -102,7 +104,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	if err != nil {
 		return err
 	}
-	environment, resourceAttachments, err := service.composeEnvironment(ctx, scope, resolved)
+	_, resourceAttachments, err := service.composeEnvironment(ctx, scope, resolved, false)
 	if err != nil {
 		return fail(err)
 	}
@@ -118,39 +120,93 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	if err != nil {
 		return err
 	}
-	candidate, err := service.workloads.Find(ctx, scope.Target.ServerID, scope.Deployment.ID, scope.Instance.ID)
-	if err != nil {
-		return err
+	candidates := make(map[uuid.UUID]containerclient.WorkloadState, len(scope.Instances))
+	processes := make(map[string]models.EnvironmentProcessState, len(scope.State.Processes))
+	for _, process := range scope.State.Processes {
+		processes[process.Name] = process
 	}
-	if candidate.Exists {
-		if err := validateCandidateOwnership(candidate, scope); err != nil {
-			return fail(err)
+	startInstance := func(instance models.InstanceEntity) error {
+		process, exists := processes[instance.ProcessName]
+		if !exists || process.Kind != instance.ProcessKind {
+			return errors.New("Deployment Instance process snapshot is mismatched")
 		}
-	} else {
-		candidate, err = service.workloads.Run(ctx, scope.Target.ServerID, containerclient.WorkloadRunSpec{
-			ApplicationID: scope.ApplicationID, EnvironmentID: scope.Environment.ID, TargetID: scope.Target.ID, DeploymentID: scope.Deployment.ID,
-			InstanceID: scope.Instance.ID, ReleaseID: scope.Release.ID,
-			ContainerName:  "dc-app-" + scope.Environment.ID.String() + "-" + scope.Deployment.ID.String(),
-			ImageReference: scope.Release.ArtifactReference, NetworkName: networkName, RestartPolicy: "unless-stopped",
-			ContainerPort: scope.State.Runtime.ContainerPort, Environment: environment,
-		}, credentials)
+		includePort := process.Kind == models.EnvironmentProcessWeb
+		environment, _, err := service.composeEnvironment(ctx, scope, resolved, includePort)
 		if err != nil {
 			return err
 		}
+		candidate, err := service.workloads.Find(ctx, scope.Target.ServerID, scope.Deployment.ID, instance.ID)
+		if err != nil {
+			return err
+		}
+		if candidate.Exists {
+			if err := validateCandidateOwnership(candidate, scope, instance); err != nil {
+				return err
+			}
+		} else {
+			command := make([]string, 0, len(process.Arguments)+1)
+			if process.Command != nil {
+				command = append(command, *process.Command)
+			}
+			command = append(command, process.Arguments...)
+			candidate, err = service.workloads.Run(ctx, scope.Target.ServerID, containerclient.WorkloadRunSpec{
+				ApplicationID: scope.ApplicationID, EnvironmentID: scope.Environment.ID, TargetID: scope.Target.ID, DeploymentID: scope.Deployment.ID,
+				InstanceID: instance.ID, ReleaseID: scope.Release.ID, ProcessName: instance.ProcessName, ProcessKind: instance.ProcessKind, ProcessReplica: instance.ReplicaKey,
+				ContainerName:  "dc-app-" + scope.Environment.ID.String() + "-" + scope.Deployment.ID.String() + "-" + instance.ProcessName + "-" + strings.ReplaceAll(instance.ReplicaKey, "/", "-"),
+				ImageReference: scope.Release.ArtifactReference, NetworkName: networkName, RestartPolicy: "unless-stopped",
+				ContainerPort: process.ContainerPort, Environment: environment, Command: command,
+			}, credentials)
+			if err != nil {
+				return err
+			}
+		}
+		ports := json.RawMessage(`{}`)
+		if includePort {
+			if candidate.HostAddress == "" || candidate.HostPort == 0 {
+				return errors.New("candidate web workload did not publish its target address and port")
+			}
+			encoded, _ := json.Marshal(map[string]any{"host": candidate.HostAddress, "http": candidate.HostPort})
+			ports = encoded
+		}
+		instanceState := "running"
+		if !candidate.Running {
+			instanceState = "failed"
+		}
+		now := time.Now().UTC()
+		if _, err := service.db.Executor().NewUpdate().TableExpr("instances").Set("external_id = ?", candidate.ID).Set("state = ?", instanceState).Set("ports = ?", ports).Set("observed_at = ?", now).Set("updated_at = ?", now).Where("id = ?", instance.ID).Exec(ctx); err != nil {
+			return err
+		}
+		if !candidate.Running {
+			return fmt.Errorf("candidate %s process %s exited during startup", process.Kind, process.Name)
+		}
+		candidates[instance.ID] = candidate
+		return nil
 	}
-	if candidate.HostAddress == "" || candidate.HostPort == 0 {
-		return fail(errors.New("candidate workload did not publish its target address and port"))
+	if err := startInstance(scope.Instance); err != nil {
+		service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
+		return fail(err)
 	}
-	encodedPorts, _ := json.Marshal(map[string]any{"host": candidate.HostAddress, "http": candidate.HostPort})
-	ports := json.RawMessage(encodedPorts)
-	instanceState := "running"
-	if !candidate.Running {
-		instanceState = "failed"
+	webProcess, _ := scope.State.WebProcess()
+	webCandidate := candidates[scope.Instance.ID]
+	if err := waitForWorkloadHealth(ctx, webCandidate.HostAddress, webCandidate.HostPort, webProcess.HealthPath); err != nil {
+		service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
+		return fail(err)
 	}
-	if _, err := service.db.Executor().NewUpdate().TableExpr("instances").Set("external_id = ?", candidate.ID).
-		Set("state = ?", instanceState).Set("ports = ?", ports).Set("observed_at = ?", time.Now().UTC()).Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", scope.Instance.ID).Exec(ctx); err != nil {
+	if err := service.advance(ctx, deploymentID, "worker_candidates"); err != nil {
 		return err
+	}
+	for _, instance := range scope.Instances {
+		if instance.ProcessKind != models.EnvironmentProcessWorker {
+			continue
+		}
+		if err := startInstance(instance); err != nil {
+			service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
+			return fail(err)
+		}
+	}
+	if err := service.stabilizeWorkers(ctx, scope, candidates); err != nil {
+		service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
+		return fail(err)
 	}
 	route, previous, first, err := service.prepareCaddy(ctx, scope)
 	if err != nil {
@@ -161,13 +217,6 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	}
 	if err := service.caddy.Verify(ctx, route.ExternalID); err != nil {
 		return err
-	}
-	if !candidate.Running {
-		return fail(errors.New("candidate workload exited after publishing its target port"))
-	}
-	if err := waitForWorkloadHealth(ctx, candidate.HostAddress, candidate.HostPort, scope.State.Runtime.HealthPath); err != nil {
-		_ = service.workloads.Remove(context.WithoutCancel(ctx), scope.Target.ServerID, scope.Deployment.ID, scope.Instance.ID)
-		return fail(err)
 	}
 	if err := service.advance(ctx, deploymentID, "traffic_switch"); err != nil {
 		return err
@@ -184,7 +233,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	if err := service.caddy.Verify(ctx, route.ExternalID); err != nil {
 		return err
 	}
-	if err := service.caddy.VerifyPublic(ctx, scope.Domain.Hostname, scope.State.Runtime.HealthPath); err != nil {
+	if err := service.caddy.VerifyPublic(ctx, scope.Domain.Hostname, webProcess.HealthPath); err != nil {
 		if !first && len(previous) > 0 {
 			rollback := map[uuid.UUID]int32{scope.Instance.ID: 0}
 			fallback := uuid.Nil
@@ -197,24 +246,32 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 			if fallback != uuid.Nil {
 				rollback[fallback] = 100
 				_ = service.caddy.SwitchTraffic(context.WithoutCancel(ctx), route.ID, previousRelease(previous, fallback), rollback)
-				if service.workloads.Remove(context.WithoutCancel(ctx), scope.Target.ServerID, scope.Deployment.ID, scope.Instance.ID) == nil {
-					_ = service.caddy.RemoveBackend(context.WithoutCancel(ctx), route.ID, scope.Instance.ID)
-				}
+				service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
+				_ = service.caddy.RemoveBackend(context.WithoutCancel(ctx), route.ID, scope.Instance.ID)
 			}
+		} else if first {
+			_ = service.caddy.DestroyManaged(context.WithoutCancel(ctx), route.ID)
+			service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
 		}
 		return fail(fmt.Errorf("public Environment health verification failed: %w", err))
 	}
-	if err := service.markSucceeded(ctx, scope, candidate, ports); err != nil {
+	if err := service.markSucceeded(ctx, scope, candidates); err != nil {
 		return err
 	}
-	for _, old := range previous {
+	previousFormation, err := service.previousFormation(ctx, previous)
+	if err != nil {
+		return err
+	}
+	for _, old := range previousFormation {
 		if err := service.workloads.Remove(ctx, scope.Target.ServerID, old.DeploymentID, old.ID); err != nil {
 			_ = service.recordEvent(ctx, deploymentID, "cleanup", "warning", "previous container cleanup will be retried", err)
 			continue
 		}
-		if err := service.caddy.RemoveBackend(ctx, route.ID, old.ID); err != nil {
-			_ = service.recordEvent(ctx, deploymentID, "cleanup", "warning", "previous backend cleanup will be retried", err)
-			continue
+		if old.ProcessKind == models.EnvironmentProcessWeb {
+			if err := service.caddy.RemoveBackend(ctx, route.ID, old.ID); err != nil {
+				_ = service.recordEvent(ctx, deploymentID, "cleanup", "warning", "previous backend cleanup will be retried", err)
+				continue
+			}
 		}
 		now := time.Now().UTC()
 		_, _ = service.db.Executor().NewUpdate().TableExpr("instances").Set("state = 'removed'").Set("removed_at = ?", now).Set("updated_at = ?", now).Where("id = ?", old.ID).Exec(ctx)
@@ -316,16 +373,75 @@ func (service *DeploymentExecution) loadScope(ctx context.Context, deployment mo
 	if err != nil {
 		return scope, err
 	}
-	err = service.db.Executor().NewSelect().Model(&scope.Instance).Where("deployment_id = ?", deployment.ID).Where("removed_at IS NULL").Limit(1).Scan(ctx)
-	if err != nil || scope.Instance.ReleaseID != scope.Release.ID || scope.Instance.EnvironmentTargetID != scope.Target.ID {
-		return scope, errors.New("Deployment candidate Instance is unavailable or mismatched")
+	var processSnapshot []models.EnvironmentProcessState
+	if json.Unmarshal(deployment.ProcessConfiguration, &processSnapshot) != nil || len(processSnapshot) == 0 {
+		return scope, errors.New("Deployment process configuration snapshot is invalid")
+	}
+	processInputs := make([]models.EnvironmentProcessInput, 0, len(processSnapshot))
+	for _, process := range processSnapshot {
+		input := models.EnvironmentProcessInput{Name: process.Name, Kind: process.Kind, Command: process.Command, Arguments: process.Arguments, Replicas: process.Replicas, HealthPath: process.HealthPath}
+		if process.Kind == models.EnvironmentProcessWeb {
+			port := process.ContainerPort
+			input.ContainerPort = &port
+		}
+		if process.Kind == models.EnvironmentProcessRelease {
+			timeout := process.TimeoutSeconds
+			input.TimeoutSeconds = &timeout
+		}
+		processInputs = append(processInputs, input)
+	}
+	if _, err := models.ValidateEnvironmentProcessFormation(processInputs); err != nil {
+		return scope, errors.New("Deployment process configuration snapshot is invalid")
+	}
+	scope.State.Processes = processSnapshot
+	err = service.db.Executor().NewSelect().Model(&scope.Instances).Where("deployment_id = ?", deployment.ID).Where("removed_at IS NULL").OrderExpr("process_kind, process_name, replica_key").Scan(ctx)
+	if err != nil || len(scope.Instances) == 0 {
+		return scope, errors.New("Deployment candidate formation is unavailable")
+	}
+	expectedInstances := make(map[string]string)
+	for _, process := range processSnapshot {
+		if process.Kind != models.EnvironmentProcessWeb && process.Kind != models.EnvironmentProcessWorker {
+			continue
+		}
+		for replica := int32(1); replica <= process.Replicas; replica++ {
+			replicaKey := fmt.Sprintf("%s/%s/%d", process.Kind, process.Name, replica)
+			if process.Kind == models.EnvironmentProcessWeb {
+				replicaKey = "web/primary"
+			}
+			expectedInstances[process.Name+"\x00"+replicaKey] = process.Kind
+		}
+	}
+	if len(expectedInstances) != len(scope.Instances) {
+		return scope, errors.New("Deployment candidate formation does not match its process snapshot")
+	}
+	for _, instance := range scope.Instances {
+		if instance.ReleaseID != scope.Release.ID || instance.EnvironmentTargetID != scope.Target.ID {
+			return scope, errors.New("Deployment candidate Instance is mismatched")
+		}
+		key := instance.ProcessName + "\x00" + instance.ReplicaKey
+		if expectedKind, exists := expectedInstances[key]; !exists || expectedKind != instance.ProcessKind {
+			return scope, errors.New("Deployment candidate formation does not match its process snapshot")
+		}
+		delete(expectedInstances, key)
+		if instance.ProcessKind == models.EnvironmentProcessWeb {
+			if scope.Instance.ID != uuid.Nil {
+				return scope, errors.New("Deployment has multiple web Instances")
+			}
+			scope.Instance = instance
+		}
+	}
+	if scope.Instance.ID == uuid.Nil {
+		return scope, errors.New("Deployment web Instance is unavailable")
+	}
+	if len(expectedInstances) != 0 {
+		return scope, errors.New("Deployment candidate formation is incomplete")
 	}
 	scope.Domain, err = models.EnvironmentDomain.Find(ctx, service.db.Executor(), scope.State.Domain.ID)
 	if err != nil || scope.Domain.EnvironmentID != scope.Environment.ID || scope.Domain.ArchivedAt.Valid || !scope.Domain.IsPrimary || scope.Domain.Hostname != scope.State.Domain.Hostname {
 		return scope, errors.New("Deployment primary domain is unavailable or mismatched")
 	}
 	err = service.db.Executor().NewSelect().Model(&scope.Runtime).Where("environment_id = ?", scope.Environment.ID).Limit(1).Scan(ctx)
-	if err != nil || scope.Runtime.Runtime != "go" || scope.Runtime.Replicas != 1 || scope.Runtime.RestartPolicy != "unless-stopped" {
+	if err != nil || scope.Runtime.Runtime != "go" || scope.Runtime.RestartPolicy != "unless-stopped" {
 		return scope, errors.New("Deployment Go runtime configuration is unavailable")
 	}
 	if scope.Release.RegistryResourceID != nil && scope.Release.RegistryCredentialID != nil && scope.Release.RegistryEndpoint.Valid {
@@ -349,12 +465,18 @@ func (service *DeploymentExecution) loadScope(ctx context.Context, deployment mo
 	return scope, nil
 }
 
-func (service *DeploymentExecution) composeEnvironment(ctx context.Context, scope deploymentScope, secrets []ResolvedEnvironmentSecret) (map[string]string, []containerclient.ResourceContainerAttachment, error) {
+func (service *DeploymentExecution) composeEnvironment(ctx context.Context, scope deploymentScope, secrets []ResolvedEnvironmentSecret, includePort bool) (map[string]string, []containerclient.ResourceContainerAttachment, error) {
 	values := map[string]string{
-		"PORT":                       strconv.Itoa(int(scope.State.Runtime.ContainerPort)),
 		"DEPLOYCRATE_APPLICATION_ID": scope.ApplicationID.String(),
 		"DEPLOYCRATE_ENVIRONMENT_ID": scope.Environment.ID.String(),
 		"DEPLOYCRATE_RELEASE_ID":     scope.Release.ID.String(),
+	}
+	if includePort {
+		web, exists := scope.State.WebProcess()
+		if !exists {
+			return nil, nil, errors.New("Environment web process is unavailable")
+		}
+		values["PORT"] = strconv.Itoa(int(web.ContainerPort))
 	}
 	put := func(key, value string) error {
 		if _, exists := values[key]; exists {
@@ -497,12 +619,15 @@ func (service *DeploymentExecution) composeEnvironment(ctx context.Context, scop
 	return values, attachments, nil
 }
 
-func validateCandidateOwnership(candidate containerclient.WorkloadState, scope deploymentScope) error {
+func validateCandidateOwnership(candidate containerclient.WorkloadState, scope deploymentScope, instance models.InstanceEntity) error {
 	expected := map[string]string{
 		"com.deploycrate.application": scope.ApplicationID.String(), "com.deploycrate.environment": scope.Environment.ID.String(),
 		"com.deploycrate.target":     scope.Target.ID.String(),
-		"com.deploycrate.deployment": scope.Deployment.ID.String(), "com.deploycrate.instance": scope.Instance.ID.String(),
-		"com.deploycrate.release": scope.Release.ID.String(),
+		"com.deploycrate.deployment": scope.Deployment.ID.String(), "com.deploycrate.instance": instance.ID.String(),
+		"com.deploycrate.release":                   scope.Release.ID.String(),
+		containerclient.WorkloadLabelProcessName:    instance.ProcessName,
+		containerclient.WorkloadLabelProcessKind:    instance.ProcessKind,
+		containerclient.WorkloadLabelProcessReplica: instance.ReplicaKey,
 	}
 	for key, value := range expected {
 		if candidate.Labels[key] != value {
@@ -590,7 +715,7 @@ func (service *DeploymentExecution) prepareCaddy(ctx context.Context, scope depl
 	return route, previous, false, nil
 }
 
-func (service *DeploymentExecution) markSucceeded(ctx context.Context, scope deploymentScope, candidate containerclient.WorkloadState, ports json.RawMessage) error {
+func (service *DeploymentExecution) markSucceeded(ctx context.Context, scope deploymentScope, candidates map[uuid.UUID]containerclient.WorkloadState) error {
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -607,11 +732,23 @@ func (service *DeploymentExecution) markSucceeded(ctx context.Context, scope dep
 		return errors.New("Deployment is no longer running")
 	}
 	now := time.Now().UTC()
-	if _, err := tx.NewUpdate().TableExpr("instances").Set("external_id = ?", candidate.ID).Set("state = 'serving'").Set("ports = ?", ports).
-		Set("observed_at = ?", now).Set("updated_at = ?", now).Where("id = ?", scope.Instance.ID).Exec(ctx); err != nil {
-		return err
+	observedProcesses := make([]map[string]any, 0, len(scope.Instances))
+	for _, instance := range scope.Instances {
+		candidate, exists := candidates[instance.ID]
+		if !exists {
+			return errors.New("candidate formation observation is incomplete")
+		}
+		ports := json.RawMessage(`{}`)
+		if instance.ProcessKind == models.EnvironmentProcessWeb {
+			encoded, _ := json.Marshal(map[string]any{"host": candidate.HostAddress, "http": candidate.HostPort})
+			ports = encoded
+		}
+		if _, err := tx.NewUpdate().TableExpr("instances").Set("external_id = ?", candidate.ID).Set("state = 'serving'").Set("ports = ?", ports).Set("observed_at = ?", now).Set("updated_at = ?", now).Where("id = ?", instance.ID).Exec(ctx); err != nil {
+			return err
+		}
+		observedProcesses = append(observedProcesses, map[string]any{"instance_id": instance.ID, "container_id": candidate.ID, "image_id": candidate.ImageID, "process_name": instance.ProcessName, "process_kind": instance.ProcessKind, "replica_key": instance.ReplicaKey})
 	}
-	encodedObserved, _ := json.Marshal(map[string]any{"schema_version": 1, "container_id": candidate.ID, "image_id": candidate.ImageID, "host_port": candidate.HostPort})
+	encodedObserved, _ := json.Marshal(map[string]any{"schema_version": 2, "processes": observedProcesses})
 	observed := json.RawMessage(encodedObserved)
 	if _, err := tx.NewUpdate().TableExpr("environment_target_states").Set("state = 'applied'").Set("observed_state = ?", observed).
 		Set("applying_revision_id = NULL").Set("applied_revision_id = ?", scope.Revision.ID).Set("observed_at = ?", now).Set("updated_at = ?", now).
@@ -635,6 +772,53 @@ func (service *DeploymentExecution) markSucceeded(ctx context.Context, scope dep
 		return err
 	}
 	return service.recordEvent(ctx, scope.Deployment.ID, "serving", "succeeded", "candidate is serving public traffic", nil)
+}
+
+func (service *DeploymentExecution) removeCandidateFormation(ctx context.Context, scope deploymentScope) {
+	for _, instance := range scope.Instances {
+		_ = service.workloads.Remove(ctx, scope.Target.ServerID, scope.Deployment.ID, instance.ID)
+	}
+}
+
+func (service *DeploymentExecution) stabilizeWorkers(ctx context.Context, scope deploymentScope, candidates map[uuid.UUID]containerclient.WorkloadState) error {
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+	}
+	for _, instance := range scope.Instances {
+		if instance.ProcessKind != models.EnvironmentProcessWorker {
+			continue
+		}
+		state, err := service.workloads.Find(ctx, scope.Target.ServerID, scope.Deployment.ID, instance.ID)
+		if err != nil {
+			return err
+		}
+		if !state.Exists || !state.Running {
+			return fmt.Errorf("worker process %s replica %s exited during stabilization", instance.ProcessName, instance.ReplicaKey)
+		}
+		candidates[instance.ID] = state
+	}
+	return nil
+}
+
+func (service *DeploymentExecution) previousFormation(ctx context.Context, previousWeb []models.InstanceEntity) ([]models.InstanceEntity, error) {
+	deploymentIDs := make([]uuid.UUID, 0, len(previousWeb))
+	seen := make(map[uuid.UUID]struct{})
+	for _, instance := range previousWeb {
+		if _, exists := seen[instance.DeploymentID]; !exists {
+			seen[instance.DeploymentID] = struct{}{}
+			deploymentIDs = append(deploymentIDs, instance.DeploymentID)
+		}
+	}
+	if len(deploymentIDs) == 0 {
+		return []models.InstanceEntity{}, nil
+	}
+	instances := make([]models.InstanceEntity, 0)
+	err := service.db.Executor().NewSelect().Model(&instances).Where("deployment_id IN (?)", bun.In(deploymentIDs)).Where("removed_at IS NULL").OrderExpr("created_at, process_kind, process_name, replica_key").Scan(ctx)
+	return instances, err
 }
 
 func (service *DeploymentExecution) recordEvent(ctx context.Context, deploymentID uuid.UUID, eventType, status, message string, operationErr error) error {

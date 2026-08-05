@@ -26,6 +26,7 @@ func BuildDeployment(changeID uuid.UUID, releaseID uuid.UUID, environmentTargetI
 		DeploymentEntity: models.DeploymentEntity{
 			Attempt:              randomInt(1, 1000, 100),
 			Strategy:             json.RawMessage{},
+			ProcessConfiguration: json.RawMessage{},
 			RuntimeConfiguration: json.RawMessage{},
 			Status:               faker.Word(),
 			CurrentStep:          sql.NullString{String: faker.Word(), Valid: true},
@@ -54,6 +55,7 @@ func CreateDeployment(ctx context.Context, exec storage.Executor, changeID uuid.
 		UpdatedAt:            time.Now(),
 		Attempt:              built.Attempt,
 		Strategy:             built.Strategy,
+		ProcessConfiguration: built.ProcessConfiguration,
 		RuntimeConfiguration: built.RuntimeConfiguration,
 		Status:               built.Status,
 		CurrentStep:          built.CurrentStep,
@@ -98,8 +100,15 @@ func WithDeploymentsStrategy(value json.RawMessage) DeploymentOption {
 	}
 }
 
+func WithDeploymentsProcessConfiguration(value json.RawMessage) DeploymentOption {
+	return func(f *DeploymentFactory) {
+		f.DeploymentEntity.ProcessConfiguration = value
+	}
+}
+
 func WithDeploymentsRuntimeConfiguration(value json.RawMessage) DeploymentOption {
 	return func(f *DeploymentFactory) {
+		f.DeploymentEntity.ProcessConfiguration = value
 		f.DeploymentEntity.RuntimeConfiguration = value
 	}
 }

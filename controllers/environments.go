@@ -24,12 +24,13 @@ import (
 )
 
 type Environments struct {
-	setup        *services.EnvironmentSetup
-	secrets      *services.EnvironmentSecrets
-	applications *services.ApplicationSetup
-	metric       services.MetricRollupService
-	logs         *services.EnvironmentLogs
-	dns          *services.EnvironmentDNS
+	setup           *services.EnvironmentSetup
+	secrets         *services.EnvironmentSecrets
+	applications    *services.ApplicationSetup
+	metric          services.MetricRollupService
+	logs            *services.EnvironmentLogs
+	dns             *services.EnvironmentDNS
+	releaseCommands *services.ReleaseCommandExecution
 }
 
 func NewEnvironments(
@@ -39,8 +40,9 @@ func NewEnvironments(
 	metric services.MetricRollupService,
 	logs *services.EnvironmentLogs,
 	dns *services.EnvironmentDNS,
+	releaseCommands *services.ReleaseCommandExecution,
 ) Environments {
-	return Environments{setup: setup, secrets: secrets, applications: applications, metric: metric, logs: logs, dns: dns}
+	return Environments{setup: setup, secrets: secrets, applications: applications, metric: metric, logs: logs, dns: dns, releaseCommands: releaseCommands}
 }
 
 func (controller Environments) RegisterRoutes(router *router.Router) error {
@@ -68,6 +70,8 @@ func (controller Environments) RegisterRoutes(router *router.Router) error {
 		{http.MethodPost, routes.EnvironmentBuildStart, controller.StartBuild},
 		{http.MethodPost, routes.EnvironmentBuildStop, controller.StopBuild},
 		{http.MethodPost, routes.EnvironmentBuildRetry, controller.RetryBuild},
+		{http.MethodGet, routes.EnvironmentReleaseCommandLogs, controller.ReleaseCommandLogs},
+		{http.MethodPost, routes.EnvironmentReleaseCommandRetry, controller.RetryReleaseCommand},
 		{http.MethodPost, routes.EnvironmentDeploymentsCreate, controller.Deploy},
 		{http.MethodPost, routes.EnvironmentReleaseDeploymentsCreate, controller.RedeployRelease},
 		{http.MethodPost, routes.EnvironmentDeploymentRetry, controller.RetryDeployment},
@@ -80,7 +84,11 @@ func (controller Environments) RegisterRoutes(router *router.Router) error {
 	}
 	registered := make([]error, 0, len(definitions))
 	for _, definition := range definitions {
-		_, err := router.AddRoute(echo.Route{Method: definition.method, Path: definition.route.Path(), Name: definition.route.Name(), Handler: definition.handler, Middlewares: auth})
+		middlewares := auth
+		if definition.route.Name() == routes.EnvironmentReleaseCommandRetry.Name() {
+			middlewares = []echo.MiddlewareFunc{middleware.AdminOnly}
+		}
+		_, err := router.AddRoute(echo.Route{Method: definition.method, Path: definition.route.Path(), Name: definition.route.Name(), Handler: definition.handler, Middlewares: middlewares})
 		registered = append(registered, err)
 	}
 	return errors.Join(registered...)
@@ -405,6 +413,7 @@ func environmentOverviewProps(overview services.EnvironmentOverview) map[string]
 		"registryName":     overview.RegistryName,
 		"registryEndpoint": overview.RegistryEndpoint,
 		"runtimeServerIds": overview.RuntimeServerIDs,
+		"runtimeTargetIds": overview.RuntimeTargetIDs,
 		"runtimeServers":   overview.RuntimeServers,
 		"deployability":    overview.Deployability,
 		"secrets":          overview.Secrets,
@@ -415,9 +424,60 @@ func environmentOverviewProps(overview services.EnvironmentOverview) map[string]
 		"releases":         overview.Releases,
 		"deployments":      overview.Deployments,
 		"instances":        overview.Instances,
+		"processes":        overview.Processes,
+		"releaseCommands":  overview.ReleaseCommands,
 		"apiTokenPrefix":   overview.APITokenPrefix,
 		"dns":              overview.DNS,
 	}
+}
+
+func (controller Environments) ReleaseCommandLogs(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	executionID, parseErr := uuid.Parse(etx.Param("executionID"))
+	if err == nil {
+		err = parseErr
+	}
+	if err != nil {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Release command not found"})
+	}
+	logs, err := controller.releaseCommands.Logs(etx.Request().Context(), params.ApplicationID, params.EnvironmentID, executionID)
+	if err != nil {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Release command not found"})
+	}
+	etx.Response().Header().Set("Cache-Control", "no-store")
+	return etx.JSON(http.StatusOK, map[string]any{"logs": logs})
+}
+
+func (controller Environments) RetryReleaseCommand(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	executionID, parseErr := uuid.Parse(etx.Param("executionID"))
+	if err == nil {
+		err = parseErr
+	}
+	var payload struct {
+		TargetID string `json:"targetId"`
+	}
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	var targetID *uuid.UUID
+	if err == nil && strings.TrimSpace(payload.TargetID) != "" {
+		parsed, targetErr := uuid.Parse(payload.TargetID)
+		if targetErr != nil {
+			err = targetErr
+		} else {
+			targetID = &parsed
+		}
+	}
+	if err == nil {
+		err = controller.releaseCommands.Retry(etx.Request().Context(), params.ApplicationID, params.EnvironmentID, executionID, cookies.ExtractFromCookieApp(etx).UserID, targetID)
+	}
+	if err != nil {
+		_ = cookies.AddFlash(etx, cookies.FlashError, err.Error())
+	} else {
+		_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Release command retry queued")
+	}
+	return inertia.Redirect(etx, routes.EnvironmentShow.URL(params.routeParams()), http.StatusSeeOther)
 }
 
 func (ids environmentPathIDs) routeParams() routes.EnvironmentParams {
@@ -491,6 +551,7 @@ type environmentEditPayload struct {
 	ContainerPort int32                                    `json:"containerPort"`
 	HealthPath    string                                   `json:"healthPath"`
 	BPGOTargets   string                                   `json:"bpGoTargets"`
+	Processes     []models.EnvironmentProcessInput         `json:"processes"`
 	Resources     []services.EnvironmentSetupResourceInput `json:"resources"`
 	DNSMode       string                                   `json:"dnsMode"`
 	DNSZoneID     string                                   `json:"dnsZoneId"`
@@ -519,7 +580,7 @@ func (controller Environments) Update(etx *echo.Context) error {
 				services.EnvironmentEditInput{
 					Name: payload.Name, Slug: payload.Slug, Kind: payload.Kind, Hostname: payload.Hostname,
 					ContainerPort: payload.ContainerPort, HealthPath: payload.HealthPath,
-					BPGOTargets: payload.BPGOTargets, Resources: payload.Resources,
+					BPGOTargets: payload.BPGOTargets, Processes: payload.Processes, Resources: payload.Resources,
 					DNS: services.EnvironmentDNSInput{Mode: payload.DNSMode, ZoneID: dnsZoneID},
 				},
 			)
@@ -538,6 +599,7 @@ func (controller Environments) Update(etx *echo.Context) error {
 				configuration.ContainerPort = payload.ContainerPort
 				configuration.HealthPath = payload.HealthPath
 				configuration.BPGOTargets = payload.BPGOTargets
+				configuration.Processes = payload.Processes
 				configuration.Resources = payload.Resources
 				configuration.DNSMode = payload.DNSMode
 				configuration.DNSZoneID = dnsZoneID

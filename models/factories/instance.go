@@ -26,6 +26,8 @@ func BuildInstance(externalID string, deploymentID uuid.UUID, releaseID uuid.UUI
 		InstanceEntity: models.InstanceEntity{
 			ExternalID:          externalID,
 			Slot:                faker.Word(),
+			ProcessName:         "web",
+			ProcessKind:         "web",
 			ReplicaKey:          faker.Word(),
 			State:               faker.Word(),
 			Ports:               json.RawMessage{},
@@ -53,6 +55,8 @@ func CreateInstance(ctx context.Context, exec storage.Executor, externalID strin
 		UpdatedAt:           time.Now(),
 		ExternalID:          built.ExternalID,
 		Slot:                built.Slot,
+		ProcessName:         built.ProcessName,
+		ProcessKind:         built.ProcessKind,
 		ReplicaKey:          built.ReplicaKey,
 		State:               built.State,
 		Ports:               built.Ports,
@@ -93,6 +97,18 @@ func WithInstancesExternalID(value string) InstanceOption {
 func WithInstancesSlot(value string) InstanceOption {
 	return func(f *InstanceFactory) {
 		f.InstanceEntity.Slot = value
+	}
+}
+
+func WithInstancesProcessName(value string) InstanceOption {
+	return func(f *InstanceFactory) {
+		f.InstanceEntity.ProcessName = value
+	}
+}
+
+func WithInstancesProcessKind(value string) InstanceOption {
+	return func(f *InstanceFactory) {
+		f.InstanceEntity.ProcessKind = value
 	}
 }
 

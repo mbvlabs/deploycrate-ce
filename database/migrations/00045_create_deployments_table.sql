@@ -8,7 +8,7 @@ CREATE TABLE deployments (
 
     attempt INTEGER NOT NULL,
     strategy JSONB NOT NULL,
-    runtime_configuration JSONB NOT NULL,
+    process_configuration JSONB NOT NULL,
     status TEXT NOT NULL,
     current_step TEXT,
     started_at TIMESTAMPTZ,

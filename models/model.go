@@ -50,6 +50,9 @@ type (
 	changeLog                    struct{}
 	build                        struct{}
 	buildLog                     struct{}
+	environmentProcess           struct{}
+	releaseCommandExecution      struct{}
+	releaseCommandLog            struct{}
 	job                          struct{}
 	release                      struct{}
 	deployment                   struct{}
@@ -122,6 +125,9 @@ var (
 	ChangeLog                    changeLog
 	Build                        build
 	BuildLog                     buildLog
+	EnvironmentProcess           environmentProcess
+	ReleaseCommandExecution      releaseCommandExecution
+	ReleaseCommandLog            releaseCommandLog
 	Job                          job
 	Release                      release
 	Deployment                   deployment

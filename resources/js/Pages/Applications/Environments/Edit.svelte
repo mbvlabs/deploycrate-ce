@@ -4,6 +4,7 @@
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
   import EnvironmentDeleteDialog from '@/Components/EnvironmentDeleteDialog.svelte'
+  import EnvironmentProcessEditor, { type ProcessInput } from '@/Components/EnvironmentProcessEditor.svelte'
   import FormField from '@/Components/FormField.svelte'
   import { Input } from '@/Components/ui/input'
   import * as NativeSelect from '@/Components/ui/native-select'
@@ -14,7 +15,7 @@
   type ResourceInput = { resourceId: string; endpointId: string; credentialId?: string; alias: string; database: string; credentialProjection: 'connection_url' | 'individual_parts' }
   type ResourceOption = { id: string; name: string; engine: string; database: string; endpointId: string; endpoint: string; credentialId?: string; credential: string; serverId?: string; credentialFields: string[]; supportsConnectionUrl: boolean; environmentKeys: Record<string, string> }
   type DNSZone = { zoneId: string; zoneName: string; connectionId: string; connectionName: string }
-  type Configuration = { name: string; slug: string; kind: string; hostname: string; containerPort: number; healthPath: string; bpGoTargets: string; resources: ResourceInput[]; serverIds: string[]; serverNames: string[]; dnsMode: 'manual' | 'cloudflare'; dnsZoneId?: string | null }
+  type Configuration = { name: string; slug: string; kind: string; hostname: string; containerPort: number; healthPath: string; bpGoTargets: string; processes: ProcessInput[]; resources: ResourceInput[]; serverIds: string[]; serverNames: string[]; dnsMode: 'manual' | 'cloudflare'; dnsZoneId?: string | null }
   type Environment = { applicationId: string; applicationName: string; sourceType: 'buildpacks' | 'image'; environment: { id: string; name: string; kind: string }; repository: string; reference: string; contextPath: string }
 
   let { auth, environment, configuration, options }: { auth: { email: string }; environment: Environment; configuration: Configuration; options: { resources: ResourceOption[]; dnsZones: DNSZone[] } } = $props()
@@ -86,10 +87,13 @@
       <Card.Header><Card.Title>Runtime</Card.Title><Card.Description>Edit the Environment runtime values.</Card.Description></Card.Header>
       <Card.Content class="grid gap-5 sm:grid-cols-2">
         <div class="sm:col-span-2"><FormField label="Runtime Server targets"><Input value={configuration.serverNames.join(', ')} readonly /></FormField><p class="mt-2 text-xs text-muted-foreground">Runtime placement is fixed after setup. Create a new Environment to change its Server targets.</p></div>
-        <FormField label="Container port" error={$form.errors.containerPort}><Input type="number" min="1" max="65535" bind:value={$form.containerPort} required /></FormField>
-        <FormField label="HTTP health path" error={$form.errors.healthPath}><Input bind:value={$form.healthPath} placeholder="/health" /></FormField>
         {#if environment.sourceType === 'buildpacks'}<FormField label="Target" error={$form.errors.bpGoTargets}><Input bind:value={$form.bpGoTargets} placeholder="./cmd/app" /></FormField>{/if}
       </Card.Content>
+    </Card.Root>
+
+    <Card.Root>
+      <Card.Header><Card.Title>Processes</Card.Title><Card.Description>Changes are snapshotted into the next desired-state revision and applied on the next deployment.</Card.Description></Card.Header>
+      <Card.Content><EnvironmentProcessEditor bind:processes={$form.processes} errors={$form.errors} /></Card.Content>
     </Card.Root>
 
     <Card.Root>

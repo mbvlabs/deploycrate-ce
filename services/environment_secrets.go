@@ -10,7 +10,6 @@ import (
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
 	"deploycrate-ce/models"
-	"deploycrate-ce/queue/jobs"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -30,13 +29,13 @@ const (
 )
 
 type EnvironmentSecrets struct {
-	db     storage.Pool
-	queue  storage.InsertQueue
-	config config.Config
+	db       storage.Pool
+	config   config.Config
+	releases *ReleaseDeployment
 }
 
-func NewEnvironmentSecrets(db storage.Pool, queue storage.InsertQueue, cfg config.Config) *EnvironmentSecrets {
-	return &EnvironmentSecrets{db: db, queue: queue, config: cfg}
+func NewEnvironmentSecrets(db storage.Pool, cfg config.Config, releases *ReleaseDeployment) *EnvironmentSecrets {
+	return &EnvironmentSecrets{db: db, config: cfg, releases: releases}
 }
 
 type PreparedEnvironmentSecret struct {
@@ -541,7 +540,7 @@ func (service *EnvironmentSecrets) ReconcileManagedResource(
 	}); err != nil {
 		return err
 	}
-	return service.queueRevisionDeployment(ctx, db, change, revision, state)
+	return service.queueRevisionDeployment(ctx, db, change, revision)
 }
 
 func (service *EnvironmentSecrets) digest(environmentID uuid.UUID, key, value string) ([]byte, error) {
@@ -654,7 +653,6 @@ func (service *EnvironmentSecrets) queueRevisionDeployment(
 	db storage.Executor,
 	change models.ChangeEntity,
 	revision models.EnvironmentStateRevisionEntity,
-	state models.EnvironmentDesiredState,
 ) error {
 	var release models.ReleaseEntity
 	err := db.NewSelect().Model(&release).Where("environment_id = ?", revision.EnvironmentID).
@@ -665,40 +663,13 @@ func (service *EnvironmentSecrets) queueRevisionDeployment(
 	if err != nil {
 		return err
 	}
-	targets, err := models.EnvironmentTarget.ActiveForEnvironmentAll(ctx, db, revision.EnvironmentID)
-	if err != nil {
-		return err
-	}
-	if len(targets) == 0 {
-		return errors.New("Environment has no runtime Server targets")
-	}
 	if _, err := models.ChangeRelease.Create(ctx, db, models.CreateChangeReleaseData{ChangeID: change.ID, ReleaseID: release.ID}); err != nil {
 		return err
 	}
-	runtimeSnapshot, _ := json.Marshal(state.Runtime)
 	tx, ok := db.(bun.Tx)
 	if !ok {
 		return errors.New("secret revision deployment requires a database transaction")
 	}
-	for _, target := range targets {
-		deployment, createErr := models.Deployment.Create(ctx, db, models.CreateDeploymentData{
-			Attempt: 1, Strategy: json.RawMessage(`{"type":"blue_green","replicas":1}`), RuntimeConfiguration: runtimeSnapshot,
-			Status: "queued", CurrentStep: sql.NullString{String: "queued", Valid: true}, ChangeID: change.ID,
-			ReleaseID: release.ID, EnvironmentTargetID: target.ID,
-		})
-		if createErr != nil {
-			return createErr
-		}
-		if _, createErr := models.Instance.Create(ctx, db, models.CreateInstanceData{
-			ExternalID: "pending:" + deployment.ID.String(), Slot: "candidate", ReplicaKey: "primary", State: "candidate",
-			Ports: json.RawMessage(`{}`), ObservedAt: time.Now().UTC(), DeploymentID: deployment.ID,
-			ReleaseID: release.ID, EnvironmentTargetID: target.ID,
-		}); createErr != nil {
-			return createErr
-		}
-		if _, createErr := service.queue.InsertTx(ctx, tx.Tx, jobs.DeployReleaseArgs{DeploymentID: deployment.ID}, jobs.DeployReleaseInsertOpts(deployment.ID)); createErr != nil {
-			return createErr
-		}
-	}
-	return nil
+	_, err = service.releases.OrchestrateTx(ctx, tx, release, change, revision)
+	return err
 }

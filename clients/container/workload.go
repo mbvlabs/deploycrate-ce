@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/netip"
 	"slices"
@@ -17,21 +18,29 @@ import (
 )
 
 const (
-	workloadDockerExecutable  = "/usr/bin/docker"
-	labelApplication          = "com.deploycrate.application"
-	labelEnvironment          = "com.deploycrate.environment"
-	labelTarget               = "com.deploycrate.target"
-	labelDeployment           = "com.deploycrate.deployment"
-	labelInstance             = "com.deploycrate.instance"
-	labelRelease              = "com.deploycrate.release"
-	labelNetworkOwner         = "com.deploycrate.environment"
-	labelResourceInstallation = "com.deploycrate.resource-installation"
-	WorkloadLabelEnvironment  = labelEnvironment
-	WorkloadLabelTarget       = labelTarget
-	WorkloadLabelDeployment   = labelDeployment
-	WorkloadLabelInstance     = labelInstance
-	WorkloadLabelResource     = labelResourceInstallation
-	WorkloadLabelNetworkOwner = labelNetworkOwner
+	workloadDockerExecutable    = "/usr/bin/docker"
+	labelApplication            = "com.deploycrate.application"
+	labelEnvironment            = "com.deploycrate.environment"
+	labelTarget                 = "com.deploycrate.target"
+	labelDeployment             = "com.deploycrate.deployment"
+	labelInstance               = "com.deploycrate.instance"
+	labelRelease                = "com.deploycrate.release"
+	labelProcessName            = "com.deploycrate.process.name"
+	labelProcessKind            = "com.deploycrate.process.kind"
+	labelProcessReplica         = "com.deploycrate.process.replica"
+	labelReleaseCommand         = "com.deploycrate.release-command"
+	labelNetworkOwner           = "com.deploycrate.environment"
+	labelResourceInstallation   = "com.deploycrate.resource-installation"
+	WorkloadLabelEnvironment    = labelEnvironment
+	WorkloadLabelTarget         = labelTarget
+	WorkloadLabelDeployment     = labelDeployment
+	WorkloadLabelInstance       = labelInstance
+	WorkloadLabelResource       = labelResourceInstallation
+	WorkloadLabelNetworkOwner   = labelNetworkOwner
+	WorkloadLabelProcessName    = labelProcessName
+	WorkloadLabelProcessKind    = labelProcessKind
+	WorkloadLabelProcessReplica = labelProcessReplica
+	WorkloadLabelReleaseCommand = labelReleaseCommand
 )
 
 type WorkloadRunSpec struct {
@@ -41,6 +50,9 @@ type WorkloadRunSpec struct {
 	DeploymentID      uuid.UUID
 	InstanceID        uuid.UUID
 	ReleaseID         uuid.UUID
+	ProcessName       string
+	ProcessKind       string
+	ProcessReplica    string
 	ContainerName     string
 	ImageReference    string
 	NetworkName       string
@@ -63,6 +75,31 @@ type WorkloadState struct {
 	HostAddress    string
 	HostPort       int32
 	Labels         map[string]string
+	ExitCode       int32
+	Error          string
+}
+
+type OneOffRunSpec struct {
+	ApplicationID             uuid.UUID
+	EnvironmentID             uuid.UUID
+	TargetID                  uuid.UUID
+	ReleaseID                 uuid.UUID
+	ReleaseCommandExecutionID uuid.UUID
+	Attempt                   int32
+	ContainerName             string
+	ImageReference            string
+	NetworkName               string
+	Environment               map[string]string
+	Command                   []string
+	DockerEnvironment         []string
+	Stdout                    io.Writer
+	Stderr                    io.Writer
+	Created                   func(string) error
+}
+
+type OneOffRunResult struct {
+	State            WorkloadState
+	ContainerCreated bool
 }
 
 type ResourceContainerAttachment struct {
@@ -242,9 +279,12 @@ func PrepareWorkloadRun(spec WorkloadRunSpec) (PreparedWorkloadRun, error) {
 		return PreparedWorkloadRun{}, errors.New("workload publish address is invalid")
 	}
 	if spec.ApplicationID == uuid.Nil || spec.EnvironmentID == uuid.Nil || spec.TargetID == uuid.Nil || spec.DeploymentID == uuid.Nil ||
-		spec.InstanceID == uuid.Nil || spec.ReleaseID == uuid.Nil || spec.ContainerPort < 1 || spec.ContainerPort > 65535 ||
-		!strings.Contains(spec.ImageReference, "@sha256:") || spec.RestartPolicy != "unless-stopped" {
+		spec.InstanceID == uuid.Nil || spec.ReleaseID == uuid.Nil || strings.TrimSpace(spec.ProcessName) == "" || strings.TrimSpace(spec.ProcessReplica) == "" ||
+		!strings.Contains(spec.ImageReference, "@sha256:") || spec.RestartPolicy != "unless-stopped" || !validWorkloadObjectName(spec.ContainerName) || !validWorkloadObjectName(spec.NetworkName) || !validWorkloadCommand(spec.Command, false) {
 		return PreparedWorkloadRun{}, errors.New("workload Docker specification is invalid")
+	}
+	if spec.ProcessKind == "web" && (spec.ContainerPort < 1 || spec.ContainerPort > 65535) || spec.ProcessKind == "worker" && spec.ContainerPort != 0 || spec.ProcessKind != "web" && spec.ProcessKind != "worker" {
+		return PreparedWorkloadRun{}, errors.New("workload process specification is invalid")
 	}
 	arguments := []string{"run", "--detach", "--name", spec.ContainerName,
 		"--label", labelApplication + "=" + spec.ApplicationID.String(),
@@ -253,8 +293,13 @@ func PrepareWorkloadRun(spec WorkloadRunSpec) (PreparedWorkloadRun, error) {
 		"--label", labelDeployment + "=" + spec.DeploymentID.String(),
 		"--label", labelInstance + "=" + spec.InstanceID.String(),
 		"--label", labelRelease + "=" + spec.ReleaseID.String(),
-		"--network", spec.NetworkName, "--restart", spec.RestartPolicy,
-		"--publish", net.JoinHostPort(publishAddress, "") + ":" + strconv.Itoa(int(spec.ContainerPort))}
+		"--label", labelProcessName + "=" + spec.ProcessName,
+		"--label", labelProcessKind + "=" + spec.ProcessKind,
+		"--label", labelProcessReplica + "=" + spec.ProcessReplica,
+		"--network", spec.NetworkName, "--restart", spec.RestartPolicy}
+	if spec.ProcessKind == "web" {
+		arguments = append(arguments, "--publish", net.JoinHostPort(publishAddress, "")+":"+strconv.Itoa(int(spec.ContainerPort)))
+	}
 	keys := make([]string, 0, len(spec.Environment))
 	for key := range spec.Environment {
 		if key == "" || strings.ContainsAny(key, "=\x00") {
@@ -298,8 +343,10 @@ func ParseWorkloadInspect(output []byte) (WorkloadState, error) {
 			Labels map[string]string `json:"Labels"`
 		} `json:"Config"`
 		State struct {
-			Running bool   `json:"Running"`
-			Status  string `json:"Status"`
+			Running  bool   `json:"Running"`
+			Status   string `json:"Status"`
+			ExitCode int32  `json:"ExitCode"`
+			Error    string `json:"Error"`
 		} `json:"State"`
 		NetworkSettings struct {
 			Ports map[string][]struct {
@@ -312,7 +359,7 @@ func ParseWorkloadInspect(output []byte) (WorkloadState, error) {
 		return WorkloadState{}, errors.New("Docker returned invalid workload state")
 	}
 	value := values[0]
-	state := WorkloadState{Exists: true, ID: value.ID, Name: strings.TrimPrefix(value.Name, "/"), ImageReference: value.Config.Image, ImageID: value.Image, Running: value.State.Running, Status: value.State.Status, Labels: value.Config.Labels}
+	state := WorkloadState{Exists: true, ID: value.ID, Name: strings.TrimPrefix(value.Name, "/"), ImageReference: value.Config.Image, ImageID: value.Image, Running: value.State.Running, Status: value.State.Status, Labels: value.Config.Labels, ExitCode: value.State.ExitCode, Error: value.State.Error}
 	for _, bindings := range value.NetworkSettings.Ports {
 		for _, binding := range bindings {
 			if !validWorkloadPublishAddress(binding.HostIP) {
@@ -326,6 +373,85 @@ func ParseWorkloadInspect(output []byte) (WorkloadState, error) {
 		}
 	}
 	return state, nil
+}
+
+func (WorkloadClient) RunOneOff(ctx context.Context, spec OneOffRunSpec) (OneOffRunResult, error) {
+	prepared, err := PrepareOneOffCreate(spec)
+	if err != nil {
+		return OneOffRunResult{}, err
+	}
+	create := sudo.CommandContextPreserveEnvironment(ctx, workloadDockerExecutable, prepared.Arguments...)
+	create.Env = prepared.Environment
+	output, err := create.CombinedOutput()
+	if err != nil {
+		return OneOffRunResult{}, fmt.Errorf("create one-off workload container: %w: %s", err, boundedDockerMessage(output))
+	}
+	identifier := strings.TrimSpace(string(output))
+	result := OneOffRunResult{ContainerCreated: true, State: WorkloadState{Exists: true, ID: identifier, Name: spec.ContainerName}}
+	if spec.Created != nil {
+		if err := spec.Created(identifier); err != nil {
+			return result, err
+		}
+	}
+	start := sudo.CommandContext(ctx, workloadDockerExecutable, "start", "--attach", identifier)
+	start.Stdout = spec.Stdout
+	start.Stderr = spec.Stderr
+	startErr := start.Run()
+	state, inspectErr := inspectWorkload(context.WithoutCancel(ctx), identifier)
+	if inspectErr == nil {
+		result.State = state
+	}
+	if startErr != nil {
+		return result, fmt.Errorf("run one-off workload container: %w", startErr)
+	}
+	return result, inspectErr
+}
+
+func PrepareOneOffCreate(spec OneOffRunSpec) (PreparedWorkloadRun, error) {
+	if spec.ApplicationID == uuid.Nil || spec.EnvironmentID == uuid.Nil || spec.TargetID == uuid.Nil || spec.ReleaseID == uuid.Nil || spec.ReleaseCommandExecutionID == uuid.Nil || spec.Attempt < 1 || !strings.Contains(spec.ImageReference, "@sha256:") || !validWorkloadObjectName(spec.ContainerName) || !validWorkloadObjectName(spec.NetworkName) || !validWorkloadCommand(spec.Command, true) {
+		return PreparedWorkloadRun{}, errors.New("one-off workload Docker specification is invalid")
+	}
+	arguments := []string{"create", "--name", spec.ContainerName,
+		"--label", labelApplication + "=" + spec.ApplicationID.String(),
+		"--label", labelEnvironment + "=" + spec.EnvironmentID.String(),
+		"--label", labelTarget + "=" + spec.TargetID.String(),
+		"--label", labelRelease + "=" + spec.ReleaseID.String(),
+		"--label", labelReleaseCommand + "=" + spec.ReleaseCommandExecutionID.String(),
+		"--label", labelProcessName + "=release", "--label", labelProcessKind + "=release",
+		"--label", labelProcessReplica + "=" + strconv.Itoa(int(spec.Attempt)), "--network", spec.NetworkName}
+	keys := make([]string, 0, len(spec.Environment))
+	for key := range spec.Environment {
+		if key == "" || strings.ContainsAny(key, "=\x00") {
+			return PreparedWorkloadRun{}, errors.New("one-off workload environment contains an invalid key")
+		}
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	childEnvironment := append([]string{}, spec.DockerEnvironment...)
+	if len(childEnvironment) == 0 {
+		childEnvironment = []string{"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}
+	}
+	for _, key := range keys {
+		if strings.ContainsRune(spec.Environment[key], '\x00') {
+			return PreparedWorkloadRun{}, errors.New("one-off workload environment contains an invalid value")
+		}
+		arguments = append(arguments, "--env", key)
+		childEnvironment = append(childEnvironment, key+"="+spec.Environment[key])
+	}
+	arguments = append(arguments, spec.ImageReference)
+	arguments = append(arguments, spec.Command...)
+	return PreparedWorkloadRun{Arguments: arguments, Environment: childEnvironment}, nil
+}
+
+func (WorkloadClient) RemoveOneOff(ctx context.Context, identifier string) error {
+	if strings.TrimSpace(identifier) == "" || strings.HasPrefix(identifier, "-") {
+		return errors.New("one-off workload container identity is invalid")
+	}
+	command := sudo.CommandContext(ctx, workloadDockerExecutable, "rm", "--force", identifier)
+	if output, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("remove one-off workload container: %w: %s", err, boundedDockerMessage(output))
+	}
+	return nil
 }
 
 func (WorkloadClient) FindEnvironment(ctx context.Context, environmentID uuid.UUID) ([]WorkloadState, error) {
@@ -418,4 +544,20 @@ func validWorkloadPublishAddress(value string) bool {
 		return false
 	}
 	return address.IsLoopback() || netip.MustParsePrefix("10.99.0.0/16").Contains(address)
+}
+
+func validWorkloadObjectName(value string) bool {
+	return value != "" && value == strings.TrimSpace(value) && !strings.HasPrefix(value, "-") && !strings.ContainsAny(value, " \t\r\n\x00")
+}
+
+func validWorkloadCommand(command []string, requireExecutable bool) bool {
+	if requireExecutable && (len(command) == 0 || command[0] == "") {
+		return false
+	}
+	for _, argument := range command {
+		if strings.ContainsRune(argument, '\x00') {
+			return false
+		}
+	}
+	return true
 }

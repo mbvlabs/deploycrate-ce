@@ -55,6 +55,12 @@ func (c change) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (Ch
 	return entity, nil
 }
 
+func (c change) Lock(ctx context.Context, db storage.Executor, id uuid.UUID) (ChangeEntity, error) {
+	var entity ChangeEntity
+	err := db.NewSelect().Model(&entity).Where("id = ?", id).For("UPDATE").Scan(ctx)
+	return entity, err
+}
+
 type CreateChangeData struct {
 	Sequence          int64
 	Kind              string
@@ -438,6 +444,13 @@ func (c change) MarkBuildCancelled(ctx context.Context, db storage.Executor, id 
 }
 
 func (c change) ResetBuildForRetry(ctx context.Context, db storage.Executor, id uuid.UUID, at time.Time) error {
+	_, err := db.NewUpdate().TableExpr("changes").Set("status = 'committed'").
+		Set("started_at = NULL").Set("finished_at = NULL").Set("cancelled_at = NULL").
+		Set("error = NULL").Set("updated_at = ?", at).Where("id = ?", id).Exec(ctx)
+	return err
+}
+
+func (c change) ResetForRetry(ctx context.Context, db storage.Executor, id uuid.UUID, at time.Time) error {
 	_, err := db.NewUpdate().TableExpr("changes").Set("status = 'committed'").
 		Set("started_at = NULL").Set("finished_at = NULL").Set("cancelled_at = NULL").
 		Set("error = NULL").Set("updated_at = ?", at).Where("id = ?", id).Exec(ctx)

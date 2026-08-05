@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net"
 	"strconv"
@@ -92,6 +93,17 @@ func (service *WorkloadExecution) Find(ctx context.Context, serverID, deployment
 	return state, validateWorkloadTargetState(target, state, findErr)
 }
 
+func (service *WorkloadExecution) FindEnvironment(ctx context.Context, serverID, environmentID uuid.UUID) ([]containerclient.WorkloadState, error) {
+	target, err := service.target(ctx, serverID)
+	if err != nil {
+		return nil, err
+	}
+	if !target.remote {
+		return service.local.FindEnvironment(ctx, environmentID)
+	}
+	return service.findRemoteEnvironment(ctx, target, environmentID)
+}
+
 func (service *WorkloadExecution) Run(ctx context.Context, serverID uuid.UUID, spec containerclient.WorkloadRunSpec, credentials registryclient.Credentials) (containerclient.WorkloadState, error) {
 	target, err := service.target(ctx, serverID)
 	if err != nil {
@@ -113,6 +125,42 @@ func (service *WorkloadExecution) Run(ctx context.Context, serverID uuid.UUID, s
 		return state, validateWorkloadTargetState(target, state, runErr)
 	}
 	return service.runRemote(ctx, target, spec, credentials)
+}
+
+func (service *WorkloadExecution) RunOneOff(ctx context.Context, serverID uuid.UUID, spec containerclient.OneOffRunSpec, credentials registryclient.Credentials) (containerclient.OneOffRunResult, error) {
+	target, err := service.target(ctx, serverID)
+	if err != nil {
+		return containerclient.OneOffRunResult{}, err
+	}
+	spec.Environment = oneOffTelemetryEnvironment(spec, target)
+	if !target.remote {
+		authentication, err := service.registry.Authenticate(ctx, credentials)
+		if err != nil {
+			return containerclient.OneOffRunResult{}, err
+		}
+		defer authentication.Close()
+		if err := service.registry.Pull(ctx, authentication, spec.ImageReference); err != nil {
+			return containerclient.OneOffRunResult{}, err
+		}
+		spec.DockerEnvironment = authentication.Environment()
+		return service.local.RunOneOff(ctx, spec)
+	}
+	return service.runRemoteOneOff(ctx, target, spec, credentials)
+}
+
+func (service *WorkloadExecution) RemoveOneOff(ctx context.Context, serverID uuid.UUID, identifier string) error {
+	if strings.TrimSpace(identifier) == "" || strings.HasPrefix(identifier, "-") || strings.ContainsAny(identifier, " \t\r\n\x00") {
+		return errors.New("one-off workload container identity is invalid")
+	}
+	target, err := service.target(ctx, serverID)
+	if err != nil {
+		return err
+	}
+	if !target.remote {
+		return service.local.RemoveOneOff(ctx, identifier)
+	}
+	_, err = service.remoteDocker(ctx, target, "rm", "--force", identifier)
+	return err
 }
 
 func (service *WorkloadExecution) Remove(ctx context.Context, serverID, deploymentID, instanceID uuid.UUID) error {
@@ -233,6 +281,29 @@ func workloadTelemetryEnvironment(spec containerclient.WorkloadRunSpec, target w
 		"deploycrate.deployment.id=" + spec.DeploymentID.String(),
 		"deploycrate.instance.id=" + spec.InstanceID.String(),
 		"deploycrate.release.id=" + spec.ReleaseID.String(),
+		"deploycrate.process.name=" + spec.ProcessName,
+		"deploycrate.process.kind=" + spec.ProcessKind,
+		"deploycrate.process.replica=" + spec.ProcessReplica,
+		"deploycrate.server.id=" + target.server.ID.String(),
+	}
+	if configured := strings.TrimSpace(environment["OTEL_RESOURCE_ATTRIBUTES"]); configured != "" {
+		resourceAttributes = append([]string{configured}, resourceAttributes...)
+	}
+	environment["OTEL_RESOURCE_ATTRIBUTES"] = strings.Join(resourceAttributes, ",")
+	return environment
+}
+
+func oneOffTelemetryEnvironment(spec containerclient.OneOffRunSpec, target workloadExecutionTarget) map[string]string {
+	environment := make(map[string]string, len(spec.Environment)+1)
+	maps.Copy(environment, spec.Environment)
+	resourceAttributes := []string{
+		"deploycrate.application.id=" + spec.ApplicationID.String(),
+		"deploycrate.environment.id=" + spec.EnvironmentID.String(),
+		"deploycrate.target.id=" + spec.TargetID.String(),
+		"deploycrate.release.id=" + spec.ReleaseID.String(),
+		"deploycrate.release_command.id=" + spec.ReleaseCommandExecutionID.String(),
+		"deploycrate.process.name=release",
+		"deploycrate.process.kind=release",
 		"deploycrate.server.id=" + target.server.ID.String(),
 	}
 	if configured := strings.TrimSpace(environment["OTEL_RESOURCE_ATTRIBUTES"]); configured != "" {
@@ -452,6 +523,71 @@ func (service *WorkloadExecution) runRemote(ctx context.Context, target workload
 	return state, nil
 }
 
+func (service *WorkloadExecution) runRemoteOneOff(ctx context.Context, target workloadExecutionTarget, spec containerclient.OneOffRunSpec, credentials registryclient.Credentials) (containerclient.OneOffRunResult, error) {
+	if strings.TrimSpace(credentials.Endpoint) == "" || strings.ContainsAny(credentials.Endpoint, " \t\r\n") || strings.TrimSpace(credentials.Username) == "" || credentials.Password == "" {
+		return containerclient.OneOffRunResult{}, errors.New("registry endpoint and credentials are required")
+	}
+	prepared, err := containerclient.PrepareOneOffCreate(spec)
+	if err != nil {
+		return containerclient.OneOffRunResult{}, err
+	}
+	var script strings.Builder
+	script.WriteString("set -euo pipefail\n")
+	script.WriteString("dc_auth=\"$(/usr/bin/mktemp -d -p /var/lib/deploycrate-node registry-auth-XXXXXXXXXX)\"\n")
+	script.WriteString("trap '/usr/bin/rm -rf -- \"$dc_auth\"' EXIT\n")
+	script.WriteString("/usr/bin/chmod 0700 \"$dc_auth\"\n")
+	script.WriteString("export HOME=\"$dc_auth\" DOCKER_CONFIG=\"$dc_auth\"\n")
+	script.WriteString("/usr/bin/printf '%s' ")
+	script.WriteString(shellQuote(base64.StdEncoding.EncodeToString([]byte(credentials.Password))))
+	script.WriteString(" | /usr/bin/base64 --decode | ")
+	script.WriteString(shellJoin(remoteDockerExecutable, "login", credentials.Endpoint, "--username", credentials.Username, "--password-stdin"))
+	script.WriteString(" >/dev/null\n")
+	script.WriteString(shellJoin(remoteDockerExecutable, "pull", spec.ImageReference))
+	script.WriteString(" >/dev/null\n")
+	for _, pair := range prepared.Environment {
+		key, value, found := strings.Cut(pair, "=")
+		if !found || !validRemoteEnvironmentKey(key) {
+			return containerclient.OneOffRunResult{}, errors.New("one-off workload environment cannot be represented by the remote shell")
+		}
+		script.WriteString("dc_value=\"$(/usr/bin/printf '%s' ")
+		script.WriteString(shellQuote(base64.StdEncoding.EncodeToString([]byte(value))))
+		script.WriteString(" | /usr/bin/base64 --decode; /usr/bin/printf x)\"\n")
+		script.WriteString("export ")
+		script.WriteString(key)
+		script.WriteString("=\"${dc_value%x}\"\n")
+	}
+	script.WriteString(shellJoin(remoteDockerExecutable, prepared.Arguments...))
+	script.WriteString("\n")
+	scriptBytes := []byte(script.String())
+	defer clear(scriptBytes)
+	created, err := service.remoteRootScript(ctx, target, scriptBytes)
+	if err != nil {
+		return containerclient.OneOffRunResult{}, err
+	}
+	identifier := strings.TrimSpace(created.Stdout)
+	result := containerclient.OneOffRunResult{ContainerCreated: true, State: containerclient.WorkloadState{Exists: true, ID: identifier, Name: spec.ContainerName}}
+	if spec.Created != nil {
+		if err := spec.Created(identifier); err != nil {
+			return result, err
+		}
+	}
+	started, startErr := service.remoteRootCommand(ctx, target, remoteDockerExecutable, "start", "--attach", identifier)
+	if spec.Stdout != nil && started.Stdout != "" {
+		_, _ = io.WriteString(spec.Stdout, started.Stdout)
+	}
+	if spec.Stderr != nil && started.Stderr != "" {
+		_, _ = io.WriteString(spec.Stderr, started.Stderr)
+	}
+	state, inspectErr := service.inspectRemoteWorkload(context.WithoutCancel(ctx), target, identifier)
+	if inspectErr == nil {
+		result.State = state
+	}
+	if startErr != nil {
+		return result, fmt.Errorf("run remote one-off workload container: %w", startErr)
+	}
+	return result, inspectErr
+}
+
 func (service *WorkloadExecution) removeRemote(ctx context.Context, target workloadExecutionTarget, deploymentID, instanceID uuid.UUID) error {
 	state, err := service.findRemote(ctx, target, deploymentID, instanceID)
 	if err != nil || !state.Exists {
@@ -514,6 +650,9 @@ func (service *WorkloadExecution) remoteRootScript(ctx context.Context, target w
 func validateWorkloadTargetState(target workloadExecutionTarget, state containerclient.WorkloadState, operationErr error) error {
 	if operationErr != nil || !state.Exists {
 		return operationErr
+	}
+	if state.Labels[containerclient.WorkloadLabelProcessKind] != "web" {
+		return nil
 	}
 	if state.HostAddress == "" || state.HostPort == 0 {
 		return errors.New("workload target address is unavailable")

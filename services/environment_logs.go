@@ -24,14 +24,17 @@ const (
 var ErrInvalidEnvironmentLogCursor = errors.New("Environment log cursor is invalid")
 
 type EnvironmentLog struct {
-	ID         string    `json:"id"`
-	Message    string    `json:"message"`
-	Stream     string    `json:"stream"`
-	Container  string    `json:"container"`
-	Deployment string    `json:"deployment"`
-	Instance   string    `json:"instance"`
-	Release    string    `json:"release"`
-	OccurredAt time.Time `json:"occurredAt"`
+	ID             string    `json:"id"`
+	Message        string    `json:"message"`
+	Stream         string    `json:"stream"`
+	Container      string    `json:"container"`
+	Deployment     string    `json:"deployment"`
+	Instance       string    `json:"instance"`
+	Release        string    `json:"release"`
+	ProcessName    string    `json:"processName"`
+	ProcessKind    string    `json:"processKind"`
+	ProcessReplica string    `json:"processReplica"`
+	OccurredAt     time.Time `json:"occurredAt"`
 }
 
 type EnvironmentLogSnapshot struct {
@@ -102,6 +105,7 @@ func (service *EnvironmentLogs) Snapshot(
 			ID: encodedCursor, Message: ansi.Strip(row.Message), Stream: row.Stream,
 			Container: row.Container, Deployment: row.Deployment,
 			Instance: row.Instance, Release: row.Release,
+			ProcessName: row.ProcessName, ProcessKind: row.ProcessKind, ProcessReplica: row.ProcessReplica,
 			OccurredAt: row.Cursor.Timestamp,
 		})
 	}

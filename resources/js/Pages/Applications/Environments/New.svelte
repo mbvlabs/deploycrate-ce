@@ -3,6 +3,7 @@
   import { untrack } from 'svelte'
 
   import BulkEnvironmentSecretsDialog from '@/Components/BulkEnvironmentSecretsDialog.svelte'
+  import EnvironmentProcessEditor, { type ProcessInput } from '@/Components/EnvironmentProcessEditor.svelte'
   import FormField from '@/Components/FormField.svelte'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
@@ -55,6 +56,7 @@
   let dnsZoneId = $state('')
   let containerPort = $state(8080)
   let healthPath = $state('/health')
+  let processes = $state<ProcessInput[]>([{ name: 'web', kind: 'web', command: null, arguments: [], replicas: 1, containerPort: 8080, healthPath: '/health' }])
   let bpGoTargets = $state('')
   let resources = $state<EnvironmentResource[]>([])
   let secrets = $state<EnvironmentSecret[]>([])
@@ -127,6 +129,7 @@
     event.preventDefault()
     processing = true
     responseErrors = {}
+    const web = processes.find((process) => process.kind === 'web')
     router.post(routes.environmentCreate(application.id), {
       environmentName,
       environmentSlug,
@@ -146,8 +149,9 @@
       hostname,
       dnsMode,
       dnsZoneId,
-      containerPort,
-      healthPath,
+      containerPort: web?.containerPort ?? containerPort,
+      healthPath: web?.healthPath ?? healthPath,
+      processes,
       bpGoTargets,
       resources,
       secrets,
@@ -210,11 +214,14 @@
           <FormField label="Domain" error={displayedErrors.hostname}><Input bind:value={hostname} placeholder="qa.example.com" required /></FormField>
           <FormField label="DNS management"><NativeSelect.Root bind:value={dnsMode} class="w-full"><NativeSelect.Option value="manual">Manual DNS</NativeSelect.Option><NativeSelect.Option value="cloudflare" disabled={dnsZones.length === 0}>Cloudflare managed</NativeSelect.Option></NativeSelect.Root></FormField>
           {#if dnsMode === 'cloudflare'}<FormField label="Cloudflare zone" error={displayedErrors.dnsZoneId}><NativeSelect.Root bind:value={dnsZoneId} class="w-full" required><NativeSelect.Option value="">Select a zone</NativeSelect.Option>{#each dnsZones as zone}<NativeSelect.Option value={zone.zoneId}>{zone.zoneName} · {zone.connectionName}</NativeSelect.Option>{/each}</NativeSelect.Root><p class="mt-2 text-xs text-muted-foreground">The hostname must be this zone or one of its subdomains.</p></FormField>{/if}
-          <FormField label="Container port"><Input type="number" min="1" max="65535" bind:value={containerPort} required /></FormField>
-          <FormField label="Health path"><Input bind:value={healthPath} placeholder="/health" /></FormField>
           {#if sourceType === 'buildpacks'}<FormField label="Target"><Input bind:value={bpGoTargets} placeholder="./cmd/server" /></FormField>{/if}
         </div>
       </Card.Content>
+    </Card.Root>
+
+    <Card.Root>
+      <Card.Header><Card.Title>Processes</Card.Title><Card.Description>Configure the public web process, private workers, and an optional one-off release command.</Card.Description></Card.Header>
+      <Card.Content><EnvironmentProcessEditor bind:processes errors={displayedErrors} /></Card.Content>
     </Card.Root>
 
     <Card.Root>

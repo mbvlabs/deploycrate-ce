@@ -122,7 +122,7 @@ func (s *SelfUpdate) createDeploymentRecords(
 			bluePort,
 			greenPort,
 		)),
-		RuntimeConfiguration: runtimeConfiguration,
+		ProcessConfiguration: runtimeConfiguration,
 		Status:               "queued",
 		CurrentStep:          sql.NullString{String: "queued", Valid: true},
 		ChangeID:             change.ID,
@@ -133,10 +133,12 @@ func (s *SelfUpdate) createDeploymentRecords(
 		return nil, fmt.Errorf("create self-update deployment: %w", err)
 	}
 	instance, err := models.Instance.Create(ctx, tx, models.CreateInstanceData{
-		ExternalID: serviceForInstance(inactiveSlot),
-		Slot:       inactiveSlot,
-		ReplicaKey: "primary",
-		State:      "queued",
+		ExternalID:  serviceForInstance(inactiveSlot),
+		Slot:        inactiveSlot,
+		ProcessName: models.EnvironmentProcessWeb,
+		ProcessKind: models.EnvironmentProcessWeb,
+		ReplicaKey:  "primary",
+		State:       "queued",
 		Ports: json.RawMessage(
 			fmt.Sprintf(`{"http":%d}`, portForInstance(inactiveSlot)),
 		),
@@ -206,7 +208,7 @@ func (s *SelfUpdate) loadUnresolvedDeployment(ctx context.Context) (*selfUpdateD
 	}
 
 	var checkpoint models.SystemUpdateCheckpoint
-	if err := json.Unmarshal(persisted.RuntimeConfig, &checkpoint); err != nil {
+	if err := json.Unmarshal(persisted.ProcessConfiguration, &checkpoint); err != nil {
 		return nil, fmt.Errorf("decode self-update checkpoint: %w", err)
 	}
 	systemState := systemApplicationState{

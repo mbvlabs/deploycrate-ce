@@ -22,6 +22,8 @@ type InstanceEntity struct {
 	UpdatedAt           time.Time       `bun:"updated_at"`
 	ExternalID          string          `bun:"external_id"`
 	Slot                string          `bun:"slot"`
+	ProcessName         string          `json:"processName" bun:"process_name"`
+	ProcessKind         string          `json:"processKind" bun:"process_kind"`
 	ReplicaKey          string          `bun:"replica_key"`
 	State               string          `bun:"state"`
 	Ports               json.RawMessage `bun:"ports,type:jsonb"`
@@ -37,7 +39,7 @@ func (e *InstanceEntity) Validate() error {
 	if e.ID == uuid.Nil || e.DeploymentID == uuid.Nil || e.ReleaseID == uuid.Nil || e.EnvironmentTargetID == uuid.Nil {
 		builder.Add("id", "required", "Instance ownership identifiers are required")
 	}
-	if strings.TrimSpace(e.ExternalID) == "" || strings.TrimSpace(e.ReplicaKey) == "" {
+	if strings.TrimSpace(e.ExternalID) == "" || strings.TrimSpace(e.ReplicaKey) == "" || !environmentProcessNamePattern.MatchString(e.ProcessName) || !slices.Contains([]string{EnvironmentProcessWeb, EnvironmentProcessWorker}, e.ProcessKind) {
 		builder.Add("externalId", "required", "Instance identity is required")
 	}
 	if !slices.Contains([]string{"queued", "candidate", "running", "serving", "failed", "removed"}, e.State) {
@@ -68,6 +70,8 @@ func (i instance) Find(
 type CreateInstanceData struct {
 	ExternalID          string
 	Slot                string
+	ProcessName         string
+	ProcessKind         string
 	ReplicaKey          string
 	State               string
 	Ports               json.RawMessage
@@ -89,6 +93,8 @@ func (i instance) Create(
 		UpdatedAt:           time.Now(),
 		ExternalID:          data.ExternalID,
 		Slot:                data.Slot,
+		ProcessName:         data.ProcessName,
+		ProcessKind:         data.ProcessKind,
 		ReplicaKey:          data.ReplicaKey,
 		State:               data.State,
 		Ports:               data.Ports,
@@ -101,6 +107,21 @@ func (i instance) Create(
 
 	if err := validation.Validate(&entity); err != nil {
 		return InstanceEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	switch db.(type) {
+	case bun.Tx, *bun.Tx:
+	default:
+		return InstanceEntity{}, errors.New("Instance creation requires a transaction")
+	}
+	if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "deployment-instance:"+entity.DeploymentID.String()); err != nil {
+		return InstanceEntity{}, err
+	}
+	count, err := db.NewSelect().Model((*InstanceEntity)(nil)).Where("deployment_id = ?", entity.DeploymentID).Where("process_name = ?", entity.ProcessName).Where("replica_key = ?", entity.ReplicaKey).Count(ctx)
+	if err != nil {
+		return InstanceEntity{}, err
+	}
+	if count != 0 {
+		return InstanceEntity{}, errors.Join(ErrDomainValidation, errors.New("Instance replica identity must be unique within its Deployment process"))
 	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
@@ -115,6 +136,8 @@ type UpdateInstanceData struct {
 	UpdatedAt           time.Time
 	ExternalID          string
 	Slot                string
+	ProcessName         string
+	ProcessKind         string
 	ReplicaKey          string
 	State               string
 	Ports               json.RawMessage
@@ -135,6 +158,8 @@ func (i instance) Update(
 		UpdatedAt:           time.Now(),
 		ExternalID:          data.ExternalID,
 		Slot:                data.Slot,
+		ProcessName:         data.ProcessName,
+		ProcessKind:         data.ProcessKind,
 		ReplicaKey:          data.ReplicaKey,
 		State:               data.State,
 		Ports:               data.Ports,
@@ -154,6 +179,8 @@ func (i instance) Update(
 		Column("updated_at").
 		Column("external_id").
 		Column("slot").
+		Column("process_name").
+		Column("process_kind").
 		Column("replica_key").
 		Column("state").
 		Column("ports").
@@ -253,6 +280,8 @@ func (i instance) Upsert(
 		UpdatedAt:           time.Now(),
 		ExternalID:          data.ExternalID,
 		Slot:                data.Slot,
+		ProcessName:         data.ProcessName,
+		ProcessKind:         data.ProcessKind,
 		ReplicaKey:          data.ReplicaKey,
 		State:               data.State,
 		Ports:               data.Ports,
@@ -272,6 +301,8 @@ func (i instance) Upsert(
 		On("CONFLICT (id) DO UPDATE").
 		Set("external_id = excluded.external_id").
 		Set("slot = excluded.slot").
+		Set("process_name = excluded.process_name").
+		Set("process_kind = excluded.process_kind").
 		Set("replica_key = excluded.replica_key").
 		Set("state = excluded.state").
 		Set("ports = excluded.ports").

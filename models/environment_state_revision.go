@@ -19,7 +19,7 @@ import (
 	"github.com/uptrace/bun"
 )
 
-const EnvironmentStateSchemaVersion = 1
+const EnvironmentStateSchemaVersion = 2
 
 type EnvironmentSecretDescriptor struct {
 	ID         uuid.UUID `json:"id"`
@@ -31,11 +31,19 @@ type EnvironmentSecretDescriptor struct {
 
 type EnvironmentRuntimeState struct {
 	Runtime       string `json:"runtime"`
-	ContainerPort int32  `json:"container_port"`
-	HealthPath    string `json:"health_path,omitempty"`
 	BPGOTargets   string `json:"bp_go_targets,omitempty"`
-	Replicas      int32  `json:"replicas"`
 	RestartPolicy string `json:"restart_policy"`
+}
+
+type EnvironmentProcessState struct {
+	Name           string   `json:"name"`
+	Kind           string   `json:"kind"`
+	Command        *string  `json:"command,omitempty"`
+	Arguments      []string `json:"arguments"`
+	Replicas       int32    `json:"replicas"`
+	ContainerPort  int32    `json:"container_port,omitempty"`
+	HealthPath     string   `json:"health_path,omitempty"`
+	TimeoutSeconds int32    `json:"timeout_seconds,omitempty"`
 }
 
 type EnvironmentDomainState struct {
@@ -59,6 +67,7 @@ type EnvironmentResourceState struct {
 type EnvironmentDesiredState struct {
 	SchemaVersion int                           `json:"schema_version"`
 	Runtime       EnvironmentRuntimeState       `json:"runtime"`
+	Processes     []EnvironmentProcessState     `json:"processes"`
 	Domain        EnvironmentDomainState        `json:"domain"`
 	Resources     []EnvironmentResourceState    `json:"resources"`
 	Secrets       []EnvironmentSecretDescriptor `json:"secrets"`
@@ -115,6 +124,13 @@ func CanonicalEnvironmentDesiredState(state EnvironmentDesiredState) (json.RawMe
 	slices.SortFunc(state.Resources, func(left, right EnvironmentResourceState) int {
 		return strings.Compare(left.Alias, right.Alias)
 	})
+	for index := range state.Processes {
+		state.Processes[index].Name = strings.ToLower(strings.TrimSpace(state.Processes[index].Name))
+		state.Processes[index].Kind = strings.ToLower(strings.TrimSpace(state.Processes[index].Kind))
+		if state.Processes[index].Arguments == nil {
+			state.Processes[index].Arguments = []string{}
+		}
+	}
 	if err := validateEnvironmentDesiredState(&state); err != nil {
 		return nil, err
 	}
@@ -133,14 +149,22 @@ func validateEnvironmentDesiredState(state *EnvironmentDesiredState) error {
 	if strings.TrimSpace(state.Runtime.Runtime) != "go" {
 		builder.Add("runtime.runtime", "unsupported", "only the Go runtime is supported")
 	}
-	if state.Runtime.ContainerPort < 1 || state.Runtime.ContainerPort > 65535 {
-		builder.Add("runtime.containerPort", "range", "container port must be between 1 and 65535")
-	}
-	if state.Runtime.Replicas != 1 {
-		builder.Add("runtime.replicas", "unsupported", "this release supports exactly one replica")
-	}
 	if state.Runtime.RestartPolicy != "unless-stopped" {
 		builder.Add("runtime.restartPolicy", "unsupported", "restart policy must be unless-stopped")
+	}
+	processInputs := make([]EnvironmentProcessInput, 0, len(state.Processes))
+	for _, process := range state.Processes {
+		input := EnvironmentProcessInput{Name: process.Name, Kind: process.Kind, Command: process.Command, Arguments: process.Arguments, Replicas: process.Replicas, HealthPath: process.HealthPath}
+		if process.Kind == EnvironmentProcessWeb {
+			input.ContainerPort = &process.ContainerPort
+		}
+		if process.Kind == EnvironmentProcessRelease {
+			input.TimeoutSeconds = &process.TimeoutSeconds
+		}
+		processInputs = append(processInputs, input)
+	}
+	if _, err := ValidateEnvironmentProcessFormation(processInputs); err != nil {
+		builder.Add("processes", "invalid", err.Error())
 	}
 	if state.Domain.ID == uuid.Nil || strings.TrimSpace(state.Domain.Hostname) == "" || !state.Domain.Primary {
 		builder.Add("domain", "invalid", "one primary Environment domain is required")
@@ -252,6 +276,34 @@ func validateEnvironmentDesiredState(state *EnvironmentDesiredState) error {
 		}
 	}
 	return builder.Err()
+}
+
+func (state EnvironmentDesiredState) WebProcess() (EnvironmentProcessState, bool) {
+	for _, process := range state.Processes {
+		if process.Kind == EnvironmentProcessWeb {
+			return process, true
+		}
+	}
+	return EnvironmentProcessState{}, false
+}
+
+func (state EnvironmentDesiredState) ReleaseProcess() (EnvironmentProcessState, bool) {
+	for _, process := range state.Processes {
+		if process.Kind == EnvironmentProcessRelease {
+			return process, true
+		}
+	}
+	return EnvironmentProcessState{}, false
+}
+
+func (state EnvironmentDesiredState) LongRunningProcesses() []EnvironmentProcessState {
+	processes := make([]EnvironmentProcessState, 0, len(state.Processes))
+	for _, process := range state.Processes {
+		if process.Kind == EnvironmentProcessWeb || process.Kind == EnvironmentProcessWorker {
+			processes = append(processes, process)
+		}
+	}
+	return processes
 }
 
 func (esr environmentStateRevision) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentStateRevisionEntity, error) {

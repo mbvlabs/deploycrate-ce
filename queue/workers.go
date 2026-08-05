@@ -20,6 +20,7 @@ var wrksConstructors = fx.Provide(
 	NewDatabaseRestoreApplyWorker,
 	NewBuildSourceWorker,
 	NewDeployReleaseWorker,
+	NewReleaseCommandWorker,
 	NewNodeEnrollmentWorker,
 	NewDNSReconciliationWorker,
 )
@@ -61,6 +62,9 @@ var WorkersModule = fx.Module(
 		return worker.Register(workers)
 	}),
 	fx.Invoke(func(workers *river.Workers, worker *DeployReleaseWorker) error {
+		return worker.Register(workers)
+	}),
+	fx.Invoke(func(workers *river.Workers, worker *ReleaseCommandWorker) error {
 		return worker.Register(workers)
 	}),
 	fx.Invoke(func(workers *river.Workers, worker *NodeEnrollmentWorker) error {

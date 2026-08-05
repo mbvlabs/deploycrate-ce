@@ -8,6 +8,8 @@ CREATE TABLE instances (
 
     external_id TEXT NOT NULL,
     slot TEXT NOT NULL,
+    process_name TEXT NOT NULL,
+    process_kind TEXT NOT NULL,
     replica_key TEXT NOT NULL,
     state TEXT NOT NULL,
     ports JSONB NOT NULL,
