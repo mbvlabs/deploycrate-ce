@@ -5,7 +5,6 @@
   import ChevronDownIcon from '@lucide/svelte/icons/chevron-down'
   import CloudIcon from '@lucide/svelte/icons/cloud'
   import DatabaseIcon from '@lucide/svelte/icons/database'
-  import GitBranchIcon from '@lucide/svelte/icons/git-branch'
   import GithubIcon from '@lucide/svelte/icons/git-fork'
   import KeyRoundIcon from '@lucide/svelte/icons/key-round'
   import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard'
@@ -107,7 +106,6 @@
     if (path.startsWith(routes.systemTelemetry())) return [{ label: 'System', href: routes.systemOverview() }, { label: 'Telemetry' }]
     if (path.startsWith(routes.systemTasks())) return [{ label: 'System', href: routes.systemOverview() }, { label: 'Tasks' }]
     if (path.startsWith(routes.systemUpdate())) return [{ label: 'System', href: routes.systemOverview() }, { label: 'Updates' }]
-    if (path.startsWith(routes.systemDeployments())) return [{ label: 'System', href: routes.systemOverview() }, { label: 'Deployments' }]
     if (path.startsWith(routes.systemResources())) return [{ label: 'Resources', href: routes.resources() }, { label: 'System Resource' }]
     return [{ label: 'Overview' }]
   })
@@ -338,16 +336,6 @@
                   <Link {...props} href={routes.systemUpdate()} aria-current={$page.url.startsWith(routes.systemUpdate()) ? 'page' : undefined}>
                     <SettingsIcon />
                     <span>Updates</span>
-                  </Link>
-                {/snippet}
-              </Sidebar.MenuButton>
-            </Sidebar.MenuItem>
-            <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive={$page.url === routes.systemDeployments()} tooltipContent="Deployments">
-                {#snippet child({ props })}
-                  <Link {...props} href={routes.systemDeployments()} aria-current={$page.url === routes.systemDeployments() ? 'page' : undefined}>
-                    <GitBranchIcon />
-                    <span>Deployments</span>
                   </Link>
                 {/snippet}
               </Sidebar.MenuButton>

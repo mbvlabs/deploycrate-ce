@@ -6,6 +6,8 @@ import (
 	"net/http"
 
 	"deploycrate-ce/internal/inertia"
+	"deploycrate-ce/internal/storage"
+	"deploycrate-ce/models"
 	"deploycrate-ce/router"
 	"deploycrate-ce/router/cookies"
 	"deploycrate-ce/router/middleware"
@@ -17,10 +19,11 @@ import (
 
 type SelfUpdates struct {
 	service *services.SelfUpdate
+	db      storage.Pool
 }
 
-func NewSelfUpdates(service *services.SelfUpdate) SelfUpdates {
-	return SelfUpdates{service: service}
+func NewSelfUpdates(service *services.SelfUpdate, db storage.Pool) SelfUpdates {
+	return SelfUpdates{service: service, db: db}
 }
 
 func (s SelfUpdates) RegisterRoutes(r *router.Router) error {
@@ -69,12 +72,27 @@ func (s SelfUpdates) RegisterRoutes(r *router.Router) error {
 }
 
 func (s SelfUpdates) Show(etx *echo.Context) error {
+	deployments, err := models.Application.FindSystemDeployments(
+		etx.Request().Context(),
+		s.db.Executor(),
+	)
+	if err != nil {
+		slog.ErrorContext(
+			etx.Request().Context(),
+			"failed to load DeployCrate CE updates",
+			"error",
+			err,
+		)
+		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
+	}
+
 	return inertia.Page(etx, "System/Update", inertia.Props{
 		"auth": inertia.Props{
 			"email": cookies.ExtractFromCookieApp(etx).Email,
 		},
 		"currentVersion": s.service.CurrentVersion(),
 		"update":         s.service.Status(),
+		"deployments":    deployments,
 	})
 }
 

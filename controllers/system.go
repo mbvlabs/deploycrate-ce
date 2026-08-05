@@ -62,7 +62,6 @@ func (s System) RegisterRoutes(r *router.Router) error {
 		{method: http.MethodGet, route: routes.SystemTelemetry, handler: s.Telemetry},
 		{method: http.MethodGet, route: routes.SystemTelemetryLogs, handler: s.TelemetryLogs},
 		{method: http.MethodGet, route: routes.SystemTelemetryTrace, handler: s.TelemetryTrace},
-		{method: http.MethodGet, route: routes.SystemDeployments, handler: s.Deployments},
 		{method: http.MethodGet, route: routes.SystemResources, handler: s.Resources},
 		{method: http.MethodGet, route: routes.SystemResource, handler: s.Resource},
 		{method: http.MethodGet, route: routes.SystemResourceBackups, handler: s.ResourceBackups},
@@ -193,21 +192,6 @@ func (s System) TelemetryTrace(etx *echo.Context) error {
 	}
 	etx.Response().Header().Set("Cache-Control", "no-store")
 	return etx.JSON(http.StatusOK, map[string]any{"spans": spans})
-}
-
-func (s System) Deployments(etx *echo.Context) error {
-	deployments, err := models.Application.FindSystemDeployments(
-		etx.Request().Context(),
-		s.db.Executor(),
-	)
-	if err != nil {
-		return s.renderLoadError(etx, "deployments", err)
-	}
-
-	return inertia.Page(etx, "System/Deployments", inertia.Props{
-		"auth":        s.authProps(etx),
-		"deployments": deployments,
-	})
 }
 
 func (s System) Resources(etx *echo.Context) error {

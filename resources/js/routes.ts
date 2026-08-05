@@ -134,7 +134,6 @@ export const routes = {
   sessionCreate: () => '/users/sign-in',
   sessionDestroy: () => '/users/sign-out',
   sessionNew: () => '/users/sign-in',
-  systemDeployments: () => '/system/deployments',
   systemOverview: () => '/system',
   systemResource: (id: string) => `/system/resources/${id}`,
   systemResourceAccess: (id: string) => `/system/resources/${id}/access`,

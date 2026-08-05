@@ -28,12 +28,6 @@ var SystemTelemetryTrace = routing.NewRouteWithStringID(
 	SystemPrefix,
 )
 
-var SystemDeployments = routing.NewSimpleRoute(
-	"/deployments",
-	"system.deployments",
-	SystemPrefix,
-)
-
 var SystemResources = routing.NewSimpleRoute(
 	"/resources",
 	"system.resources",
