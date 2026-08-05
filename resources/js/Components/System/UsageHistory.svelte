@@ -79,17 +79,17 @@
   }
 </script>
 
-<article class="border border-border bg-card/35 p-5">
+<article class="w-full min-w-0 border border-border bg-card/35 p-5">
   <div class="flex items-center justify-between gap-4">
     <h2 class="text-base font-semibold">{label}</h2>
     <p class="text-sm font-medium text-foreground/70">Last 24 hours</p>
   </div>
-  <div bind:this={chartElement} class="relative mt-4">
-    <svg viewBox="0 0 800 220" class="h-56 w-full" role="img" aria-label={`${label} over the last 24 hours`}>
+  <div bind:this={chartElement} class="relative mt-4 w-full min-w-0">
+    <svg viewBox="0 0 800 220" class="block h-56 w-full max-w-none" role="img" aria-label={`${label} over the last 24 hours`}>
       {#each [0, 50, 100] as percentage}
         {@const y = bottom - (percentage / 100) * (bottom - top)}
         <line x1={left} x2={right} y1={y} y2={y} stroke="currentColor" stroke-width="1" class="text-border" />
-        <text x="42" y={y + 5} text-anchor="end" class="fill-foreground text-[16px] font-medium opacity-80">{percentage}%</text>
+        <text x="0" y={y + 5} text-anchor="start" class="fill-foreground text-[16px] font-medium opacity-80">{percentage}%</text>
       {/each}
       <polyline
         points={chart.map((point) => `${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(' ')}

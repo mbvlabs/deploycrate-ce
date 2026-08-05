@@ -71,17 +71,17 @@
   }
 </script>
 
-<article class="border border-border bg-card/35 p-5">
+<article class="w-full min-w-0 border border-border bg-card/35 p-5">
   <div>
     <h3 class="text-sm font-semibold">Memory usage</h3>
     <p class="mt-1 text-xs text-muted-foreground">Average active container memory for each hour over the last 24 hours</p>
   </div>
 
   {#if chart.available}
-    <div class="relative mt-4">
+    <div class="relative mt-4 w-full min-w-0">
       <svg
         viewBox="0 0 800 220"
-        class="h-auto w-full touch-none"
+        class="block h-auto w-full max-w-none touch-none"
         role="img"
         aria-label="Hourly memory usage over the last 24 hours"
         onpointerenter={hover}
@@ -91,7 +91,7 @@
         {#each [0, 0.5, 1] as ratio}
           {@const y = bottom - ratio * (bottom - top)}
           <line x1={left} x2={right} y1={y} y2={y} stroke="currentColor" stroke-width="1" class="text-border" />
-          <text x={left - 10} y={y + 4} text-anchor="end" class="fill-muted-foreground text-[11px]">{formatMemory(chart.memoryMaximum * ratio)}</text>
+          <text x="0" y={y + 4} text-anchor="start" class="fill-muted-foreground text-[11px]">{formatMemory(chart.memoryMaximum * ratio)}</text>
         {/each}
 
         <path d={memoryPath} fill="none" stroke="var(--chart-2)" stroke-width="2.5" vector-effect="non-scaling-stroke" />

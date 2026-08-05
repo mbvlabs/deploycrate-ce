@@ -102,13 +102,13 @@
   }
 </script>
 
-<article class="border border-border bg-card/35 p-6">
-  <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-    <div>
-      <h3 class="text-base font-semibold">{label}</h3>
+<article class="w-full min-w-0 border border-border bg-card/35 p-6">
+  <div class="flex w-full flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <div class="sm:shrink-0">
+      <h3 class="text-base font-semibold sm:whitespace-nowrap">{label}</h3>
       <p class="mt-1 text-sm leading-5 text-muted-foreground">{description}</p>
     </div>
-    <div class="flex flex-wrap justify-end gap-x-5 gap-y-2 text-sm text-muted-foreground">
+    <div class="flex min-w-0 flex-wrap justify-end gap-x-5 gap-y-2 text-sm text-muted-foreground sm:flex-1">
       {#each chart.series as item}
         <span class="flex items-center gap-2"><span class="h-0.5 w-5" style:background={item.comparison ? 'var(--muted-foreground)' : item.color}></span>{item.label}</span>
       {/each}
@@ -116,10 +116,10 @@
   </div>
 
   {#if chart.available}
-    <div class="relative mt-4" bind:clientWidth={chartWidth}>
+    <div class="relative mt-4 w-full min-w-0" bind:clientWidth={chartWidth}>
       <svg
         viewBox={`0 0 ${chart.width} 240`}
-        class="h-64 w-full touch-none"
+        class="block h-64 w-full max-w-none touch-none"
         role="img"
         aria-label={`${label} over the selected telemetry range`}
         onpointerenter={hover}
@@ -129,7 +129,7 @@
         {#each [0, 0.5, 1] as ratio}
           {@const y = bottom - ratio * (bottom - top)}
           <line x1={left} x2={chart.right} y1={y} y2={y} stroke="currentColor" stroke-width="1" class="text-border" />
-          <text x={left - 12} y={y + 4} text-anchor="end" class="fill-muted-foreground text-[12px] font-medium">{formatValue(chart.maximum * ratio)}</text>
+          <text x="0" y={y + 4} text-anchor="start" class="fill-muted-foreground text-[12px] font-medium">{formatValue(chart.maximum * ratio)}</text>
         {/each}
 
         {#each chart.series as item}
