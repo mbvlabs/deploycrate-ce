@@ -82,14 +82,14 @@
       {#snippet actions()}<Button type="button" onclick={openCreateDialog}>Add registry</Button>{/snippet}
     </PageHeader>
 
-    <Card.Root>
-      <Card.Header><Card.Title>Image registries</Card.Title><Card.Description>{registries.length} destination{registries.length === 1 ? '' : 's'} available to Application sources.</Card.Description></Card.Header>
-      <Card.Content>
-        {#if registries.length === 0}
-          <Empty.Root class="border border-dashed border-border py-12">
-            <Empty.Header><Empty.Media variant="icon"><BoxesIcon /></Empty.Media><Empty.Title>No image registries</Empty.Title><Empty.Description>Connect an external OCI registry to publish and deploy Application images.</Empty.Description></Empty.Header>
-          </Empty.Root>
-        {:else}
+    {#if registries.length === 0}
+      <Empty.Root class="border border-dashed border-border py-14">
+        <Empty.Header><Empty.Media variant="icon"><BoxesIcon /></Empty.Media><Empty.Title>No image registries</Empty.Title><Empty.Description>Connect an external OCI registry to publish and deploy Application images.</Empty.Description></Empty.Header>
+      </Empty.Root>
+    {:else}
+      <Card.Root>
+        <Card.Header><Card.Title>Image registries</Card.Title><Card.Description>{registries.length} destination{registries.length === 1 ? '' : 's'} available to Application sources.</Card.Description></Card.Header>
+        <Card.Content>
           <div class="overflow-hidden border border-border">
             <Table.Root class="min-w-[760px]">
               <Table.Header class="bg-muted/30"><Table.Row><Table.Head>Registry</Table.Head><Table.Head>Endpoint</Table.Head><Table.Head>Username</Table.Head><Table.Head>Status</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header>
@@ -106,9 +106,9 @@
               </Table.Body>
             </Table.Root>
           </div>
-        {/if}
-      </Card.Content>
-    </Card.Root>
+        </Card.Content>
+      </Card.Root>
+    {/if}
   </div>
 
   <Dialog.Root bind:open={createDialogOpen}>

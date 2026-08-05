@@ -70,14 +70,14 @@
       {#snippet actions()}<Button type="button" onclick={openCreateDialog}>Add destination</Button>{/snippet}
     </PageHeader>
 
-    <Card.Root>
-      <Card.Header><Card.Title>Backup destinations</Card.Title><Card.Description>{destinations.length} verified destination{destinations.length === 1 ? '' : 's'} available to backup policies.</Card.Description></Card.Header>
-      <Card.Content>
-        {#if destinations.length === 0}
-          <Empty.Root class="border border-dashed border-border py-12">
-            <Empty.Header><Empty.Media variant="icon"><CloudIcon /></Empty.Media><Empty.Title>No Object Storage destinations</Empty.Title><Empty.Description>Add an S3 or Cloudflare R2 bucket before enabling backup policies.</Empty.Description></Empty.Header>
-          </Empty.Root>
-        {:else}
+    {#if destinations.length === 0}
+      <Empty.Root class="border border-dashed border-border py-14">
+        <Empty.Header><Empty.Media variant="icon"><CloudIcon /></Empty.Media><Empty.Title>No Object Storage destinations</Empty.Title><Empty.Description>Add an S3 or Cloudflare R2 bucket before enabling backup policies.</Empty.Description></Empty.Header>
+      </Empty.Root>
+    {:else}
+      <Card.Root>
+        <Card.Header><Card.Title>Backup destinations</Card.Title><Card.Description>{destinations.length} verified destination{destinations.length === 1 ? '' : 's'} available to backup policies.</Card.Description></Card.Header>
+        <Card.Content>
           <div class="overflow-hidden border border-border">
             <Table.Root class="min-w-[640px]">
               <Table.Header class="bg-muted/30"><Table.Row><Table.Head>Destination</Table.Head><Table.Head>Provider</Table.Head><Table.Head>Bucket</Table.Head><Table.Head>Status</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header>
@@ -94,9 +94,9 @@
               </Table.Body>
             </Table.Root>
           </div>
-        {/if}
-      </Card.Content>
-    </Card.Root>
+        </Card.Content>
+      </Card.Root>
+    {/if}
   </div>
 
   <Dialog.Root bind:open={createDialogOpen}>

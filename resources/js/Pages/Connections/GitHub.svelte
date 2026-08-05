@@ -117,14 +117,14 @@
       {/snippet}
     </PageHeader>
 
-    <Card.Root>
-      <Card.Header><Card.Title>GitHub App</Card.Title><Card.Description>{connection.app ? connection.healthMessage : 'No private GitHub App is connected to this DeployCrate instance.'}</Card.Description></Card.Header>
-      <Card.Content>
-        {#if !connection.app}
-          <Empty.Root class="border border-dashed border-border py-12">
-            <Empty.Header><Empty.Media variant="icon"><GithubIcon /></Empty.Media><Empty.Title>No GitHub App</Empty.Title><Empty.Description>Create a private GitHub App to connect repositories and receive signed push events.</Empty.Description></Empty.Header>
-          </Empty.Root>
-        {:else}
+    {#if !connection.app}
+      <Empty.Root class="border border-dashed border-border py-14">
+        <Empty.Header><Empty.Media variant="icon"><GithubIcon /></Empty.Media><Empty.Title>No GitHub App</Empty.Title><Empty.Description>Create a private GitHub App to connect repositories and receive signed push events.</Empty.Description></Empty.Header>
+      </Empty.Root>
+    {:else}
+      <Card.Root>
+        <Card.Header><Card.Title>GitHub App</Card.Title><Card.Description>{connection.healthMessage}</Card.Description></Card.Header>
+        <Card.Content>
           <div class="overflow-hidden border border-border">
             <Table.Root class="min-w-[900px]">
               <Table.Header class="bg-muted/30"><Table.Row><Table.Head>App</Table.Head><Table.Head>Owner</Table.Head><Table.Head>Permissions</Table.Head><Table.Head>Events</Table.Head><Table.Head>Verified</Table.Head><Table.Head>Status</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header>
@@ -139,9 +139,9 @@
               </Table.Row></Table.Body>
             </Table.Root>
           </div>
-        {/if}
-      </Card.Content>
-    </Card.Root>
+        </Card.Content>
+      </Card.Root>
+    {/if}
 
     {#if connection.app}
       <Card.Root>

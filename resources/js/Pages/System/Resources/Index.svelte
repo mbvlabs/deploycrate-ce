@@ -1,5 +1,7 @@
 <script lang="ts">
+  import DatabaseIcon from '@lucide/svelte/icons/database'
   import { Link } from '@inertiajs/svelte'
+  import PageHeader from '@/Components/PageHeader.svelte'
   import * as Card from '@/Components/ui/card'
   import * as Empty from '@/Components/ui/empty'
   import * as Table from '@/Components/ui/table'
@@ -26,19 +28,13 @@
 
 <DashboardLayout email={auth.email}>
   <div class="space-y-8">
-    <header>
-      <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">System</p>
-      <h1 class="mt-3 text-3xl font-semibold tracking-tight">Resources</h1>
-      <p class="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
-        Durable infrastructure services managed by DeployCrate.
-      </p>
-    </header>
+    <PageHeader eyebrow="System" title="Resources" description="Durable infrastructure services managed by DeployCrate." />
 
-    <Card.Root>
-      <Card.Content class="p-0">
-        {#if resources.length === 0}
-          <Empty.Root class="py-12"><Empty.Header><Empty.Title>No active system Resources</Empty.Title><Empty.Description>Durable infrastructure services will appear here when the system creates them.</Empty.Description></Empty.Header></Empty.Root>
-        {:else}
+    {#if resources.length === 0}
+      <Empty.Root class="border border-dashed border-border py-14"><Empty.Header><Empty.Media variant="icon"><DatabaseIcon /></Empty.Media><Empty.Title>No active system Resources</Empty.Title><Empty.Description>Durable infrastructure services will appear here when the system creates them.</Empty.Description></Empty.Header></Empty.Root>
+    {:else}
+      <Card.Root>
+        <Card.Content class="p-0">
           <div class="overflow-x-auto">
             <Table.Root>
               <Table.Header class="bg-muted/30">
@@ -55,8 +51,8 @@
               </Table.Body>
             </Table.Root>
           </div>
-        {/if}
-      </Card.Content>
-    </Card.Root>
+        </Card.Content>
+      </Card.Root>
+    {/if}
   </div>
 </DashboardLayout>

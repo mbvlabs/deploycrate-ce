@@ -112,14 +112,14 @@
       {#snippet actions()}<Button type="button" onclick={openCreateDialog}>Add DNS connection</Button>{/snippet}
     </PageHeader>
 
-    <Card.Root>
-      <Card.Header><Card.Title>Cloudflare accounts</Card.Title><Card.Description>{connections.length} connected account{connections.length === 1 ? '' : 's'}. Zones are cached locally and refreshed explicitly.</Card.Description></Card.Header>
-      <Card.Content>
-        {#if connections.length === 0}
-          <Empty.Root class="border border-dashed border-border py-12">
-            <Empty.Header><Empty.Media variant="icon"><CloudIcon /></Empty.Media><Empty.Title>No DNS connections</Empty.Title><Empty.Description>Add Cloudflare to automate Environment A records.</Empty.Description></Empty.Header>
-          </Empty.Root>
-        {:else}
+    {#if connections.length === 0}
+      <Empty.Root class="border border-dashed border-border py-14">
+        <Empty.Header><Empty.Media variant="icon"><CloudIcon /></Empty.Media><Empty.Title>No DNS connections</Empty.Title><Empty.Description>Add Cloudflare to automate Environment A records.</Empty.Description></Empty.Header>
+      </Empty.Root>
+    {:else}
+      <Card.Root>
+        <Card.Header><Card.Title>Cloudflare accounts</Card.Title><Card.Description>{connections.length} connected account{connections.length === 1 ? '' : 's'}. Zones are cached locally and refreshed explicitly.</Card.Description></Card.Header>
+        <Card.Content>
           <div class="overflow-hidden border border-border">
             <Table.Root class="min-w-[980px]">
               <Table.Header class="bg-muted/30"><Table.Row><Table.Head>Connection</Table.Head><Table.Head>Cloudflare account</Table.Head><Table.Head>Usage</Table.Head><Table.Head>Verified</Table.Head><Table.Head>Last synchronized</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header>
@@ -137,9 +137,9 @@
               </Table.Body>
             </Table.Root>
           </div>
-        {/if}
-      </Card.Content>
-    </Card.Root>
+        </Card.Content>
+      </Card.Root>
+    {/if}
   </div>
 
   <Dialog.Root bind:open={createDialogOpen}>
