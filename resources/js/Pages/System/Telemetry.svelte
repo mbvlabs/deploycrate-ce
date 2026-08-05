@@ -9,11 +9,10 @@
   import TelemetryHistory from '@/Components/System/TelemetryHistory.svelte'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
+  import { router } from '@inertiajs/svelte'
 
   type SystemIdentity = {
     applicationName: string
-    serverName: string
-    serverAddress: string
   }
 
   type ResourceUsage = {
@@ -122,6 +121,7 @@
     storage: ResourceUsage
     hostHistory: HostHistoryPoint[]
     memoryHistory: UsageHistoryPoint[]
+    storageHistory: UsageHistoryPoint[]
     platform: AttributedTelemetry[]
     systemContainers: AttributedTelemetry[]
   }
@@ -139,6 +139,46 @@
     heapAllocations: number
     heapGoalBytes: number
     goroutines: number
+    history: ApplicationTelemetryPoint[]
+    database: DatabaseTelemetry
+    recentTraces: TraceSummary[]
+  }
+
+  type ApplicationTelemetryPoint = {
+    observedAt: string
+    requestsPerSecond: number
+    clientErrorsPerSecond: number
+    serverErrorsPerSecond: number
+    p50DurationMs: number
+    p95DurationMs: number
+    p99DurationMs: number
+  }
+
+  type DatabaseTelemetry = {
+    available: boolean
+    observedAt: string
+    operationsPerSecond: number
+    errorsPerSecond: number
+    p95DurationMs: number
+    history: DatabaseTelemetryPoint[]
+  }
+
+  type DatabaseTelemetryPoint = {
+    observedAt: string
+    operationsPerSecond: number
+    errorsPerSecond: number
+    p50DurationMs: number
+    p95DurationMs: number
+    p99DurationMs: number
+  }
+
+  type TraceSummary = {
+    traceId: string
+    rootSpanName: string
+    startedAt: string
+    durationNs: number
+    spanCount: number
+    errorCount: number
   }
 
   type TraceSpan = {
@@ -179,12 +219,12 @@
     hasMore: boolean
   }
 
-  let { auth, system, telemetry, applicationTelemetry, collectorEndpoint }: {
+  let { auth, system, telemetry, applicationTelemetry, telemetryRange }: {
     auth: { email: string }
     system: SystemIdentity
     telemetry: SystemTelemetry
     applicationTelemetry: ApplicationTelemetry
-    collectorEndpoint: string
+    telemetryRange: '1h' | '6h' | '24h' | '7d'
   } = $props()
 
   let systemLogs = $state<SystemLog[]>([])
@@ -193,7 +233,7 @@
   let systemLogsPaused = $state(false)
   let systemLogConnectionError = $state('')
   let followingSystemLogs = $state(true)
-  let systemLogViewport: HTMLDivElement
+  let systemLogViewport = $state<HTMLDivElement>()
   let traceDialogOpen = $state(false)
   let selectedTraceID = $state('')
   let traceSpans = $state<TraceSpan[]>([])
@@ -201,6 +241,8 @@
   let traceError = $state('')
   let selectedAttributionID = $state('')
   let attributionComparison = $state<'host' | 'service'>('host')
+  let activeView = $state<'overview' | 'services' | 'logs' | 'traces'>('overview')
+  let live = $state(false)
 
   const formatBytes = (value: number) => {
     if (!Number.isFinite(value) || value < 0) return 'Unavailable'
@@ -212,6 +254,7 @@
   const formatRate = (value: number) => `${formatBytes(value)}/s`
   const formatCores = (value: number) => `${value.toFixed(2)} cores`
   const formatCount = (value: number) => value.toFixed(0)
+  const formatPerSecond = (value: number) => `${value.toFixed(value < 1 ? 2 : 1)}/s`
   const formatPercent = (value: number) => `${(value * 100).toFixed(2)}%`
   const formatDuration = (milliseconds: number) => milliseconds < 1 ? `${(milliseconds * 1000).toFixed(0)} µs` : `${milliseconds.toFixed(1)} ms`
   const formatSpanDuration = (nanoseconds: number) => formatDuration(nanoseconds / 1_000_000)
@@ -234,6 +277,12 @@
   const systemContainers = $derived(telemetry.systemContainers ?? [])
   const hostHistory = $derived(telemetry.hostHistory ?? [])
   const memoryHistory = $derived(telemetry.memoryHistory ?? [])
+  const storageHistory = $derived(telemetry.storageHistory ?? [])
+  const applicationHistory = $derived(applicationTelemetry.history ?? [])
+  const databaseHistory = $derived(applicationTelemetry.database?.history ?? [])
+  const recentTraces = $derived(applicationTelemetry.recentTraces ?? [])
+  const rangeSeconds = $derived(({ '1h': 3600, '6h': 21600, '24h': 86400, '7d': 604800 })[telemetryRange] ?? 86400)
+  const rangeLabel = $derived(({ '1h': 'last hour', '6h': 'last 6 hours', '24h': 'last 24 hours', '7d': 'last 7 days' })[telemetryRange] ?? 'last 24 hours')
   const attributionRows = $derived([...platform, ...systemContainers])
   const rowName = (row: AttributedTelemetry) => {
     if (row.scope === 'native') return label(row.component)
@@ -268,6 +317,51 @@
     { label: 'Receive', points: hostHistory.filter((point) => point.networkReceiveAvailable).map((point) => ({ observedAt: point.observedAt, value: point.networkReceiveBytesPerSecond })) },
     { label: 'Transmit', points: hostHistory.filter((point) => point.networkTransmitAvailable).map((point) => ({ observedAt: point.observedAt, value: point.networkTransmitBytesPerSecond })) },
   ])
+  const applicationTrafficSeries = $derived<ChartSeries[]>([
+    { label: 'Requests', points: applicationHistory.map((point) => ({ observedAt: point.observedAt, value: point.requestsPerSecond })) },
+    { label: 'Server errors', points: applicationHistory.map((point) => ({ observedAt: point.observedAt, value: point.serverErrorsPerSecond })) },
+    { label: 'Client errors', points: applicationHistory.map((point) => ({ observedAt: point.observedAt, value: point.clientErrorsPerSecond })) },
+  ])
+  const applicationLatencySeries = $derived<ChartSeries[]>([
+    { label: 'p50', points: applicationHistory.map((point) => ({ observedAt: point.observedAt, value: point.p50DurationMs })) },
+    { label: 'p95', points: applicationHistory.map((point) => ({ observedAt: point.observedAt, value: point.p95DurationMs })) },
+    { label: 'p99', points: applicationHistory.map((point) => ({ observedAt: point.observedAt, value: point.p99DurationMs })) },
+  ])
+  const databaseActivitySeries = $derived<ChartSeries[]>([
+    { label: 'Operations', points: databaseHistory.map((point) => ({ observedAt: point.observedAt, value: point.operationsPerSecond })) },
+    { label: 'Errors', points: databaseHistory.map((point) => ({ observedAt: point.observedAt, value: point.errorsPerSecond })) },
+  ])
+  const databaseLatencySeries = $derived<ChartSeries[]>([
+    { label: 'p50', points: databaseHistory.map((point) => ({ observedAt: point.observedAt, value: point.p50DurationMs })) },
+    { label: 'p95', points: databaseHistory.map((point) => ({ observedAt: point.observedAt, value: point.p95DurationMs })) },
+    { label: 'p99', points: databaseHistory.map((point) => ({ observedAt: point.observedAt, value: point.p99DurationMs })) },
+  ])
+  const applicationService = $derived(platform.find((row) => row.application) ?? platform.find((row) => row.component === 'deploycrate-ce'))
+  const applicationCPUSeries = $derived<ChartSeries[]>(applicationService ? [{
+    label: 'CPU', points: applicationService.history.filter((point) => point.cpuAvailable).map((point) => ({ observedAt: point.observedAt, value: point.cpuCores })),
+  }] : [])
+  const applicationMemorySeries = $derived<ChartSeries[]>(applicationService ? [{
+    label: 'Memory', points: applicationService.history.filter((point) => point.memoryAvailable).map((point) => ({ observedAt: point.observedAt, value: point.memoryBytes })),
+  }] : [])
+  const hostCapacitySeries = $derived<ChartSeries[]>([
+    { label: 'CPU', points: hostHistory.filter((point) => point.cpuAvailable && point.cpuCoresTotal > 0).map((point) => ({ observedAt: point.observedAt, value: point.cpuCores / point.cpuCoresTotal * 100 })) },
+    { label: 'Memory', points: memoryHistory.filter((point) => point.used + point.free > 0).map((point) => ({ observedAt: point.observedAt, value: point.used / (point.used + point.free) * 100 })) },
+    { label: 'Disk', points: storageHistory.filter((point) => point.used + point.free > 0).map((point) => ({ observedAt: point.observedAt, value: point.used / (point.used + point.free) * 100 })) },
+  ])
+  const healthIssues = $derived.by(() => {
+    const issues: string[] = []
+    if (!telemetry.available) issues.push('Host telemetry is stale or unavailable.')
+    if (!applicationTelemetry.available) issues.push('Application telemetry is stale or unavailable.')
+    if (applicationTelemetry.serverErrorRate >= 0.01) issues.push(`Server errors are ${formatPercent(applicationTelemetry.serverErrorRate)} of recent requests.`)
+    if (applicationTelemetry.database?.errorsPerSecond > 0) issues.push(`PostgreSQL is reporting ${formatPerSecond(applicationTelemetry.database.errorsPerSecond)} failed operations.`)
+    const memoryTotal = telemetry.memory.used + telemetry.memory.free
+    if (memoryTotal > 0 && telemetry.memory.free / memoryTotal < 0.1) issues.push('Host memory has less than 10% available.')
+    const storageTotal = telemetry.storage.used + telemetry.storage.free
+    if (storageTotal > 0 && telemetry.storage.free / storageTotal < 0.1) issues.push('Root disk has less than 10% available.')
+    if (telemetry.oomAvailable && telemetry.oomEvents > 0) issues.push('The host reported an out-of-memory event.')
+    return issues
+  })
+  const healthLabel = $derived(healthIssues.length === 0 ? 'Healthy' : healthIssues.length === 1 ? 'Needs attention' : 'Degraded')
   const attributedCPUSeries = $derived<ChartSeries[]>(selectedAttributionRow ? [
     ...attributedSeries('cpu'),
     ...(attributionComparison === 'host' ? hostCPUSeries.map((series) => ({ ...series, label: 'Host total', comparison: true })) : []),
@@ -347,6 +441,7 @@
   }
 
   function updateSystemLogFollow() {
+    if (!systemLogViewport) return
     followingSystemLogs = systemLogViewport.scrollHeight
       - systemLogViewport.scrollTop
       - systemLogViewport.clientHeight < 48
@@ -362,7 +457,7 @@
   })
 
   $effect(() => {
-    if (systemLogsPaused) return
+    if (activeView !== 'logs' || systemLogsPaused) return
     const abortController = new AbortController()
     let timer: number | undefined
     let retryDelay = 2000
@@ -387,80 +482,120 @@
       if (timer !== undefined) window.clearTimeout(timer)
     }
   })
+
+  $effect(() => {
+    if (!live) return
+    let refreshing = false
+    const refresh = () => {
+      if (refreshing || document.visibilityState !== 'visible') return
+      refreshing = true
+      router.reload({
+        only: ['telemetry', 'applicationTelemetry'],
+        preserveScroll: true,
+        preserveState: true,
+        onFinish: () => (refreshing = false),
+      })
+    }
+    refresh()
+    const timer = window.setInterval(refresh, 3000)
+    return () => window.clearInterval(timer)
+  })
 </script>
 
 <svelte:head><title>System telemetry</title></svelte:head>
 
 <DashboardLayout email={auth.email}>
   <div class="space-y-8">
-    <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <header class="flex flex-col gap-5 xl:flex-row xl:items-end xl:justify-between">
       <div>
         <p class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary">System</p>
-        <h1 class="mt-3 text-3xl font-semibold tracking-tight">Telemetry</h1>
+        <h1 class="mt-3 text-3xl font-semibold tracking-tight">System health</h1>
         <p class="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
-          Extended host throughput and resource attribution for {system.applicationName}.
+          Application, PostgreSQL, and host telemetry for {system.applicationName}.
         </p>
       </div>
-      <div class="text-left text-xs text-muted-foreground sm:text-right">
-        <p class="font-medium text-foreground">{system.serverName}</p>
-        <p class="mt-1 font-mono">{system.serverAddress}</p>
-        {#if telemetry.available}<p class="mt-1">Observed {stamp(telemetry.observedAt)}</p>{/if}
-        <p class="mt-2">OTLP/HTTP over WireGuard</p>
-        <p class="mt-1 font-mono text-foreground">{collectorEndpoint}</p>
+      <div class="flex flex-wrap gap-1 xl:justify-end" aria-label="Telemetry time range">
+        {#each [{ value: '1h', label: '1h' }, { value: '6h', label: '6h' }, { value: '24h', label: '24h' }, { value: '7d', label: '7d' }] as option}
+          <Button
+            size="sm"
+            variant={!live && telemetryRange === option.value ? 'default' : 'outline'}
+            aria-pressed={!live && telemetryRange === option.value}
+            href={`${routes.systemTelemetry()}?range=${option.value}`}
+            onclick={() => (live = false)}
+          >{option.label}</Button>
+        {/each}
+        <Button size="sm" variant={live ? 'default' : 'outline'} aria-pressed={live} onclick={() => (live = !live)}>
+          <span class={`size-1.5 rounded-full ${live ? 'bg-primary-foreground animate-pulse' : 'bg-muted-foreground'}`}></span>
+          Live
+        </Button>
       </div>
     </header>
 
-    <section aria-labelledby="application-telemetry-heading">
-      <div class="mb-4">
-        <h2 id="application-telemetry-heading" class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Application signals</h2>
-        <p class="mt-1 text-xs text-muted-foreground">OpenTelemetry HTTP and Go runtime metrics for the DeployCrate CE application</p>
-      </div>
-      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Card.Root><Card.Header><Card.Title class="text-sm">Request rate</Card.Title></Card.Header><Card.Content><p class="text-2xl font-semibold">{applicationTelemetry.available ? `${applicationTelemetry.requestsPerSecond.toFixed(2)} req/s` : 'Unavailable'}</p><p class="mt-1 text-xs text-muted-foreground">Rolling OpenTelemetry collection window</p></Card.Content></Card.Root>
-        <Card.Root><Card.Header><Card.Title class="text-sm">HTTP errors</Card.Title></Card.Header><Card.Content><p class="text-sm"><span class="text-muted-foreground">Server</span> {applicationTelemetry.available ? formatPercent(applicationTelemetry.serverErrorRate) : 'Unavailable'}</p><p class="mt-2 text-sm"><span class="text-muted-foreground">Client</span> {applicationTelemetry.available ? formatPercent(applicationTelemetry.clientErrorRate) : 'Unavailable'}</p></Card.Content></Card.Root>
-        <Card.Root><Card.Header><Card.Title class="text-sm">Request duration</Card.Title></Card.Header><Card.Content><p class="text-2xl font-semibold">{applicationTelemetry.available ? formatDuration(applicationTelemetry.meanRequestDurationMs) : 'Unavailable'}</p><p class="mt-1 text-xs text-muted-foreground">Mean server request duration</p></Card.Content></Card.Root>
-        <Card.Root><Card.Header><Card.Title class="text-sm">Go runtime</Card.Title></Card.Header><Card.Content><p class="text-sm"><span class="text-muted-foreground">Heap allocated</span> {applicationTelemetry.available ? formatBytes(applicationTelemetry.heapAllocatedBytes) : 'Unavailable'}</p><p class="mt-2 text-sm"><span class="text-muted-foreground">Goroutines</span> {applicationTelemetry.available ? formatCount(applicationTelemetry.goroutines) : 'Unavailable'}</p></Card.Content></Card.Root>
-      </div>
-    </section>
+    <nav class="flex flex-wrap gap-2 border-b border-border pb-3" aria-label="Telemetry views">
+      <Button size="sm" variant={activeView === 'overview' ? 'default' : 'ghost'} onclick={() => (activeView = 'overview')}>Overview</Button>
+      <Button size="sm" variant={activeView === 'services' ? 'default' : 'ghost'} onclick={() => (activeView = 'services')}>Services</Button>
+      <Button size="sm" variant={activeView === 'logs' ? 'default' : 'ghost'} onclick={() => (activeView = 'logs')}>Logs</Button>
+      <Button size="sm" variant={activeView === 'traces' ? 'default' : 'ghost'} onclick={() => (activeView = 'traces')}>Traces</Button>
+    </nav>
 
-    <section aria-labelledby="host-throughput-heading">
-      <div class="mb-4">
-        <h2 id="host-throughput-heading" class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Host throughput</h2>
-        <p class="mt-1 text-xs text-muted-foreground">Current rates and counters reported by the system server</p>
-      </div>
-      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <Card.Root>
-          <Card.Header><Card.Title class="text-sm">CPU cores</Card.Title></Card.Header>
-          <Card.Content><p class="text-2xl font-semibold">{telemetry.available ? formatCores(telemetry.cpuCoresUsed) : 'Unavailable'}</p><p class="mt-1 text-xs text-muted-foreground">{telemetry.available ? `${telemetry.cpuCoresTotal.toFixed(0)} total cores` : 'No fresh host sample'}</p></Card.Content>
+    {#if activeView === 'overview'}
+      <section aria-labelledby="health-summary-heading">
+        <Card.Root class={healthIssues.length === 0 ? 'border-success/40' : 'border-warning/50'}>
+          <Card.Header>
+            <Card.Title id="health-summary-heading" class="flex items-center gap-2">
+              <span class={`size-2 rounded-full ${healthIssues.length === 0 ? 'bg-success' : 'bg-warning'}`}></span>
+              {healthLabel}
+            </Card.Title>
+            <Card.Description>Health signals from {rangeLabel}. Synthetic health-check traffic is excluded.</Card.Description>
+          </Card.Header>
+          <Card.Content>
+            {#if healthIssues.length}
+              <ul class="grid gap-2 text-sm">
+                {#each healthIssues as issue}<li>{issue}</li>{/each}
+              </ul>
+            {:else}
+              <p class="text-sm text-muted-foreground">Application, PostgreSQL, and host signals are current with no detected pressure or errors.</p>
+            {/if}
+          </Card.Content>
         </Card.Root>
-        <Card.Root>
-          <Card.Header><Card.Title class="text-sm">Disk throughput</Card.Title></Card.Header>
-          <Card.Content><p class="text-sm"><span class="text-muted-foreground">Read</span> {telemetry.diskReadAvailable ? formatRate(telemetry.diskReadBytesPerSecond) : 'Unavailable'}</p><p class="mt-2 text-sm"><span class="text-muted-foreground">Write</span> {telemetry.diskWriteAvailable ? formatRate(telemetry.diskWriteBytesPerSecond) : 'Unavailable'}</p></Card.Content>
-        </Card.Root>
-        <Card.Root>
-          <Card.Header><Card.Title class="text-sm">Network throughput</Card.Title></Card.Header>
-          <Card.Content><p class="text-sm"><span class="text-muted-foreground">Receive</span> {telemetry.networkReceiveAvailable ? formatRate(telemetry.networkReceiveBytesPerSecond) : 'Unavailable'}</p><p class="mt-2 text-sm"><span class="text-muted-foreground">Transmit</span> {telemetry.networkTransmitAvailable ? formatRate(telemetry.networkTransmitBytesPerSecond) : 'Unavailable'}</p></Card.Content>
-        </Card.Root>
-        <Card.Root>
-          <Card.Header><Card.Title class="text-sm">Host activity</Card.Title></Card.Header>
-          <Card.Content><p class="text-sm"><span class="text-muted-foreground">Tasks</span> {telemetry.tasksAvailable ? formatCount(telemetry.tasks) : 'Unavailable'}</p><p class="mt-2 text-sm"><span class="text-muted-foreground">OOM events</span> {telemetry.oomAvailable ? formatCount(telemetry.oomEvents) : 'Unavailable'}</p></Card.Content>
-        </Card.Root>
-      </div>
-    </section>
+      </section>
 
-    <section aria-labelledby="host-history-heading" class="space-y-4">
-      <div>
-        <h2 id="host-history-heading" class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Host history</h2>
-        <p class="mt-1 text-xs text-muted-foreground">Twelve two-hour buckets from the last 24 hours</p>
-      </div>
-      <div class="grid gap-4 xl:grid-cols-2">
-        <TelemetryHistory label="CPU usage" description="Host CPU cores in use" series={hostCPUSeries} formatValue={formatCores} />
-        <TelemetryHistory label="Memory usage" description="Host memory working set" series={hostMemorySeries} formatValue={formatBytes} />
-        <TelemetryHistory label="Disk throughput" description="Host read and write rates" series={hostDiskSeries} formatValue={formatRate} />
-        <TelemetryHistory label="Network throughput" description="Host receive and transmit rates" series={hostNetworkSeries} formatValue={formatRate} />
-      </div>
-    </section>
+      <section aria-labelledby="application-health-heading" class="space-y-4">
+        <div>
+          <h2 id="application-health-heading" class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Application</h2>
+          <p class="mt-1 text-sm text-muted-foreground">Traffic, errors, and tail latency for DeployCrate CE</p>
+        </div>
+        <div class="grid gap-4 xl:grid-cols-2">
+          <TelemetryHistory label="Traffic and errors" description={`${applicationTelemetry.requestsPerSecond.toFixed(2)} requests/s now`} series={applicationTrafficSeries} formatValue={formatPerSecond} windowSeconds={rangeSeconds} />
+          <TelemetryHistory label="Response latency" description={`Recent mean ${formatDuration(applicationTelemetry.meanRequestDurationMs)}`} series={applicationLatencySeries} formatValue={formatDuration} windowSeconds={rangeSeconds} />
+        </div>
+      </section>
 
+      <section aria-labelledby="database-health-heading" class="space-y-4">
+        <div>
+          <h2 id="database-health-heading" class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">PostgreSQL</h2>
+          <p class="mt-1 text-sm text-muted-foreground">Database operations emitted by the system application</p>
+        </div>
+        <div class="grid gap-4 xl:grid-cols-2">
+          <TelemetryHistory label="Database activity" description={applicationTelemetry.database?.available ? `${formatPerSecond(applicationTelemetry.database.operationsPerSecond)} now` : 'No recent database operations'} series={databaseActivitySeries} formatValue={formatPerSecond} windowSeconds={rangeSeconds} />
+          <TelemetryHistory label="Database latency" description={applicationTelemetry.database?.available ? `p95 ${formatDuration(applicationTelemetry.database.p95DurationMs)}` : 'No recent database latency samples'} series={databaseLatencySeries} formatValue={formatDuration} windowSeconds={rangeSeconds} />
+        </div>
+      </section>
+
+      <section aria-labelledby="capacity-health-heading" class="space-y-4">
+        <div>
+          <h2 id="capacity-health-heading" class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Resources</h2>
+          <p class="mt-1 text-sm text-muted-foreground">Application consumption and remaining host capacity</p>
+        </div>
+        <div class="grid gap-4 xl:grid-cols-2">
+          <TelemetryHistory label="Application CPU" description={applicationService?.cpuAvailable ? formatCores(applicationService.cpuCores) : 'Current usage unavailable'} series={applicationCPUSeries} formatValue={formatCores} windowSeconds={rangeSeconds} />
+          <TelemetryHistory label="Application memory" description={applicationService?.memoryAvailable ? formatBytes(applicationService.memoryBytes) : 'Current usage unavailable'} series={applicationMemorySeries} formatValue={formatBytes} windowSeconds={rangeSeconds} />
+          <div class="xl:col-span-2"><TelemetryHistory label="Host capacity used" description="CPU, memory, and root disk utilization" series={hostCapacitySeries} formatValue={(value) => `${value.toFixed(0)}%`} windowSeconds={rangeSeconds} maximum={100} /></div>
+        </div>
+      </section>
+    {/if}
+
+    {#if activeView === 'services'}
     <section aria-labelledby="attribution-heading" class="space-y-4">
       <div class="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
         <div>
@@ -494,8 +629,8 @@
       </div>
 
       <div class="grid gap-4 xl:grid-cols-2">
-        <TelemetryHistory label="CPU usage" description={`${selectedAttributionLabel}${attributionComparison === 'host' ? ' compared with total host CPU' : ''}`} series={attributedCPUSeries} formatValue={formatCores} />
-        <TelemetryHistory label="Memory usage" description={`${selectedAttributionLabel}${attributionComparison === 'host' ? ' compared with total host memory' : ''}`} series={attributedMemorySeries} formatValue={formatBytes} />
+        <TelemetryHistory label="CPU usage" description={`${selectedAttributionLabel}${attributionComparison === 'host' ? ' compared with total host CPU' : ''}`} series={attributedCPUSeries} formatValue={formatCores} windowSeconds={rangeSeconds} />
+        <TelemetryHistory label="Memory usage" description={`${selectedAttributionLabel}${attributionComparison === 'host' ? ' compared with total host memory' : ''}`} series={attributedMemorySeries} formatValue={formatBytes} windowSeconds={rangeSeconds} />
       </div>
 
       <Card.Root>
@@ -545,7 +680,9 @@
         </Card.Content>
       </Card.Root>
     </section>
+    {/if}
 
+    {#if activeView === 'logs'}
     <section aria-labelledby="deploycrate-logs-heading">
       <Card.Root>
         <Card.Header>
@@ -591,6 +728,41 @@
         </Card.Content>
       </Card.Root>
     </section>
+    {/if}
+
+    {#if activeView === 'traces'}
+      <section aria-labelledby="recent-traces-heading">
+        <Card.Root>
+          <Card.Header>
+            <Card.Title id="recent-traces-heading">Recent traces</Card.Title>
+            <Card.Description>Up to 100 application traces from {rangeLabel}. Select one to inspect every retained span.</Card.Description>
+          </Card.Header>
+          <Card.Content class="p-0">
+            {#if recentTraces.length}
+              <div class="overflow-x-auto">
+                <Table.Root class="min-w-[780px] text-xs">
+                  <Table.Header class="border-y border-border bg-muted/30"><Table.Row><Table.Head>Started</Table.Head><Table.Head>Root span</Table.Head><Table.Head>Duration</Table.Head><Table.Head>Spans</Table.Head><Table.Head>Errors</Table.Head><Table.Head>Trace</Table.Head></Table.Row></Table.Header>
+                  <Table.Body>
+                    {#each recentTraces as trace (trace.traceId)}
+                      <Table.Row>
+                        <Table.Cell class="whitespace-nowrap">{stamp(trace.startedAt)}</Table.Cell>
+                        <Table.Cell class="font-medium">{trace.rootSpanName || 'Unknown root span'}</Table.Cell>
+                        <Table.Cell>{formatSpanDuration(trace.durationNs)}</Table.Cell>
+                        <Table.Cell>{trace.spanCount}</Table.Cell>
+                        <Table.Cell>{#if trace.errorCount > 0}<span class="text-destructive">{trace.errorCount}</span>{:else}0{/if}</Table.Cell>
+                        <Table.Cell><Button variant="link" size="xs" class="h-auto p-0 font-mono" onclick={() => loadTrace(trace.traceId)}>{short(trace.traceId)}</Button></Table.Cell>
+                      </Table.Row>
+                    {/each}
+                  </Table.Body>
+                </Table.Root>
+              </div>
+            {:else}
+              <Empty.Root class="py-12"><Empty.Header><Empty.Title>No traces in this range</Empty.Title><Empty.Description>Traces will appear after application requests are sampled.</Empty.Description></Empty.Header></Empty.Root>
+            {/if}
+          </Card.Content>
+        </Card.Root>
+      </section>
+    {/if}
 
     <Dialog.Root bind:open={traceDialogOpen} onOpenChange={(open) => { if (!open) closeTrace() }}>
       <Dialog.Content class="sm:max-w-6xl">

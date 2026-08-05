@@ -270,6 +270,7 @@ func (client Client) SystemMetricHistory(
 	ctx context.Context,
 	server string,
 	since time.Time,
+	bucket time.Duration,
 ) ([]MetricHistoryValue, error) {
 	endpoint, err := url.Parse(client.baseURL)
 	if err != nil {
@@ -279,9 +280,10 @@ func (client Client) SystemMetricHistory(
 	query.Set("database", client.database)
 	query.Set("param_server", server)
 	query.Set("param_since_seconds", strconv.FormatInt(since.Unix(), 10))
+	query.Set("param_bucket_seconds", strconv.FormatInt(int64(bucket/time.Second), 10))
 	query.Set(
 		"query",
-		"SELECT toString(toUInt64(toUnixTimestamp(bucket_start)) * 1000) AS bucket_start_milliseconds, metric, argMax(`last`, observed_at) AS value FROM metric_rollups WHERE scope = 'host' AND server = {server:String} AND bucket_start >= toDateTime({since_seconds:UInt32}) AND metric IN ('cpu_cores_used', 'cpu_cores_total', 'memory_available_bytes', 'memory_total_bytes', 'root_filesystem_available_bytes', 'root_filesystem_size_bytes', 'disk_read_bytes_per_second', 'disk_write_bytes_per_second', 'network_receive_bytes_per_second', 'network_transmit_bytes_per_second', 'oom_events', 'tasks') GROUP BY bucket_start, metric ORDER BY bucket_start, metric FORMAT JSONEachRow",
+		"SELECT toString(toUInt64(toUnixTimestamp(history_bucket)) * 1000) AS bucket_start_milliseconds, metric, argMax(`last`, observed_at) AS value FROM metric_rollups WHERE scope = 'host' AND server = {server:String} AND bucket_start >= toDateTime({since_seconds:UInt32}) AND metric IN ('cpu_cores_used', 'cpu_cores_total', 'memory_available_bytes', 'memory_total_bytes', 'root_filesystem_available_bytes', 'root_filesystem_size_bytes', 'disk_read_bytes_per_second', 'disk_write_bytes_per_second', 'network_receive_bytes_per_second', 'network_transmit_bytes_per_second', 'oom_events', 'tasks') GROUP BY toStartOfInterval(bucket_start, toIntervalSecond({bucket_seconds:UInt32})) AS history_bucket, metric ORDER BY history_bucket, metric FORMAT JSONEachRow",
 	)
 	endpoint.RawQuery = query.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), nil)
@@ -340,7 +342,7 @@ func (client Client) LatestAttributedMetricValues(
 	environment string,
 ) ([]AttributedMetricValue, error) {
 	const query = "SELECT scope, component, application, environment, release, deployment, target, instance, resource, installation, argMax(runtime_id, observed_at) AS runtime_id, metric, argMax(`last`, observed_at) AS value, toString(toUnixTimestamp64Milli(max(observed_at))) AS observed_at_milliseconds FROM metric_rollups WHERE scope = {scope:String} AND server = {server:String} AND ({environment:String} = '' OR environment = {environment:String}) GROUP BY scope, component, application, environment, release, deployment, target, instance, resource, installation, metric ORDER BY component, application, environment, instance, installation, metric FORMAT JSONEachRow"
-	return client.queryAttributedMetrics(ctx, query, scope, server, environment, time.Time{})
+	return client.queryAttributedMetrics(ctx, query, scope, server, environment, time.Time{}, 0)
 }
 
 func (client Client) AttributedMetricHistory(
@@ -349,9 +351,10 @@ func (client Client) AttributedMetricHistory(
 	server string,
 	environment string,
 	since time.Time,
+	bucket time.Duration,
 ) ([]AttributedMetricValue, error) {
-	const query = "SELECT bucket_start, scope, component, application, environment, release, deployment, target, instance, resource, installation, argMax(runtime_id, observed_at) AS runtime_id, metric, argMax(`last`, observed_at) AS value, toString(toUnixTimestamp64Milli(max(observed_at))) AS observed_at_milliseconds FROM metric_rollups WHERE scope = {scope:String} AND server = {server:String} AND ({environment:String} = '' OR environment = {environment:String}) AND bucket_start >= toDateTime({since_seconds:UInt32}) GROUP BY bucket_start, scope, component, application, environment, release, deployment, target, instance, resource, installation, metric ORDER BY bucket_start, component, application, environment, instance, installation, metric FORMAT JSONEachRow"
-	return client.queryAttributedMetrics(ctx, query, scope, server, environment, since)
+	const query = "SELECT history_bucket AS bucket_start, scope, component, application, environment, release, deployment, target, instance, resource, installation, argMax(runtime_id, observed_at) AS runtime_id, metric, argMax(`last`, observed_at) AS value, toString(toUnixTimestamp64Milli(max(observed_at))) AS observed_at_milliseconds FROM metric_rollups WHERE scope = {scope:String} AND server = {server:String} AND ({environment:String} = '' OR environment = {environment:String}) AND bucket_start >= toDateTime({since_seconds:UInt32}) GROUP BY toStartOfInterval(bucket_start, toIntervalSecond({bucket_seconds:UInt32})) AS history_bucket, scope, component, application, environment, release, deployment, target, instance, resource, installation, metric ORDER BY history_bucket, component, application, environment, instance, installation, metric FORMAT JSONEachRow"
+	return client.queryAttributedMetrics(ctx, query, scope, server, environment, since, bucket)
 }
 
 func (client Client) queryAttributedMetrics(
@@ -361,6 +364,7 @@ func (client Client) queryAttributedMetrics(
 	server string,
 	environment string,
 	since time.Time,
+	bucket time.Duration,
 ) ([]AttributedMetricValue, error) {
 	endpoint, err := url.Parse(client.baseURL)
 	if err != nil {
@@ -373,6 +377,7 @@ func (client Client) queryAttributedMetrics(
 	values.Set("param_environment", environment)
 	if !since.IsZero() {
 		values.Set("param_since_seconds", strconv.FormatInt(since.Unix(), 10))
+		values.Set("param_bucket_seconds", strconv.FormatInt(int64(bucket/time.Second), 10))
 	}
 	values.Set("query", queryText)
 	endpoint.RawQuery = values.Encode()

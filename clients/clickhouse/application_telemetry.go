@@ -8,23 +8,64 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"time"
 )
 
 type ApplicationTelemetry struct {
-	Available             bool      `json:"available"`
-	ObservedAt            time.Time `json:"observedAt"`
-	WindowSeconds         float64   `json:"windowSeconds"`
-	RequestsPerSecond     float64   `json:"requestsPerSecond"`
-	ServerErrorRate       float64   `json:"serverErrorRate"`
-	ClientErrorRate       float64   `json:"clientErrorRate"`
-	MeanRequestDurationMS float64   `json:"meanRequestDurationMs"`
-	RuntimeMemoryBytes    float64   `json:"runtimeMemoryBytes"`
-	HeapAllocatedBytes    float64   `json:"heapAllocatedBytes"`
-	HeapAllocations       float64   `json:"heapAllocations"`
-	HeapGoalBytes         float64   `json:"heapGoalBytes"`
-	Goroutines            float64   `json:"goroutines"`
+	Available             bool                        `json:"available"`
+	ObservedAt            time.Time                   `json:"observedAt"`
+	WindowSeconds         float64                     `json:"windowSeconds"`
+	RequestsPerSecond     float64                     `json:"requestsPerSecond"`
+	ServerErrorRate       float64                     `json:"serverErrorRate"`
+	ClientErrorRate       float64                     `json:"clientErrorRate"`
+	MeanRequestDurationMS float64                     `json:"meanRequestDurationMs"`
+	RuntimeMemoryBytes    float64                     `json:"runtimeMemoryBytes"`
+	HeapAllocatedBytes    float64                     `json:"heapAllocatedBytes"`
+	HeapAllocations       float64                     `json:"heapAllocations"`
+	HeapGoalBytes         float64                     `json:"heapGoalBytes"`
+	Goroutines            float64                     `json:"goroutines"`
+	History               []ApplicationTelemetryPoint `json:"history"`
+	Database              DatabaseTelemetry           `json:"database"`
+	RecentTraces          []TraceSummary              `json:"recentTraces"`
+}
+
+type ApplicationTelemetryPoint struct {
+	ObservedAt        time.Time `json:"observedAt"`
+	RequestsPerSecond float64   `json:"requestsPerSecond"`
+	ClientErrorsPS    float64   `json:"clientErrorsPerSecond"`
+	ServerErrorsPS    float64   `json:"serverErrorsPerSecond"`
+	P50DurationMS     float64   `json:"p50DurationMs"`
+	P95DurationMS     float64   `json:"p95DurationMs"`
+	P99DurationMS     float64   `json:"p99DurationMs"`
+}
+
+type DatabaseTelemetry struct {
+	Available           bool                     `json:"available"`
+	ObservedAt          time.Time                `json:"observedAt"`
+	OperationsPerSecond float64                  `json:"operationsPerSecond"`
+	ErrorsPerSecond     float64                  `json:"errorsPerSecond"`
+	P95DurationMS       float64                  `json:"p95DurationMs"`
+	History             []DatabaseTelemetryPoint `json:"history"`
+}
+
+type DatabaseTelemetryPoint struct {
+	ObservedAt          time.Time `json:"observedAt"`
+	OperationsPerSecond float64   `json:"operationsPerSecond"`
+	ErrorsPerSecond     float64   `json:"errorsPerSecond"`
+	P50DurationMS       float64   `json:"p50DurationMs"`
+	P95DurationMS       float64   `json:"p95DurationMs"`
+	P99DurationMS       float64   `json:"p99DurationMs"`
+}
+
+type TraceSummary struct {
+	TraceID      string    `json:"traceId"`
+	RootSpanName string    `json:"rootSpanName"`
+	StartedAt    time.Time `json:"startedAt"`
+	DurationNS   uint64    `json:"durationNs"`
+	SpanCount    uint64    `json:"spanCount"`
+	ErrorCount   uint64    `json:"errorCount"`
 }
 
 type TraceSpan struct {
@@ -43,7 +84,13 @@ type TraceSpan struct {
 	DurationNS         uint64            `json:"durationNs"`
 }
 
-func (client Client) ApplicationTelemetry(ctx context.Context, service, namespace string) (ApplicationTelemetry, error) {
+func (client Client) ApplicationTelemetry(
+	ctx context.Context,
+	service string,
+	namespace string,
+	since time.Time,
+	bucket time.Duration,
+) (ApplicationTelemetry, error) {
 	const requestQuery = `
 SELECT
   toString(toInt64(toUnixTimestamp(max(last_time))) * 1000) AS observed_at_milliseconds,
@@ -64,6 +111,7 @@ FROM
   WHERE ServiceName = {service:String}
     AND ResourceAttributes['service.namespace'] = {namespace:String}
     AND MetricName = 'http.server.request.duration'
+    AND Attributes['http.route'] != '/api/health'
     AND TimeUnix >= now() - INTERVAL 5 MINUTE
   GROUP BY ResourceAttributes['service.instance.id'], cityHash64(Attributes)
   HAVING last_time > first_time
@@ -112,7 +160,11 @@ FORMAT JSONEachRow`
 		return ApplicationTelemetry{}, err
 	}
 
-	result := ApplicationTelemetry{}
+	result := ApplicationTelemetry{
+		History:      []ApplicationTelemetryPoint{},
+		Database:     DatabaseTelemetry{History: []DatabaseTelemetryPoint{}},
+		RecentTraces: []TraceSummary{},
+	}
 	if len(requestRows) == 1 && requestRows[0].WindowSeconds > 0 {
 		row := requestRows[0]
 		result.Available = true
@@ -149,6 +201,340 @@ FORMAT JSONEachRow`
 		case "go.goroutine.count":
 			result.Goroutines = row.Value
 		}
+	}
+
+	history, database, err := client.applicationMetricHistory(ctx, service, namespace, since, bucket)
+	if err != nil {
+		return ApplicationTelemetry{}, err
+	}
+	result.History = history
+	result.Database = database
+	result.RecentTraces, err = client.recentTraces(ctx, service, namespace, since)
+	if err != nil {
+		return ApplicationTelemetry{}, err
+	}
+	return result, nil
+}
+
+type histogramDelta struct {
+	ObservedAt   time.Time
+	Metric       string
+	Status       uint16
+	Operation    string
+	Count        uint64
+	Sum          float64
+	BucketCounts []uint64
+	Bounds       []float64
+	Maximum      float64
+}
+
+func (client Client) applicationMetricHistory(
+	ctx context.Context,
+	service string,
+	namespace string,
+	since time.Time,
+	bucket time.Duration,
+) ([]ApplicationTelemetryPoint, DatabaseTelemetry, error) {
+	const histogramQuery = `
+SELECT
+  toString(toUInt64(toUnixTimestamp(bucket_start)) * 1000) AS observed_at_milliseconds,
+  metric, status, operation, toString(count_delta) AS count_delta_value, sum_delta,
+  bucket_counts, explicit_bounds, maximum
+FROM
+(
+  SELECT
+    toStartOfInterval(TimeUnix, toIntervalSecond({bucket_seconds:UInt32})) AS bucket_start,
+    MetricName AS metric,
+    toUInt16OrZero(Attributes['http.response.status_code']) AS status,
+    Attributes['pgx.operation.type'] AS operation,
+    greatest(toInt64(argMax(Count, TimeUnix)) - toInt64(argMin(Count, TimeUnix)), 0) AS count_delta,
+    greatest(argMax(Sum, TimeUnix) - argMin(Sum, TimeUnix), 0) AS sum_delta,
+	arrayMap((latest, earliest) -> toUInt64(if(
+		latest >= earliest,
+		toInt64(latest) - toInt64(earliest),
+		toInt64(latest)
+	)),
+	  argMax(BucketCounts, TimeUnix), argMin(BucketCounts, TimeUnix)) AS bucket_counts,
+    argMax(ExplicitBounds, TimeUnix) AS explicit_bounds,
+    argMax(Max, TimeUnix) AS maximum
+  FROM otel_metrics_histogram
+  WHERE ServiceName = {service:String}
+    AND ResourceAttributes['service.namespace'] = {namespace:String}
+    AND MetricName IN ('http.server.request.duration', 'db.client.operation.duration')
+    AND TimeUnix >= toDateTime({since_seconds:UInt32})
+    AND (MetricName != 'http.server.request.duration' OR Attributes['http.route'] != '/api/health')
+  GROUP BY bucket_start, metric, ResourceAttributes['service.instance.id'], cityHash64(Attributes), status, operation
+  HAVING max(TimeUnix) > min(TimeUnix)
+)
+WHERE count_delta > 0
+ORDER BY bucket_start, metric, status, operation
+FORMAT JSONEachRow`
+	type histogramRow struct {
+		ObservedAtMilliseconds string    `json:"observed_at_milliseconds"`
+		Metric                 string    `json:"metric"`
+		Status                 uint16    `json:"status"`
+		Operation              string    `json:"operation"`
+		Count                  string    `json:"count_delta_value"`
+		Sum                    float64   `json:"sum_delta"`
+		BucketCounts           []uint64  `json:"bucket_counts"`
+		Bounds                 []float64 `json:"explicit_bounds"`
+		Maximum                float64   `json:"maximum"`
+	}
+	parameters := map[string]string{
+		"service": service, "namespace": namespace,
+		"since_seconds":  strconv.FormatInt(since.Unix(), 10),
+		"bucket_seconds": strconv.FormatInt(int64(bucket/time.Second), 10),
+	}
+	rows, err := queryJSONRows[histogramRow](ctx, client, histogramQuery, parameters)
+	if err != nil {
+		return nil, DatabaseTelemetry{}, err
+	}
+
+	deltas := make([]histogramDelta, 0, len(rows))
+	for _, row := range rows {
+		observedAt, parseErr := millisecondsTime(row.ObservedAtMilliseconds)
+		if parseErr != nil {
+			return nil, DatabaseTelemetry{}, parseErr
+		}
+		count, parseErr := strconv.ParseUint(row.Count, 10, 64)
+		if parseErr != nil {
+			return nil, DatabaseTelemetry{}, fmt.Errorf("decode ClickHouse histogram count: %w", parseErr)
+		}
+		deltas = append(deltas, histogramDelta{
+			ObservedAt: observedAt, Metric: row.Metric, Status: row.Status, Operation: row.Operation,
+			Count: count, Sum: row.Sum, BucketCounts: row.BucketCounts, Bounds: row.Bounds, Maximum: row.Maximum,
+		})
+	}
+
+	databaseErrors, err := client.databaseErrorHistory(ctx, service, namespace, since, bucket)
+	if err != nil {
+		return nil, DatabaseTelemetry{}, err
+	}
+	httpHistory, database := aggregateApplicationHistory(deltas, databaseErrors, bucket)
+	return httpHistory, database, nil
+}
+
+func (client Client) databaseErrorHistory(
+	ctx context.Context,
+	service string,
+	namespace string,
+	since time.Time,
+	bucket time.Duration,
+) (map[int64]float64, error) {
+	const query = `
+SELECT toString(toUInt64(toUnixTimestamp(bucket_start)) * 1000) AS observed_at_milliseconds,
+  sum(error_delta) AS errors
+FROM
+(
+  SELECT toStartOfInterval(TimeUnix, toIntervalSecond({bucket_seconds:UInt32})) AS bucket_start,
+    greatest(argMax(Value, TimeUnix) - argMin(Value, TimeUnix), 0) AS error_delta
+  FROM otel_metrics_sum
+  WHERE ServiceName = {service:String}
+    AND ResourceAttributes['service.namespace'] = {namespace:String}
+    AND MetricName = 'db.client.operation.errors'
+    AND TimeUnix >= toDateTime({since_seconds:UInt32})
+  GROUP BY bucket_start, ResourceAttributes['service.instance.id'], cityHash64(Attributes)
+  HAVING max(TimeUnix) > min(TimeUnix)
+)
+GROUP BY bucket_start
+ORDER BY bucket_start
+FORMAT JSONEachRow`
+	type errorRow struct {
+		ObservedAtMilliseconds string  `json:"observed_at_milliseconds"`
+		Errors                 float64 `json:"errors"`
+	}
+	rows, err := queryJSONRows[errorRow](ctx, client, query, map[string]string{
+		"service": service, "namespace": namespace,
+		"since_seconds":  strconv.FormatInt(since.Unix(), 10),
+		"bucket_seconds": strconv.FormatInt(int64(bucket/time.Second), 10),
+	})
+	if err != nil {
+		return nil, err
+	}
+	errorsByBucket := make(map[int64]float64, len(rows))
+	for _, row := range rows {
+		observedAt, parseErr := millisecondsTime(row.ObservedAtMilliseconds)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		errorsByBucket[observedAt.Unix()] = row.Errors
+	}
+	return errorsByBucket, nil
+}
+
+type aggregatedHistogram struct {
+	count        uint64
+	bucketCounts []uint64
+	bounds       []float64
+	maximum      float64
+}
+
+func (aggregate *aggregatedHistogram) add(delta histogramDelta) {
+	aggregate.count += delta.Count
+	if len(aggregate.bucketCounts) < len(delta.BucketCounts) {
+		aggregate.bucketCounts = append(aggregate.bucketCounts, make([]uint64, len(delta.BucketCounts)-len(aggregate.bucketCounts))...)
+	}
+	for index, count := range delta.BucketCounts {
+		aggregate.bucketCounts[index] += count
+	}
+	if len(delta.Bounds) > len(aggregate.bounds) {
+		aggregate.bounds = append([]float64(nil), delta.Bounds...)
+	}
+	if delta.Maximum > aggregate.maximum {
+		aggregate.maximum = delta.Maximum
+	}
+}
+
+func (aggregate aggregatedHistogram) quantile(value float64) float64 {
+	if aggregate.count == 0 {
+		return 0
+	}
+	target := uint64(float64(aggregate.count)*value + 0.999999)
+	var cumulative uint64
+	for index, count := range aggregate.bucketCounts {
+		cumulative += count
+		if cumulative < target {
+			continue
+		}
+		if index < len(aggregate.bounds) {
+			return aggregate.bounds[index]
+		}
+		return aggregate.maximum
+	}
+	return aggregate.maximum
+}
+
+func aggregateApplicationHistory(
+	deltas []histogramDelta,
+	databaseErrors map[int64]float64,
+	bucket time.Duration,
+) ([]ApplicationTelemetryPoint, DatabaseTelemetry) {
+	type bucketData struct {
+		http, database aggregatedHistogram
+		clientErrors   uint64
+		serverErrors   uint64
+	}
+	buckets := make(map[int64]*bucketData)
+	for _, delta := range deltas {
+		key := delta.ObservedAt.Unix()
+		current := buckets[key]
+		if current == nil {
+			current = &bucketData{}
+			buckets[key] = current
+		}
+		switch delta.Metric {
+		case "http.server.request.duration":
+			current.http.add(delta)
+			if delta.Status >= 500 {
+				current.serverErrors += delta.Count
+			} else if delta.Status >= 400 {
+				current.clientErrors += delta.Count
+			}
+		case "db.client.operation.duration":
+			current.database.add(delta)
+		}
+	}
+	keys := make([]int64, 0, len(buckets))
+	for key := range buckets {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	bucketSeconds := bucket.Seconds()
+	httpHistory := make([]ApplicationTelemetryPoint, 0, len(keys))
+	databaseHistory := make([]DatabaseTelemetryPoint, 0, len(keys))
+	for _, key := range keys {
+		current := buckets[key]
+		observedAt := time.Unix(key, 0).UTC()
+		if current.http.count > 0 {
+			httpHistory = append(httpHistory, ApplicationTelemetryPoint{
+				ObservedAt: observedAt, RequestsPerSecond: float64(current.http.count) / bucketSeconds,
+				ClientErrorsPS: float64(current.clientErrors) / bucketSeconds,
+				ServerErrorsPS: float64(current.serverErrors) / bucketSeconds,
+				P50DurationMS:  current.http.quantile(0.50) * 1000,
+				P95DurationMS:  current.http.quantile(0.95) * 1000,
+				P99DurationMS:  current.http.quantile(0.99) * 1000,
+			})
+		}
+		if current.database.count > 0 {
+			databaseHistory = append(databaseHistory, DatabaseTelemetryPoint{
+				ObservedAt: observedAt, OperationsPerSecond: float64(current.database.count) / bucketSeconds,
+				ErrorsPerSecond: databaseErrors[key] / bucketSeconds,
+				P50DurationMS:   current.database.quantile(0.50) * 1000,
+				P95DurationMS:   current.database.quantile(0.95) * 1000,
+				P99DurationMS:   current.database.quantile(0.99) * 1000,
+			})
+		}
+	}
+	database := DatabaseTelemetry{History: databaseHistory}
+	if len(databaseHistory) > 0 {
+		latest := databaseHistory[len(databaseHistory)-1]
+		database.Available = true
+		database.ObservedAt = latest.ObservedAt
+		database.OperationsPerSecond = latest.OperationsPerSecond
+		database.ErrorsPerSecond = latest.ErrorsPerSecond
+		database.P95DurationMS = latest.P95DurationMS
+	}
+	return httpHistory, database
+}
+
+func (client Client) recentTraces(
+	ctx context.Context,
+	service string,
+	namespace string,
+	since time.Time,
+) ([]TraceSummary, error) {
+	const query = `
+SELECT TraceId AS trace_id,
+  argMaxIf(SpanName, Duration, ParentSpanId = '') AS root_span_name,
+  toString(toUnixTimestamp64Nano(min(Timestamp))) AS timestamp_nanoseconds,
+  toString(if(countIf(ParentSpanId = '') > 0, argMaxIf(Duration, Duration, ParentSpanId = ''), max(Duration))) AS duration_nanoseconds,
+  toString(count()) AS span_count,
+  toString(countIf(lower(StatusCode) = 'error')) AS error_count
+FROM otel_traces
+WHERE ServiceName = {service:String}
+  AND ResourceAttributes['service.namespace'] = {namespace:String}
+  AND Timestamp >= toDateTime({since_seconds:UInt32})
+GROUP BY TraceId
+HAVING countIf(SpanAttributes['http.route'] = '/api/health') = 0
+ORDER BY min(Timestamp) DESC
+LIMIT 100
+FORMAT JSONEachRow`
+	type traceSummaryRow struct {
+		TraceID              string `json:"trace_id"`
+		RootSpanName         string `json:"root_span_name"`
+		TimestampNanoseconds string `json:"timestamp_nanoseconds"`
+		DurationNanoseconds  string `json:"duration_nanoseconds"`
+		SpanCount            string `json:"span_count"`
+		ErrorCount           string `json:"error_count"`
+	}
+	rows, err := queryJSONRows[traceSummaryRow](ctx, client, query, map[string]string{
+		"service": service, "namespace": namespace, "since_seconds": strconv.FormatInt(since.Unix(), 10),
+	})
+	if err != nil {
+		return nil, err
+	}
+	result := make([]TraceSummary, 0, len(rows))
+	for _, row := range rows {
+		timestamp, parseErr := strconv.ParseInt(row.TimestampNanoseconds, 10, 64)
+		if parseErr != nil {
+			return nil, fmt.Errorf("decode ClickHouse trace summary timestamp: %w", parseErr)
+		}
+		duration, parseErr := strconv.ParseUint(row.DurationNanoseconds, 10, 64)
+		if parseErr != nil {
+			return nil, fmt.Errorf("decode ClickHouse trace summary duration: %w", parseErr)
+		}
+		spanCount, parseErr := strconv.ParseUint(row.SpanCount, 10, 64)
+		if parseErr != nil {
+			return nil, fmt.Errorf("decode ClickHouse trace summary span count: %w", parseErr)
+		}
+		errorCount, parseErr := strconv.ParseUint(row.ErrorCount, 10, 64)
+		if parseErr != nil {
+			return nil, fmt.Errorf("decode ClickHouse trace summary error count: %w", parseErr)
+		}
+		result = append(result, TraceSummary{
+			TraceID: row.TraceID, RootSpanName: row.RootSpanName, StartedAt: time.Unix(0, timestamp).UTC(),
+			DurationNS: duration, SpanCount: spanCount, ErrorCount: errorCount,
+		})
 	}
 	return result, nil
 }

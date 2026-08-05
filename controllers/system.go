@@ -129,6 +129,7 @@ func (s System) Overview(etx *echo.Context) error {
 }
 
 func (s System) Telemetry(etx *echo.Context) error {
+	telemetryRange := services.ParseTelemetryRange(etx.QueryParam("range"))
 	overview, err := models.Application.FindSystemOverview(
 		etx.Request().Context(),
 		s.db.Executor(),
@@ -136,7 +137,7 @@ func (s System) Telemetry(etx *echo.Context) error {
 	if err != nil {
 		return s.renderLoadError(etx, "telemetry", err)
 	}
-	metricData, err := s.metric.SystemTelemetry(etx.Request().Context(), overview.ServerID)
+	metricData, err := s.metric.SystemTelemetry(etx.Request().Context(), overview.ServerID, telemetryRange)
 	if err != nil {
 		slog.WarnContext(
 			etx.Request().Context(),
@@ -145,16 +146,21 @@ func (s System) Telemetry(etx *echo.Context) error {
 			err,
 		)
 	}
-	applicationData, err := s.appTelemetry.Snapshot(etx.Request().Context())
+	applicationData, err := s.appTelemetry.Snapshot(etx.Request().Context(), telemetryRange)
 	if err != nil {
 		slog.WarnContext(etx.Request().Context(), "failed to load DeployCrate CE application telemetry", "error", err)
+	}
+	collectorEndpoint, err := models.ResourceEndpoint.FindSystemEnvironmentEndpoint(etx.Request().Context(), s.db.Executor(), "opentelemetry")
+	if err != nil {
+		return s.renderLoadError(etx, "telemetry Resource endpoint", err)
 	}
 	return inertia.Page(etx, "System/Telemetry", inertia.Props{
 		"auth":                 s.authProps(etx),
 		"system":               overview,
 		"telemetry":            metricData,
 		"applicationTelemetry": applicationData,
-		"collectorEndpoint":    services.ControlPlaneOTLPEndpoint,
+		"telemetryRange":       telemetryRange,
+		"collectorEndpoint":    collectorEndpoint.URL(),
 	})
 }
 

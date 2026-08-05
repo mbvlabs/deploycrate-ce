@@ -15,7 +15,6 @@ const WireGuardMeshCIDR = internalwireguard.MeshCIDR
 const WireGuardNodeCIDR = internalwireguard.NodeCIDR
 const WireGuardDeviceCIDR = internalwireguard.DeviceCIDR
 const WireGuardPrivateAddress = internalwireguard.ControlPlaneAddress
-const ControlPlaneOTLPEndpoint = "http://" + WireGuardPrivateAddress + ":4318"
 const wireGuardAddressAllocationLock = "deploycrate-wireguard-address-allocation"
 
 type WireGuardDesiredPeer struct {

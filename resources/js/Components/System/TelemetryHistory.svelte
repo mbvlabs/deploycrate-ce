@@ -15,30 +15,36 @@
     description,
     series,
     formatValue,
+    windowSeconds = 24 * 60 * 60,
+    maximum,
   }: {
     label: string
     description: string
     series: TelemetrySeries[]
     formatValue: (value: number) => string
+    windowSeconds?: number
+    maximum?: number
   } = $props()
 
   let hoveredIndex = $state<number | null>(null)
-  const left = 112
-  const right = 780
+  let chartWidth = $state(800)
+  const left = 84
   const top = 22
   const bottom = 190
-  const bucketCount = 12
-  const historyWindowMilliseconds = 24 * 60 * 60 * 1000
+  const bucketCount = 36
   const colors = ['var(--chart-1)', 'var(--chart-2)', 'var(--chart-3)', 'var(--chart-4)', 'var(--chart-5)']
   const timeFormatter = new Intl.DateTimeFormat(undefined, { hour: 'numeric' })
   const rangeFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 
   const chart = $derived.by(() => {
+    const width = Math.max(chartWidth, 320)
+    const right = width - 8
     const timestamps = series
       .flatMap((item) => item.points)
       .map((point) => new Date(point.observedAt).getTime())
       .filter((timestamp) => Number.isFinite(timestamp))
     const end = timestamps.length ? Math.max(...timestamps) : Date.now()
+    const historyWindowMilliseconds = windowSeconds * 1000
     const start = end - historyWindowMilliseconds
     const duration = historyWindowMilliseconds / bucketCount
     const buckets = Array.from({ length: bucketCount }, (_, index) => ({
@@ -53,19 +59,21 @@
         .map((point) => ({ timestamp: new Date(point.observedAt).getTime(), value: point.value }))
         .filter((point) => Number.isFinite(point.timestamp) && Number.isFinite(point.value) && point.timestamp >= start && point.timestamp <= end)
         .sort((a, b) => a.timestamp - b.timestamp)
+      const bucketValues = buckets.map((bucket, index) => samples.findLast((point) => (
+        point.timestamp >= bucket.start
+        && (index === bucketCount - 1 ? point.timestamp <= bucket.end : point.timestamp < bucket.end)
+      ))?.value ?? null)
       return {
         label: item.label,
         color: colors[seriesIndex % colors.length],
         comparison: item.comparison === true,
-        values: buckets.map((bucket, index) => samples.findLast((point) => (
-          point.timestamp >= bucket.start
-          && (index === bucketCount - 1 ? point.timestamp <= bucket.end : point.timestamp < bucket.end)
-        ))?.value ?? null),
+        hasSamples: bucketValues.some((value) => value !== null),
+        values: bucketValues.map((value) => value ?? 0),
       }
     })
-    const values = chartSeries.flatMap((item) => item.values).filter((value): value is number => value !== null)
-    const maximum = Math.max(1, ...values) * 1.1
-    return { buckets, series: chartSeries, maximum, available: values.length > 0 }
+    const values = chartSeries.flatMap((item) => item.values)
+    const chartMaximum = maximum ?? Math.max(1, ...values) * 1.1
+    return { width, right, buckets, series: chartSeries, maximum: chartMaximum, available: chartSeries.some((item) => item.hasSamples) }
   })
 
   const yFor = (value: number) => bottom - (Math.max(0, value) / chart.maximum) * (bottom - top)
@@ -89,8 +97,8 @@
 
   const hover = (event: PointerEvent) => {
     const bounds = (event.currentTarget as SVGSVGElement).getBoundingClientRect()
-    const x = ((event.clientX - bounds.left) / bounds.width) * 800
-    hoveredIndex = Math.min(bucketCount - 1, Math.max(0, Math.floor(((x - left) / (right - left)) * bucketCount)))
+    const x = ((event.clientX - bounds.left) / bounds.width) * chart.width
+    hoveredIndex = Math.min(bucketCount - 1, Math.max(0, Math.floor(((x - left) / (chart.right - left)) * bucketCount)))
   }
 </script>
 
@@ -108,20 +116,20 @@
   </div>
 
   {#if chart.available}
-    <div class="relative mt-4">
+    <div class="relative mt-4" bind:clientWidth={chartWidth}>
       <svg
-        viewBox="0 0 800 240"
+        viewBox={`0 0 ${chart.width} 240`}
         class="h-64 w-full touch-none"
         role="img"
-        aria-label={`${label} over the last 24 hours`}
+        aria-label={`${label} over the selected telemetry range`}
         onpointerenter={hover}
         onpointermove={hover}
         onpointerleave={() => (hoveredIndex = null)}
       >
         {#each [0, 0.5, 1] as ratio}
           {@const y = bottom - ratio * (bottom - top)}
-          <line x1={left} x2={right} y1={y} y2={y} stroke="currentColor" stroke-width="1" class="text-border" />
-          <text x={left - 12} y={y + 5} text-anchor="end" class="fill-muted-foreground text-[17px] font-medium">{formatValue(chart.maximum * ratio)}</text>
+          <line x1={left} x2={chart.right} y1={y} y2={y} stroke="currentColor" stroke-width="1" class="text-border" />
+          <text x={left - 12} y={y + 4} text-anchor="end" class="fill-muted-foreground text-[12px] font-medium">{formatValue(chart.maximum * ratio)}</text>
         {/each}
 
         {#each chart.series as item}
@@ -147,7 +155,7 @@
 
         {#each chart.buckets as bucket, index}
           {#if index === 0 || index === Math.floor((bucketCount - 1) / 2) || index === bucketCount - 1}
-            <text x={bucket.x} y="226" text-anchor={index === 0 ? 'start' : index === bucketCount - 1 ? 'end' : 'middle'} class="fill-muted-foreground text-[16px] font-medium">{timeFormatter.format(bucket.end)}</text>
+            <text x={bucket.x} y="226" text-anchor={index === 0 ? 'start' : index === bucketCount - 1 ? 'end' : 'middle'} class="fill-muted-foreground text-[12px] font-medium">{timeFormatter.format(bucket.end)}</text>
           {/if}
         {/each}
       </svg>

@@ -394,6 +394,15 @@ func rollupIdentity(scope string, identity models.MetricRollupIdentities, labels
 }
 
 func (service MetricRollupService) HostTelemetry(ctx context.Context, server string) (SystemTelemetry, error) {
+	return service.hostTelemetry(ctx, server, service.now().UTC().Add(-systemTelemetryHistoryWindow), 15*time.Minute)
+}
+
+func (service MetricRollupService) hostTelemetry(
+	ctx context.Context,
+	server string,
+	since time.Time,
+	bucket time.Duration,
+) (SystemTelemetry, error) {
 	result := emptySystemTelemetry()
 	if !service.enabled || server == "" {
 		return result, nil
@@ -403,7 +412,7 @@ func (service MetricRollupService) HostTelemetry(ctx context.Context, server str
 		return result, err
 	}
 	values, latestErr := client.LatestSystemMetricValues(ctx, server)
-	history, historyErr := client.SystemMetricHistory(ctx, server, service.now().UTC().Add(-systemTelemetryHistoryWindow))
+	history, historyErr := client.SystemMetricHistory(ctx, server, since, bucket)
 	if historyErr == nil {
 		result.MemoryHistory = systemResourceHistory(history, "memory_available_bytes", "memory_total_bytes")
 		result.StorageHistory = systemResourceHistory(history, "root_filesystem_available_bytes", "root_filesystem_size_bytes")
@@ -472,8 +481,14 @@ func emptySystemTelemetry() SystemTelemetry {
 	}
 }
 
-func (service MetricRollupService) SystemTelemetry(ctx context.Context, server string) (SystemTelemetry, error) {
-	result, hostErr := service.HostTelemetry(ctx, server)
+func (service MetricRollupService) SystemTelemetry(
+	ctx context.Context,
+	server string,
+	telemetryRange TelemetryRange,
+) (SystemTelemetry, error) {
+	since := service.now().UTC().Add(-telemetryRange.Duration())
+	bucket := telemetryRange.Bucket()
+	result, hostErr := service.hostTelemetry(ctx, server, since, bucket)
 	if server == "" {
 		return result, hostErr
 	}
@@ -495,8 +510,7 @@ func (service MetricRollupService) SystemTelemetry(ctx context.Context, server s
 	if err != nil {
 		queryErrors = append(queryErrors, err)
 	} else {
-		historySince := service.now().UTC().Add(-systemTelemetryHistoryWindow)
-		platformHistory, historyErr := client.AttributedMetricHistory(ctx, "native", server, "", historySince)
+		platformHistory, historyErr := client.AttributedMetricHistory(ctx, "native", server, "", since, bucket)
 		if historyErr != nil {
 			queryErrors = append(queryErrors, historyErr)
 		}
@@ -507,7 +521,7 @@ func (service MetricRollupService) SystemTelemetry(ctx context.Context, server s
 		queryErrors = append(queryErrors, err)
 	} else {
 		containers = systemContainerMetricValues(containers)
-		containerHistory, historyErr := client.AttributedMetricHistory(ctx, "container", server, "", service.now().UTC().Add(-systemTelemetryHistoryWindow))
+		containerHistory, historyErr := client.AttributedMetricHistory(ctx, "container", server, "", since, bucket)
 		if historyErr != nil {
 			queryErrors = append(queryErrors, historyErr)
 		}
@@ -597,7 +611,7 @@ func (service MetricRollupService) EnvironmentTelemetry(ctx context.Context, env
 	if err != nil {
 		return nil, err
 	}
-	history, err := client.AttributedMetricHistory(ctx, "container", target.ServerID.String(), environmentID.String(), service.now().UTC().Add(-systemTelemetryHistoryWindow))
+	history, err := client.AttributedMetricHistory(ctx, "container", target.ServerID.String(), environmentID.String(), service.now().UTC().Add(-systemTelemetryHistoryWindow), 15*time.Minute)
 	if err != nil {
 		return nil, err
 	}
