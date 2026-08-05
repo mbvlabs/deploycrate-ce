@@ -518,10 +518,9 @@
         {#each [{ value: '1h', label: '1h' }, { value: '6h', label: '6h' }, { value: '24h', label: '24h' }, { value: '7d', label: '7d' }] as option}
           <Button
             size="sm"
-            variant={!live && telemetryRange === option.value ? 'default' : 'outline'}
-            aria-pressed={!live && telemetryRange === option.value}
+            variant={telemetryRange === option.value ? 'default' : 'outline'}
+            aria-pressed={telemetryRange === option.value}
             href={`${routes.systemTelemetry()}?range=${option.value}`}
-            onclick={() => (live = false)}
           >{option.label}</Button>
         {/each}
         <Button size="sm" variant={live ? 'default' : 'outline'} aria-pressed={live} onclick={() => (live = !live)}>
