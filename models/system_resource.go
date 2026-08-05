@@ -224,6 +224,7 @@ type SystemResourceDetail struct {
 	Name             string                        `bun:"name"`
 	ResourceType     string                        `bun:"resource_type"`
 	Engine           string                        `bun:"engine"`
+	ServerID         string                        `bun:"server_id"`
 	Bindings         []SystemResourceBinding       `bun:"-"`
 	Endpoints        []SystemResourceEndpoint      `bun:"-"`
 	Credentials      []SystemResourceCredential    `bun:"-"`
@@ -240,6 +241,15 @@ func (application) FindSystemResourceDetail(ctx context.Context, db storage.Exec
 	err := db.NewSelect().TableExpr("resources AS resource").
 		ColumnExpr("resource.id::text AS id, resource.created_at, resource.updated_at, resource.name, resource.configuration ->> 'engine' AS engine").
 		ColumnExpr("resource.resource_type AS resource_type").
+		ColumnExpr(`COALESCE((
+			SELECT target.server_id::text
+			FROM applications AS application
+			JOIN environments AS environment ON environment.application_id = application.id AND environment.archived_at IS NULL
+			JOIN environment_targets AS target ON target.environment_id = environment.id AND target.detached_at IS NULL
+			WHERE application.slug = ? AND application.archived_at IS NULL
+			ORDER BY target.attached_at DESC
+			LIMIT 1
+		), '') AS server_id`, SystemApplicationSlug).
 		Where("resource.id = ?", resourceID).
 		Where("resource.archived_at IS NULL").
 		Where("resource.system_managed = TRUE").

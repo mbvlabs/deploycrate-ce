@@ -41,15 +41,37 @@ type ResourceEndpointEntity struct {
 const (
 	ResourceEndpointExposureSystem      = "system"
 	ResourceEndpointExposureEnvironment = "environment"
+	ResourceEndpointExposurePublic      = "public"
 	ResourceEndpointAuthNone            = "none"
 	ResourceEndpointAuthSignedIdentity  = "signed_identity"
 	ResourceEndpointTransportOTLPHTTP   = "http/protobuf"
+	ResourceEndpointAudienceLocalSystem = "local_system"
+	ResourceEndpointAudienceEnvironment = "environment"
+	ResourceEndpointAudiencePublic      = "public"
+	ResourceEndpointAudienceCustom      = "custom"
+	ResourceEndpointAddressLoopback     = "system_loopback"
+	ResourceEndpointAddressWireGuard    = "server_wireguard"
+	ResourceEndpointAddressCaddy        = "caddy"
+	ResourceEndpointAddressManual       = "manual"
 )
 
 type ResourceEndpointSettings struct {
-	Exposure       string `json:"exposure"`
-	Transport      string `json:"transport"`
-	Authentication string `json:"authentication"`
+	Exposure       string                         `json:"exposure"`
+	Transport      string                         `json:"transport"`
+	Authentication string                         `json:"authentication"`
+	Audience       string                         `json:"audience"`
+	AddressSource  string                         `json:"address_source"`
+	Caddy          *ResourceEndpointCaddySettings `json:"caddy,omitempty"`
+}
+
+type ResourceEndpointCaddySettings struct {
+	Managed                bool       `json:"managed"`
+	HealthPath             string     `json:"health_path"`
+	OriginAddress          string     `json:"origin_address"`
+	OriginPort             int32      `json:"origin_port"`
+	OriginProtocol         string     `json:"origin_protocol"`
+	OriginTLSMode          string     `json:"origin_tls_mode"`
+	OriginPrivateNetworkID *uuid.UUID `json:"origin_private_network_id,omitempty"`
 }
 
 func (e ResourceEndpointEntity) ParsedSettings() ResourceEndpointSettings {
@@ -58,11 +80,39 @@ func (e ResourceEndpointEntity) ParsedSettings() ResourceEndpointSettings {
 	settings.Exposure = strings.ToLower(strings.TrimSpace(settings.Exposure))
 	settings.Transport = strings.ToLower(strings.TrimSpace(settings.Transport))
 	settings.Authentication = strings.ToLower(strings.TrimSpace(settings.Authentication))
+	settings.Audience = strings.ToLower(strings.TrimSpace(settings.Audience))
+	settings.AddressSource = strings.ToLower(strings.TrimSpace(settings.AddressSource))
+	if settings.Caddy != nil {
+		settings.Caddy.HealthPath = strings.TrimSpace(settings.Caddy.HealthPath)
+		settings.Caddy.OriginAddress = strings.TrimSpace(settings.Caddy.OriginAddress)
+		settings.Caddy.OriginProtocol = strings.ToLower(strings.TrimSpace(settings.Caddy.OriginProtocol))
+		settings.Caddy.OriginTLSMode = strings.ToLower(strings.TrimSpace(settings.Caddy.OriginTLSMode))
+	}
+	if settings.Audience == "" {
+		switch settings.Exposure {
+		case ResourceEndpointExposureEnvironment:
+			settings.Audience = ResourceEndpointAudienceEnvironment
+		case ResourceEndpointExposureSystem:
+			settings.Audience = ResourceEndpointAudienceLocalSystem
+		default:
+			settings.Audience = ResourceEndpointAudienceCustom
+		}
+	}
+	if settings.AddressSource == "" {
+		if e.PrivateNetworkID != nil {
+			settings.AddressSource = ResourceEndpointAddressWireGuard
+		} else if slices.Contains([]string{"127.0.0.1", "::1", "localhost"}, strings.ToLower(e.Address)) {
+			settings.AddressSource = ResourceEndpointAddressLoopback
+		} else {
+			settings.AddressSource = ResourceEndpointAddressManual
+		}
+	}
 	return settings
 }
 
 func (e ResourceEndpointEntity) IsEnvironmentEndpoint() bool {
-	return e.ParsedSettings().Exposure == ResourceEndpointExposureEnvironment
+	settings := e.ParsedSettings()
+	return settings.Audience == ResourceEndpointAudienceEnvironment || settings.Audience == ResourceEndpointAudiencePublic
 }
 
 func (e ResourceEndpointEntity) URL() string {
@@ -113,11 +163,15 @@ func (e *ResourceEndpointEntity) ValidateForKind(kind string) error {
 	if !definition.SupportsEndpointRole(e.Role) {
 		builder.Add("role", "unsupported", "endpoint role is not supported by this resource kind")
 	}
-	if !definition.SupportsProtocol(e.Protocol) {
+	settings := e.ParsedSettings()
+	validatedProtocol := e.Protocol
+	if settings.Caddy != nil && settings.Caddy.Managed {
+		validatedProtocol = settings.Caddy.OriginProtocol
+	}
+	if !definition.SupportsProtocol(validatedProtocol) {
 		builder.Add("protocol", "unsupported", "protocol is not supported by this resource kind")
 	}
 	if definition.Engine == "opentelemetry" {
-		settings := e.ParsedSettings()
 		if settings.Transport != ResourceEndpointTransportOTLPHTTP {
 			builder.Add("settings.transport", "unsupported", "OpenTelemetry endpoints require the HTTP/protobuf transport")
 		}
@@ -133,8 +187,50 @@ func (e *ResourceEndpointEntity) ValidateForKind(kind string) error {
 			if e.PrivateNetworkID == nil {
 				builder.Add("privateNetworkId", "required", "Environment OpenTelemetry endpoints require a private network")
 			}
+		case ResourceEndpointExposurePublic:
+			if settings.Authentication != ResourceEndpointAuthSignedIdentity {
+				builder.Add("settings.authentication", "unsupported", "public OpenTelemetry endpoints require signed identity authentication")
+			}
 		default:
 			builder.Add("settings.exposure", "unsupported", "OpenTelemetry endpoint exposure is not supported")
+		}
+	}
+	switch settings.Audience {
+	case ResourceEndpointAudienceLocalSystem, ResourceEndpointAudienceEnvironment, ResourceEndpointAudiencePublic, ResourceEndpointAudienceCustom:
+	default:
+		builder.Add("settings.audience", "unsupported", "endpoint audience is not supported")
+	}
+	switch settings.AddressSource {
+	case ResourceEndpointAddressLoopback, ResourceEndpointAddressWireGuard, ResourceEndpointAddressCaddy, ResourceEndpointAddressManual:
+	default:
+		builder.Add("settings.address_source", "unsupported", "endpoint address source is not supported")
+	}
+	if settings.Audience == ResourceEndpointAudienceEnvironment && e.PrivateNetworkID == nil {
+		builder.Add("privateNetworkId", "required", "Environment endpoints require a private network")
+	}
+	if settings.AddressSource == ResourceEndpointAddressWireGuard && e.PrivateNetworkID == nil {
+		builder.Add("privateNetworkId", "required", "WireGuard address sources require a private network")
+	}
+	if settings.Audience == ResourceEndpointAudiencePublic || settings.AddressSource == ResourceEndpointAddressCaddy {
+		if settings.Caddy == nil || !settings.Caddy.Managed {
+			builder.Add("settings.caddy", "required", "public endpoints require managed Caddy settings")
+		}
+	}
+	if settings.Caddy != nil && settings.Caddy.Managed {
+		if !IsValidHostname(e.Address) {
+			builder.Add("address", "format", "managed Caddy endpoints require a valid hostname")
+		}
+		if settings.Caddy.OriginAddress == "" {
+			builder.Add("settings.caddy.origin_address", "required", "Caddy origin address is required")
+		}
+		if settings.Caddy.OriginPort < 1 || settings.Caddy.OriginPort > 65535 {
+			builder.Add("settings.caddy.origin_port", "range", "Caddy origin port must be between 1 and 65535")
+		}
+		if settings.Caddy.OriginProtocol == "" {
+			builder.Add("settings.caddy.origin_protocol", "required", "Caddy origin protocol is required")
+		}
+		if settings.Caddy.HealthPath != "" && !strings.HasPrefix(settings.Caddy.HealthPath, "/") {
+			builder.Add("settings.caddy.health_path", "format", "Caddy health path must start with /")
 		}
 	}
 	return builder.Err()
@@ -256,6 +352,9 @@ func (re resourceEndpoint) Create(
 	if err := ensureActiveUnique(ctx, db, "resource-endpoint:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceEndpointEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active endpoint already uses this name"); err != nil {
 		return ResourceEndpointEntity{}, err
 	}
+	if err := ensureCaddyEndpointHostnameUnique(ctx, db, entity); err != nil {
+		return ResourceEndpointEntity{}, err
+	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
 		return ResourceEndpointEntity{}, err
@@ -297,18 +396,9 @@ func (re resourceEndpoint) CreateForSystemResource(
 	if err := entity.ValidateForKind(configuration.Engine); err != nil {
 		return ResourceEndpointEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if !resourceSupportsProtocol(configuration.Engine, entity.Protocol) {
-		return ResourceEndpointEntity{}, errors.Join(
-			ErrDomainValidation,
-			validation.ValidationErrors{{Field: "protocol", Code: "unsupported", Message: fmt.Sprintf("protocol %q is not supported by %s", entity.Protocol, configuration.Engine)}},
-		)
-	}
 	data.Name, data.Role, data.Address = entity.Name, entity.Role, entity.Address
 	data.Protocol, data.TlsMode, data.Settings = entity.Protocol, entity.TlsMode, entity.Settings
-	if entity.Role == "wireguard" {
-		if entity.PrivateNetworkID == nil {
-			return ResourceEndpointEntity{}, errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "privateNetworkId", Code: "required", Message: "WireGuard endpoints require a private network"}})
-		}
+	if entity.PrivateNetworkID != nil {
 		var cidr string
 		err = db.NewSelect().TableExpr("server_networks AS server_network").
 			ColumnExpr("server_network.configuration ->> 'cidr'").
@@ -372,6 +462,9 @@ func (re resourceEndpoint) Update(
 	if err := ensureActiveUnique(ctx, db, "resource-endpoint:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceEndpointEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active endpoint already uses this name"); err != nil {
 		return ResourceEndpointEntity{}, err
 	}
+	if err := ensureCaddyEndpointHostnameUnique(ctx, db, entity); err != nil {
+		return ResourceEndpointEntity{}, err
+	}
 
 	if err := db.NewUpdate().
 		Model(&entity).
@@ -393,6 +486,37 @@ func (re resourceEndpoint) Update(
 	}
 
 	return entity, nil
+}
+
+func ensureCaddyEndpointHostnameUnique(ctx context.Context, db storage.Executor, entity ResourceEndpointEntity) error {
+	settings := entity.ParsedSettings()
+	if entity.ArchivedAt.Valid || settings.Caddy == nil || !settings.Caddy.Managed {
+		return nil
+	}
+	hostname := NormalizeHostname(entity.Address)
+	if err := lockUnique(ctx, db, "environment-domain-hostname:"+hostname); err != nil {
+		return err
+	}
+	environmentDomains, err := db.NewSelect().Model((*EnvironmentDomainEntity)(nil)).
+		Where("lower(hostname) = ?", hostname).
+		Where("archived_at IS NULL").
+		Count(ctx)
+	if err != nil {
+		return err
+	}
+	resourceEndpoints, err := db.NewSelect().Model((*ResourceEndpointEntity)(nil)).
+		Where("id <> ?", entity.ID).
+		Where("lower(address) = ?", hostname).
+		Where("settings ->> 'address_source' = ?", ResourceEndpointAddressCaddy).
+		Where("archived_at IS NULL").
+		Count(ctx)
+	if err != nil {
+		return err
+	}
+	if environmentDomains+resourceEndpoints > 0 {
+		return errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "hostname", Code: "taken", Message: "an active Caddy route already uses this hostname"}})
+	}
+	return nil
 }
 
 func (re resourceEndpoint) Destroy(ctx context.Context, db storage.Executor, id uuid.UUID) error {

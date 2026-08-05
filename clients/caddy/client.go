@@ -38,11 +38,13 @@ type Backend struct {
 }
 
 type Route struct {
-	ID             string
-	Domain         string
-	Backends       []Backend
-	HealthPath     string
-	Authentication *BasicAuthentication
+	ID                        string
+	Domain                    string
+	Backends                  []Backend
+	HealthPath                string
+	UpstreamTLS               bool
+	DisableActiveHealthChecks bool
+	Authentication            *BasicAuthentication
 }
 
 type BasicAuthentication struct {
@@ -88,17 +90,23 @@ func (client *Client) ApplyRoute(ctx context.Context, route Route) error {
 			},
 		})
 	}
-	handles = append(handles, routeHandle{
+	proxy := routeHandle{
 		Handler:   "reverse_proxy",
 		Upstreams: upstreams(route.Backends),
 		LoadBalancing: &loadBalancing{SelectionPolicy: selectionPolicy{
 			Policy:  "weighted_round_robin",
 			Weights: weights(route.Backends),
 		}, TryDuration: backendTryDuration, TryInterval: backendTryInterval},
-		HealthChecks: &healthChecks{Active: activeHealthChecks{
+	}
+	if !route.DisableActiveHealthChecks {
+		proxy.HealthChecks = &healthChecks{Active: activeHealthChecks{
 			URI: healthPath, Interval: backendHealthInterval, Timeout: backendHealthTimeout,
-		}},
-	})
+		}}
+	}
+	if route.UpstreamTLS {
+		proxy.Transport = &httpTransport{Protocol: "http", TLS: &tlsTransport{}}
+	}
+	handles = append(handles, proxy)
 	entry := routeEntry{
 		ID:       route.ID,
 		Match:    []routeMatch{{Host: []string{route.Domain}}},
@@ -164,6 +172,33 @@ func (client *Client) VerifyRoute(ctx context.Context, id string) error {
 		return fmt.Errorf("caddy: route %s is not present", id)
 	}
 	return nil
+}
+
+func (client *Client) RouteConfig(ctx context.Context, id string) (json.RawMessage, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return nil, errors.New("caddy: route identifier is required")
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+"/id/"+url.PathEscape(id), nil)
+	if err != nil {
+		return nil, err
+	}
+	response, err := client.http.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("caddy: read route %s: %w", id, err)
+	}
+	defer response.Body.Close()
+	body, readErr := io.ReadAll(response.Body)
+	if readErr != nil {
+		return nil, fmt.Errorf("caddy: read route %s response: %w", id, readErr)
+	}
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("caddy: read route %s: unexpected status %d: %s", id, response.StatusCode, strings.TrimSpace(string(body)))
+	}
+	if !json.Valid(body) {
+		return nil, fmt.Errorf("caddy: route %s returned invalid JSON", id)
+	}
+	return json.RawMessage(body), nil
 }
 
 func (client *Client) DeleteRoute(ctx context.Context, id string) error {
@@ -427,7 +462,15 @@ type routeHandle struct {
 	LoadBalancing *loadBalancing                    `json:"load_balancing,omitempty"`
 	Upstreams     []upstream                        `json:"upstreams,omitempty"`
 	Providers     map[string]authenticationProvider `json:"providers,omitempty"`
+	Transport     *httpTransport                    `json:"transport,omitempty"`
 }
+
+type httpTransport struct {
+	Protocol string        `json:"protocol"`
+	TLS      *tlsTransport `json:"tls,omitempty"`
+}
+
+type tlsTransport struct{}
 
 type authenticationProvider struct {
 	Accounts []authenticationAccount `json:"accounts"`

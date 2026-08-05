@@ -3,6 +3,7 @@
   import { toast } from 'svelte-sonner'
   import * as Card from '@/Components/ui/card'
   import { Button } from '@/Components/ui/button'
+  import { Checkbox } from '@/Components/ui/checkbox'
   import ConfirmActionDialog from '@/Components/ConfirmActionDialog.svelte'
   import * as Dialog from '@/Components/ui/dialog'
   import FormField from '@/Components/FormField.svelte'
@@ -23,22 +24,40 @@
   type Volume = { id: string; name: string; driver: string; configuration: unknown; serverId: string; serverName: string; mounts: Array<{ id: string; mountPath: string; readOnly: boolean; installationId: string }> }
   type HealthCheck = { id: string; name: string; kind: string; configuration: unknown; intervalSeconds: number; timeoutSeconds: number; failureThreshold: number; successThreshold: number; enabled: boolean; state: string; message: string; observedAt: string | null }
   type DeviceGrant = { deviceId: string; deviceName: string; ownerEmail: string; privateAddress: string; grantId: string; grantedAt: string; applicationState: string; applicationError: string; latestHandshakeAt: string | null; observedAt: string | null }
-  type Resource = { id: string; createdAt: string; updatedAt: string; name: string; resourceType: string; engine: string; bindings: Binding[]; endpoints: Endpoint[]; credentials: Credential[]; installations: Installation[]; volumes: Volume[]; healthChecks: HealthCheck[]; deviceGrants: DeviceGrant[]; privateNetworks: Array<{ id: string; name: string }>; availableDevices: Array<{ id: string; name: string; privateAddress: string }> }
+  type Resource = { id: string; createdAt: string; updatedAt: string; name: string; resourceType: string; engine: string; serverId: string; bindings: Binding[]; endpoints: Endpoint[]; credentials: Credential[]; installations: Installation[]; volumes: Volume[]; healthChecks: HealthCheck[]; deviceGrants: DeviceGrant[]; privateNetworks: Array<{ id: string; name: string }>; availableDevices: Array<{ id: string; name: string; privateAddress: string }> }
   type Enrollment = { deviceId: string; grantId: string; clientConfiguration: string }
+  type Engine = { engine: string; label: string; protocols: string[]; endpointRoles: string[]; tlsModes: string[]; defaultPort: number; defaultProtocol: string; defaultTlsMode: string }
+  type PrivateNetwork = { id: string; name: string; serverIds: string[]; serverAddresses: Record<string, string> }
+  type Options = { engines: Engine[]; privateNetworks: PrivateNetwork[] }
+  type Publication = { id: string; resourceEndpointId: string; externalId: string; hostname: string; healthPath: string; state: string; lastError: string; appliedAt: string; observedAt: string }
   type BackupPolicy = { id: string; schedule: string; active: boolean; nextRunAt: string | null; backupDestinationId: string }
   type BackupHistory = { id: string; status: string; triggerType: string; scheduledAt: string; finishedAt: string | null; verifiedAt: string | null; sizeBytes: number | null; error: string }
   type DatabaseBackups = { databaseName: string; eligibility: { eligible: boolean; reason: string }; policy: BackupPolicy | null; history: BackupHistory[] }
   type Backups = { databases: DatabaseBackups[] }
 
-  let { auth, resource, section = 'overview', backups, enrollment = null }: { auth: { email: string }; resource: Resource; section?: string; backups: Backups; enrollment?: Enrollment | null } = $props()
+  let { auth, resource, section = 'overview', backups, options, publications = [], enrollment = null }: { auth: { email: string }; resource: Resource; section?: string; backups: Backups; options: Options; publications?: Publication[]; enrollment?: Enrollment | null } = $props()
 	const resourceNavigation = $derived({ id: resource.id, name: resource.name, engine: resource.engine, resourceType: resource.resourceType, systemManaged: true })
 	const sectionTitle = $derived(({ overview: 'Overview', backups: 'Backups', endpoints: 'Endpoints', credentials: 'Credentials', health: 'Health checks', access: 'Access' } as Record<string, string>)[section] ?? 'Overview')
-  const endpointForm = useForm(() => ({ name: '', role: resource.engine === 'opentelemetry' ? 'wireguard' : 'primary', address: '', port: resource.engine === 'opentelemetry' ? 4318 : 0, protocol: resource.engine === 'postgresql' ? 'postgresql' : resource.engine === 'clickhouse' || resource.engine === 'opentelemetry' ? 'http' : resource.engine, tlsMode: 'disable', database: '', user: '', settings: {} as Record<string, string>, privateNetworkId: '' }))
+  const definition = $derived(options.engines.find((engine) => engine.engine === resource.engine) ?? { engine: resource.engine, label: resource.engine, protocols: [], endpointRoles: [], tlsModes: [], defaultPort: 1, defaultProtocol: '', defaultTlsMode: 'disable' })
+  const endpointServerID = $derived(resource.installations[0]?.serverId || resource.serverId)
+  const endpointNetworks = $derived(options.privateNetworks.filter((network) => !endpointServerID || network.serverIds.includes(endpointServerID)))
+  const serviceMappings = $derived(resource.installations.flatMap((installation) => ((installation.configuration as any)?.portMappings ?? []).map((mapping: any) => ({ ...mapping, containerName: installation.containerName }))))
+  const endpointForm = useForm(() => ({ name: '', role: resource.engine === 'opentelemetry' ? 'wireguard' : definition?.endpointRoles[0] ?? 'primary', audience: 'environment', addressSource: 'server_wireguard', address: '', port: definition?.defaultPort ?? 1, protocol: definition?.defaultProtocol ?? 'tcp', tlsMode: definition?.defaultTlsMode ?? 'disable', database: '', user: '', settings: {} as Record<string, string>, privateNetworkId: '', publication: { enabled: false, hostname: '', healthPath: '' } }))
+  const endpointErrors = $derived(Object.values($endpointForm.errors))
   const deviceForm = useForm(() => ({ name: '', deviceId: '' }))
   let revokeDialogOpen = $state(false)
   let revokeProcessing = $state(false)
   let revokeError = $state('')
   let pendingGrant = $state<DeviceGrant | null>(null)
+  let bindingDialogOpen = $state(false)
+  let selectedBinding = $state<Binding | null>(null)
+  let endpointDialogOpen = $state(false)
+  let endpointCreateDialogOpen = $state(false)
+  let selectedEndpoint = $state<Endpoint | null>(null)
+  let endpointRemovalDialogOpen = $state(false)
+  let endpointRemovalProcessing = $state(false)
+  let endpointRemovalError = $state('')
+  let pendingEndpointRemoval = $state<Endpoint | null>(null)
   let credentialPasswordDialogOpen = $state(false)
   let revealedCredentialDialogOpen = $state(false)
   let selectedCredential = $state<Credential | null>(null)
@@ -49,7 +68,7 @@
   const label = (value: string) => value ? value.replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase()) : 'Unknown'
   const timestamp = (value: string | null) => value ? new Date(value).toLocaleString() : 'Not recorded'
 	const bytes = (value: number | null) => value === null ? 'Not available' : new Intl.NumberFormat(undefined, { style: 'unit', unit: 'byte', notation: 'compact', unitDisplay: 'narrow' }).format(value)
-  const wireguardEndpoint = $derived(resource.endpoints.find((endpoint) => endpoint.role === 'wireguard'))
+  const wireguardEndpoint = $derived(resource.endpoints.find((endpoint) => endpoint.settings?.audience === 'environment' || endpoint.settings?.exposure === 'environment' || endpoint.role === 'wireguard'))
   const connectionExample = $derived.by(() => {
     if (!wireguardEndpoint) return ''
     const database = String(wireguardEndpoint.settings?.database ?? '')
@@ -61,9 +80,50 @@
   function submitEndpoint(event: SubmitEvent) {
     event.preventDefault()
     $endpointForm.settings = resource.engine === 'opentelemetry'
-      ? { exposure: $endpointForm.role === 'local' ? 'system' : 'environment', transport: 'http/protobuf', authentication: $endpointForm.role === 'local' ? 'none' : 'signed_identity' }
-      : Object.fromEntries(Object.entries({ database: $endpointForm.database, user: $endpointForm.user }).filter(([, value]) => value.trim() !== ''))
-    $endpointForm.post(routes.systemResourceEndpointCreate(resource.id))
+      ? { audience: $endpointForm.audience, address_source: $endpointForm.addressSource, exposure: $endpointForm.audience === 'local_system' ? 'system' : 'environment', transport: 'http/protobuf', authentication: $endpointForm.audience === 'local_system' ? 'none' : 'signed_identity' }
+      : { audience: $endpointForm.audience, address_source: $endpointForm.addressSource, ...Object.fromEntries(Object.entries({ database: $endpointForm.database, user: $endpointForm.user }).filter(([, value]) => value.trim() !== '')) }
+    $endpointForm.post(routes.systemResourceEndpointCreate(resource.id), {
+      preserveScroll: true,
+      onSuccess: () => {
+        endpointCreateDialogOpen = false
+        $endpointForm.reset()
+      },
+      onError: (errors) => toast.error(Object.values(errors)[0] || 'Resource endpoint could not be added'),
+    })
+  }
+  function openEndpointCreateDialog() {
+    $endpointForm.reset()
+    $endpointForm.clearErrors()
+    chooseEndpointAudience('environment')
+    endpointCreateDialogOpen = true
+  }
+  function chooseEndpointAudience(audience: string) {
+    $endpointForm.audience = audience
+    if (audience === 'local_system') {
+      $endpointForm.addressSource = 'system_loopback'
+      $endpointForm.privateNetworkId = ''
+      $endpointForm.address = '127.0.0.1'
+      if (resource.engine === 'opentelemetry') $endpointForm.role = 'local'
+      return
+    }
+    if (audience === 'environment') {
+      $endpointForm.addressSource = 'server_wireguard'
+      if (resource.engine === 'opentelemetry') $endpointForm.role = 'wireguard'
+      chooseEndpointNetwork($endpointForm.privateNetworkId || endpointNetworks[0]?.id || '')
+      return
+    }
+    $endpointForm.addressSource = 'manual'
+    $endpointForm.privateNetworkId = ''
+  }
+  function chooseEndpointNetwork(networkID: string) {
+    $endpointForm.privateNetworkId = networkID
+    const network = options.privateNetworks.find((item) => item.id === networkID)
+    const existingEndpoint = resource.endpoints.find((endpoint) => endpoint.privateNetworkId === networkID)
+    $endpointForm.address = network?.serverAddresses[endpointServerID] ?? existingEndpoint?.address ?? ''
+  }
+  function chooseServiceMapping(index: number) {
+    const mapping = serviceMappings[index]
+    if (mapping) $endpointForm.port = mapping.hostPort
   }
   function submitDevice(event: SubmitEvent) { event.preventDefault(); $deviceForm.post(routes.systemResourceWireGuardDeviceCreate(resource.id)) }
   function askToRevokeGrant(grant: DeviceGrant) { pendingGrant = grant; revokeError = ''; revokeDialogOpen = true }
@@ -78,6 +138,37 @@
     })
   }
   function retryGrant(deviceId: string) { router.post(routes.systemResourceWireGuardDeviceCreate(resource.id), { deviceId, name: '' }) }
+  function viewBinding(binding: Binding) {
+    selectedBinding = binding
+    bindingDialogOpen = true
+  }
+  function viewEndpoint(endpoint: Endpoint) {
+    selectedEndpoint = endpoint
+    endpointDialogOpen = true
+  }
+  function askToRemoveEndpoint(endpoint: Endpoint) {
+    pendingEndpointRemoval = endpoint
+    endpointRemovalError = ''
+    endpointRemovalDialogOpen = true
+  }
+  function removeEndpoint() {
+    if (!pendingEndpointRemoval || endpointRemovalProcessing) return
+    endpointRemovalProcessing = true
+    endpointRemovalError = ''
+    router.delete(routes.systemResourceEndpointDestroy(resource.id, pendingEndpointRemoval.id), {
+      preserveScroll: true,
+      onSuccess: () => {
+        endpointRemovalDialogOpen = false
+        endpointDialogOpen = false
+        pendingEndpointRemoval = null
+        selectedEndpoint = null
+      },
+      onError: (errors) => {
+        endpointRemovalError = Object.values(errors).map(String).join('\n') || 'Resource endpoint could not be removed'
+      },
+      onFinish: () => { endpointRemovalProcessing = false },
+    })
+  }
   function askForCredential(credential: Credential) {
     selectedCredential = credential
     currentPassword = ''
@@ -156,9 +247,31 @@
 	{/if}
 
     {#if section === 'overview'}
-	<div class="grid gap-4 lg:grid-cols-2">
-      <Card.Root><Card.Header><Card.Title>Attached Environments</Card.Title></Card.Header><Card.Content class="space-y-4">{#if resource.bindings.length === 0}<p class="text-sm text-muted-foreground">No attached Environments.</p>{:else}{#each resource.bindings as binding (binding.id)}<div class="border border-border p-4"><p class="font-medium">{binding.environmentName} · {binding.alias}</p><p class="mt-1 text-xs text-muted-foreground">{label(binding.environmentKind)} · endpoint {binding.endpointId}</p><div class="mt-3"><JsonCode value={binding.configuration} /></div></div>{/each}{/if}</Card.Content></Card.Root>
-    </div>
+	<Card.Root>
+      <Card.Header><Card.Title>Attached environments</Card.Title><Card.Description>Environments configured to consume this Resource.</Card.Description></Card.Header>
+      <Card.Content>
+        {#if resource.bindings.length === 0}
+          <p class="text-sm text-muted-foreground">No attached environments.</p>
+        {:else}
+          <div class="overflow-hidden border border-border">
+            <Table.Root>
+              <Table.Header><Table.Row><Table.Head>Environment</Table.Head><Table.Head>Kind</Table.Head><Table.Head>Alias</Table.Head><Table.Head>Attached</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header>
+              <Table.Body>
+                {#each resource.bindings as binding (binding.id)}
+                  <Table.Row>
+                    <Table.Cell class="font-medium">{binding.environmentName}</Table.Cell>
+                    <Table.Cell>{label(binding.environmentKind)}</Table.Cell>
+                    <Table.Cell class="font-mono text-xs">{binding.alias}</Table.Cell>
+                    <Table.Cell>{timestamp(binding.createdAt)}</Table.Cell>
+                    <Table.Cell class="text-right"><Button type="button" size="sm" variant="outline" onclick={() => viewBinding(binding)}>View</Button></Table.Cell>
+                  </Table.Row>
+                {/each}
+              </Table.Body>
+            </Table.Root>
+          </div>
+        {/if}
+      </Card.Content>
+    </Card.Root>
 	{/if}
 
 	{#if section === 'credentials'}
@@ -166,20 +279,44 @@
 	{/if}
 
 	{#if section === 'endpoints'}
-    <Card.Root><Card.Header><Card.Title>Endpoints</Card.Title><Card.Description>Origin and private WireGuard addresses. Credentials are managed separately.</Card.Description></Card.Header><Card.Content><div class="grid gap-4 lg:grid-cols-2">{#each resource.endpoints as endpoint (endpoint.id)}<div class="border border-border p-4"><div class="flex justify-between gap-4"><p class="font-medium">{endpoint.name}</p><span class="text-xs text-muted-foreground">{label(endpoint.role)}</span></div><p class="mt-2 font-mono text-xs">{endpoint.address}:{endpoint.port} · {endpoint.protocol} · TLS {endpoint.tlsMode}</p><div class="mt-3"><JsonCode value={endpoint.settings} /></div></div>{/each}</div>{#if connectionExample}<div class="mt-5"><p class="mb-2 text-xs text-muted-foreground">Connection example without credentials</p><pre class="overflow-x-auto border border-border bg-muted/30 p-3 font-mono text-xs">{connectionExample}</pre></div>{/if}</Card.Content></Card.Root>
-
     <Card.Root>
-      <Card.Header><Card.Title>Add endpoint</Card.Title><Card.Description>{resource.engine === 'opentelemetry' ? 'Environment endpoints use OTLP over HTTP/protobuf with signed Environment identity authentication.' : 'Settings containing credential material are rejected.'}</Card.Description></Card.Header>
-      <Card.Content><form class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3" onsubmit={submitEndpoint}><FormField label="Name" error={$endpointForm.errors.name}><Input bind:value={$endpointForm.name} required /></FormField><FormField label="Role" error={$endpointForm.errors.role}><NativeSelect.Root class="w-full" bind:value={$endpointForm.role}>{#if resource.engine === 'opentelemetry'}<NativeSelect.Option value="local">Local system</NativeSelect.Option><NativeSelect.Option value="wireguard">Environment</NativeSelect.Option>{:else}<NativeSelect.Option value="primary">Primary</NativeSelect.Option><NativeSelect.Option value="wireguard">WireGuard</NativeSelect.Option>{/if}</NativeSelect.Root></FormField><FormField label="Address" error={$endpointForm.errors.address}><Input bind:value={$endpointForm.address} required /></FormField><FormField label="Port" error={$endpointForm.errors.port}><Input type="number" min="1" max="65535" bind:value={$endpointForm.port} required /></FormField><FormField label="Protocol" error={$endpointForm.errors.protocol}><Input bind:value={$endpointForm.protocol} required /></FormField><FormField label="TLS mode" error={$endpointForm.errors.tlsMode}><NativeSelect.Root class="w-full" bind:value={$endpointForm.tlsMode}><NativeSelect.Option value="disable">Disable</NativeSelect.Option><NativeSelect.Option value="prefer">Prefer</NativeSelect.Option><NativeSelect.Option value="require">Require</NativeSelect.Option><NativeSelect.Option value="verify-ca">Verify CA</NativeSelect.Option><NativeSelect.Option value="verify-full">Verify full</NativeSelect.Option></NativeSelect.Root></FormField>{#if resource.engine !== 'opentelemetry'}<FormField label="Database"><Input bind:value={$endpointForm.database} /></FormField><FormField label="Username"><Input bind:value={$endpointForm.user} /></FormField>{/if}<FormField label="Private network" error={$endpointForm.errors.privateNetworkId}><NativeSelect.Root class="w-full" bind:value={$endpointForm.privateNetworkId}><NativeSelect.Option value="">None</NativeSelect.Option>{#each resource.privateNetworks as network}<NativeSelect.Option value={network.id}>{network.name}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField><div class="flex items-end"><Button type="submit" disabled={$endpointForm.processing} aria-busy={$endpointForm.processing}>{#if $endpointForm.processing}<Spinner />{/if}Add endpoint</Button></div></form></Card.Content>
+      <Card.Header><Card.Action><Button type="button" onclick={openEndpointCreateDialog}>Add endpoint</Button></Card.Action><Card.Title>Endpoints</Card.Title><Card.Description>Connectable Resource addresses and their optional Caddy routes.</Card.Description></Card.Header>
+      <Card.Content class="space-y-5">
+        {#if resource.endpoints.length === 0}
+          <p class="text-sm text-muted-foreground">No Resource endpoints.</p>
+        {:else}
+          <div class="overflow-hidden border border-border">
+            <Table.Root>
+              <Table.Header><Table.Row><Table.Head>Name</Table.Head><Table.Head>Address</Table.Head><Table.Head>Available to</Table.Head><Table.Head>Caddy route</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header>
+              <Table.Body>
+                {#each resource.endpoints as endpoint (endpoint.id)}
+                  {@const publication = publications.find((value) => value.resourceEndpointId === endpoint.id)}
+                  <Table.Row>
+                    <Table.Cell class="font-medium">{endpoint.name}</Table.Cell>
+                    <Table.Cell class="font-mono text-xs">{endpoint.protocol}://{endpoint.address}:{endpoint.port}</Table.Cell>
+                    <Table.Cell>{label(String(endpoint.settings?.audience ?? endpoint.settings?.exposure ?? endpoint.role))}</Table.Cell>
+                    <Table.Cell>{#if publication}<div class="flex flex-wrap items-center gap-2"><span class="font-mono text-xs">{publication.hostname}</span><StatusBadge status={publication.state} /></div>{:else}<span class="text-xs text-muted-foreground">Not published</span>{/if}</Table.Cell>
+                    <Table.Cell><div class="flex justify-end gap-2"><Button type="button" size="sm" variant="outline" onclick={() => viewEndpoint(endpoint)}>View</Button><Button type="button" size="sm" variant="destructive" onclick={() => askToRemoveEndpoint(endpoint)}>Remove</Button></div></Table.Cell>
+                  </Table.Row>
+                {/each}
+              </Table.Body>
+            </Table.Root>
+          </div>
+        {/if}
+        {#if connectionExample}<div><p class="mb-2 text-xs text-muted-foreground">Connection example without credentials</p><pre class="overflow-x-auto border border-border bg-muted/30 p-3 font-mono text-xs">{connectionExample}</pre></div>{/if}
+      </Card.Content>
     </Card.Root>
+
 	{/if}
 
     {#if section === 'overview'}
 	<div class="grid gap-4 lg:grid-cols-2">
-      <Card.Root><Card.Header><Card.Title>Installations</Card.Title></Card.Header><Card.Content class="space-y-4">{#if resource.installations.length === 0}<p class="text-sm text-muted-foreground">Externally managed Resource.</p>{:else}{#each resource.installations as installation (installation.id)}<div class="border border-border p-4"><div class="flex flex-wrap items-center justify-between gap-2"><p class="font-medium">{installation.containerName}</p><StatusBadge status={installation.serviceState || installation.state} /></div><p class="mt-1 break-all font-mono text-xs">{installation.imageReference}</p><p class="mt-2 text-xs text-muted-foreground">Docker · {installation.serverName} · health {label(installation.health)}</p>{#if installation.healthReason}<p class="mt-2 text-xs text-destructive">{installation.healthReason}</p>{/if}<div class="mt-3"><JsonCode value={installation.configuration} /></div></div>{/each}{/if}</Card.Content></Card.Root>
+      <Card.Root><Card.Header><Card.Title>{resource.installations.length === 0 ? 'Runtime' : 'Installations'}</Card.Title></Card.Header><Card.Content class="space-y-4">{#if resource.installations.length === 0}<p class="text-sm text-muted-foreground">System managed by DeployCrate. This Resource runs without a container installation.</p>{:else}{#each resource.installations as installation (installation.id)}<div class="border border-border p-4"><div class="flex flex-wrap items-center justify-between gap-2"><p class="font-medium">{installation.containerName}</p><StatusBadge status={installation.serviceState || installation.state} /></div><p class="mt-1 break-all font-mono text-xs">{installation.imageReference}</p><p class="mt-2 text-xs text-muted-foreground">Docker · {installation.serverName} · health {label(installation.health)}</p>{#if installation.healthReason}<p class="mt-2 text-xs text-destructive">{installation.healthReason}</p>{/if}<div class="mt-3"><JsonCode value={installation.configuration} /></div></div>{/each}{/if}</Card.Content></Card.Root>
     </div>
 
-    <Card.Root><Card.Header><Card.Title>Volumes</Card.Title><Card.Description>Durable storage and installation mount placement.</Card.Description></Card.Header><Card.Content class="space-y-4">{#if resource.volumes.length === 0}<p class="text-sm text-muted-foreground">No Resource volume records.</p>{:else}{#each resource.volumes as volume (volume.id)}<div class="border border-border p-4"><p class="font-medium">{volume.name}</p><p class="mt-1 text-xs text-muted-foreground">{label(volume.driver)} · {volume.serverName}</p>{#if volume.mounts.length > 0}<ul class="mt-3 space-y-1 font-mono text-xs">{#each volume.mounts as mount (mount.id)}<li>{mount.mountPath} · {mount.readOnly ? 'read only' : 'read write'}</li>{/each}</ul>{/if}<div class="mt-3"><JsonCode value={volume.configuration} /></div></div>{/each}{/if}</Card.Content></Card.Root>
+    {#if resource.installations.length > 0}
+      <Card.Root><Card.Header><Card.Title>Volumes</Card.Title><Card.Description>Durable storage and installation mount placement.</Card.Description></Card.Header><Card.Content class="space-y-4">{#if resource.volumes.length === 0}<p class="text-sm text-muted-foreground">No Resource volume records.</p>{:else}{#each resource.volumes as volume (volume.id)}<div class="border border-border p-4"><p class="font-medium">{volume.name}</p><p class="mt-1 text-xs text-muted-foreground">{label(volume.driver)} · {volume.serverName}</p>{#if volume.mounts.length > 0}<ul class="mt-3 space-y-1 font-mono text-xs">{#each volume.mounts as mount (mount.id)}<li>{mount.mountPath} · {mount.readOnly ? 'read only' : 'read write'}</li>{/each}</ul>{/if}<div class="mt-3"><JsonCode value={volume.configuration} /></div></div>{/each}{/if}</Card.Content></Card.Root>
+    {/if}
 	{/if}
 
 	{#if section === 'health'}
@@ -224,6 +361,100 @@
   </div>
 
   <ConfirmActionDialog bind:open={revokeDialogOpen} title={`Remove access for ${pendingGrant?.deviceName ?? 'this device'}?`} description="The device-specific firewall rule will be removed. The device remains enrolled for other Resources." confirmLabel="Remove access" processing={revokeProcessing} error={revokeError} destructive onconfirm={revokeGrant} />
+
+  <Dialog.Root bind:open={bindingDialogOpen} onOpenChange={(open) => { if (!open) selectedBinding = null }}>
+    <Dialog.Content class="sm:max-w-2xl">
+      <Dialog.Header><Dialog.Title>{selectedBinding?.environmentName ?? 'Attached environment'}</Dialog.Title><Dialog.Description>Resource attachment details and environment projection configuration.</Dialog.Description></Dialog.Header>
+      {#if selectedBinding}
+        <div class="space-y-5">
+          <dl class="grid gap-4 text-sm sm:grid-cols-2">
+            <div><dt class="text-muted-foreground">Environment</dt><dd class="mt-1 font-medium">{selectedBinding.environmentName}</dd></div>
+            <div><dt class="text-muted-foreground">Kind</dt><dd class="mt-1">{label(selectedBinding.environmentKind)}</dd></div>
+            <div><dt class="text-muted-foreground">Alias</dt><dd class="mt-1 font-mono text-xs">{selectedBinding.alias}</dd></div>
+            <div><dt class="text-muted-foreground">Attached</dt><dd class="mt-1">{timestamp(selectedBinding.createdAt)}</dd></div>
+            <div><dt class="text-muted-foreground">Environment ID</dt><dd class="mt-1 break-all font-mono text-xs">{selectedBinding.environmentId}</dd></div>
+            <div><dt class="text-muted-foreground">Endpoint ID</dt><dd class="mt-1 break-all font-mono text-xs">{selectedBinding.endpointId}</dd></div>
+            {#if selectedBinding.credentialId}<div><dt class="text-muted-foreground">Credential ID</dt><dd class="mt-1 break-all font-mono text-xs">{selectedBinding.credentialId}</dd></div>{/if}
+            <div><dt class="text-muted-foreground">Updated</dt><dd class="mt-1">{timestamp(selectedBinding.updatedAt)}</dd></div>
+          </dl>
+          <div><p class="mb-2 text-xs font-medium text-muted-foreground">Environment configuration</p><JsonCode value={selectedBinding.configuration} /></div>
+        </div>
+      {/if}
+      <Dialog.Footer><Button type="button" onclick={() => (bindingDialogOpen = false)}>Done</Button></Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
+
+  <Dialog.Root bind:open={endpointCreateDialogOpen}>
+    <Dialog.Content class="sm:max-w-3xl">
+      <form class="space-y-5" onsubmit={submitEndpoint}>
+        <Dialog.Header><Dialog.Title>Add endpoint</Dialog.Title><Dialog.Description>Choose who can connect, then select a known network address or provide one manually.</Dialog.Description></Dialog.Header>
+        {#if endpointErrors.length > 0}
+          <div class="border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive" role="alert"><p class="font-medium">Endpoint could not be added</p><ul class="mt-2 list-disc space-y-1 pl-5">{#each endpointErrors as error}<li>{error}</li>{/each}</ul></div>
+        {/if}
+        <div class="grid gap-4 sm:grid-cols-2">
+          <FormField label="Name" error={$endpointForm.errors.name}><Input bind:value={$endpointForm.name} required /></FormField>
+          <FormField label="Available to"><NativeSelect.Root class="w-full" value={$endpointForm.audience} onchange={(event) => chooseEndpointAudience(event.currentTarget.value)}><NativeSelect.Option value="local_system">Local system</NativeSelect.Option><NativeSelect.Option value="environment">Environments through WireGuard</NativeSelect.Option>{#if resource.engine !== 'opentelemetry'}<NativeSelect.Option value="custom">Custom address</NativeSelect.Option>{/if}</NativeSelect.Root></FormField>
+          {#if $endpointForm.audience === 'environment'}
+            <FormField label="Reach via" error={$endpointForm.errors.privateNetworkId || $endpointForm.errors.address}><NativeSelect.Root class="w-full" value={$endpointForm.privateNetworkId} onchange={(event) => chooseEndpointNetwork(event.currentTarget.value)} required><NativeSelect.Option value="">Select a private network</NativeSelect.Option>{#each endpointNetworks as network}<NativeSelect.Option value={network.id}>{network.name} · {network.serverAddresses[endpointServerID] ?? resource.endpoints.find((endpoint) => endpoint.privateNetworkId === network.id)?.address ?? 'No server address'}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
+          {:else if $endpointForm.audience === 'custom'}
+            <FormField label="Address" error={$endpointForm.errors.address}><Input bind:value={$endpointForm.address} required placeholder="Hostname or IP address" /></FormField>
+          {:else}
+            <div class="border border-border bg-muted/20 px-3 py-2"><p class="text-[10px] uppercase tracking-wider text-muted-foreground">Reach via</p><p class="mt-1 font-mono text-sm">127.0.0.1 · this system</p></div>
+          {/if}
+          {#if serviceMappings.length > 0}
+            <FormField label="Installation service"><NativeSelect.Root class="w-full" value={String(serviceMappings.findIndex((mapping: any) => mapping.hostPort === $endpointForm.port))} onchange={(event) => chooseServiceMapping(Number(event.currentTarget.value))}>{#each serviceMappings as mapping, index}<NativeSelect.Option value={String(index)}>{mapping.containerName} · {mapping.containerPort}/{mapping.protocol} → {mapping.hostPort}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
+          {:else}
+            <FormField label="Port" error={$endpointForm.errors.port}><Input type="number" min="1" max="65535" bind:value={$endpointForm.port} required /></FormField>
+          {/if}
+          {#if !$endpointForm.publication.enabled}<FormField label="Protocol" error={$endpointForm.errors.protocol}><NativeSelect.Root class="w-full" bind:value={$endpointForm.protocol}>{#each definition.protocols as protocol}<NativeSelect.Option value={protocol}>{protocol}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>{/if}
+          <FormField label="Origin TLS" error={$endpointForm.errors.tlsMode}><NativeSelect.Root class="w-full" bind:value={$endpointForm.tlsMode}>{#each definition.tlsModes as mode}<NativeSelect.Option value={mode}>{label(mode)}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
+          {#if resource.engine !== 'opentelemetry'}<FormField label="Database"><Input bind:value={$endpointForm.database} /></FormField><FormField label="Username"><Input bind:value={$endpointForm.user} /></FormField>{/if}
+        </div>
+        {#if $endpointForm.protocol === 'http' || $endpointForm.protocol === 'https'}<div class="space-y-4 border border-border bg-muted/20 p-4">
+          <label class="flex items-center gap-3 text-sm"><Checkbox bind:checked={$endpointForm.publication.enabled} /> Publish through Caddy</label>
+          {#if $endpointForm.publication.enabled}
+            <div class="grid gap-4 sm:grid-cols-2">
+              <FormField label="Public hostname" error={$endpointForm.errors.hostname}><Input bind:value={$endpointForm.publication.hostname} required placeholder="database.deploycrate.com" /></FormField>
+              {#if $endpointForm.protocol === 'http' || $endpointForm.protocol === 'https'}<FormField label="Public health path" error={$endpointForm.errors.healthPath || $endpointForm.errors['settings.caddy.health_path']}><Input bind:value={$endpointForm.publication.healthPath} placeholder="Optional" /></FormField>{/if}
+              <p class="sm:col-span-2 text-xs text-muted-foreground"><span class="font-mono">https://{$endpointForm.publication.hostname || 'hostname'}</span> will reverse proxy to <span class="font-mono">{$endpointForm.address}:{$endpointForm.port}</span>.</p>
+            </div>
+          {/if}
+        </div>{/if}
+        <Dialog.Footer><Button type="button" variant="outline" disabled={$endpointForm.processing} onclick={() => (endpointCreateDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={$endpointForm.processing} aria-busy={$endpointForm.processing}>{#if $endpointForm.processing}<Spinner />{/if}Add endpoint</Button></Dialog.Footer>
+      </form>
+    </Dialog.Content>
+  </Dialog.Root>
+
+  <Dialog.Root bind:open={endpointDialogOpen} onOpenChange={(open) => { if (!open) selectedEndpoint = null }}>
+    <Dialog.Content class="sm:max-w-2xl">
+      <Dialog.Header><Dialog.Title>{selectedEndpoint?.name ?? 'Resource endpoint'}</Dialog.Title><Dialog.Description>Connection, network, and Caddy publication details.</Dialog.Description></Dialog.Header>
+      {#if selectedEndpoint}
+        {@const publication = publications.find((value) => value.resourceEndpointId === selectedEndpoint?.id)}
+        <div class="space-y-5">
+          <dl class="grid gap-4 text-sm sm:grid-cols-2">
+            <div><dt class="text-muted-foreground">Address</dt><dd class="mt-1 break-all font-mono text-xs">{selectedEndpoint.protocol}://{selectedEndpoint.address}:{selectedEndpoint.port}</dd></div>
+            <div><dt class="text-muted-foreground">Available to</dt><dd class="mt-1">{label(String(selectedEndpoint.settings?.audience ?? selectedEndpoint.settings?.exposure ?? selectedEndpoint.role))}</dd></div>
+            <div><dt class="text-muted-foreground">Origin TLS</dt><dd class="mt-1">{label(selectedEndpoint.tlsMode)}</dd></div>
+            <div><dt class="text-muted-foreground">Private network ID</dt><dd class="mt-1 break-all font-mono text-xs">{selectedEndpoint.privateNetworkId || 'None'}</dd></div>
+            <div><dt class="text-muted-foreground">Created</dt><dd class="mt-1">{timestamp(selectedEndpoint.createdAt)}</dd></div>
+            <div><dt class="text-muted-foreground">Endpoint ID</dt><dd class="mt-1 break-all font-mono text-xs">{selectedEndpoint.id}</dd></div>
+            <div><dt class="text-muted-foreground">Updated</dt><dd class="mt-1">{timestamp(selectedEndpoint.updatedAt)}</dd></div>
+          </dl>
+          {#if publication}
+            <div class="border border-border bg-muted/20 p-4">
+              <div class="flex flex-wrap items-center justify-between gap-3"><div><p class="text-xs text-muted-foreground">Caddy route</p><p class="mt-1 font-mono text-sm">{publication.hostname}</p></div><StatusBadge status={publication.state} /></div>
+              {#if publication.healthPath}<p class="mt-3 text-xs text-muted-foreground">Health path: <span class="font-mono text-foreground">{publication.healthPath}</span></p>{/if}
+              {#if publication.lastError}<p class="mt-3 text-xs text-destructive">{publication.lastError}</p>{/if}
+            </div>
+          {/if}
+          <div><p class="mb-2 text-xs font-medium text-muted-foreground">Endpoint settings</p><JsonCode value={selectedEndpoint.settings} /></div>
+        </div>
+      {/if}
+      <Dialog.Footer><Button type="button" variant="destructive" onclick={() => selectedEndpoint && askToRemoveEndpoint(selectedEndpoint)}>Remove endpoint</Button><Button type="button" onclick={() => (endpointDialogOpen = false)}>Done</Button></Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
+
+  <ConfirmActionDialog bind:open={endpointRemovalDialogOpen} title={`Remove ${pendingEndpointRemoval?.name ?? 'this endpoint'}?`} description="The endpoint and its managed Caddy route will be removed. Endpoints used by an attached Environment or health check cannot be removed." confirmLabel="Remove endpoint" requiredPhrase="DELETE" processing={endpointRemovalProcessing} error={endpointRemovalError} destructive onconfirm={removeEndpoint} />
 
   <Dialog.Root bind:open={credentialPasswordDialogOpen} onOpenChange={(open) => { if (!open && !credentialProcessing) { currentPassword = ''; credentialError = ''; selectedCredential = null } }}>
     <Dialog.Content showCloseButton={!credentialProcessing}>

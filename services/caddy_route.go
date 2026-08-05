@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/netip"
 	"strings"
@@ -16,11 +17,13 @@ import (
 	"deploycrate-ce/models"
 
 	"github.com/google/uuid"
+	"go.uber.org/fx"
 )
 
 type CaddyClient interface {
 	ApplyRoute(context.Context, caddyclients.Route) error
 	DeleteRoute(context.Context, string) error
+	RouteConfig(context.Context, string) (json.RawMessage, error)
 	VerifyRoute(context.Context, string) error
 	VerifyPublic(context.Context, string, string) error
 }
@@ -32,6 +35,33 @@ type CaddyRouteService struct {
 
 func NewCaddyRouteService(db storage.Pool, caddy CaddyClient) CaddyRouteService {
 	return CaddyRouteService{db: db, caddy: caddy}
+}
+
+func StartResourceCaddyReconciler(lifecycle fx.Lifecycle, appCtx context.Context, service CaddyRouteService) {
+	lifecycle.Append(fx.Hook{OnStart: func(context.Context) error {
+		go service.runResourceRouteReconciler(appCtx)
+		return nil
+	}})
+}
+
+func (service CaddyRouteService) runResourceRouteReconciler(ctx context.Context) {
+	service.reconcileResourceRouteCandidates(ctx)
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			service.reconcileResourceRouteCandidates(ctx)
+		}
+	}
+}
+
+func (service CaddyRouteService) reconcileResourceRouteCandidates(ctx context.Context) {
+	if err := service.ReconcileManagedResourceEndpoints(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		slog.WarnContext(ctx, "failed to reconcile Resource Caddy endpoints", "error", err)
+	}
 }
 
 func (service CaddyRouteService) Reconcile(ctx context.Context, routeID uuid.UUID) (string, error) {
@@ -457,6 +487,75 @@ type ManagedCaddyRouteOptions struct {
 type ManagedCaddyRouteSnapshot struct {
 	Routes  []ManagedCaddyRoute      `json:"routes"`
 	Options ManagedCaddyRouteOptions `json:"options"`
+}
+
+type ManagedCaddyRouteDetail struct {
+	ExternalID         string                     `json:"externalId"`
+	Kind               string                     `json:"kind"`
+	Hostname           string                     `json:"hostname"`
+	State              string                     `json:"state"`
+	LastError          string                     `json:"lastError"`
+	Source             string                     `json:"source"`
+	Target             string                     `json:"target"`
+	HealthPath         string                     `json:"healthPath"`
+	AppliedAt          string                     `json:"appliedAt"`
+	ObservedAt         string                     `json:"observedAt"`
+	Backends           []ManagedCaddyRouteBackend `json:"backends"`
+	Configuration      json.RawMessage            `json:"configuration"`
+	ConfigurationError string                     `json:"configurationError"`
+	EnvironmentRoute   *ManagedCaddyRoute         `json:"environmentRoute,omitempty"`
+	ResourceRoute      *ManagedResourceCaddyRoute `json:"resourceRoute,omitempty"`
+	Options            ManagedCaddyRouteOptions   `json:"options"`
+}
+
+func (service CaddyRouteService) RouteDetail(ctx context.Context, externalID string) (ManagedCaddyRouteDetail, error) {
+	externalID = strings.TrimSpace(externalID)
+	snapshot, err := service.ManagementSnapshot(ctx)
+	if err != nil {
+		return ManagedCaddyRouteDetail{}, err
+	}
+	var detail ManagedCaddyRouteDetail
+	for _, route := range snapshot.Routes {
+		if route.ExternalID != externalID {
+			continue
+		}
+		detail = ManagedCaddyRouteDetail{
+			ExternalID: route.ExternalID, Kind: "environment", Hostname: route.Hostname,
+			State: route.State, Source: route.ApplicationName + " / " + route.EnvironmentName,
+			Target: route.ServerName + " / " + route.ReleaseLabel, HealthPath: route.HealthPath,
+			AppliedAt: route.AppliedAt, ObservedAt: route.ObservedAt, Backends: route.Backends,
+			EnvironmentRoute: &route, Options: snapshot.Options,
+		}
+		break
+	}
+	if detail.ExternalID == "" {
+		resourceRoutes, routeErr := service.ResourceRouteSnapshot(ctx)
+		if routeErr != nil {
+			return ManagedCaddyRouteDetail{}, routeErr
+		}
+		for _, route := range resourceRoutes {
+			if route.ExternalID != externalID {
+				continue
+			}
+			detail = ManagedCaddyRouteDetail{
+				ExternalID: route.ExternalID, Kind: "resource", Hostname: route.Hostname,
+				State: route.State, LastError: route.LastError,
+				Source: route.ResourceName + " / " + route.EndpointName, Target: route.Origin,
+				AppliedAt: route.AppliedAt, ObservedAt: route.ObservedAt,
+				Backends: []ManagedCaddyRouteBackend{{Address: route.Origin, Weight: 100}},
+				ResourceRoute: &route,
+			}
+			break
+		}
+	}
+	if detail.ExternalID == "" {
+		return ManagedCaddyRouteDetail{}, models.ErrNotFound
+	}
+	detail.Configuration, err = service.caddy.RouteConfig(ctx, externalID)
+	if err != nil {
+		detail.ConfigurationError = err.Error()
+	}
+	return detail, nil
 }
 
 func (service CaddyRouteService) ManagementSnapshot(ctx context.Context) (ManagedCaddyRouteSnapshot, error) {

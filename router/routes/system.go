@@ -82,6 +82,17 @@ var SystemResourceEndpointCreate = routing.NewRouteWithUUIDID(
 	SystemPrefix,
 )
 
+type SystemResourceEndpointParams struct {
+	ResourceID string `param:"resourceID"`
+	EndpointID string `param:"endpointID"`
+}
+
+var SystemResourceEndpointDestroy = routing.NewRouteWithParams[SystemResourceEndpointParams](
+	"/resources/:resourceID/endpoints/:endpointID",
+	"system.resource.endpoint.destroy",
+	SystemPrefix,
+)
+
 type SystemResourceCredentialParams struct {
 	ResourceID   string `param:"resourceID"`
 	CredentialID string `param:"credentialID"`

@@ -27,10 +27,19 @@ type EnvironmentDomainEntity struct {
 
 var environmentHostnamePattern = regexp.MustCompile(`^(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))+$`)
 
+func NormalizeHostname(value string) string {
+	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(value), "."))
+}
+
+func IsValidHostname(value string) bool {
+	value = NormalizeHostname(value)
+	return len(value) <= 253 && environmentHostnamePattern.MatchString(value)
+}
+
 func (e *EnvironmentDomainEntity) Validate() error {
-	e.Hostname = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(e.Hostname), "."))
+	e.Hostname = NormalizeHostname(e.Hostname)
 	builder := validation.NewBuilder()
-	if len(e.Hostname) > 253 || !environmentHostnamePattern.MatchString(e.Hostname) {
+	if !IsValidHostname(e.Hostname) {
 		builder.Add("hostname", "format", "hostname must be a valid fully qualified domain name")
 	}
 	if !e.IsPrimary {

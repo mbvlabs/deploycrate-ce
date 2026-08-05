@@ -25,3 +25,34 @@ func ParseResourceTypeEnum(value string) (ResourceTypeEnum, error) {
 	}
 	return resourceType, nil
 }
+
+type CaddyRouteStateEnum string
+
+const (
+	CaddyRoutePending        CaddyRouteStateEnum = "pending"
+	CaddyRouteApplied        CaddyRouteStateEnum = "applied"
+	CaddyRouteFailed         CaddyRouteStateEnum = "failed"
+	CaddyRouteRemovalPending CaddyRouteStateEnum = "removal_pending"
+	CaddyRouteRemoved        CaddyRouteStateEnum = "removed"
+)
+
+func (state CaddyRouteStateEnum) IsValid() bool {
+	switch state {
+	case CaddyRoutePending, CaddyRouteApplied, CaddyRouteFailed, CaddyRouteRemovalPending, CaddyRouteRemoved:
+		return true
+	default:
+		return false
+	}
+}
+
+func (state CaddyRouteStateEnum) String() string {
+	return string(state)
+}
+
+func ParseCaddyRouteStateEnum(value string) (CaddyRouteStateEnum, error) {
+	state := CaddyRouteStateEnum(value)
+	if !state.IsValid() {
+		return "", errors.New("invalid Caddy route state")
+	}
+	return state, nil
+}

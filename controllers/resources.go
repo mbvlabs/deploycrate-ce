@@ -28,10 +28,11 @@ type Resources struct {
 	backups     *services.DatabaseBackups
 	restore     *services.DatabaseRestoreWorkflow
 	credentials *services.ResourceCredentials
+	caddy       services.CaddyRouteService
 }
 
-func NewResources(service *services.ResourceManagement, access *services.ResourcePrivateAccess, backups *services.DatabaseBackups, restore *services.DatabaseRestoreWorkflow, credentials *services.ResourceCredentials) Resources {
-	return Resources{service: service, access: access, backups: backups, restore: restore, credentials: credentials}
+func NewResources(service *services.ResourceManagement, access *services.ResourcePrivateAccess, backups *services.DatabaseBackups, restore *services.DatabaseRestoreWorkflow, credentials *services.ResourceCredentials, caddy services.CaddyRouteService) Resources {
+	return Resources{service: service, access: access, backups: backups, restore: restore, credentials: credentials, caddy: caddy}
 }
 
 func (controller Resources) RegisterRoutes(r *router.Router) error {
@@ -339,14 +340,15 @@ func (controller Resources) UpdateConnectionEnvironmentKeys(etx *echo.Context) e
 }
 
 type resourceEndpointPayload struct {
-	Name             string          `json:"name"`
-	Role             string          `json:"role"`
-	Address          string          `json:"address"`
-	Port             int32           `json:"port"`
-	Protocol         string          `json:"protocol"`
-	TLSMode          string          `json:"tlsMode"`
-	Settings         json.RawMessage `json:"settings"`
-	PrivateNetworkID string          `json:"privateNetworkId"`
+	Name             string                                 `json:"name"`
+	Role             string                                 `json:"role"`
+	Address          string                                 `json:"address"`
+	Port             int32                                  `json:"port"`
+	Protocol         string                                 `json:"protocol"`
+	TLSMode          string                                 `json:"tlsMode"`
+	Settings         json.RawMessage                        `json:"settings"`
+	PrivateNetworkID string                                 `json:"privateNetworkId"`
+	Publication      services.ResourceCaddyPublicationInput `json:"publication"`
 }
 
 func (payload resourceEndpointPayload) serviceInput() (services.ResourceEndpointInput, error) {
@@ -362,15 +364,22 @@ func (payload resourceEndpointPayload) serviceInput() (services.ResourceEndpoint
 }
 
 func (controller Resources) CreateEndpoint(etx *echo.Context) error {
+	var payload resourceEndpointPayload
 	resourceID, input, err := bindResourceChild(etx, func() (services.ResourceEndpointInput, error) {
-		var payload resourceEndpointPayload
 		if bindErr := etx.Bind(&payload); bindErr != nil {
 			return services.ResourceEndpointInput{}, bindErr
 		}
 		return payload.serviceInput()
 	})
 	if err == nil {
-		_, err = controller.service.CreateEndpoint(etx.Request().Context(), resourceID, input)
+		input, err = controller.caddy.PrepareResourcePublication(etx.Request().Context(), resourceID, uuid.Nil, input, payload.Publication)
+	}
+	if err == nil {
+		var endpoint models.ResourceEndpointEntity
+		endpoint, err = controller.service.CreateEndpoint(etx.Request().Context(), resourceID, input)
+		if err == nil && payload.Publication.Enabled {
+			err = controller.caddy.SyncResourcePublication(etx.Request().Context(), resourceID, endpoint.ID, payload.Publication)
+		}
 	}
 	return controller.finishChildMutation(etx, resourceID, err, "Endpoint created")
 }
@@ -386,7 +395,22 @@ func (controller Resources) UpdateEndpoint(etx *echo.Context) error {
 		input, err = payload.serviceInput()
 	}
 	if err == nil {
+		input, err = controller.caddy.PrepareResourcePublication(etx.Request().Context(), resourceID, endpointID, input, payload.Publication)
+	}
+	if err == nil {
+		if !payload.Publication.Enabled {
+			err = controller.caddy.RemoveResourcePublication(etx.Request().Context(), resourceID, endpointID)
+		}
+	}
+	if err == nil {
 		_, err = controller.service.UpdateEndpoint(etx.Request().Context(), resourceID, endpointID, input)
+	}
+	if err == nil {
+		if payload.Publication.Enabled {
+			err = controller.caddy.SyncResourcePublication(etx.Request().Context(), resourceID, endpointID, payload.Publication)
+		} else {
+			err = controller.caddy.RemoveResourcePublication(etx.Request().Context(), resourceID, endpointID)
+		}
 	}
 	return controller.finishChildMutation(etx, resourceID, err, "Endpoint updated")
 }
@@ -394,7 +418,13 @@ func (controller Resources) UpdateEndpoint(etx *echo.Context) error {
 func (controller Resources) DestroyEndpoint(etx *echo.Context) error {
 	resourceID, endpointID, err := parseChildIDs(etx, "endpointID")
 	if err == nil {
+		err = controller.caddy.RemoveResourcePublication(etx.Request().Context(), resourceID, endpointID)
+	}
+	if err == nil {
 		err = controller.service.ArchiveEndpoint(etx.Request().Context(), resourceID, endpointID)
+	}
+	if err == nil {
+		err = controller.caddy.RemoveResourcePublication(etx.Request().Context(), resourceID, endpointID)
 	}
 	return controller.finishChildMutation(etx, resourceID, err, "Endpoint archived")
 }
@@ -1029,7 +1059,11 @@ func (controller Resources) renderShowSection(etx *echo.Context, resourceID uuid
 	if err != nil {
 		return controller.renderLoadError(etx, err)
 	}
-	options, err := controller.service.Options(etx.Request().Context())
+	publications, err := controller.caddy.ResourcePublications(etx.Request().Context(), resourceID)
+	if err != nil {
+		return controller.renderLoadError(etx, err)
+	}
+	options, err := controller.service.OptionsForEngine(etx.Request().Context(), detail.Resource.Engine())
 	if err != nil {
 		return controller.renderLoadError(etx, err)
 	}
@@ -1047,7 +1081,8 @@ func (controller Resources) renderShowSection(etx *echo.Context, resourceID uuid
 	props := inertia.Props{
 		"auth": authProps(etx), "resource": resourceDetailProps(detail, privateAccess),
 		"backups": resourceBackupProps(backups), "options": resourceOptionsProps(options),
-		"section": section, "selectedDatabase": strings.TrimSpace(etx.QueryParam("database")), "flash": resourceFlashProps(etx),
+		"publications": publications,
+		"section":      section, "selectedDatabase": strings.TrimSpace(etx.QueryParam("database")), "flash": resourceFlashProps(etx),
 	}
 	if enrollment != nil {
 		props["enrollment"] = enrollment

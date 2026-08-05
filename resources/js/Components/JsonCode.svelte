@@ -9,7 +9,7 @@
   type TokenKind = 'key' | 'string' | 'number' | 'literal' | 'punctuation' | 'plain'
   type Token = { value: string; kind: TokenKind }
 
-  let { value, class: className }: { value: unknown; class?: string } = $props()
+  let { value, class: className, expanded = false }: { value: unknown; class?: string; expanded?: boolean } = $props()
 
   const formatted = $derived(JSON.stringify(value ?? {}, null, 2) ?? '{}')
   const tokens = $derived(tokenize(formatted))
@@ -60,7 +60,7 @@
 
 <div class={cn('relative min-w-0 max-w-full border border-border bg-muted/20', className)}>
   <Button type="button" variant="ghost" size="icon-xs" class="absolute right-2 top-2 z-10 bg-background/80" aria-label="Copy JSON" title="Copy JSON" onclick={copy}><CopyIcon /></Button>
-  <ScrollArea.Root orientation="both" class="max-h-96 w-full">
+  <ScrollArea.Root orientation="both" class={cn(expanded ? 'max-h-none' : 'max-h-96', 'w-full')}>
     <pre class="min-w-max whitespace-pre p-4 pr-10 text-xs leading-5"><code>{#each tokens as token}<span class={tokenClass(token.kind)}>{token.value}</span>{/each}</code></pre>
   </ScrollArea.Root>
 </div>

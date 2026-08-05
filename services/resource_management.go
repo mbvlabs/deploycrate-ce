@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -281,6 +282,23 @@ func (service *ResourceManagement) Options(ctx context.Context) (models.Resource
 				options.PrivateNetworks[index].ServerAddresses[item.ServerID] = item.Address
 			}
 		}
+	}
+	return options, nil
+}
+
+func (service *ResourceManagement) OptionsForEngine(ctx context.Context, engine string) (models.ResourceFormOptions, error) {
+	options, err := service.Options(ctx)
+	if err != nil {
+		return models.ResourceFormOptions{}, err
+	}
+	engine = strings.ToLower(strings.TrimSpace(engine))
+	if slices.ContainsFunc(options.Engines, func(definition models.ResourceEngineDefinition) bool {
+		return definition.Engine == engine
+	}) {
+		return options, nil
+	}
+	if definition, ok := models.FindResourceEngine(engine); ok {
+		options.Engines = append(options.Engines, definition)
 	}
 	return options, nil
 }
@@ -627,6 +645,10 @@ func (service *ResourceManagement) ArchiveResource(ctx context.Context, resource
 }
 
 func (service *ResourceManagement) loadResource(ctx context.Context, db storage.Executor, resourceID uuid.UUID, lock bool) (models.ResourceEntity, error) {
+	return service.loadResourceWithSystemPolicy(ctx, db, resourceID, lock, false)
+}
+
+func (service *ResourceManagement) loadResourceWithSystemPolicy(ctx context.Context, db storage.Executor, resourceID uuid.UUID, lock, allowSystem bool) (models.ResourceEntity, error) {
 	var resource models.ResourceEntity
 	query := db.NewSelect().TableExpr("resources AS resource").ColumnExpr("resource.*").
 		Where("resource.id = ?", resourceID).Where("resource.archived_at IS NULL")
@@ -639,7 +661,7 @@ func (service *ResourceManagement) loadResource(ctx context.Context, db storage.
 		}
 		return models.ResourceEntity{}, err
 	}
-	if lock && resource.SystemManaged {
+	if lock && resource.SystemManaged && !allowSystem {
 		return models.ResourceEntity{}, ErrSystemResourceImmutable
 	}
 	return resource, nil
@@ -1252,7 +1274,9 @@ func (service *ResourceManagement) createEndpoint(ctx context.Context, db storag
 	if err := entity.ValidateForKind(resource.Engine()); err != nil {
 		return models.ResourceEndpointEntity{}, errors.Join(models.ErrDomainValidation, err)
 	}
-	if input.Role == "primary" && input.PrivateNetworkID == nil {
+	caddySettings := entity.ParsedSettings().Caddy
+	isCaddyEndpoint := caddySettings != nil && caddySettings.Managed
+	if !isCaddyEndpoint && input.Role == "primary" && input.PrivateNetworkID == nil {
 		primaryEndpoints, err := db.NewSelect().TableExpr("resource_endpoints").
 			Where("resource_id = ?", resource.ID).
 			Where("role = 'primary'").
@@ -1299,17 +1323,10 @@ func (service *ResourceManagement) UpdateEndpoint(ctx context.Context, resourceI
 	if current.Role == "wireguard" && current.PrivateNetworkID != nil && current.Name == "Private access" {
 		return models.ResourceEndpointEntity{}, domainError("endpoint", "managed", "WireGuard access is managed through the Endpoints page")
 	}
-	if current.Role == "primary" && current.PrivateNetworkID == nil && (input.Role != "primary" || input.PrivateNetworkID != nil) {
+	currentCaddySettings := current.ParsedSettings().Caddy
+	currentIsCaddyEndpoint := currentCaddySettings != nil && currentCaddySettings.Managed
+	if !currentIsCaddyEndpoint && current.Role == "primary" && current.PrivateNetworkID == nil && (input.Role != "primary" || input.PrivateNetworkID != nil) {
 		return models.ResourceEndpointEntity{}, domainError("role", "primary", "external Resource primary origin cannot be changed into another endpoint type")
-	}
-	if input.Role == "primary" && input.PrivateNetworkID == nil && (current.Role != "primary" || current.PrivateNetworkID != nil) {
-		primaryEndpoints, countErr := tx.NewSelect().TableExpr("resource_endpoints").Where("resource_id = ?", resourceID).Where("role = 'primary'").Where("private_network_id IS NULL").Where("archived_at IS NULL").Count(ctx)
-		if countErr != nil {
-			return models.ResourceEndpointEntity{}, countErr
-		}
-		if primaryEndpoints != 0 {
-			return models.ResourceEndpointEntity{}, domainError("role", "primary", "Resource already has a primary origin endpoint")
-		}
 	}
 	input.Settings = normalizedJSON(input.Settings)
 	entity := models.ResourceEndpointEntity{
@@ -1320,6 +1337,17 @@ func (service *ResourceManagement) UpdateEndpoint(ctx context.Context, resourceI
 	}
 	if err := entity.ValidateForKind(resource.Engine()); err != nil {
 		return models.ResourceEndpointEntity{}, errors.Join(models.ErrDomainValidation, err)
+	}
+	inputCaddySettings := entity.ParsedSettings().Caddy
+	inputIsCaddyEndpoint := inputCaddySettings != nil && inputCaddySettings.Managed
+	if !inputIsCaddyEndpoint && input.Role == "primary" && input.PrivateNetworkID == nil && (current.Role != "primary" || current.PrivateNetworkID != nil) {
+		primaryEndpoints, countErr := tx.NewSelect().TableExpr("resource_endpoints").Where("resource_id = ?", resourceID).Where("role = 'primary'").Where("private_network_id IS NULL").Where("archived_at IS NULL").Count(ctx)
+		if countErr != nil {
+			return models.ResourceEndpointEntity{}, countErr
+		}
+		if primaryEndpoints != 0 {
+			return models.ResourceEndpointEntity{}, domainError("role", "primary", "Resource already has a primary origin endpoint")
+		}
 	}
 	if err := service.validateEndpointTopology(ctx, tx, resource, &current.ID, input); err != nil {
 		return models.ResourceEndpointEntity{}, err
@@ -1384,14 +1412,25 @@ func (service *ResourceManagement) validateEndpointTopology(ctx context.Context,
 }
 
 func (service *ResourceManagement) ArchiveEndpoint(ctx context.Context, resourceID, endpointID uuid.UUID) error {
+	return service.archiveEndpoint(ctx, resourceID, endpointID, false)
+}
+
+func (service *ResourceManagement) ArchiveSystemEndpoint(ctx context.Context, resourceID, endpointID uuid.UUID) error {
+	return service.archiveEndpoint(ctx, resourceID, endpointID, true)
+}
+
+func (service *ResourceManagement) archiveEndpoint(ctx context.Context, resourceID, endpointID uuid.UUID, systemManaged bool) error {
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = service.loadResource(ctx, tx, resourceID, true)
+	resource, err := service.loadResourceWithSystemPolicy(ctx, tx, resourceID, true, systemManaged)
 	if err != nil {
 		return err
+	}
+	if resource.SystemManaged != systemManaged {
+		return models.ErrNotFound
 	}
 	var endpoint models.ResourceEndpointEntity
 	err = tx.NewSelect().Model(&endpoint).Where("id = ?", endpointID).Where("resource_id = ?", resourceID).Where("archived_at IS NULL").For("UPDATE").Scan(ctx)
@@ -1412,7 +1451,7 @@ func (service *ResourceManagement) ArchiveEndpoint(ctx context.Context, resource
 	if dependencies > 0 {
 		return domainError("endpoint", "dependency", "endpoint is selected by an active binding or health check")
 	}
-	if endpoint.Role == "primary" && endpoint.PrivateNetworkID == nil {
+	if !systemManaged && endpoint.Role == "primary" && endpoint.PrivateNetworkID == nil {
 		primaryEndpoints, countErr := tx.NewSelect().TableExpr("resource_endpoints").Where("resource_id = ?", resourceID).Where("role = 'primary'").Where("private_network_id IS NULL").Where("archived_at IS NULL").Count(ctx)
 		if countErr != nil {
 			return countErr

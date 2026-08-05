@@ -14,21 +14,25 @@ import (
 
 type CaddyRouteEntity struct {
 	bun.BaseModel       `bun:"table:caddy_routes,alias:caddy_routes"`
-	ID                  uuid.UUID    `bun:"id,pk,type:uuid"`
-	CreatedAt           time.Time    `bun:"created_at"`
-	UpdatedAt           time.Time    `bun:"updated_at"`
-	ExternalID          string       `bun:"external_id"`
-	State               string       `bun:"state"`
-	AppliedAt           sql.NullTime `bun:"applied_at"`
-	ObservedAt          sql.NullTime `bun:"observed_at"`
-	RemovedAt           sql.NullTime `bun:"removed_at"`
-	EnvironmentTargetID uuid.UUID    `bun:"environment_target_id,type:uuid"`
-	EnvironmentDomainID uuid.UUID    `bun:"environment_domain_id,type:uuid"`
-	ReleaseID           uuid.UUID    `bun:"release_id,type:uuid"`
+	ID                  uuid.UUID           `bun:"id,pk,type:uuid"`
+	CreatedAt           time.Time           `bun:"created_at"`
+	UpdatedAt           time.Time           `bun:"updated_at"`
+	ExternalID          string              `bun:"external_id"`
+	State               CaddyRouteStateEnum `bun:"state"`
+	AppliedAt           sql.NullTime        `bun:"applied_at"`
+	ObservedAt          sql.NullTime        `bun:"observed_at"`
+	RemovedAt           sql.NullTime        `bun:"removed_at"`
+	EnvironmentTargetID uuid.UUID           `bun:"environment_target_id,type:uuid"`
+	EnvironmentDomainID uuid.UUID           `bun:"environment_domain_id,type:uuid"`
+	ReleaseID           uuid.UUID           `bun:"release_id,type:uuid"`
 }
 
 func (e *CaddyRouteEntity) Validate() error {
-	return nil
+	builder := validation.NewBuilder()
+	if !e.State.IsValid() {
+		builder.Add("state", "unsupported", "Caddy route state is not supported")
+	}
+	return builder.Err()
 }
 
 func (cr caddyRoute) Find(
@@ -49,7 +53,7 @@ func (cr caddyRoute) Find(
 
 type CreateCaddyRouteData struct {
 	ExternalID          string
-	State               string
+	State               CaddyRouteStateEnum
 	AppliedAt           sql.NullTime
 	ObservedAt          sql.NullTime
 	RemovedAt           sql.NullTime
@@ -80,7 +84,6 @@ func (cr caddyRoute) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return CaddyRouteEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
 		return CaddyRouteEntity{}, err
 	}
@@ -92,7 +95,7 @@ type UpdateCaddyRouteData struct {
 	ID                  uuid.UUID
 	UpdatedAt           time.Time
 	ExternalID          string
-	State               string
+	State               CaddyRouteStateEnum
 	AppliedAt           sql.NullTime
 	ObservedAt          sql.NullTime
 	RemovedAt           sql.NullTime
@@ -122,7 +125,6 @@ func (cr caddyRoute) Update(
 	if err := validation.Validate(&entity); err != nil {
 		return CaddyRouteEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-
 	if err := db.NewUpdate().
 		Model(&entity).
 		Column("updated_at").
@@ -236,7 +238,6 @@ func (cr caddyRoute) Upsert(
 	if err := validation.Validate(&entity); err != nil {
 		return CaddyRouteEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-
 	if err := db.NewInsert().
 		Model(&entity).
 		On("CONFLICT (id) DO UPDATE").

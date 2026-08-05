@@ -145,6 +145,7 @@ type systemResourceDetailProp struct {
 	Name             string                            `json:"name"`
 	ResourceType     string                            `json:"resourceType"`
 	Engine           string                            `json:"engine"`
+	ServerID         string                            `json:"serverId"`
 	Bindings         []systemResourceBindingProp       `json:"bindings"`
 	Endpoints        []systemResourceEndpointProp      `json:"endpoints"`
 	Credentials      []systemResourceCredentialProp    `json:"credentials"`
@@ -159,7 +160,7 @@ type systemResourceDetailProp struct {
 func systemResourceDetailProps(detail models.SystemResourceDetail) systemResourceDetailProp {
 	prop := systemResourceDetailProp{
 		ID: detail.ID, CreatedAt: detail.CreatedAt, UpdatedAt: detail.UpdatedAt,
-		Name: detail.Name, ResourceType: detail.ResourceType, Engine: detail.Engine,
+		Name: detail.Name, ResourceType: detail.ResourceType, Engine: detail.Engine, ServerID: detail.ServerID,
 		Bindings:         make([]systemResourceBindingProp, 0, len(detail.Bindings)),
 		Endpoints:        make([]systemResourceEndpointProp, 0, len(detail.Endpoints)),
 		Credentials:      make([]systemResourceCredentialProp, 0, len(detail.Credentials)),

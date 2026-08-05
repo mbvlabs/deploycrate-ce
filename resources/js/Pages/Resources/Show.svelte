@@ -22,6 +22,7 @@
   type CredentialField = { name: string; label: string; required: boolean; secret: boolean }
   type EnvironmentKey = { name: string; label: string; defaultKey: string }
   type Engine = { engine: string; label: string; resourceType: string; protocols: string[]; endpointRoles: string[]; tlsModes: string[]; credentialFields: CredentialField[]; environmentKeys: EnvironmentKey[]; healthCheckKinds: string[]; defaultPort: number; defaultProtocol: string; defaultTlsMode: string }
+  type Publication = { id: string; resourceEndpointId: string; externalId: string; hostname: string; healthPath: string; state: string; lastError: string; appliedAt: string; observedAt: string }
   type PrivateNetwork = { id: string; name: string; serverIds: string[]; serverAddresses: Record<string, string> }
   type Options = { engines: Engine[]; servers: Array<{ id: string; name: string; address: string }>; privateNetworks: PrivateNetwork[]; registryCredentials: Array<{ id: string; name: string }> }
   type Enrollment = { deviceId: string; grantId: string; clientConfiguration: string }
@@ -43,14 +44,15 @@
     | { kind: 'archive-health'; healthId: string; title: string; description: string; confirmationLabel: string }
     | { kind: 'archive-resource'; title: string; description: string; confirmationLabel: string }
     | { kind: 'archive-backup-policy'; databaseName: string; policyId: string; title: string; description: string; confirmationLabel: string }
-  let { auth, resource, backups, options, section = 'overview', selectedDatabase = '', enrollment = null, errors = {} }: { auth: { email: string }; resource: any; backups: Backups; options: Options; section?: string; selectedDatabase?: string; enrollment?: Enrollment | null; errors?: Record<string, string> } = $props()
+  let { auth, resource, backups, options, publications = [], section = 'overview', selectedDatabase = '', enrollment = null, errors = {} }: { auth: { email: string }; resource: any; backups: Backups; options: Options; publications?: Publication[]; section?: string; selectedDatabase?: string; enrollment?: Enrollment | null; errors?: Record<string, string> } = $props()
   let selectedBackupDatabaseName = $state(initialSelectedBackupDatabase())
 
-  const definition = $derived(options.engines.find((kind) => kind.engine === resource.engine) ?? options.engines[0])
+  const definition = $derived(options.engines.find((kind) => kind.engine === resource.engine) ?? { engine: resource.engine, label: resource.engine, resourceType: resource.resourceType, protocols: [], endpointRoles: [], tlsModes: [], credentialFields: [], environmentKeys: [], healthCheckKinds: [], defaultPort: 1, defaultProtocol: '', defaultTlsMode: 'disable' })
   const endpointNetworks = $derived(resource.installations.length === 1
     ? options.privateNetworks.filter((network) => network.serverIds.includes(resource.installations[0].serverId) && Boolean(network.serverAddresses[resource.installations[0].serverId]))
     : options.privateNetworks)
   const primaryEndpoint = $derived(resource.endpoints.find((item: any) => item.role === 'primary' && !item.privateNetworkId))
+  const serviceMappings = $derived(resource.installations.flatMap((installation: any) => (installation.configuration?.portMappings ?? []).map((mapping: any) => ({ ...mapping, installationId: installation.id, containerName: installation.containerName }))))
   const privateAccess = $derived(resource.privateAccess)
   const privateNetwork = $derived(privateAccess ? options.privateNetworks.find((item) => item.id === privateAccess.privateNetworkId) : undefined)
   const administratorCredentials = $derived(resource.credentials.filter((item: any) => item.metadata?.purpose === 'administrator'))
@@ -171,7 +173,7 @@
   })
 
   function initialEndpoint() {
-    return { name: 'Primary', role: definition?.endpointRoles[0] ?? 'primary', address: '127.0.0.1', port: definition?.defaultPort ?? 1, protocol: definition?.defaultProtocol ?? 'tcp', tlsMode: definition?.defaultTlsMode ?? 'disable', privateNetworkId: '', settings: {} }
+    return { name: 'Primary', role: definition?.endpointRoles[0] ?? 'primary', audience: 'local_system', addressSource: 'system_loopback', address: '127.0.0.1', port: definition?.defaultPort ?? 1, protocol: definition?.defaultProtocol ?? 'tcp', tlsMode: definition?.defaultTlsMode ?? 'disable', privateNetworkId: '', settings: {}, publication: { enabled: false, hostname: '', healthPath: '' } }
   }
   function initialSelectedBackupDatabase() { return selectedDatabase }
   function initialVolume() { return { name: '', driver: 'local', configurationText: '{}', serverId: options.servers[0]?.id ?? '' } }
@@ -209,13 +211,21 @@
   function createDatabase() { if (dialogAction) return; dialogAction = 'database'; router.post(actionURL(routes.resourceDatabaseCreateForResource(resource.id)), database, { onSuccess: () => { databaseDialogOpen = false; database = { name: '', encoding: 'UTF8', collation: '' } }, onError: () => (databaseDialogOpen = true), onFinish: () => (dialogAction = '') }) }
   function openEndpointDialog(item: any = null) {
     editingEndpointId = item?.id ?? ''
-    endpoint = item ? { name: item.name, role: item.role, address: item.address, port: item.port, protocol: item.protocol, tlsMode: item.tlsMode, privateNetworkId: item.privateNetworkId ?? '', settings: item.settings ?? {} } : initialEndpoint()
+    const publication = publications.find((value) => value.resourceEndpointId === item?.id)
+    const settings = item?.settings ?? {}
+    const caddy = settings.caddy?.managed ? settings.caddy : null
+    const originSettings = { ...settings }
+    delete originSettings.caddy
+    const originAddress = caddy?.origin_address ?? item?.address ?? ''
+    const originPrivateNetworkId = caddy?.origin_private_network_id ?? item?.privateNetworkId ?? ''
+    endpoint = item ? { name: item.name, role: item.role, audience: originPrivateNetworkId ? 'environment' : ['127.0.0.1', '::1', 'localhost'].includes(originAddress) ? 'local_system' : 'custom', addressSource: originPrivateNetworkId ? 'server_wireguard' : ['127.0.0.1', '::1', 'localhost'].includes(originAddress) ? 'system_loopback' : 'manual', address: originAddress, port: caddy?.origin_port ?? item.port, protocol: caddy?.origin_protocol ?? item.protocol, tlsMode: caddy?.origin_tls_mode ?? item.tlsMode, privateNetworkId: originPrivateNetworkId, settings: originSettings, publication: { enabled: Boolean(caddy || publication), hostname: item.address, healthPath: caddy?.health_path ?? publication?.healthPath ?? '' } } : initialEndpoint()
     endpointDialogOpen = true
   }
   function saveEndpoint() {
     if (dialogAction) return
     dialogAction = 'endpoint'
-    const payload = { ...endpoint }
+    const settings = { ...endpoint.settings, audience: endpoint.audience, address_source: endpoint.addressSource, ...(resource.engine === 'opentelemetry' ? { exposure: endpoint.audience === 'environment' ? 'environment' : 'system', transport: 'http/protobuf', authentication: endpoint.audience === 'environment' ? 'signed_identity' : 'none' } : {}) }
+    const payload = { ...endpoint, settings, publication: endpoint.publication }
     const options = { onSuccess: () => { endpointDialogOpen = false; editingEndpointId = '' }, onError: () => (endpointDialogOpen = true), onFinish: () => (dialogAction = '') }
     if (editingEndpointId) router.patch(actionURL(routes.resourceEndpointUpdate(resource.id, editingEndpointId)), payload, options)
     else router.post(actionURL(routes.resourceEndpointCreate(resource.id)), payload, options)
@@ -225,6 +235,29 @@
     const selected = options.privateNetworks.find((network) => network.id === networkId)
     const serverId = resource.installations[0]?.serverId
     endpoint.address = selected && serverId ? selected.serverAddresses[serverId] ?? '127.0.0.1' : '127.0.0.1'
+  }
+  function chooseEndpointAudience(audience: string) {
+    endpoint.audience = audience
+    endpoint.role = audience === 'environment' && definition.endpointRoles.includes('wireguard')
+      ? 'wireguard'
+      : audience === 'local_system' && definition.endpointRoles.includes('local')
+        ? 'local'
+        : definition.endpointRoles[0] ?? 'primary'
+    if (audience === 'local_system') {
+      endpoint.addressSource = 'system_loopback'
+      endpoint.privateNetworkId = ''
+      endpoint.address = '127.0.0.1'
+    } else if (audience === 'environment') {
+      endpoint.addressSource = 'server_wireguard'
+      chooseEndpointNetwork(endpoint.privateNetworkId || endpointNetworks[0]?.id || '')
+    } else {
+      endpoint.addressSource = 'manual'
+      endpoint.privateNetworkId = ''
+    }
+  }
+  function chooseServiceMapping(index: number) {
+    const mapping = serviceMappings[index]
+    if (mapping) endpoint.port = mapping.hostPort
   }
   function openCredentialDialog(item: any = null) {
     if (!item && !canAddApplicationUser) return
@@ -680,14 +713,15 @@
             {#if resource.endpoints.length > 0}
               <div class="overflow-hidden border border-border">
                 <Table.Root>
-                  <Table.Header><Table.Row><Table.Head>Name</Table.Head><Table.Head>Address</Table.Head><Table.Head>Role</Table.Head><Table.Head>Network</Table.Head><Table.Head class="w-20"><span class="sr-only">Actions</span></Table.Head></Table.Row></Table.Header>
+                  <Table.Header><Table.Row><Table.Head>Name</Table.Head><Table.Head>Address</Table.Head><Table.Head>Available to</Table.Head><Table.Head>Caddy route</Table.Head><Table.Head class="w-20"><span class="sr-only">Actions</span></Table.Head></Table.Row></Table.Header>
                   <Table.Body>
                     {#each resource.endpoints as item (item.id)}
+                      {@const publication = publications.find((value) => value.resourceEndpointId === item.id)}
                       <Table.Row>
                         <Table.Cell class="font-medium">{item.name}</Table.Cell>
                         <Table.Cell class="font-mono text-xs">{item.address}:{item.port}</Table.Cell>
-                        <Table.Cell class="capitalize">{item.role}</Table.Cell>
-                        <Table.Cell>{item.privateNetworkId ? options.privateNetworks.find((network) => network.id === item.privateNetworkId)?.name ?? 'WireGuard' : 'Public or local'}</Table.Cell>
+                        <Table.Cell class="capitalize">{String(item.settings?.audience ?? (item.privateNetworkId ? 'environment' : 'local system')).replaceAll('_', ' ')}</Table.Cell>
+                        <Table.Cell>{#if publication}<div class="flex flex-wrap items-center gap-2"><span class="font-mono text-xs">{publication.hostname}</span><StatusBadge status={publication.state} /></div>{#if publication.lastError}<p class="mt-1 max-w-sm text-xs text-destructive">{publication.lastError}</p>{/if}{:else}<span class="text-xs text-muted-foreground">Not published</span>{/if}</Table.Cell>
                         <Table.Cell class="text-right">{#if item.managed}<span class="text-xs text-muted-foreground">Managed</span>{:else}<Button size="sm" variant="ghost" onclick={() => openEndpointDialog(item)}>Edit</Button>{/if}</Table.Cell>
                       </Table.Row>
                     {/each}
@@ -799,6 +833,7 @@
     title={destructiveAction?.title ?? 'Confirm destructive action'}
     description={destructiveAction?.description ?? 'This action cannot be undone.'}
     confirmLabel={destructiveAction?.confirmationLabel ?? 'Confirm'}
+    requiredPhrase={destructiveAction?.kind === 'archive-endpoint' ? 'DELETE' : ''}
     processing={destructiveProcessing}
     error={destructiveError}
     destructive
@@ -846,14 +881,22 @@
         <Dialog.Header><Dialog.Title>{editingEndpointId ? 'Edit endpoint' : 'Add endpoint'}</Dialog.Title><Dialog.Description>{editingEndpointId ? 'Update how this Resource endpoint is published.' : 'Define another address for this Resource.'}</Dialog.Description></Dialog.Header>
         <div class="grid gap-4 sm:grid-cols-2">
           <FormField label="Name" error={errors.name}><Input bind:value={endpoint.name} required /></FormField>
-          <FormField label="Address" error={errors.address}><Input bind:value={endpoint.address} required /></FormField>
-          <FormField label="Role"><NativeSelect.Root bind:value={endpoint.role} class="w-full">{#each definition.endpointRoles as value}<NativeSelect.Option value={value}>{value}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
-          <FormField label="Protocol"><NativeSelect.Root bind:value={endpoint.protocol} class="w-full">{#each definition.protocols as value}<NativeSelect.Option value={value}>{value}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
-          <FormField label="Port"><Input type="number" bind:value={endpoint.port} min="1" max="65535" /></FormField>
-          <FormField label="TLS"><NativeSelect.Root bind:value={endpoint.tlsMode} class="w-full">{#each definition.tlsModes as value}<NativeSelect.Option value={value}>{value}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
-          <FormField label="Network path"><NativeSelect.Root value={endpoint.privateNetworkId} onchange={(event) => chooseEndpointNetwork(event.currentTarget.value)} class="w-full"><NativeSelect.Option value="">Public or local</NativeSelect.Option>{#if privateAccess && privateNetwork}<NativeSelect.Option value={privateNetwork.id}>WireGuard · {privateNetwork.name}</NativeSelect.Option>{/if}</NativeSelect.Root>{#if !privateAccess}<p class="mt-1 text-[11px] text-muted-foreground">Turn on WireGuard access before creating a private endpoint.</p>{/if}</FormField>
-          <div class="border border-border bg-muted/20 px-3 py-2"><p class="text-[10px] uppercase tracking-wider text-muted-foreground">Docker installation</p><p class="mt-1 text-sm">{resource.installations[0]?.containerName ?? 'Not installed'}</p></div>
+          <FormField label="Available to"><NativeSelect.Root value={endpoint.audience} onchange={(event) => chooseEndpointAudience(event.currentTarget.value)} class="w-full"><NativeSelect.Option value="local_system">Local system</NativeSelect.Option><NativeSelect.Option value="environment">Environments through WireGuard</NativeSelect.Option>{#if resource.engine !== 'opentelemetry'}<NativeSelect.Option value="custom">Custom address</NativeSelect.Option>{/if}</NativeSelect.Root></FormField>
+          {#if endpoint.audience === 'environment'}
+            <FormField label="Reach via" error={errors.privateNetworkId}><NativeSelect.Root value={endpoint.privateNetworkId} onchange={(event) => chooseEndpointNetwork(event.currentTarget.value)} class="w-full" required><NativeSelect.Option value="">Select a private network</NativeSelect.Option>{#each endpointNetworks as network}<NativeSelect.Option value={network.id}>{network.name} · {network.serverAddresses[resource.installations[0]?.serverId] ?? 'No Server address'}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
+          {:else if endpoint.audience === 'local_system'}
+            <div class="border border-border bg-muted/20 px-3 py-2"><p class="text-[10px] uppercase tracking-wider text-muted-foreground">Reach via</p><p class="mt-1 font-mono text-sm">127.0.0.1 · this DeployCrate system</p></div>
+          {:else}
+            <FormField label="Address" error={errors.address}><Input bind:value={endpoint.address} required placeholder="Hostname or IP address" /></FormField>
+          {/if}
+          {#if serviceMappings.length > 0}<FormField label="Installation service"><NativeSelect.Root value={String(serviceMappings.findIndex((mapping: any) => mapping.hostPort === endpoint.port))} onchange={(event) => chooseServiceMapping(Number(event.currentTarget.value))} class="w-full">{#each serviceMappings as mapping, index}<NativeSelect.Option value={String(index)}>{mapping.containerName} · {mapping.containerPort}/{mapping.protocol} → {mapping.hostPort}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>{:else}<FormField label="Port"><Input type="number" bind:value={endpoint.port} min="1" max="65535" /></FormField>{/if}
+          {#if !endpoint.publication.enabled}<FormField label="Protocol"><NativeSelect.Root bind:value={endpoint.protocol} class="w-full">{#each definition.protocols as value}<NativeSelect.Option value={value}>{value}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>{/if}
+          <FormField label="Origin TLS"><NativeSelect.Root bind:value={endpoint.tlsMode} class="w-full">{#each definition.tlsModes as value}<NativeSelect.Option value={value}>{value}</NativeSelect.Option>{/each}</NativeSelect.Root></FormField>
         </div>
+        {#if endpoint.publication.enabled || endpoint.protocol === 'http' || endpoint.protocol === 'https'}<div class="space-y-4 border border-border bg-muted/20 p-4">
+          <label class="flex items-center gap-3 text-sm"><Checkbox bind:checked={endpoint.publication.enabled} /> Publish through Caddy</label>
+          {#if endpoint.publication.enabled}<div class="grid gap-4 sm:grid-cols-2"><FormField label="Public hostname" error={errors.hostname}><Input bind:value={endpoint.publication.hostname} required placeholder="database.deploycrate.com" /></FormField>{#if endpoint.protocol === 'http' || endpoint.protocol === 'https'}<FormField label="Public health path" error={errors.healthPath}><Input bind:value={endpoint.publication.healthPath} placeholder="Optional, for example /health" /></FormField>{/if}<div class="sm:col-span-2 text-xs text-muted-foreground"><span class="font-mono">https://{endpoint.publication.hostname || 'hostname'}</span> will reverse proxy to <span class="font-mono">{endpoint.address}:{endpoint.port}</span>.</div></div>{/if}
+        </div>{/if}
         <Dialog.Footer>{#if editingEndpointId}<Button type="button" variant="destructive" disabled={dialogAction === 'endpoint'} onclick={archiveEndpoint}>Archive</Button>{/if}<Button type="button" variant="outline" disabled={dialogAction === 'endpoint'} onclick={() => (endpointDialogOpen = false)}>Cancel</Button><Button type="submit" disabled={dialogAction === 'endpoint'} aria-busy={dialogAction === 'endpoint'}>{#if dialogAction === 'endpoint'}<Spinner />{/if}{editingEndpointId ? 'Save endpoint' : 'Create endpoint'}</Button></Dialog.Footer>
       </form>
     </Dialog.Content>

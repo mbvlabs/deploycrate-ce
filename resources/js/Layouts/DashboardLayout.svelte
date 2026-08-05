@@ -93,7 +93,9 @@
     }
     if (path.startsWith(routes.nodes())) return [{ label: 'Nodes', href: routes.nodes() }, ...(path === routes.nodes() ? [] : [{ label: leaf }])]
     if (path.startsWith(routes.networks())) return [{ label: 'Networks' }]
-    if (path.startsWith(routes.caddyRoutes())) return [{ label: 'Infrastructure' }, { label: 'Caddy Routes' }]
+    if (path.startsWith(routes.caddyRoutes())) return path === routes.caddyRoutes()
+      ? [{ label: 'Infrastructure' }, { label: 'Caddy Routes' }]
+      : [{ label: 'Infrastructure' }, { label: 'Caddy Routes', href: routes.caddyRoutes() }, { label: 'Details' }]
     if (path.startsWith(routes.registryResources())) return path === routes.registryResources()
       ? [{ label: 'Connections' }, { label: 'Image Registry' }]
       : [{ label: 'Connections' }, { label: 'Image Registry', href: routes.registryResources() }, { label: 'Details' }]

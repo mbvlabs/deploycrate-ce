@@ -30,6 +30,8 @@ type System struct {
 	access       *services.ResourcePrivateAccess
 	credentials  *services.ResourceCredentials
 	backups      *services.DatabaseBackups
+	resources    *services.ResourceManagement
+	caddy        services.CaddyRouteService
 }
 
 func NewSystem(
@@ -41,8 +43,10 @@ func NewSystem(
 	access *services.ResourcePrivateAccess,
 	credentials *services.ResourceCredentials,
 	backups *services.DatabaseBackups,
+	resources *services.ResourceManagement,
+	caddy services.CaddyRouteService,
 ) System {
-	return System{db: db, health: health, metric: metric, logs: logs, appTelemetry: appTelemetry, access: access, credentials: credentials, backups: backups}
+	return System{db: db, health: health, metric: metric, logs: logs, appTelemetry: appTelemetry, access: access, credentials: credentials, backups: backups, resources: resources, caddy: caddy}
 }
 
 func (s System) RegisterRoutes(r *router.Router) error {
@@ -67,6 +71,7 @@ func (s System) RegisterRoutes(r *router.Router) error {
 		{method: http.MethodGet, route: routes.SystemResourceHealth, handler: s.ResourceHealth},
 		{method: http.MethodGet, route: routes.SystemResourceAccess, handler: s.ResourceAccess},
 		{method: http.MethodPost, route: routes.SystemResourceEndpointCreate, handler: s.CreateResourceEndpoint},
+		{method: http.MethodDelete, route: routes.SystemResourceEndpointDestroy, handler: s.DestroyResourceEndpoint},
 		{method: http.MethodPost, route: routes.SystemResourceCredentialReveal, handler: middleware.IPRateLimiter(5, routes.SystemResources)(s.RevealResourceCredential)},
 		{method: http.MethodPost, route: routes.SystemResourceWireGuardDeviceCreate, handler: s.CreateResourceWireGuardDevice},
 		{method: http.MethodDelete, route: routes.SystemResourceWireGuardDeviceDestroy, handler: s.DestroyResourceWireGuardDevice},
@@ -287,14 +292,15 @@ func (s System) RevealResourceCredential(etx *echo.Context) error {
 }
 
 type systemResourceEndpointPayload struct {
-	Name             string          `json:"name"`
-	Role             string          `json:"role"`
-	Address          string          `json:"address"`
-	Port             int32           `json:"port"`
-	Protocol         string          `json:"protocol"`
-	TLSMode          string          `json:"tlsMode"`
-	Settings         json.RawMessage `json:"settings"`
-	PrivateNetworkID string          `json:"privateNetworkId"`
+	Name             string                                 `json:"name"`
+	Role             string                                 `json:"role"`
+	Address          string                                 `json:"address"`
+	Port             int32                                  `json:"port"`
+	Protocol         string                                 `json:"protocol"`
+	TLSMode          string                                 `json:"tlsMode"`
+	Settings         json.RawMessage                        `json:"settings"`
+	PrivateNetworkID string                                 `json:"privateNetworkId"`
+	Publication      services.ResourceCaddyPublicationInput `json:"publication"`
 }
 
 func (s System) CreateResourceEndpoint(etx *echo.Context) error {
@@ -307,29 +313,41 @@ func (s System) CreateResourceEndpoint(etx *echo.Context) error {
 	if err == nil {
 		networkID, err = optionalUUID(payload.PrivateNetworkID)
 	}
+	if len(payload.Settings) == 0 {
+		payload.Settings = json.RawMessage(`{}`)
+	}
+	endpointInput := services.ResourceEndpointInput{
+		Name: payload.Name, Role: payload.Role, Address: payload.Address,
+		Port: payload.Port, Protocol: payload.Protocol, TLSMode: payload.TLSMode,
+		Settings: payload.Settings, PrivateNetworkID: networkID,
+	}
 	if err == nil {
-		if len(payload.Settings) == 0 {
-			payload.Settings = json.RawMessage(`{}`)
-		}
+		endpointInput, err = s.caddy.PrepareResourcePublication(etx.Request().Context(), resourceID, uuid.Nil, endpointInput, payload.Publication)
+	}
+	if err == nil {
+		var endpoint models.ResourceEndpointEntity
 		err = func() error {
 			tx, txErr := s.db.BeginTx(etx.Request().Context(), nil)
 			if txErr != nil {
 				return txErr
 			}
 			defer tx.Rollback()
-			if _, txErr = models.ResourceEndpoint.CreateForSystemResource(
+			if endpoint, txErr = models.ResourceEndpoint.CreateForSystemResource(
 				etx.Request().Context(),
 				tx,
 				models.CreateResourceEndpointData{
-					Name: payload.Name, Role: payload.Role, Address: payload.Address,
-					Port: payload.Port, Protocol: payload.Protocol, TlsMode: payload.TLSMode,
-					Settings: payload.Settings, ResourceID: resourceID, PrivateNetworkID: networkID,
+					Name: endpointInput.Name, Role: endpointInput.Role, Address: endpointInput.Address,
+					Port: endpointInput.Port, Protocol: endpointInput.Protocol, TlsMode: endpointInput.TLSMode,
+					Settings: endpointInput.Settings, ResourceID: resourceID, PrivateNetworkID: endpointInput.PrivateNetworkID,
 				},
 			); txErr != nil {
 				return txErr
 			}
 			return tx.Commit()
 		}()
+		if err == nil && payload.Publication.Enabled {
+			err = s.caddy.SyncResourcePublication(etx.Request().Context(), resourceID, endpoint.ID, payload.Publication)
+		}
 	}
 	if err != nil {
 		if validationErrors, ok := validation.As(err); ok {
@@ -338,6 +356,26 @@ func (s System) CreateResourceEndpoint(etx *echo.Context) error {
 		return s.redirectResourceError(etx, resourceID, "endpoints", err)
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Resource endpoint added")
+	return inertia.Redirect(etx, routes.SystemResourceEndpoints.URL(resourceID), http.StatusSeeOther)
+}
+
+func (s System) DestroyResourceEndpoint(etx *echo.Context) error {
+	resourceID, resourceErr := uuid.Parse(etx.Param("resourceID"))
+	endpointID, endpointErr := uuid.Parse(etx.Param("endpointID"))
+	err := errors.Join(resourceErr, endpointErr)
+	if err == nil {
+		err = s.resources.ArchiveSystemEndpoint(etx.Request().Context(), resourceID, endpointID)
+	}
+	if err == nil {
+		err = s.caddy.RemoveResourcePublication(etx.Request().Context(), resourceID, endpointID)
+	}
+	if err != nil {
+		if validationErrors, ok := validation.As(err); ok {
+			return s.renderResource(etx, resourceID, "endpoints", nil, inertia.WithValidationErrors(validationErrors.ToMap()))
+		}
+		return s.redirectResourceError(etx, resourceID, "endpoints", err)
+	}
+	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Resource endpoint removed")
 	return inertia.Redirect(etx, routes.SystemResourceEndpoints.URL(resourceID), http.StatusSeeOther)
 }
 
@@ -402,6 +440,14 @@ func (s System) renderResource(etx *echo.Context, resourceID uuid.UUID, section 
 	if err != nil {
 		return s.renderLoadError(etx, "resource", err)
 	}
+	options, err := s.resources.OptionsForEngine(etx.Request().Context(), detail.Engine)
+	if err != nil {
+		return s.renderLoadError(etx, "resource endpoint options", err)
+	}
+	publications, err := s.caddy.ResourcePublications(etx.Request().Context(), resourceID)
+	if err != nil {
+		return s.renderLoadError(etx, "resource publications", err)
+	}
 	backups := models.ResourceBackupCatalog{}
 	if section == "backups" && detail.ResourceType == "database" {
 		backups, err = s.backups.DetailsForResource(etx.Request().Context(), resourceID)
@@ -412,6 +458,7 @@ func (s System) renderResource(etx *echo.Context, resourceID uuid.UUID, section 
 	props := inertia.Props{
 		"auth": s.authProps(etx), "resource": systemResourceDetailProps(detail),
 		"section": section, "backups": resourceBackupProps(backups),
+		"options": resourceOptionsProps(options), "publications": publications,
 	}
 	if enrollment != nil {
 		props["enrollment"] = enrollment

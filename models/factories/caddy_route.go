@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/go-faker/faker/v4"
 	"github.com/google/uuid"
 )
 
@@ -24,7 +23,7 @@ func BuildCaddyRoute(externalID string, environmentTargetID uuid.UUID, environme
 	f := &CaddyRouteFactory{
 		CaddyRouteEntity: models.CaddyRouteEntity{
 			ExternalID:          externalID,
-			State:               faker.Word(),
+			State:               models.CaddyRoutePending,
 			AppliedAt:           sql.NullTime{Time: time.Now(), Valid: true},
 			ObservedAt:          sql.NullTime{Time: time.Now(), Valid: true},
 			RemovedAt:           sql.NullTime{Time: time.Now(), Valid: true},
@@ -85,7 +84,7 @@ func WithCaddyRoutesExternalID(value string) CaddyRouteOption {
 	}
 }
 
-func WithCaddyRoutesState(value string) CaddyRouteOption {
+func WithCaddyRoutesState(value models.CaddyRouteStateEnum) CaddyRouteOption {
 	return func(f *CaddyRouteFactory) {
 		f.CaddyRouteEntity.State = value
 	}
