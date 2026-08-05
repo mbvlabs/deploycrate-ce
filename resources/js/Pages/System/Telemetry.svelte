@@ -655,11 +655,11 @@
 
       <Card.Root>
         <Card.Header><Card.Title>Platform services</Card.Title><Card.Description>Native services managed as part of the DeployCrate control plane. Network attribution is not collected for native services.</Card.Description></Card.Header>
-        <Card.Content class="p-0">
+        <Card.Content>
           {#if platform.length}
-            <div class="overflow-x-auto">
+            <div class="overflow-x-auto border border-border">
               <Table.Root class="min-w-[900px] text-xs">
-                <Table.Header class="border-y border-border bg-muted/30"><Table.Row><Table.Head>Service</Table.Head><Table.Head>CPU</Table.Head><Table.Head>Memory</Table.Head><Table.Head>Disk read / write</Table.Head><Table.Head>Network</Table.Head><Table.Head>Tasks</Table.Head></Table.Row></Table.Header>
+                <Table.Header><Table.Row><Table.Head>Service</Table.Head><Table.Head>CPU</Table.Head><Table.Head>Memory</Table.Head><Table.Head>Disk read / write</Table.Head><Table.Head>Network</Table.Head><Table.Head>Tasks</Table.Head></Table.Row></Table.Header>
                 <Table.Body>
                   {#each platform as row (attributionID(row))}
                     <Table.Row>
@@ -678,11 +678,11 @@
 
       <Card.Root>
         <Card.Header><Card.Title>System containers</Card.Title><Card.Description>Containerized services managed as part of the DeployCrate system.</Card.Description></Card.Header>
-        <Card.Content class="p-0">
+        <Card.Content>
           {#if systemContainers.length}
-            <div class="overflow-x-auto">
+            <div class="overflow-x-auto border border-border">
               <Table.Root class="min-w-[1180px] text-xs">
-                <Table.Header class="border-y border-border bg-muted/30"><Table.Row><Table.Head>Service</Table.Head><Table.Head>CPU</Table.Head><Table.Head>Memory</Table.Head><Table.Head>Disk read / write</Table.Head><Table.Head>Network receive / transmit</Table.Head><Table.Head>Tasks</Table.Head><Table.Head>Throttling / OOM</Table.Head></Table.Row></Table.Header>
+                <Table.Header><Table.Row><Table.Head>Service</Table.Head><Table.Head>CPU</Table.Head><Table.Head>Memory</Table.Head><Table.Head>Disk read / write</Table.Head><Table.Head>Network receive / transmit</Table.Head><Table.Head>Tasks</Table.Head><Table.Head>Throttling / OOM</Table.Head></Table.Row></Table.Header>
                 <Table.Body>
                   {#each systemContainers as row (attributionID(row))}
                     <Table.Row>
@@ -757,11 +757,11 @@
             <Card.Title id="recent-traces-heading">Recent traces</Card.Title>
             <Card.Description>Up to 100 application traces from {rangeLabel}. Select one to inspect every retained span.</Card.Description>
           </Card.Header>
-          <Card.Content class="p-0">
+          <Card.Content>
             {#if recentTraces.length}
-              <div class="overflow-x-auto">
+              <div class="overflow-x-auto border border-border">
                 <Table.Root class="min-w-[780px] text-xs">
-                  <Table.Header class="border-y border-border bg-muted/30"><Table.Row><Table.Head>Started</Table.Head><Table.Head>Root span</Table.Head><Table.Head>Duration</Table.Head><Table.Head>Spans</Table.Head><Table.Head>Errors</Table.Head><Table.Head>Trace</Table.Head></Table.Row></Table.Header>
+                  <Table.Header><Table.Row><Table.Head>Started</Table.Head><Table.Head>Root span</Table.Head><Table.Head>Duration</Table.Head><Table.Head>Spans</Table.Head><Table.Head>Errors</Table.Head><Table.Head>Trace</Table.Head></Table.Row></Table.Header>
                   <Table.Body>
                     {#each recentTraces as trace (trace.traceId)}
                       <Table.Row>
@@ -795,7 +795,7 @@
         {:else if traceSpans.length}
           <div class="overflow-x-auto border border-border">
             <Table.Root class="min-w-[920px] text-xs">
-              <Table.Header class="border-b border-border bg-muted/30"><Table.Row><Table.Head>Started</Table.Head><Table.Head>Service</Table.Head><Table.Head>Span</Table.Head><Table.Head>Span ID / parent</Table.Head><Table.Head>Duration</Table.Head><Table.Head>Status</Table.Head></Table.Row></Table.Header>
+              <Table.Header><Table.Row><Table.Head>Started</Table.Head><Table.Head>Service</Table.Head><Table.Head>Span</Table.Head><Table.Head>Span ID / parent</Table.Head><Table.Head>Duration</Table.Head><Table.Head>Status</Table.Head></Table.Row></Table.Header>
               <Table.Body>
                 {#each traceSpans as span (span.spanId)}
                   <Table.Row>

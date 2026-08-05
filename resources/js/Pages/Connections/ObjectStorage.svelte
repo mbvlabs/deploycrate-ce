@@ -80,7 +80,7 @@
         <Card.Content>
           <div class="overflow-hidden border border-border">
             <Table.Root class="min-w-[640px]">
-              <Table.Header class="bg-muted/30"><Table.Row><Table.Head>Destination</Table.Head><Table.Head>Provider</Table.Head><Table.Head>Bucket</Table.Head><Table.Head>Status</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header>
+              <Table.Header><Table.Row><Table.Head>Destination</Table.Head><Table.Head>Provider</Table.Head><Table.Head>Bucket</Table.Head><Table.Head>Status</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header>
               <Table.Body>
                 {#each destinations as destination (destination.id)}
                   <Table.Row>

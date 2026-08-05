@@ -127,7 +127,7 @@
         <Card.Content>
           <div class="overflow-hidden border border-border">
             <Table.Root class="min-w-[900px]">
-              <Table.Header class="bg-muted/30"><Table.Row><Table.Head>App</Table.Head><Table.Head>Owner</Table.Head><Table.Head>Permissions</Table.Head><Table.Head>Events</Table.Head><Table.Head>Verified</Table.Head><Table.Head>Status</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header>
+              <Table.Header><Table.Row><Table.Head>App</Table.Head><Table.Head>Owner</Table.Head><Table.Head>Permissions</Table.Head><Table.Head>Events</Table.Head><Table.Head>Verified</Table.Head><Table.Head>Status</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header>
               <Table.Body><Table.Row>
                 <Table.Cell><p class="font-medium">{connection.app.name}</p><p class="mt-1 font-mono text-[11px] text-muted-foreground">{connection.app.slug}</p></Table.Cell>
                 <Table.Cell><p>{connection.app.ownerLogin}</p><p class="mt-1 capitalize text-[11px] text-muted-foreground">{connection.app.ownerType}</p></Table.Cell>
@@ -154,7 +154,7 @@
           {:else}
             <div class="overflow-hidden border border-border">
               <Table.Root class="min-w-[820px]">
-                <Table.Header class="bg-muted/30"><Table.Row><Table.Head>Account</Table.Head><Table.Head>Repository access</Table.Head><Table.Head>Repositories</Table.Head><Table.Head>Status</Table.Head><Table.Head>Last synchronized</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header>
+                <Table.Header><Table.Row><Table.Head>Account</Table.Head><Table.Head>Repository access</Table.Head><Table.Head>Repositories</Table.Head><Table.Head>Status</Table.Head><Table.Head>Last synchronized</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header>
                 <Table.Body>
                   {#each connection.installations as installation (installation.id)}
                     <Table.Row>

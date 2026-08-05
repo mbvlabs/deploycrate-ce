@@ -144,7 +144,7 @@
         {#if items.length}
           <div class="overflow-x-auto border border-border">
             <Table.Root class="min-w-[760px]">
-              <Table.Header class="bg-muted/30">
+              <Table.Header>
                 <Table.Row><Table.Head>Task</Table.Head><Table.Head>State</Table.Head><Table.Head>Queue</Table.Head><Table.Head>Attempts</Table.Head><Table.Head>Last activity</Table.Head></Table.Row>
               </Table.Header>
               <Table.Body>

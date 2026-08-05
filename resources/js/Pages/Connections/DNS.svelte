@@ -122,7 +122,7 @@
         <Card.Content>
           <div class="overflow-hidden border border-border">
             <Table.Root class="min-w-[980px]">
-              <Table.Header class="bg-muted/30"><Table.Row><Table.Head>Connection</Table.Head><Table.Head>Cloudflare account</Table.Head><Table.Head>Usage</Table.Head><Table.Head>Verified</Table.Head><Table.Head>Last synchronized</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header>
+              <Table.Header><Table.Row><Table.Head>Connection</Table.Head><Table.Head>Cloudflare account</Table.Head><Table.Head>Usage</Table.Head><Table.Head>Verified</Table.Head><Table.Head>Last synchronized</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header>
               <Table.Body>
                 {#each connections as connection (connection.id)}
                   <Table.Row>

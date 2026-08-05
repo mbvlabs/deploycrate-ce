@@ -143,7 +143,7 @@
     {:else}
       <div class="overflow-x-auto border border-border">
         <Table.Root>
-          <Table.Header class="bg-muted/40"><Table.Row><Table.Head>Hostname</Table.Head><Table.Head>Managed for</Table.Head><Table.Head>Type</Table.Head><Table.Head>State</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header>
+          <Table.Header><Table.Row><Table.Head>Hostname</Table.Head><Table.Head>Managed for</Table.Head><Table.Head>Type</Table.Head><Table.Head>State</Table.Head><Table.Head class="text-right">Actions</Table.Head></Table.Row></Table.Header>
           <Table.Body>
             {#each caddyRoutes as route (route.externalId)}
               <Table.Row>
