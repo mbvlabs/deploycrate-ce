@@ -165,8 +165,13 @@ func (s System) Telemetry(etx *echo.Context) error {
 }
 
 func (s System) TelemetryLogs(etx *echo.Context) error {
-	snapshot, err := s.logs.Snapshot(etx.Request().Context(), etx.QueryParam("after"))
-	if errors.Is(err, services.ErrInvalidSystemLogCursor) {
+	snapshot, err := s.logs.Snapshot(
+		etx.Request().Context(),
+		etx.QueryParam("after"),
+		services.ParseTelemetryRange(etx.QueryParam("range")),
+		etx.QueryParam("search"),
+	)
+	if errors.Is(err, services.ErrInvalidSystemLogCursor) || errors.Is(err, services.ErrInvalidSystemLogSearch) {
 		return etx.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 	if err != nil {

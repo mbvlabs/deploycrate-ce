@@ -549,14 +549,20 @@ func (client Client) EnvironmentLogs(
 func (client Client) SystemLogs(
 	ctx context.Context,
 	service string,
+	since time.Time,
+	search string,
 	after *SystemLogCursor,
 	limit uint64,
 ) (SystemLogPage, error) {
 	const fingerprint = "sipHash64(SeverityText, Body, TraceId, SpanId, ScopeName, toString(LogAttributes), toString(ResourceAttributes))"
 	const columns = "toString(toUnixTimestamp64Nano(Timestamp)) AS timestamp_nanoseconds, toString(" + fingerprint + ") AS fingerprint, Body AS message, SeverityText AS severity, SeverityNumber AS severity_number, LogAttributes AS attributes, TraceId AS trace_id, SpanId AS span_id, ScopeName AS scope, LogAttributes['code.file.path'] AS source, LogAttributes['code.line.number'] AS line, ResourceAttributes['service.instance.id'] AS instance, ResourceAttributes['deploycrate.slot'] AS slot"
-	const filter = "ServiceName = {service:String} AND SeverityNumber >= 9"
-	const initialQuery = "SELECT " + columns + " FROM otel_logs WHERE " + filter + " ORDER BY Timestamp DESC, " + fingerprint + " DESC LIMIT {limit:UInt64} FORMAT JSONEachRow"
-	const incrementalQuery = "SELECT " + columns + " FROM otel_logs WHERE " + filter + " AND (Timestamp, " + fingerprint + ") > (fromUnixTimestamp64Nano({after_nanoseconds:Int64}), {after_fingerprint:UInt64}) ORDER BY Timestamp, " + fingerprint + " LIMIT {limit:UInt64} FORMAT JSONEachRow"
+	const searchable = "concat(Body, ' ', SeverityText, ' ', ScopeName, ' ', toString(LogAttributes), ' ', toString(ResourceAttributes), ' ', toString(TraceId), ' ', toString(SpanId))"
+	filter := "ServiceName = {service:String} AND SeverityNumber >= 9 AND Timestamp >= fromUnixTimestamp64Nano({since_nanoseconds:Int64})"
+	if search != "" {
+		filter += " AND positionCaseInsensitiveUTF8(" + searchable + ", {search:String}) > 0"
+	}
+	initialQuery := "SELECT " + columns + " FROM otel_logs WHERE " + filter + " ORDER BY Timestamp DESC, " + fingerprint + " DESC LIMIT {limit:UInt64} FORMAT JSONEachRow"
+	incrementalQuery := "SELECT " + columns + " FROM otel_logs WHERE " + filter + " AND (Timestamp, " + fingerprint + ") > (fromUnixTimestamp64Nano({after_nanoseconds:Int64}), {after_fingerprint:UInt64}) ORDER BY Timestamp, " + fingerprint + " LIMIT {limit:UInt64} FORMAT JSONEachRow"
 
 	endpoint, err := url.Parse(client.baseURL)
 	if err != nil {
@@ -565,7 +571,11 @@ func (client Client) SystemLogs(
 	query := endpoint.Query()
 	query.Set("database", client.database)
 	query.Set("param_service", service)
+	query.Set("param_since_nanoseconds", strconv.FormatInt(since.UnixNano(), 10))
 	query.Set("param_limit", strconv.FormatUint(limit, 10))
+	if search != "" {
+		query.Set("param_search", search)
+	}
 	queryText := initialQuery
 	if after != nil {
 		queryText = incrementalQuery

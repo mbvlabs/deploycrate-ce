@@ -3,6 +3,7 @@
   import * as Card from '@/Components/ui/card'
   import * as Dialog from '@/Components/ui/dialog'
   import * as Empty from '@/Components/ui/empty'
+  import { Input } from '@/Components/ui/input'
   import * as NativeSelect from '@/Components/ui/native-select'
   import * as Table from '@/Components/ui/table'
   import StatusBadge from '@/Components/StatusBadge.svelte'
@@ -10,6 +11,7 @@
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
   import { page, router } from '@inertiajs/svelte'
+  import SearchIcon from '@lucide/svelte/icons/search'
 
   type SystemIdentity = {
     applicationName: string
@@ -232,8 +234,10 @@
   let systemLogs = $state<SystemLog[]>([])
   let systemLogCursor = $state('')
   let systemLogsLoaded = $state(false)
-  let systemLogsPaused = $state(false)
   let systemLogConnectionError = $state('')
+  let systemLogSearchInput = $state('')
+  let systemLogSearch = $state('')
+  let systemLogQueryKey = $state('')
   let followingSystemLogs = $state(true)
   let systemLogViewport = $state<HTMLDivElement>()
   let traceDialogOpen = $state(false)
@@ -407,6 +411,11 @@
     if (log.severityNumber >= 9) return 'INFO'
     return 'DEBUG'
   }
+  const systemLogStatus = (log: SystemLog) => {
+    if (log.severityNumber >= 17) return 'error'
+    if (log.severityNumber >= 13) return 'warning'
+    return systemLogLevel(log).toLowerCase()
+  }
   const systemLogSource = (log: SystemLog) => {
     if (log.source) return log.line ? `${log.source}:${log.line}` : log.source
     return log.scope || 'application'
@@ -415,9 +424,20 @@
     .filter(([key, value]) => value && !key.startsWith('code.')
       && (key !== 'trace_id' || !log.traceId) && (key !== 'span_id' || !log.spanId))
     .sort(([left], [right]) => left.localeCompare(right))
+  const systemLogMessage = (log: SystemLog) => {
+    const message = log.message.trim()
+    if (!(message.startsWith('{') || message.startsWith('['))) return log.message
+    try {
+      return JSON.stringify(JSON.parse(message), null, 2)
+    } catch {
+      return log.message
+    }
+  }
 
-  async function loadSystemLogs(signal?: AbortSignal) {
+  async function loadSystemLogs(range: string, search: string, signal?: AbortSignal) {
     const endpoint = new URL(routes.systemTelemetryLogs(), window.location.origin)
+    endpoint.searchParams.set('range', range)
+    if (search) endpoint.searchParams.set('search', search)
     if (systemLogCursor) endpoint.searchParams.set('after', systemLogCursor)
     const response = await window.fetch(endpoint, {
       cache: 'no-store',
@@ -427,7 +447,11 @@
     })
     if (!response.ok) throw new Error(`System logs returned ${response.status}`)
     const snapshot = (await response.json()) as SystemLogSnapshot
-    if (snapshot.logs.length > 0) systemLogs = [...systemLogs, ...snapshot.logs].slice(-2000)
+    const windowSeconds = ({ '1h': 3600, '6h': 21600, '24h': 86400, '7d': 604800 } as Record<string, number>)[range] ?? 86400
+    const cutoff = Date.now() - windowSeconds * 1000
+    systemLogs = [...systemLogs, ...snapshot.logs]
+      .filter((log) => new Date(log.occurredAt).getTime() >= cutoff)
+      .slice(-2000)
     systemLogCursor = snapshot.nextCursor
     systemLogsLoaded = true
     systemLogConnectionError = ''
@@ -469,6 +493,23 @@
   }
 
   $effect(() => {
+    const search = systemLogSearchInput.trim()
+    const timer = window.setTimeout(() => (systemLogSearch = search), 300)
+    return () => window.clearTimeout(timer)
+  })
+
+  $effect(() => {
+    const nextQueryKey = activeView === 'logs' ? `${telemetryRange}:${systemLogSearch}` : ''
+    if (nextQueryKey === systemLogQueryKey) return
+    systemLogQueryKey = nextQueryKey
+    systemLogs = []
+    systemLogCursor = ''
+    systemLogsLoaded = false
+    systemLogConnectionError = ''
+    followingSystemLogs = true
+  })
+
+  $effect(() => {
     systemLogs.length
     if (!followingSystemLogs) return
     const frame = window.requestAnimationFrame(() => {
@@ -478,20 +519,26 @@
   })
 
   $effect(() => {
-    if (activeView !== 'logs' || systemLogsPaused) return
+    if (activeView !== 'logs' || !systemLogQueryKey) return
+    const range = telemetryRange
+    const search = systemLogSearch
+    const shouldPoll = live
     const abortController = new AbortController()
     let timer: number | undefined
     let retryDelay = 2000
 
     async function poll() {
       try {
-        const snapshot = await loadSystemLogs(abortController.signal)
+        const snapshot = await loadSystemLogs(range, search, abortController.signal)
         if (abortController.signal.aborted) return
         retryDelay = 2000
-        timer = window.setTimeout(poll, snapshot.hasMore ? 0 : retryDelay)
+        if (shouldPoll) timer = window.setTimeout(poll, snapshot.hasMore ? 0 : retryDelay)
       } catch {
         if (abortController.signal.aborted) return
-        systemLogConnectionError = 'Reconnecting to the DeployCrate CE log stream...'
+        systemLogConnectionError = shouldPoll
+          ? 'Reconnecting to the DeployCrate CE log stream...'
+          : 'DeployCrate CE logs are temporarily unavailable.'
+        if (!shouldPoll) return
         retryDelay = Math.min(retryDelay * 2, 10000)
         timer = window.setTimeout(poll, retryDelay)
       }
@@ -706,43 +753,68 @@
     <section aria-labelledby="deploycrate-logs-heading">
       <Card.Root>
         <Card.Header>
-          <Card.Action><Button size="sm" variant="outline" onclick={() => (systemLogsPaused = !systemLogsPaused)}>{systemLogsPaused ? 'Resume' : 'Pause'}</Button></Card.Action>
           <Card.Title id="deploycrate-logs-heading">DeployCrate CE logs</Card.Title>
-          <Card.Description>Live structured application logs from OpenTelemetry. ClickHouse retains logs for seven days.</Card.Description>
+          <Card.Description>Structured application logs from {rangeLabel}. Use Live above to poll for new entries. ClickHouse retains logs for seven days.</Card.Description>
         </Card.Header>
         <Card.Content>
+          <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+            <label class="grid w-full max-w-xl gap-1.5 text-xs font-medium" for="system-log-search">
+              <span class="text-muted-foreground">Search logs</span>
+              <span class="relative">
+                <SearchIcon class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input id="system-log-search" type="search" maxlength="256" bind:value={systemLogSearchInput} placeholder="Search messages, attributes, traces, or instances" class="pl-8" />
+              </span>
+            </label>
+            <p class="shrink-0 text-xs text-muted-foreground">
+              {systemLogs.length} {systemLogs.length === 1 ? 'entry' : 'entries'}
+              {#if live}<span class="ml-2 text-success">● Live polling</span>{/if}
+            </p>
+          </div>
           {#if systemLogConnectionError}<p class="mb-3 text-xs text-warning">{systemLogConnectionError}</p>{/if}
           <div
             bind:this={systemLogViewport}
             onscroll={updateSystemLogFollow}
-            class="max-h-[36rem] min-h-48 overflow-auto border border-border bg-black/35 p-3 font-mono text-[11px] leading-relaxed"
+            class="max-h-[42rem] min-h-48 overflow-auto border border-border bg-muted/10"
           >
             {#each systemLogs as log (log.id)}
-              <div
-                class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 py-1"
-                class:text-warning={log.severityNumber >= 13 && log.severityNumber < 17}
-                class:text-destructive={log.severityNumber >= 17}
-              >
-                <span class="select-none whitespace-nowrap text-muted-foreground">{stamp(log.occurredAt)}</span>
-                <div class="min-w-0">
-                  <p class="select-none text-[10px] text-muted-foreground">
-                    {systemLogLevel(log)} · {log.slot || 'slot unknown'} · {systemLogSource(log)}{#if log.traceId} · <Button variant="link" size="xs" class="h-auto p-0 font-mono text-[10px]" onclick={() => loadTrace(log.traceId)}>trace {short(log.traceId)}</Button>{/if}{#if log.spanId} · span {short(log.spanId)}{/if}{#if log.instance} · instance {short(log.instance)}{/if}
-                  </p>
-                  <pre class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
+              <article class="border-b border-border p-3 last:border-b-0 hover:bg-muted/20">
+                <header class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+                  <StatusBadge status={systemLogStatus(log)} label={systemLogLevel(log)} />
+                  <time datetime={log.occurredAt} title={new Date(log.occurredAt).toISOString()}>{stamp(log.occurredAt)}</time>
+                  <span aria-hidden="true">·</span>
+                  <span>{log.slot || 'slot unknown'}</span>
+                  <span aria-hidden="true">·</span>
+                  <span class="font-mono">{systemLogSource(log)}</span>
+                  {#if log.traceId}<span aria-hidden="true">·</span><Button variant="link" size="xs" class="h-auto p-0 font-mono text-[10px]" onclick={() => loadTrace(log.traceId)}>trace {short(log.traceId)}</Button>{/if}
+                  {#if log.spanId}<span aria-hidden="true">·</span><span class="font-mono">span {short(log.spanId)}</span>{/if}
+                  {#if log.instance}<span aria-hidden="true">·</span><span class="font-mono">instance {short(log.instance)}</span>{/if}
+                </header>
+                <div class="mt-2 min-w-0">
+                  <pre
+                    class="whitespace-pre-wrap break-words border-l-2 border-border pl-3 font-mono text-xs leading-5 text-foreground"
+                    class:border-warning={log.severityNumber >= 13 && log.severityNumber < 17}
+                    class:border-destructive={log.severityNumber >= 17}
+                  >{systemLogMessage(log)}</pre>
                   {#if systemLogContext(log).length > 0}
-                    <dl class="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[10px] text-muted-foreground">
+                    <dl class="mt-3 grid gap-x-5 gap-y-1 border-t border-border/70 pt-2 text-[10px] sm:grid-cols-2 xl:grid-cols-3">
                       {#each systemLogContext(log) as [key, value] (key)}
-                        <div class="flex min-w-0 gap-1">
-                          <dt class="shrink-0">{key}=</dt>
-                          <dd class="break-all text-foreground/80">{value}</dd>
+                        <div class="grid min-w-0 grid-cols-[minmax(5rem,auto)_1fr] gap-2">
+                          <dt class="truncate font-mono text-muted-foreground" title={key}>{key}</dt>
+                          <dd class="break-all font-mono text-foreground/80">{value}</dd>
                         </div>
                       {/each}
                     </dl>
                   {/if}
                 </div>
-              </div>
+              </article>
             {:else}
-              <p class="text-muted-foreground">{systemLogsLoaded ? 'No DeployCrate CE logs have been collected yet.' : 'Loading DeployCrate CE logs...'}</p>
+              <p class="p-4 text-sm text-muted-foreground">
+                {systemLogsLoaded
+                  ? systemLogSearch
+                    ? `No logs in ${rangeLabel} match “${systemLogSearch}”.`
+                    : `No DeployCrate CE logs were collected in ${rangeLabel}.`
+                  : 'Loading DeployCrate CE logs...'}
+              </p>
             {/each}
           </div>
         </Card.Content>

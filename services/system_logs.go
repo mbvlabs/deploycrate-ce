@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	clickhouseclient "deploycrate-ce/clients/clickhouse"
 	"deploycrate-ce/config"
@@ -15,9 +17,11 @@ import (
 const (
 	systemLogBatchSize = 200
 	maxSystemLogCursor = 1024
+	maxSystemLogSearch = 256
 )
 
 var ErrInvalidSystemLogCursor = errors.New("system log cursor is invalid")
+var ErrInvalidSystemLogSearch = errors.New("system log search is too long")
 
 type SystemLog struct {
 	ID             string            `json:"id"`
@@ -55,10 +59,19 @@ func NewSystemLogs(resource *ClickHouseResource, cfg config.Config) *SystemLogs 
 	return &SystemLogs{resource: resource, serviceName: cfg.Telemetry.ServiceName}
 }
 
-func (service *SystemLogs) Snapshot(ctx context.Context, after string) (SystemLogSnapshot, error) {
+func (service *SystemLogs) Snapshot(
+	ctx context.Context,
+	after string,
+	telemetryRange TelemetryRange,
+	search string,
+) (SystemLogSnapshot, error) {
 	cursor, err := decodeSystemLogCursor(after)
 	if err != nil {
 		return SystemLogSnapshot{}, err
+	}
+	search = strings.TrimSpace(search)
+	if utf8.RuneCountInString(search) > maxSystemLogSearch {
+		return SystemLogSnapshot{}, ErrInvalidSystemLogSearch
 	}
 	client, err := service.resource.Client(ctx)
 	if err != nil {
@@ -68,7 +81,14 @@ func (service *SystemLogs) Snapshot(ctx context.Context, after string) (SystemLo
 	if cursor != nil {
 		limit++
 	}
-	page, err := client.SystemLogs(ctx, service.serviceName, cursor, limit)
+	page, err := client.SystemLogs(
+		ctx,
+		service.serviceName,
+		time.Now().UTC().Add(-telemetryRange.Duration()),
+		search,
+		cursor,
+		limit,
+	)
 	if err != nil {
 		return SystemLogSnapshot{}, err
 	}
