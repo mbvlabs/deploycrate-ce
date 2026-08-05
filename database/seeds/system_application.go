@@ -277,7 +277,7 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		clickHouse.ID,
 		clickHouseEndpoint.ID,
 		nil,
-		factories.WithEnvironmentResourcesAlias("telemetry"),
+		factories.WithEnvironmentResourcesAlias("telemetry-storage"),
 		factories.WithEnvironmentResourcesConfiguration(
 			json.RawMessage(
 				`{"credential_source":"app_env","password_env":"CLICKHOUSE_PASSWORD"}`,
@@ -286,6 +286,46 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		factories.WithEnvironmentResourcesArchivedAt(sql.NullTime{}),
 	); err != nil {
 		return fmt.Errorf("bind DeployCrate CE ClickHouse resource: %w", err)
+	}
+
+	telemetry, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
+		Name: "DeployCrate Telemetry", Slug: "deploycrate-telemetry", ResourceType: models.ResourceTypeService,
+		Configuration: json.RawMessage(`{"engine":"opentelemetry"}`), SystemManaged: true,
+	})
+	if err != nil {
+		return fmt.Errorf("create DeployCrate Telemetry Resource: %w", err)
+	}
+	localTelemetryEndpoint, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
+		Name: "Control-plane OTLP HTTP", Role: "local", Address: "127.0.0.1", Port: 4318,
+		Protocol: "http", TlsMode: "disable",
+		Settings:   json.RawMessage(`{"exposure":"system","transport":"http/protobuf","authentication":"none"}`),
+		ResourceID: telemetry.ID,
+	})
+	if err != nil {
+		return fmt.Errorf("create local DeployCrate Telemetry endpoint: %w", err)
+	}
+	wireGuardTelemetryEndpoint, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
+		Name: "WireGuard OTLP HTTP", Role: "wireguard", Address: "10.99.0.1", Port: 4318,
+		Protocol: "http", TlsMode: "disable",
+		Settings:   json.RawMessage(`{"exposure":"environment","transport":"http/protobuf","authentication":"signed_identity"}`),
+		ResourceID: telemetry.ID, PrivateNetworkID: &network.ID,
+	})
+	if err != nil {
+		return fmt.Errorf("create WireGuard DeployCrate Telemetry endpoint: %w", err)
+	}
+	if _, err := models.ResourceHealthCheck.Create(ctx, exec, models.CreateResourceHealthCheckData{
+		Name: "OTLP receiver", Kind: "tcp", Configuration: json.RawMessage(`{}`),
+		IntervalSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 3, SuccessThreshold: 1,
+		Enabled: true, ResourceID: telemetry.ID, ResourceEndpointID: &wireGuardTelemetryEndpoint.ID,
+	}); err != nil {
+		return fmt.Errorf("create DeployCrate Telemetry health check: %w", err)
+	}
+	if _, err := models.EnvironmentResource.Create(ctx, exec, models.CreateEnvironmentResourceData{
+		Alias:         "telemetry",
+		Configuration: json.RawMessage(`{"schema_version":1,"credential_source":"none","credential_projection":"individual_parts","environment_keys":{"endpoint":"OTEL_EXPORTER_OTLP_ENDPOINT","protocol":"OTEL_EXPORTER_OTLP_PROTOCOL","headers":"OTEL_EXPORTER_OTLP_HEADERS"}}`),
+		EnvironmentID: environment.ID, ResourceID: telemetry.ID, ResourceEndpointID: localTelemetryEndpoint.ID,
+	}); err != nil {
+		return fmt.Errorf("bind DeployCrate Telemetry Resource: %w", err)
 	}
 
 	domain, err := factories.CreateEnvironmentDomain(ctx, exec, environment.ID,

@@ -13,6 +13,7 @@ import (
 
 	buildpacksclient "deploycrate-ce/clients/buildpacks"
 	"deploycrate-ce/internal/secretcrypto"
+	"deploycrate-ce/internal/telemetry"
 )
 
 const (
@@ -156,14 +157,21 @@ func DefaultSteps(operations Operations) []Step {
 			},
 		),
 		scriptSetupStep(
-			"otel-collector-"+OpenTelemetryCollectorVersion+"-wireguard-otlp-v4",
+			"otel-collector-"+OpenTelemetryCollectorVersion+"-authenticated-otlp-v5",
 			"Install durable logs, traces, and metrics collection",
 			"otel-collector.sh",
 			func(cfg Config) map[string]string {
+				identity, _ := telemetry.New(
+					cfg.Secrets.TokenSigningKey,
+					"https://"+cfg.Domain+"/telemetry",
+				)
+				jwkSet, _ := identity.PublicJWKSet()
 				return map[string]string{
-					"CLICKHOUSE_PASSWORD": cfg.Secrets.ClickHousePassword,
-					"INSTANCE_ID":         cfg.InstanceID,
-					"OTELCOL_VERSION":     OpenTelemetryCollectorVersion,
+					"CLICKHOUSE_PASSWORD":       cfg.Secrets.ClickHousePassword,
+					"INSTANCE_ID":               cfg.InstanceID,
+					"OTELCOL_VERSION":           OpenTelemetryCollectorVersion,
+					"TELEMETRY_IDENTITY_ISSUER": identity.Issuer(),
+					"TELEMETRY_IDENTITY_JWKS":   jwkSet,
 				}
 			},
 		),
@@ -196,7 +204,7 @@ func DefaultSteps(operations Operations) []Step {
 		migrationStep(operations.RunMigrations),
 		adminStep(operations.EnsureAdmin),
 		scriptSetupStep(
-			"application-service-caddy-2-11-4",
+			"application-service-caddy-2-11-4-system-slice-v2",
 			"Configure blue-green systemd slots and start pinned Caddy",
 			"service.sh",
 			func(cfg Config) map[string]string {

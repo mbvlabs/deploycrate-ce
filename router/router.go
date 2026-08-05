@@ -87,7 +87,8 @@ func New(
 		otelhttp.WithFilter(func(request *http.Request) bool {
 			return request.URL.Path != assetsPrefix &&
 				!strings.HasPrefix(request.URL.Path, assetsPrefix+"/") &&
-				request.URL.Path != routes.SystemTelemetryLogs.Path()
+				request.URL.Path != routes.SystemTelemetryLogs.Path() &&
+				request.URL.Path != routes.Health.Path()
 		}),
 	)
 

@@ -42,6 +42,7 @@ type NodeEnrollment struct {
 	ssh       sshclient.Client
 	sshCA     SSHCAService
 	wireguard wireguardclient.Client
+	telemetry *TelemetryIdentity
 }
 
 type CreateNodeInput struct {
@@ -60,10 +61,10 @@ type NodeEnrollmentDetail struct {
 	Credential models.ServerSSHCredentialEntity
 }
 
-func NewNodeEnrollment(db storage.Pool, queue storage.InsertQueue, configuration config.Config, version CurrentVersion, sshCA SSHCAService) *NodeEnrollment {
+func NewNodeEnrollment(db storage.Pool, queue storage.InsertQueue, configuration config.Config, version CurrentVersion, sshCA SSHCAService, telemetry *TelemetryIdentity) *NodeEnrollment {
 	return &NodeEnrollment{
 		db: db, queue: queue, config: configuration, version: version,
-		ssh: sshclient.New(), sshCA: sshCA, wireguard: wireguardclient.New(),
+		ssh: sshclient.New(), sshCA: sshCA, wireguard: wireguardclient.New(), telemetry: telemetry,
 	}
 }
 
@@ -419,6 +420,24 @@ func (service *NodeEnrollment) manifest(ctx context.Context, detail NodeEnrollme
 	if !control.Endpoint.Valid {
 		return nodeinstall.Manifest{}, errors.New("control-plane WireGuard endpoint is unavailable")
 	}
+	telemetryEndpoint, err := models.ResourceEndpoint.FindSystemEnvironmentEndpoint(ctx, service.db.Executor(), "opentelemetry")
+	if err != nil {
+		return nodeinstall.Manifest{}, fmt.Errorf("load control-plane OpenTelemetry Resource endpoint: %w", err)
+	}
+	if telemetryEndpoint.Address != control.PrivateAddress {
+		return nodeinstall.Manifest{}, errors.New("control-plane OpenTelemetry Resource endpoint does not match the WireGuard peer")
+	}
+	if err = telemetryEndpoint.ValidateForKind("opentelemetry"); err != nil {
+		return nodeinstall.Manifest{}, fmt.Errorf("validate control-plane OpenTelemetry Resource endpoint: %w", err)
+	}
+	telemetryToken, err := service.telemetry.NodeToken(detail.Server.ID)
+	if err != nil {
+		return nodeinstall.Manifest{}, fmt.Errorf("issue Node telemetry identity: %w", err)
+	}
+	telemetryJWKSet, err := service.telemetry.PublicJWKSet()
+	if err != nil {
+		return nodeinstall.Manifest{}, fmt.Errorf("encode telemetry identity keys: %w", err)
+	}
 	userCA, err := os.ReadFile(service.config.SSHCA.UserPrivateKeyPath + ".pub")
 	if err != nil {
 		return nodeinstall.Manifest{}, fmt.Errorf("read SSH user CA public key: %w", err)
@@ -437,8 +456,9 @@ func (service *NodeEnrollment) manifest(ctx context.Context, detail NodeEnrollme
 		ControlPlanePublicKey: control.PublicKey, ControlPlaneAddress: WireGuardPrivateAddress,
 		ControlPlaneEndpoint: control.Endpoint.String, NodePeers: nodePeers,
 		SSHUserCAPublicKey: strings.TrimSpace(string(userCA)),
-		OTLPEndpoint:       net.JoinHostPort(WireGuardPrivateAddress, "4318"),
-		Capabilities:       capabilities,
+		OTLPEndpoint:       telemetryEndpoint.URL(),
+		TelemetryIssuer:    service.telemetry.Issuer(), TelemetryJWKSet: telemetryJWKSet,
+		TelemetryNodeToken: telemetryToken, Capabilities: capabilities,
 	}, nil
 }
 

@@ -12,6 +12,9 @@ set -euo pipefail
 : "${DEPLOYCRATE_CONTROL_ENDPOINT:?DEPLOYCRATE_CONTROL_ENDPOINT is required}"
 : "${DEPLOYCRATE_SSH_USER_CA:?DEPLOYCRATE_SSH_USER_CA is required}"
 : "${DEPLOYCRATE_OTLP_ENDPOINT:?DEPLOYCRATE_OTLP_ENDPOINT is required}"
+: "${DEPLOYCRATE_TELEMETRY_ISSUER:?DEPLOYCRATE_TELEMETRY_ISSUER is required}"
+: "${DEPLOYCRATE_TELEMETRY_JWKS:?DEPLOYCRATE_TELEMETRY_JWKS is required}"
+: "${DEPLOYCRATE_TELEMETRY_NODE_TOKEN:?DEPLOYCRATE_TELEMETRY_NODE_TOKEN is required}"
 : "${DEPLOYCRATE_CAPABILITY_BUILD:?DEPLOYCRATE_CAPABILITY_BUILD is required}"
 : "${DEPLOYCRATE_CAPABILITY_RUNTIME:?DEPLOYCRATE_CAPABILITY_RUNTIME is required}"
 : "${DEPLOYCRATE_CAPABILITY_RESOURCE:?DEPLOYCRATE_CAPABILITY_RESOURCE is required}"
@@ -159,6 +162,12 @@ id otelcol-contrib >/dev/null 2>&1 || useradd --system --no-create-home --home-d
 usermod --append --groups systemd-journal otelcol-contrib
 install -d -o root -g otelcol-contrib -m 0750 /etc/otelcol-contrib
 install -d -o otelcol-contrib -g otelcol-contrib -m 0750 /var/lib/otelcol-contrib
+printf '%s' "${DEPLOYCRATE_TELEMETRY_JWKS}" | base64 --decode > /etc/otelcol-contrib/telemetry-jwks.json
+chown root:otelcol-contrib /etc/otelcol-contrib/telemetry-jwks.json
+chmod 0640 /etc/otelcol-contrib/telemetry-jwks.json
+printf 'DEPLOYCRATE_TELEMETRY_NODE_TOKEN=%s\n' "${DEPLOYCRATE_TELEMETRY_NODE_TOKEN}" > /etc/otelcol-contrib/environment
+chown root:otelcol-contrib /etc/otelcol-contrib/environment
+chmod 0640 /etc/otelcol-contrib/environment
 cat > /etc/otelcol-contrib/config.yaml <<EOF
 receivers:
   journald:
@@ -172,6 +181,8 @@ receivers:
     protocols:
       http:
         endpoint: ${DEPLOYCRATE_PRIVATE_ADDRESS}:4318
+        auth:
+          authenticator: oidc
 processors:
   batch: {}
   transform/workload_logs:
@@ -205,9 +216,16 @@ processors:
       - key: host.name
         value: ${DEPLOYCRATE_NODE_NAME_YAML}
         action: upsert
+  resource/authenticated_identity:
+    attributes:
+      - key: deploycrate.environment.id
+        from_context: auth.claims.deploycrate_environment_id
+        action: upsert
 exporters:
   otlphttp/control-plane:
-    endpoint: http://${DEPLOYCRATE_OTLP_ENDPOINT}
+    endpoint: ${DEPLOYCRATE_OTLP_ENDPOINT}
+    headers:
+      Authorization: "Bearer \${env:DEPLOYCRATE_TELEMETRY_NODE_TOKEN}"
     sending_queue:
       enabled: true
       storage: file_storage
@@ -220,20 +238,29 @@ extensions:
     directory: /var/lib/otelcol-contrib
   health_check:
     endpoint: 127.0.0.1:13133
+  oidc:
+    providers:
+      - issuer_url: ${DEPLOYCRATE_TELEMETRY_ISSUER}
+        audience: deploycrate-telemetry
+        public_keys_file: /etc/otelcol-contrib/telemetry-jwks.json
 service:
-  extensions: [file_storage, health_check]
+  extensions: [file_storage, health_check, oidc]
   pipelines:
-    logs:
-      receivers: [journald, otlp]
+    logs/journald:
+      receivers: [journald]
       processors: [transform/workload_logs, resource/node, batch]
+      exporters: [otlphttp/control-plane]
+    logs/workloads:
+      receivers: [otlp]
+      processors: [resource/authenticated_identity, resource/node, batch]
       exporters: [otlphttp/control-plane]
     metrics:
       receivers: [otlp]
-      processors: [resource/node, batch]
+      processors: [resource/authenticated_identity, resource/node, batch]
       exporters: [otlphttp/control-plane]
     traces:
       receivers: [otlp]
-      processors: [resource/node, batch]
+      processors: [resource/authenticated_identity, resource/node, batch]
       exporters: [otlphttp/control-plane]
 EOF
 chown root:otelcol-contrib /etc/otelcol-contrib/config.yaml
@@ -245,6 +272,7 @@ After=network-online.target wg-quick@wg0.service
 User=otelcol-contrib
 Group=otelcol-contrib
 SupplementaryGroups=systemd-journal
+EnvironmentFile=/etc/otelcol-contrib/environment
 ExecStart=/usr/local/bin/otelcol-contrib --config=/etc/otelcol-contrib/config.yaml
 Restart=on-failure
 NoNewPrivileges=true

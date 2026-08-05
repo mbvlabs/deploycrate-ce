@@ -29,6 +29,7 @@ After=network-online.target docker.service otelcol-contrib.service
 
 [Service]
 Type=simple
+Slice=system.slice
 User=${SERVICE_USER}
 Group=${SERVICE_USER}
 WorkingDirectory=/opt/deploycrate-ce
@@ -99,6 +100,10 @@ cat > /etc/caddy/Caddyfile <<EOF
 EOF
 
 systemctl daemon-reload
-systemctl enable --now deploycrate-ce@blue.service
+systemctl enable deploycrate-ce@blue.service
+systemctl restart deploycrate-ce@blue.service
+if systemctl is-active --quiet deploycrate-ce@green.service; then
+  systemctl restart deploycrate-ce@green.service
+fi
 systemctl enable --now caddy
 systemctl restart caddy

@@ -4,6 +4,8 @@ set -euo pipefail
 : "${CLICKHOUSE_PASSWORD:?CLICKHOUSE_PASSWORD is required}"
 : "${INSTANCE_ID:?INSTANCE_ID is required}"
 : "${OTELCOL_VERSION:?OTELCOL_VERSION is required}"
+: "${TELEMETRY_IDENTITY_ISSUER:?TELEMETRY_IDENTITY_ISSUER is required}"
+: "${TELEMETRY_IDENTITY_JWKS:?TELEMETRY_IDENTITY_JWKS is required}"
 
 architecture="$(dpkg --print-architecture)"
 case "${architecture}" in
@@ -42,6 +44,9 @@ fi
 
 install -d -o root -g otelcol-contrib -m 0750 /etc/otelcol-contrib
 install -d -o otelcol-contrib -g otelcol-contrib -m 0750 /var/lib/otelcol-contrib/storage
+printf '%s\n' "${TELEMETRY_IDENTITY_JWKS}" > /etc/otelcol-contrib/telemetry-jwks.json
+chown root:otelcol-contrib /etc/otelcol-contrib/telemetry-jwks.json
+chmod 0640 /etc/otelcol-contrib/telemetry-jwks.json
 
 cat > /etc/otelcol-contrib/environment <<EOF
 CLICKHOUSE_PASSWORD="${CLICKHOUSE_PASSWORD}"
@@ -59,6 +64,11 @@ extensions:
       on_start: true
   health_check:
     endpoint: 127.0.0.1:13133
+  oidc:
+    providers:
+      - issuer_url: ${TELEMETRY_IDENTITY_ISSUER}
+        audience: deploycrate-telemetry
+        public_keys_file: /etc/otelcol-contrib/telemetry-jwks.json
 
 receivers:
   journald:
@@ -89,6 +99,8 @@ receivers:
     protocols:
       http:
         endpoint: 10.99.0.1:4318
+        auth:
+          authenticator: oidc
 
 processors:
   memory_limiter:
@@ -120,6 +132,14 @@ processors:
       - key: host.id
         value: "${INSTANCE_ID}"
         action: insert
+  resource/authenticated_identity:
+    attributes:
+      - key: deploycrate.environment.id
+        from_context: auth.claims.deploycrate_environment_id
+        action: upsert
+      - key: deploycrate.server.id
+        from_context: auth.claims.deploycrate_server_id
+        action: upsert
 exporters:
   clickhouse:
     endpoint: tcp://127.0.0.1:9000?dial_timeout=10s
@@ -163,7 +183,7 @@ exporters:
       max_elapsed_time: 0
 
 service:
-  extensions: [file_storage, health_check]
+  extensions: [file_storage, health_check, oidc]
   telemetry:
     logs:
       level: info
@@ -188,7 +208,7 @@ service:
       exporters: [clickhouse]
     logs/nodes:
       receivers: [otlp/nodes]
-      processors: [memory_limiter]
+      processors: [memory_limiter, resource/authenticated_identity]
       exporters: [clickhouse]
     traces/local:
       receivers: [otlp/local]
@@ -196,7 +216,7 @@ service:
       exporters: [clickhouse]
     traces/nodes:
       receivers: [otlp/nodes]
-      processors: [memory_limiter]
+      processors: [memory_limiter, resource/authenticated_identity]
       exporters: [clickhouse]
     metrics/local:
       receivers: [otlp/local]
@@ -204,7 +224,7 @@ service:
       exporters: [clickhouse]
     metrics/nodes:
       receivers: [otlp/nodes]
-      processors: [memory_limiter]
+      processors: [memory_limiter, resource/authenticated_identity]
       exporters: [clickhouse]
 EOF
 chown root:otelcol-contrib /etc/otelcol-contrib/config.yaml

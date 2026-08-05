@@ -58,10 +58,21 @@ func (application) FindSystemResourceIndex(ctx context.Context, db storage.Execu
 		ColumnExpr("resource.configuration ->> 'engine' AS engine").
 		ColumnExpr("COALESCE(origin.address, '') AS origin_address").
 		ColumnExpr("COALESCE(origin.port, 0) AS origin_port").
-		ColumnExpr("COALESCE(installation_status.health, 'unknown') AS health").
-		Join("LEFT JOIN LATERAL (SELECT address, port FROM resource_endpoints WHERE resource_id = resource.id AND role = 'primary' AND archived_at IS NULL ORDER BY created_at LIMIT 1) AS origin ON TRUE").
+		ColumnExpr("COALESCE(installation_status.health, health_status.health, 'unknown') AS health").
+		Join("LEFT JOIN LATERAL (SELECT address, port FROM resource_endpoints WHERE resource_id = resource.id AND role IN ('primary', 'local') AND archived_at IS NULL ORDER BY CASE role WHEN 'primary' THEN 0 ELSE 1 END, created_at LIMIT 1) AS origin ON TRUE").
 		Join("LEFT JOIN LATERAL (SELECT id FROM resource_installations WHERE resource_id = resource.id AND archived_at IS NULL ORDER BY created_at LIMIT 1) AS installation ON TRUE").
 		Join("LEFT JOIN resource_installation_statuses AS installation_status ON installation_status.resource_installation_id = installation.id").
+		Join(`LEFT JOIN LATERAL (
+			SELECT CASE
+				WHEN bool_or(status.state = 'unhealthy' AND status.expires_at > CURRENT_TIMESTAMP) THEN 'unhealthy'
+				WHEN bool_or(status.state = 'degraded' AND status.expires_at > CURRENT_TIMESTAMP) THEN 'degraded'
+				WHEN bool_and(status.state = 'healthy' AND status.expires_at > CURRENT_TIMESTAMP) THEN 'healthy'
+				ELSE 'unknown'
+			END AS health
+			FROM resource_health_checks AS health_check
+			LEFT JOIN resource_health_check_statuses AS status ON status.health_check_id = health_check.id
+			WHERE health_check.resource_id = resource.id AND health_check.archived_at IS NULL AND health_check.enabled = TRUE
+		) AS health_status ON TRUE`).
 		Where("resource.system_managed = TRUE").
 		Where("resource.archived_at IS NULL").
 		OrderExpr("resource.name").

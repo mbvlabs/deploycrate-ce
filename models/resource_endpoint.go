@@ -6,8 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/netip"
+	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,6 +36,37 @@ type ResourceEndpointEntity struct {
 	ArchivedAt       sql.NullTime    `bun:"archived_at"`
 	ResourceID       uuid.UUID       `bun:"resource_id,type:uuid"`
 	PrivateNetworkID *uuid.UUID      `bun:"private_network_id,type:uuid"`
+}
+
+const (
+	ResourceEndpointExposureSystem      = "system"
+	ResourceEndpointExposureEnvironment = "environment"
+	ResourceEndpointAuthNone            = "none"
+	ResourceEndpointAuthSignedIdentity  = "signed_identity"
+	ResourceEndpointTransportOTLPHTTP   = "http/protobuf"
+)
+
+type ResourceEndpointSettings struct {
+	Exposure       string `json:"exposure"`
+	Transport      string `json:"transport"`
+	Authentication string `json:"authentication"`
+}
+
+func (e ResourceEndpointEntity) ParsedSettings() ResourceEndpointSettings {
+	var settings ResourceEndpointSettings
+	_ = json.Unmarshal(e.Settings, &settings)
+	settings.Exposure = strings.ToLower(strings.TrimSpace(settings.Exposure))
+	settings.Transport = strings.ToLower(strings.TrimSpace(settings.Transport))
+	settings.Authentication = strings.ToLower(strings.TrimSpace(settings.Authentication))
+	return settings
+}
+
+func (e ResourceEndpointEntity) IsEnvironmentEndpoint() bool {
+	return e.ParsedSettings().Exposure == ResourceEndpointExposureEnvironment
+}
+
+func (e ResourceEndpointEntity) URL() string {
+	return (&url.URL{Scheme: e.Protocol, Host: net.JoinHostPort(e.Address, strconv.Itoa(int(e.Port)))}).String()
 }
 
 func (e *ResourceEndpointEntity) Validate() error {
@@ -81,6 +115,27 @@ func (e *ResourceEndpointEntity) ValidateForKind(kind string) error {
 	}
 	if !definition.SupportsProtocol(e.Protocol) {
 		builder.Add("protocol", "unsupported", "protocol is not supported by this resource kind")
+	}
+	if definition.Engine == "opentelemetry" {
+		settings := e.ParsedSettings()
+		if settings.Transport != ResourceEndpointTransportOTLPHTTP {
+			builder.Add("settings.transport", "unsupported", "OpenTelemetry endpoints require the HTTP/protobuf transport")
+		}
+		switch settings.Exposure {
+		case ResourceEndpointExposureSystem:
+			if settings.Authentication != ResourceEndpointAuthNone {
+				builder.Add("settings.authentication", "unsupported", "system-only OpenTelemetry endpoints must not require workload authentication")
+			}
+		case ResourceEndpointExposureEnvironment:
+			if settings.Authentication != ResourceEndpointAuthSignedIdentity {
+				builder.Add("settings.authentication", "unsupported", "Environment OpenTelemetry endpoints require signed identity authentication")
+			}
+			if e.PrivateNetworkID == nil {
+				builder.Add("privateNetworkId", "required", "Environment OpenTelemetry endpoints require a private network")
+			}
+		default:
+			builder.Add("settings.exposure", "unsupported", "OpenTelemetry endpoint exposure is not supported")
+		}
 	}
 	return builder.Err()
 }
@@ -133,6 +188,32 @@ func (re resourceEndpoint) Find(
 	}
 
 	return entity, nil
+}
+
+func (re resourceEndpoint) FindSystemEnvironmentEndpoint(
+	ctx context.Context,
+	db storage.Executor,
+	engine string,
+) (ResourceEndpointEntity, error) {
+	endpoints := make([]ResourceEndpointEntity, 0, 1)
+	if err := db.NewSelect().Model(&endpoints).
+		Join("JOIN resources AS resource ON resource.id = resource_endpoints.resource_id AND resource.archived_at IS NULL").
+		Where("resource.system_managed = TRUE").Where("resource.configuration ->> 'engine' = ?", strings.ToLower(strings.TrimSpace(engine))).
+		Where("resource_endpoints.settings ->> 'exposure' = ?", ResourceEndpointExposureEnvironment).
+		Where(`resource_endpoints.private_network_id IN (
+			SELECT membership.private_network_id
+			FROM environment_networks AS membership
+			JOIN environments AS environment ON environment.id = membership.environment_id AND environment.archived_at IS NULL
+			JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL
+			WHERE application.slug = ? AND membership.removed_at IS NULL
+		)`, SystemApplicationSlug).
+		Where("resource_endpoints.archived_at IS NULL").OrderExpr("resource_endpoints.created_at").Scan(ctx); err != nil {
+		return ResourceEndpointEntity{}, err
+	}
+	if len(endpoints) != 1 {
+		return ResourceEndpointEntity{}, fmt.Errorf("exactly one system %s Environment endpoint is required", engine)
+	}
+	return endpoints[0], nil
 }
 
 type CreateResourceEndpointData struct {
@@ -208,25 +289,35 @@ func (re resourceEndpoint) CreateForSystemResource(
 	}
 	var configuration ResourceConfiguration
 	_ = json.Unmarshal(resource.Configuration, &configuration)
-	if !resourceSupportsProtocol(configuration.Engine, data.Protocol) {
+	entity := ResourceEndpointEntity{
+		Name: data.Name, Role: data.Role, Address: data.Address, Port: data.Port,
+		Protocol: data.Protocol, TlsMode: data.TlsMode, Settings: data.Settings,
+		ResourceID: data.ResourceID, PrivateNetworkID: data.PrivateNetworkID,
+	}
+	if err := entity.ValidateForKind(configuration.Engine); err != nil {
+		return ResourceEndpointEntity{}, errors.Join(ErrDomainValidation, err)
+	}
+	if !resourceSupportsProtocol(configuration.Engine, entity.Protocol) {
 		return ResourceEndpointEntity{}, errors.Join(
 			ErrDomainValidation,
-			validation.ValidationErrors{{Field: "protocol", Code: "unsupported", Message: fmt.Sprintf("protocol %q is not supported by %s", data.Protocol, configuration.Engine)}},
+			validation.ValidationErrors{{Field: "protocol", Code: "unsupported", Message: fmt.Sprintf("protocol %q is not supported by %s", entity.Protocol, configuration.Engine)}},
 		)
 	}
-	if data.Role == "wireguard" {
-		if data.PrivateNetworkID == nil {
+	data.Name, data.Role, data.Address = entity.Name, entity.Role, entity.Address
+	data.Protocol, data.TlsMode, data.Settings = entity.Protocol, entity.TlsMode, entity.Settings
+	if entity.Role == "wireguard" {
+		if entity.PrivateNetworkID == nil {
 			return ResourceEndpointEntity{}, errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "privateNetworkId", Code: "required", Message: "WireGuard endpoints require a private network"}})
 		}
 		var cidr string
 		err = db.NewSelect().TableExpr("server_networks AS server_network").
 			ColumnExpr("server_network.configuration ->> 'cidr'").
-			Where("server_network.private_network_id = ?", *data.PrivateNetworkID).
+			Where("server_network.private_network_id = ?", *entity.PrivateNetworkID).
 			Where("server_network.driver = 'wireguard'").
 			Where("server_network.removed_at IS NULL").
 			Limit(1).
 			Scan(ctx, &cidr)
-		address, addressErr := netip.ParseAddr(strings.TrimSpace(data.Address))
+		address, addressErr := netip.ParseAddr(strings.TrimSpace(entity.Address))
 		network, networkErr := netip.ParsePrefix(strings.TrimSpace(cidr))
 		if err != nil || addressErr != nil || networkErr != nil || !network.Contains(address) {
 			return ResourceEndpointEntity{}, errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "address", Code: "network", Message: "WireGuard endpoint address must be reachable through the selected private network"}})

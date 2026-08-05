@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -17,7 +18,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-const ManifestVersion = 3
+const ManifestVersion = 4
 
 type Manifest struct {
 	ManifestVersion       int                       `json:"manifest_version"`
@@ -32,6 +33,9 @@ type Manifest struct {
 	NodePeers             []internalwireguard.Peer  `json:"node_peers"`
 	SSHUserCAPublicKey    string                    `json:"ssh_user_ca_public_key"`
 	OTLPEndpoint          string                    `json:"otlp_endpoint"`
+	TelemetryIssuer       string                    `json:"telemetry_issuer"`
+	TelemetryJWKSet       string                    `json:"telemetry_jwk_set"`
+	TelemetryNodeToken    string                    `json:"telemetry_node_token"`
 	Capabilities          models.ServerCapabilities `json:"capabilities"`
 }
 
@@ -96,9 +100,27 @@ func (manifest Manifest) Validate() error {
 	if _, _, _, remainder, caErr := ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(manifest.SSHUserCAPublicKey))); caErr != nil || len(strings.TrimSpace(string(remainder))) != 0 {
 		errs = append(errs, errors.New("SSH user CA public key is invalid"))
 	}
-	otlp, otlpErr := netip.ParseAddrPort(strings.TrimSpace(manifest.OTLPEndpoint))
-	if otlpErr != nil || otlp.Addr().String() != internalwireguard.ControlPlaneAddress {
-		errs = append(errs, errors.New("OTLP endpoint must be on the control-plane WireGuard address"))
+	otlp, otlpErr := url.Parse(strings.TrimSpace(manifest.OTLPEndpoint))
+	otlpValid := otlpErr == nil && otlp != nil
+	if otlpValid {
+		otlpPort, portErr := strconv.Atoi(otlp.Port())
+		otlpValid = (otlp.Scheme == "http" || otlp.Scheme == "https") && otlp.Hostname() == internalwireguard.ControlPlaneAddress && portErr == nil && otlpPort >= 1 && otlpPort <= 65535 && otlp.User == nil && otlp.RawQuery == "" && otlp.Fragment == ""
+	}
+	if !otlpValid {
+		errs = append(errs, errors.New("OTLP endpoint must be an absolute HTTP URL on the control-plane WireGuard address"))
+	}
+	issuer, issuerErr := url.Parse(strings.TrimSpace(manifest.TelemetryIssuer))
+	if issuerErr != nil || issuer == nil || issuer.Host == "" || (issuer.Scheme != "http" && issuer.Scheme != "https") || issuer.User != nil || issuer.RawQuery != "" || issuer.Fragment != "" {
+		errs = append(errs, errors.New("telemetry issuer must be an absolute HTTP URL"))
+	}
+	var keySet struct {
+		Keys []json.RawMessage `json:"keys"`
+	}
+	if json.Unmarshal([]byte(manifest.TelemetryJWKSet), &keySet) != nil || len(keySet.Keys) == 0 {
+		errs = append(errs, errors.New("telemetry JWK set is invalid"))
+	}
+	if strings.Count(manifest.TelemetryNodeToken, ".") != 2 || strings.ContainsAny(manifest.TelemetryNodeToken, " \t\r\n\x00") {
+		errs = append(errs, errors.New("telemetry Node token is invalid"))
 	}
 	for _, peer := range manifest.NodePeers {
 		if len(peer.AllowedIPs) != 1 {

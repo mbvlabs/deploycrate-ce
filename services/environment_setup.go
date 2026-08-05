@@ -48,11 +48,14 @@ type environmentResourceConfiguration struct {
 func encodeEnvironmentResourceConfiguration(
 	projection string,
 	credentialID *uuid.UUID,
+	credentialSource string,
 	environmentKeys, environmentKeyOverrides map[string]string,
 ) (json.RawMessage, error) {
-	credentialSource := "none"
-	if credentialID != nil {
+	credentialSource = strings.ToLower(strings.TrimSpace(credentialSource))
+	if credentialSource == "" && credentialID != nil {
 		credentialSource = "managed"
+	} else if credentialSource == "" {
+		credentialSource = "none"
 	}
 	return json.Marshal(environmentResourceConfiguration{
 		SchemaVersion: 1, CredentialSource: credentialSource,
@@ -83,6 +86,7 @@ type EnvironmentSetup struct {
 	servers    *ServerExecution
 	builds     *BuildExecution
 	registry   registryclient.Client
+	telemetry  *TelemetryIdentity
 	config     config.Config
 }
 
@@ -98,12 +102,13 @@ func NewEnvironmentSetup(
 	workloads *WorkloadExecution,
 	servers *ServerExecution,
 	builds *BuildExecution,
+	telemetry *TelemetryIdentity,
 	cfg config.Config,
 ) *EnvironmentSetup {
 	return &EnvironmentSetup{
 		db: db, queue: queue, jobControl: jobControl, github: github, secrets: secrets,
 		resources: resources, dns: dns, caddy: caddy, workloads: workloads, buildpacks: buildpacksclient.New(), servers: servers,
-		builds: builds, registry: registryclient.New(), config: cfg,
+		builds: builds, registry: registryclient.New(), telemetry: telemetry, config: cfg,
 	}
 }
 
@@ -668,8 +673,10 @@ func (service *EnvironmentSetup) EditData(
 		ColumnExpr("connection.id, connection.resource_id, connection.resource_endpoint_id, connection.resource_credential_id, connection.alias, connection.configuration").
 		ColumnExpr("credential.metadata AS credential_metadata").
 		Join("JOIN resource_endpoints AS endpoint ON endpoint.id = connection.resource_endpoint_id AND endpoint.archived_at IS NULL").
+		Join("JOIN resources AS resource ON resource.id = connection.resource_id AND resource.archived_at IS NULL").
 		Join("LEFT JOIN resource_credentials AS credential ON credential.id = connection.resource_credential_id AND credential.archived_at IS NULL").
-		Where("connection.environment_id = ?", environmentID).Where("connection.archived_at IS NULL").OrderExpr("connection.alias").Scan(ctx, &rows); err != nil {
+		Where("connection.environment_id = ?", environmentID).Where("connection.archived_at IS NULL").
+		Where("resource.system_managed = FALSE").OrderExpr("connection.alias").Scan(ctx, &rows); err != nil {
 		return EnvironmentEditData{}, err
 	}
 	resources := make([]EnvironmentSetupResourceInput, 0, len(rows))
@@ -1016,6 +1023,7 @@ func (service *EnvironmentSetup) Complete(
 	for _, prepared := range preparedResources {
 		configuration, configurationErr := encodeEnvironmentResourceConfiguration(
 			prepared.input.CredentialProjection, prepared.input.CredentialID,
+			preparedCredentialSource(prepared),
 			prepared.environmentKeys, prepared.environmentKeyOverrides,
 		)
 		if configurationErr != nil {
@@ -1941,6 +1949,7 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	for _, prepared := range preparedResources {
 		resourceConfiguration, configurationErr := encodeEnvironmentResourceConfiguration(
 			prepared.input.CredentialProjection, prepared.input.CredentialID,
+			preparedCredentialSource(prepared),
 			prepared.environmentKeys, prepared.environmentKeyOverrides,
 		)
 		if configurationErr != nil {
@@ -2459,6 +2468,16 @@ func (service *EnvironmentSetup) runtimePlacement(ctx context.Context, serverID 
 }
 
 func (service *EnvironmentSetup) prepareResources(ctx context.Context, environmentID uuid.UUID, serverIDs []uuid.UUID, networkID uuid.UUID, inputs []EnvironmentSetupResourceInput) ([]preparedSetupResource, error) {
+	telemetryInput, err := service.environmentTelemetryResourceInput(ctx, networkID)
+	if err != nil {
+		return nil, err
+	}
+	for index, input := range inputs {
+		if input.ResourceID == telemetryInput.ResourceID {
+			return nil, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: fmt.Sprintf("resources.%d.resourceId", index), Code: "system_managed", Message: "Telemetry is attached automatically through its Environment endpoint"}})
+		}
+	}
+	inputs = append(append([]EnvironmentSetupResourceInput(nil), inputs...), telemetryInput)
 	prepared := make([]preparedSetupResource, 0, len(inputs))
 	connectionConfigurations := make(map[uuid.UUID]environmentResourceConfiguration)
 	if environmentID != uuid.Nil {
@@ -2489,6 +2508,9 @@ func (service *EnvironmentSetup) prepareResources(ctx context.Context, environme
 		_, supported := models.FindResourceEngine(resource.Engine())
 		if err != nil || resource.ArchivedAt.Valid || !supported {
 			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected Resource is unavailable"))
+		}
+		if resource.ID != telemetryInput.ResourceID && (resource.SystemManaged || resource.Engine() == "opentelemetry") {
+			return nil, errors.Join(models.ErrDomainValidation, errors.New("selected system Resource is unavailable for manual attachment"))
 		}
 		input.Alias = strings.ToUpper(strings.TrimSpace(input.Alias))
 		input.CredentialProjection = strings.ToLower(strings.TrimSpace(input.CredentialProjection))
@@ -2548,8 +2570,15 @@ func (service *EnvironmentSetup) prepareResources(ctx context.Context, environme
 			overrides = maps.Clone(configuration.EnvironmentKeyOverrides)
 			effectiveKeys = connectionEnvironmentKeys(resource, configuration)
 		}
+		identityToken := ""
+		if resource.Engine() == "opentelemetry" {
+			identityToken, err = service.telemetry.EnvironmentToken(environmentID)
+			if err != nil {
+				return nil, err
+			}
+		}
 		values, environmentKeys, projectionErr := resourceProjectionValues(
-			resource, endpoint, credential, credentialValues, input.CredentialProjection, effectiveKeys,
+			resource, endpoint, credential, credentialValues, input.CredentialProjection, effectiveKeys, identityToken,
 		)
 		if projectionErr != nil {
 			return nil, projectionErr
@@ -2573,6 +2602,39 @@ func (service *EnvironmentSetup) prepareResources(ctx context.Context, environme
 	return prepared, nil
 }
 
+func (service *EnvironmentSetup) environmentTelemetryResourceInput(ctx context.Context, networkID uuid.UUID) (EnvironmentSetupResourceInput, error) {
+	type endpointRow struct {
+		ResourceID uuid.UUID `bun:"resource_id"`
+		EndpointID uuid.UUID `bun:"endpoint_id"`
+	}
+	rows := make([]endpointRow, 0, 1)
+	err := service.db.Executor().NewSelect().TableExpr("resources AS resource").
+		ColumnExpr("resource.id AS resource_id, endpoint.id AS endpoint_id").
+		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = resource.id AND endpoint.archived_at IS NULL").
+		Where("resource.system_managed = TRUE").Where("resource.archived_at IS NULL").
+		Where("resource.configuration ->> 'engine' = 'opentelemetry'").
+		Where("endpoint.private_network_id = ?", networkID).
+		Where("endpoint.settings ->> 'exposure' = ?", models.ResourceEndpointExposureEnvironment).
+		OrderExpr("endpoint.created_at").Scan(ctx, &rows)
+	if err != nil {
+		return EnvironmentSetupResourceInput{}, err
+	}
+	if len(rows) != 1 {
+		return EnvironmentSetupResourceInput{}, errors.New("exactly one Environment OpenTelemetry Resource endpoint is required")
+	}
+	return EnvironmentSetupResourceInput{
+		ResourceID: rows[0].ResourceID, EndpointID: rows[0].EndpointID, Alias: "TELEMETRY",
+		CredentialProjection: resourceCredentialProjectionIndividualParts,
+	}, nil
+}
+
+func preparedCredentialSource(resource preparedSetupResource) string {
+	if resource.resource.Engine() == "opentelemetry" {
+		return "platform"
+	}
+	return ""
+}
+
 func resourceProjectionValues(
 	resource models.ResourceEntity,
 	endpoint models.ResourceEndpointEntity,
@@ -2580,6 +2642,7 @@ func resourceProjectionValues(
 	credentialValues map[string]string,
 	projection string,
 	resourceKeys map[string]string,
+	identityToken string,
 ) (map[string]string, map[string]string, error) {
 	definition, supported := models.FindResourceEngine(resource.Engine())
 	if !supported {
@@ -2598,6 +2661,21 @@ func resourceProjectionValues(
 		return nil
 	}
 	values := make(map[string]string)
+	if resource.Engine() == "opentelemetry" {
+		settings := endpoint.ParsedSettings()
+		if projection != resourceCredentialProjectionIndividualParts || !endpoint.IsEnvironmentEndpoint() || settings.Transport != models.ResourceEndpointTransportOTLPHTTP || settings.Authentication != models.ResourceEndpointAuthSignedIdentity || strings.TrimSpace(identityToken) == "" {
+			return nil, nil, errors.New("selected OpenTelemetry Resource endpoint cannot be projected into an Environment")
+		}
+		for logicalName, value := range map[string]string{
+			"endpoint": endpoint.URL(), "protocol": settings.Transport,
+			"headers": "Authorization=Bearer " + identityToken,
+		} {
+			if err := valueFor(logicalName, value, values); err != nil {
+				return nil, nil, err
+			}
+		}
+		return values, projectedKeys, nil
+	}
 	database := ""
 	if credential != nil {
 		database = resourceCredentialMetadataDatabase(credential.Metadata)

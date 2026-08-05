@@ -237,6 +237,9 @@ func (c Config) Validate(normalizeObjectStorage func(S3Config) (S3Config, error)
 	if len(c.Secrets.ClickHousePassword) < 24 {
 		errs = append(errs, errors.New("ClickHouse password is unavailable"))
 	}
+	if strings.TrimSpace(c.Secrets.TokenSigningKey) == "" {
+		errs = append(errs, errors.New("token signing key is unavailable"))
+	}
 	if c.Database.Host == "" || c.Database.Port < 1 || c.Database.Name == "" ||
 		c.Database.User == "" ||
 		c.Secrets.DatabasePassword == "" {

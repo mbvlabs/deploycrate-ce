@@ -473,6 +473,9 @@ func (service BootstrapService) createGraph(
 	); err != nil {
 		return BootstrapResult{}, err
 	}
+	if err := createBootstrapTelemetryResource(ctx, tx, environment.ID, network.ID); err != nil {
+		return BootstrapResult{}, err
+	}
 	if err := createBootstrapRegistryResource(ctx, tx, input, server.ID); err != nil {
 		return BootstrapResult{}, err
 	}
@@ -691,7 +694,7 @@ func createBootstrapClickHouseResource(
 		ctx,
 		exec,
 		models.CreateEnvironmentResourceData{
-			Alias:                "telemetry",
+			Alias:                "telemetry-storage",
 			Configuration:        json.RawMessage(`{"credential_source":"managed","database":"deploycrate"}`),
 			EnvironmentID:        environmentID,
 			ResourceID:           resource.ID,
@@ -700,6 +703,77 @@ func createBootstrapClickHouseResource(
 		},
 	); err != nil {
 		return fmt.Errorf("bind bootstrap ClickHouse resource: %w", err)
+	}
+	return nil
+}
+
+func createBootstrapTelemetryResource(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentID, networkID uuid.UUID,
+) error {
+	configuration, err := json.Marshal(models.ResourceConfiguration{Engine: "opentelemetry"})
+	if err != nil {
+		return fmt.Errorf("encode bootstrap OpenTelemetry Resource: %w", err)
+	}
+	resource, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
+		Name:          "DeployCrate Telemetry",
+		Slug:          "deploycrate-telemetry",
+		ResourceType:  models.ResourceTypeService,
+		Configuration: configuration,
+		SystemManaged: true,
+	})
+	if err != nil {
+		return fmt.Errorf("create bootstrap OpenTelemetry Resource: %w", err)
+	}
+	localEndpoint, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
+		Name:             "Control-plane OTLP HTTP",
+		Role:             "local",
+		Address:          "127.0.0.1",
+		Port:             4318,
+		Protocol:         "http",
+		TlsMode:          "disable",
+		Settings:         json.RawMessage(`{"exposure":"system","transport":"http/protobuf","authentication":"none"}`),
+		ResourceID:       resource.ID,
+		PrivateNetworkID: nil,
+	})
+	if err != nil {
+		return fmt.Errorf("create bootstrap local OpenTelemetry endpoint: %w", err)
+	}
+	endpoint, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
+		Name:             "WireGuard OTLP HTTP",
+		Role:             "wireguard",
+		Address:          WireGuardPrivateAddress,
+		Port:             4318,
+		Protocol:         "http",
+		TlsMode:          "disable",
+		Settings:         json.RawMessage(`{"exposure":"environment","transport":"http/protobuf","authentication":"signed_identity"}`),
+		ResourceID:       resource.ID,
+		PrivateNetworkID: &networkID,
+	})
+	if err != nil {
+		return fmt.Errorf("create bootstrap OpenTelemetry endpoint: %w", err)
+	}
+	if _, err := models.ResourceHealthCheck.Create(ctx, exec, models.CreateResourceHealthCheckData{
+		Name: "OTLP receiver", Kind: "tcp", Configuration: json.RawMessage(`{}`),
+		IntervalSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 3, SuccessThreshold: 1,
+		Enabled: true, ResourceID: resource.ID, ResourceEndpointID: &endpoint.ID,
+	}); err != nil {
+		return fmt.Errorf("create bootstrap OpenTelemetry health check: %w", err)
+	}
+	bindingConfiguration, err := json.Marshal(environmentResourceConfiguration{
+		SchemaVersion: 1, CredentialSource: "none",
+		CredentialProjection: resourceCredentialProjectionIndividualParts,
+		EnvironmentKeys:      resource.EnvironmentKeys(),
+	})
+	if err != nil {
+		return fmt.Errorf("encode bootstrap OpenTelemetry binding: %w", err)
+	}
+	if _, err := models.EnvironmentResource.Create(ctx, exec, models.CreateEnvironmentResourceData{
+		Alias: "telemetry", Configuration: bindingConfiguration, EnvironmentID: environmentID,
+		ResourceID: resource.ID, ResourceEndpointID: localEndpoint.ID,
+	}); err != nil {
+		return fmt.Errorf("bind bootstrap OpenTelemetry Resource: %w", err)
 	}
 	return nil
 }

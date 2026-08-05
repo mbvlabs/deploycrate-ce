@@ -35,10 +35,11 @@ type ResourceManagement struct {
 	container *ContainerExecution
 	postgres  postgresqlclient.Client
 	secrets   *EnvironmentSecrets
+	telemetry *TelemetryIdentity
 }
 
-func NewResourceManagement(db storage.Pool, cfg config.Config, secrets *EnvironmentSecrets, container *ContainerExecution) *ResourceManagement {
-	return &ResourceManagement{db: db, config: cfg, container: container, postgres: postgresqlclient.New(), secrets: secrets}
+func NewResourceManagement(db storage.Pool, cfg config.Config, secrets *EnvironmentSecrets, container *ContainerExecution, telemetry *TelemetryIdentity) *ResourceManagement {
+	return &ResourceManagement{db: db, config: cfg, container: container, postgres: postgresqlclient.New(), secrets: secrets, telemetry: telemetry}
 }
 
 type ResourceInput struct {
@@ -214,7 +215,7 @@ func (service *ResourceManagement) List(ctx context.Context, filters models.Reso
 func (service *ResourceManagement) Options(ctx context.Context) (models.ResourceFormOptions, error) {
 	engines := make([]models.ResourceEngineDefinition, 0)
 	for _, definition := range models.ResourceEngineCatalog() {
-		if definition.Engine != "mysql" && definition.Engine != "registry" {
+		if definition.Engine != "mysql" && definition.Engine != "registry" && definition.Engine != "opentelemetry" {
 			engines = append(engines, definition)
 		}
 	}
@@ -360,6 +361,11 @@ func (service *ResourceManagement) Details(ctx context.Context, resourceID uuid.
 }
 
 func (service *ResourceManagement) CreateResource(ctx context.Context, input CreateResourceInput) (models.ResourceEntity, error) {
+	var requestedConfiguration models.ResourceConfiguration
+	_ = json.Unmarshal(input.Resource.Configuration, &requestedConfiguration)
+	if strings.EqualFold(strings.TrimSpace(requestedConfiguration.Engine), "opentelemetry") {
+		return models.ResourceEntity{}, domainError("resource.configuration.engine", "system_managed", "OpenTelemetry is managed by the DeployCrate telemetry Resource")
+	}
 	if input.Installation == nil {
 		return models.ResourceEntity{}, domainError("installation", "required", "Resources require a Docker installation")
 	}
@@ -1696,8 +1702,8 @@ func (service *ResourceManagement) UpdateConnectionEnvironmentKeys(
 		}
 		credential = &selected
 	}
-	values, projectedKeys, err := resourceProjectionValues(
-		resource, endpoint, credential, credentialValues, configuration.CredentialProjection, effectiveKeys,
+	values, projectedKeys, err := service.resourceProjectionValuesForEnvironment(
+		connection.EnvironmentID, resource, endpoint, credential, credentialValues, configuration.CredentialProjection, effectiveKeys,
 	)
 	if err != nil {
 		return err
@@ -1744,8 +1750,8 @@ func (service *ResourceManagement) reconcileEnvironmentResourceConnections(
 			return err
 		}
 		effectiveKeys := connectionEnvironmentKeys(resource, configuration)
-		values, environmentKeys, err := resourceProjectionValues(
-			resource, endpoint, credential, credentialValues, configuration.CredentialProjection, effectiveKeys,
+		values, environmentKeys, err := service.resourceProjectionValuesForEnvironment(
+			connection.EnvironmentID, resource, endpoint, credential, credentialValues, configuration.CredentialProjection, effectiveKeys,
 		)
 		if err != nil {
 			return err
@@ -1761,6 +1767,26 @@ func (service *ResourceManagement) reconcileEnvironmentResourceConnections(
 		}
 	}
 	return nil
+}
+
+func (service *ResourceManagement) resourceProjectionValuesForEnvironment(
+	environmentID uuid.UUID,
+	resource models.ResourceEntity,
+	endpoint models.ResourceEndpointEntity,
+	credential *models.ResourceCredentialEntity,
+	credentialValues map[string]string,
+	projection string,
+	resourceKeys map[string]string,
+) (map[string]string, map[string]string, error) {
+	identityToken := ""
+	var err error
+	if resource.Engine() == "opentelemetry" {
+		identityToken, err = service.telemetry.EnvironmentToken(environmentID)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return resourceProjectionValues(resource, endpoint, credential, credentialValues, projection, resourceKeys, identityToken)
 }
 
 func (service *ResourceManagement) ArchiveCredential(ctx context.Context, resourceID, credentialID uuid.UUID) error {

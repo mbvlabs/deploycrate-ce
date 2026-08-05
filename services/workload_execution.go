@@ -224,14 +224,8 @@ func (service *WorkloadExecution) target(ctx context.Context, serverID uuid.UUID
 }
 
 func workloadTelemetryEnvironment(spec containerclient.WorkloadRunSpec, target workloadExecutionTarget) map[string]string {
-	environment := make(map[string]string, len(spec.Environment)+3)
+	environment := make(map[string]string, len(spec.Environment)+1)
 	maps.Copy(environment, spec.Environment)
-	if strings.TrimSpace(environment["OTEL_EXPORTER_OTLP_ENDPOINT"]) == "" {
-		environment["OTEL_EXPORTER_OTLP_ENDPOINT"] = "http://" + net.JoinHostPort(target.peer.PrivateAddress, "4318")
-	}
-	if strings.TrimSpace(environment["OTEL_EXPORTER_OTLP_PROTOCOL"]) == "" {
-		environment["OTEL_EXPORTER_OTLP_PROTOCOL"] = "http/protobuf"
-	}
 	resourceAttributes := []string{
 		"deploycrate.application.id=" + spec.ApplicationID.String(),
 		"deploycrate.environment.id=" + spec.EnvironmentID.String(),

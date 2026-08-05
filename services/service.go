@@ -19,6 +19,7 @@ var Module = fx.Module(
 		NewSystemHealth,
 		NewSystemLogs,
 		NewSystemApplicationTelemetry,
+		NewTelemetryIdentity,
 		NewResourceCredentials,
 		func() CloudflareDNSClient { return cloudflareclient.NewDNS() },
 		NewDNSConnections,
