@@ -19,7 +19,6 @@
   import { Link, page, router } from '@inertiajs/svelte'
   import type { Snippet } from 'svelte'
 
-  import { Badge } from '@/Components/ui/badge'
   import * as Breadcrumb from '@/Components/ui/breadcrumb'
   import { Button } from '@/Components/ui/button'
   import * as DropdownMenu from '@/Components/ui/dropdown-menu'
@@ -253,13 +252,6 @@
             <Sidebar.MenuItem>
               <Sidebar.MenuButton isActive={$page.url.startsWith(routes.gitHubConnection())} tooltipContent="GitHub">
                 {#snippet child({ props })}<Link {...props} href={routes.gitHubConnection()} aria-current={$page.url.startsWith(routes.gitHubConnection()) ? 'page' : undefined}><GithubIcon /><span>GitHub</span></Link>{/snippet}
-              </Sidebar.MenuButton>
-            </Sidebar.MenuItem>
-            <Sidebar.MenuItem>
-              <Sidebar.MenuButton disabled tooltipContent="Repositories">
-                <GitBranchIcon />
-                <span>Repositories</span>
-                <Badge variant="outline" class="ml-auto group-data-[collapsible=icon]:hidden">Soon</Badge>
               </Sidebar.MenuButton>
             </Sidebar.MenuItem>
           </Sidebar.Menu>

@@ -1,8 +1,6 @@
 <script lang="ts">
-  import ActivityIcon from '@lucide/svelte/icons/activity'
   import AppWindowIcon from '@lucide/svelte/icons/app-window'
   import ArrowRightIcon from '@lucide/svelte/icons/arrow-right'
-  import BoxesIcon from '@lucide/svelte/icons/boxes'
   import DatabaseIcon from '@lucide/svelte/icons/database'
   import GitCommitHorizontalIcon from '@lucide/svelte/icons/git-commit-horizontal'
   import PlusIcon from '@lucide/svelte/icons/plus'
@@ -87,37 +85,6 @@
   const dayFormatter = new Intl.DateTimeFormat(undefined, { weekday: 'short' })
   const dateTimeFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
 
-  const summaryCards = $derived([
-    {
-      label: 'Applications',
-      value: dashboard.metrics.applications,
-      detail: dashboard.metrics.applications === 1 ? 'service in motion' : 'services in motion',
-      icon: AppWindowIcon,
-      href: routes.applications(),
-    },
-    {
-      label: 'Environments',
-      value: dashboard.metrics.environments,
-      detail: dashboard.metrics.environments === 1 ? 'runtime configured' : 'runtimes configured',
-      icon: BoxesIcon,
-      href: routes.environments(),
-    },
-    {
-      label: 'Deployments',
-      value: dashboard.metrics.deployments,
-      detail: dashboard.metrics.activeDeployments > 0 ? `${dashboard.metrics.activeDeployments} active now` : 'none running now',
-      icon: RocketIcon,
-      href: routes.environments(),
-    },
-    {
-      label: 'Success rate',
-      value: dashboard.metrics.finishedDeployments > 0 ? `${dashboard.metrics.deploymentSuccess.toFixed(0)}%` : 'Ready',
-      detail: dashboard.metrics.finishedDeployments > 0 ? `${dashboard.metrics.successfulDeployments} successful releases` : 'waiting for first launch',
-      icon: ActivityIcon,
-      href: routes.environments(),
-    },
-  ])
-
   function activityHeight(value: number) {
     if (value === 0) return 4
     return Math.max(12, Math.round((value / maxActivity) * 112))
@@ -171,25 +138,6 @@
         <UsageHistory label="Memory usage" points={telemetry.memoryHistory ?? []} />
         <UsageHistory label="Storage usage" points={telemetry.storageHistory ?? []} />
       </div>
-    </section>
-
-    <section class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4" aria-label="Platform metrics">
-      {#each summaryCards as item (item.label)}
-        {@const Icon = item.icon}
-        <Link href={item.href} class="group border border-border bg-card/80 p-4 transition-colors hover:border-primary/60 hover:bg-card">
-          <div class="flex items-start justify-between gap-4">
-            <span class="grid size-9 place-items-center border border-border bg-background text-muted-foreground transition-colors group-hover:border-primary/40 group-hover:text-primary">
-              <Icon class="size-4" />
-            </span>
-            <ArrowRightIcon class="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
-          </div>
-          <p class="mt-5 font-mono text-3xl font-semibold tabular-nums tracking-tight">{item.value}</p>
-          <div class="mt-1 flex items-baseline justify-between gap-3">
-            <p class="text-xs font-medium">{item.label}</p>
-            <p class="truncate text-[10px] text-muted-foreground">{item.detail}</p>
-          </div>
-        </Link>
-      {/each}
     </section>
 
     <section class="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(18rem,0.75fr)]">
