@@ -332,16 +332,24 @@ type SystemUpdateCheckpoint struct {
 }
 
 type UnresolvedSystemUpdate struct {
-	DeploymentID  uuid.UUID       `bun:"deployment_id"`
-	ChangeID      uuid.UUID       `bun:"change_id"`
-	ReleaseID     uuid.UUID       `bun:"release_id"`
-	Version       string          `bun:"version"`
-	ReleasePath   string          `bun:"release_path"`
-	InstanceID    uuid.UUID       `bun:"instance_id"`
-	BackendID     int32           `bun:"backend_id"`
-	InactiveSlot  string          `bun:"inactive_slot"`
-	RuntimeConfig json.RawMessage `bun:"runtime_configuration"`
-	EventSequence int64           `bun:"event_sequence"`
+	DeploymentID         uuid.UUID       `bun:"deployment_id"`
+	ChangeID             uuid.UUID       `bun:"change_id"`
+	ReleaseID            uuid.UUID       `bun:"release_id"`
+	Version              string          `bun:"version"`
+	ReleasePath          string          `bun:"release_path"`
+	InstanceID           uuid.UUID       `bun:"instance_id"`
+	BackendID            int32           `bun:"backend_id"`
+	InactiveSlot         string          `bun:"inactive_slot"`
+	CaddyRouteID         uuid.UUID       `bun:"caddy_route_id"`
+	CaddyRouteExternalID string          `bun:"caddy_route_external_id"`
+	PreviousInstanceID   uuid.UUID       `bun:"previous_instance_id"`
+	PreviousInstanceSlot string          `bun:"previous_instance_slot"`
+	PreviousBackendID    int32           `bun:"previous_backend_id"`
+	PreviousReleaseID    uuid.UUID       `bun:"previous_release_id"`
+	EnvironmentID        uuid.UUID       `bun:"environment_id"`
+	EnvironmentTargetID  uuid.UUID       `bun:"environment_target_id"`
+	RuntimeConfig        json.RawMessage `bun:"runtime_configuration"`
+	EventSequence        int64           `bun:"event_sequence"`
 }
 
 func (d deployment) FindUnresolvedSystemUpdate(
@@ -359,12 +367,24 @@ func (d deployment) FindUnresolvedSystemUpdate(
 		ColumnExpr("instance.id AS instance_id").
 		ColumnExpr("backend.id AS backend_id").
 		ColumnExpr("instance.slot AS inactive_slot").
+		ColumnExpr("route.id AS caddy_route_id").
+		ColumnExpr("route.external_id AS caddy_route_external_id").
+		ColumnExpr("previous_instance.id AS previous_instance_id").
+		ColumnExpr("previous_instance.slot AS previous_instance_slot").
+		ColumnExpr("previous_backend.id AS previous_backend_id").
+		ColumnExpr("previous_instance.release_id AS previous_release_id").
+		ColumnExpr("environment.id AS environment_id").
+		ColumnExpr("deployment.environment_target_id AS environment_target_id").
 		ColumnExpr("deployment.runtime_configuration AS runtime_configuration").
 		ColumnExpr("(SELECT COALESCE(MAX(event.sequence), 0) FROM deployment_events AS event WHERE event.deployment_id = deployment.id) AS event_sequence").
 		Join("JOIN changes AS change ON change.id = deployment.change_id").
 		Join("JOIN releases AS release ON release.id = deployment.release_id").
 		Join("JOIN instances AS instance ON instance.deployment_id = deployment.id").
 		Join("JOIN caddy_route_backends AS backend ON backend.instance_id = instance.id").
+		Join("JOIN caddy_routes AS route ON route.id = backend.caddy_route_id AND route.removed_at IS NULL").
+		Join("JOIN environments AS environment ON environment.id = release.environment_id").
+		Join("JOIN caddy_route_backends AS previous_backend ON previous_backend.caddy_route_id = route.id AND previous_backend.id <> backend.id AND previous_backend.removed_at IS NULL").
+		Join("JOIN instances AS previous_instance ON previous_instance.id = previous_backend.instance_id AND previous_instance.removed_at IS NULL").
 		Where("change.kind = ?", "system_update").
 		Where("change.cause_system = ?", "deploycrate-ce").
 		Where("deployment.status IN (?)", bun.In([]string{"queued", "in_progress"})).

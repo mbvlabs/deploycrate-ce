@@ -205,15 +205,21 @@ func (s *SelfUpdate) loadUnresolvedDeployment(ctx context.Context) (*selfUpdateD
 		return nil, nil
 	}
 
-	systemState, err := s.loadSystemState(ctx)
-	if err != nil {
-		return nil, err
-	}
 	var checkpoint models.SystemUpdateCheckpoint
 	if err := json.Unmarshal(persisted.RuntimeConfig, &checkpoint); err != nil {
 		return nil, fmt.Errorf("decode self-update checkpoint: %w", err)
 	}
-	if checkpoint.ActiveSlot != systemState.ActiveInstanceSlot ||
+	systemState := systemApplicationState{
+		EnvironmentID:        persisted.EnvironmentID,
+		EnvironmentTargetID:  persisted.EnvironmentTargetID,
+		CaddyRouteID:         persisted.CaddyRouteID,
+		CaddyRouteExternalID: persisted.CaddyRouteExternalID,
+		ActiveInstanceID:     persisted.PreviousInstanceID,
+		ActiveInstanceSlot:   persisted.PreviousInstanceSlot,
+		ActiveBackendID:      persisted.PreviousBackendID,
+		ActiveReleaseID:      persisted.PreviousReleaseID,
+	}
+	if checkpoint.ActiveSlot != persisted.PreviousInstanceSlot ||
 		checkpoint.TargetSlot != persisted.InactiveSlot {
 		return nil, errors.New(
 			"unresolved self-update checkpoint does not match the persisted system state",

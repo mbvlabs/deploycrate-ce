@@ -32,21 +32,21 @@ import (
 )
 
 const (
-	defaultReleaseRoot    = "/opt/deploycrate-ce/releases"
-	defaultSlotsRoot      = "/opt/deploycrate-ce/slots"
-	defaultStatusPath     = "/var/lib/deploycrate-ce/self-update.json"
-	defaultCaddyAdminURL  = "http://127.0.0.1:2019"
-	updateLockPath        = "/tmp/deploycrate-ce-update.lock"
-	greenInstance         = "green"
-	blueInstance          = "blue"
-	greenService          = "deploycrate-ce@green.service"
-	blueService           = "deploycrate-ce@blue.service"
-	greenPort             = 8081
-	bluePort              = 8080
-	backendHealthInterval = "2s"
-	backendHealthTimeout  = "1s"
-	backendTryDuration    = "2s"
-	backendTryInterval    = "100ms"
+	defaultReleaseRoot   = "/opt/deploycrate-ce/releases"
+	defaultSlotsRoot     = "/opt/deploycrate-ce/slots"
+	defaultStatusPath    = "/var/lib/deploycrate-ce/self-update.json"
+	defaultCaddyAdminURL = "http://127.0.0.1:2019"
+	updateLockPath       = "/tmp/deploycrate-ce-update.lock"
+	greenInstance        = "green"
+	blueInstance         = "blue"
+	greenService         = "deploycrate-ce@green.service"
+	blueService          = "deploycrate-ce@blue.service"
+	greenPort            = 8081
+	bluePort             = 8080
+	healthSlotHeader     = "X-DeployCrate-Slot"
+	healthVersionHeader  = "X-DeployCrate-Version"
+	selfHealInterval     = 30 * time.Second
+	trafficVerifyTimeout = 15 * time.Second
 )
 
 var (
@@ -100,7 +100,6 @@ type caddyRoute struct {
 
 type caddyHandle struct {
 	Handler       string             `json:"handler"`
-	HealthChecks  caddyHealthChecks  `json:"health_checks"`
 	LoadBalancing caddyLoadBalancing `json:"load_balancing"`
 	Routes        []caddySubroute    `json:"routes,omitempty"`
 	Upstreams     []caddyUpstream    `json:"upstreams"`
@@ -112,18 +111,6 @@ type caddySubroute struct {
 
 type caddyLoadBalancing struct {
 	SelectionPolicy caddySelectionPolicy `json:"selection_policy"`
-	TryDuration     string               `json:"try_duration,omitempty"`
-	TryInterval     string               `json:"try_interval,omitempty"`
-}
-
-type caddyHealthChecks struct {
-	Active caddyActiveHealthChecks `json:"active"`
-}
-
-type caddyActiveHealthChecks struct {
-	URI      string `json:"uri"`
-	Interval string `json:"interval"`
-	Timeout  string `json:"timeout"`
 }
 
 type caddySelectionPolicy struct {
@@ -144,6 +131,7 @@ type SelfUpdate struct {
 	mu             sync.RWMutex
 	status         SelfUpdateStatus
 	localRunning   bool
+	handingOff     bool
 	currentVersion string
 	releaseRoot    string
 	slotsRoot      string
@@ -154,6 +142,8 @@ type SelfUpdate struct {
 	r2             *cloudflare.R2
 	queue          chan updateJob
 	db             storage.Pool
+	routes         CaddyRouteService
+	instanceSlot   string
 
 	currentDeployment *selfUpdateDeployment
 }
@@ -163,6 +153,8 @@ func NewSelfUpdate(
 	appCtx context.Context,
 	version CurrentVersion,
 	db storage.Pool,
+	routes CaddyRouteService,
+	configuration config.Config,
 ) *SelfUpdate {
 	currentVersion := normalizeVersion(string(version))
 	if currentVersion == "" {
@@ -191,6 +183,10 @@ func NewSelfUpdate(
 		r2:     cloudflare.NewR2(httpClient),
 		queue:  make(chan updateJob, 1),
 		db:     db,
+		routes: routes,
+		instanceSlot: strings.ToLower(strings.TrimSpace(
+			configuration.App.Slot,
+		)),
 	}
 	service.loadStatus()
 	if service.status.UpdatedAt.IsZero() {
@@ -199,10 +195,7 @@ func NewSelfUpdate(
 
 	var done chan struct{}
 	lifecycle.Append(fx.Hook{
-		OnStart: func(startCtx context.Context) error {
-			if err := service.reconcileOnStartup(startCtx, appCtx); err != nil {
-				return err
-			}
+		OnStart: func(context.Context) error {
 			done = make(chan struct{})
 			go func() {
 				defer close(done)
@@ -274,6 +267,7 @@ func (s *SelfUpdate) Start(ctx context.Context, actorID uuid.UUID) (SelfUpdateSt
 		}},
 	}
 	s.currentDeployment = nil
+	s.handingOff = false
 	s.persistStatusLocked()
 	status := s.status
 	s.mu.Unlock()
@@ -291,30 +285,40 @@ func (s *SelfUpdate) Start(ctx context.Context, actorID uuid.UUID) (SelfUpdateSt
 }
 
 func (s *SelfUpdate) run(ctx context.Context) {
+	ticker := time.NewTicker(selfHealInterval)
+	defer ticker.Stop()
+	if s.reconcileWhenUnlocked(ctx) {
+		return
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case job := <-s.queue:
 			s.execute(ctx, job)
+			s.mu.RLock()
+			handingOff := s.handingOff
+			s.mu.RUnlock()
+			if handingOff {
+				return
+			}
+		case <-ticker.C:
+			if s.reconcileIfUnlocked(ctx) {
+				return
+			}
 		}
 	}
 }
 
-func (s *SelfUpdate) reconcileOnStartup(_ context.Context, appCtx context.Context) error {
-	go s.reconcileWhenUnlocked(appCtx)
-	return nil
-}
-
-func (s *SelfUpdate) reconcileWhenUnlocked(ctx context.Context) {
+func (s *SelfUpdate) reconcileWhenUnlocked(ctx context.Context) bool {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		lock, err := acquireSelfUpdateLock()
 		if err == nil {
-			if reconcileErr := s.reconcileLocked(
-				ctx,
-			); reconcileErr != nil &&
+			stopSelf, reconcileErr := s.reconcileLocked(ctx)
+			lock.release()
+			if reconcileErr != nil &&
 				!errors.Is(reconcileErr, context.Canceled) {
 				slog.ErrorContext(
 					ctx,
@@ -323,21 +327,42 @@ func (s *SelfUpdate) reconcileWhenUnlocked(ctx context.Context) {
 					reconcileErr,
 				)
 			}
-			lock.release()
-			return
+			if stopSelf {
+				return s.requestSelfStop()
+			}
+			return false
 		}
 		select {
 		case <-ctx.Done():
-			return
+			return false
 		case <-ticker.C:
 		}
 	}
 }
 
-func (s *SelfUpdate) reconcileLocked(ctx context.Context) error {
+func (s *SelfUpdate) reconcileIfUnlocked(ctx context.Context) bool {
+	lock, err := acquireSelfUpdateLock()
+	if err != nil {
+		return false
+	}
+	stopSelf, reconcileErr := s.reconcileLocked(ctx)
+	lock.release()
+	if reconcileErr != nil && !errors.Is(reconcileErr, context.Canceled) {
+		slog.ErrorContext(ctx, "failed to reconcile DeployCrate CE slots", "error", reconcileErr)
+	}
+	if stopSelf {
+		return s.requestSelfStop()
+	}
+	return false
+}
+
+func (s *SelfUpdate) reconcileLocked(ctx context.Context) (bool, error) {
 	record, err := s.loadUnresolvedDeployment(ctx)
-	if err != nil || record == nil {
-		return err
+	if err != nil {
+		return false, err
+	}
+	if record == nil {
+		return s.healSteadyStateLocked(ctx)
 	}
 
 	s.mu.Lock()
@@ -356,36 +381,73 @@ func (s *SelfUpdate) reconcileLocked(ctx context.Context) error {
 	s.transition(SelfUpdateInProgress, "reconcile", "Reconciling interrupted update")
 
 	targetActive, targetActiveErr := serviceActive(ctx, serviceForInstance(targetInstance))
-	trafficTarget, trafficErr := s.trafficTarget(ctx, record.SystemState.CaddyRouteExternalID)
 	slotTarget, slotErr := readSlotTarget(s.slotBinaryPath(targetInstance))
-	_, activeBootErr := serviceEnabled(ctx, serviceForInstance(activeInstance))
-	_, targetBootErr := serviceEnabled(ctx, serviceForInstance(targetInstance))
-	inspectionErr := errors.Join(targetActiveErr, trafficErr, slotErr, activeBootErr, targetBootErr)
+	desiredState, desiredStateErr := s.loadSystemState(ctx)
+	inspectionErr := errors.Join(targetActiveErr, slotErr, desiredStateErr)
 
 	targetHealthy := false
 	if inspectionErr == nil && targetActive &&
 		filepath.Clean(slotTarget) == filepath.Clean(record.ReleasePath) {
-		targetHealthy = s.waitForHealth(
+		targetHealthy = s.waitForSlotHealth(
 			ctx,
 			internalHealthURL(targetInstance),
-			5*time.Second,
+			targetInstance,
+			record.Version,
+			trafficVerifyTimeout,
 		) == nil
 	}
-	if targetHealthy && trafficTarget == targetInstance {
+	targetDesired := desiredStateErr == nil &&
+		desiredState.ActiveInstanceID == record.InstanceID &&
+		desiredState.ActiveInstanceSlot == targetInstance
+	if targetHealthy && !targetDesired && record.Checkpoint.TrafficSwitched {
+		if err := s.switchDatabaseTraffic(ctx, record, targetInstance); err != nil {
+			return false, fmt.Errorf("adopt interrupted target traffic state: %w", err)
+		}
+		targetDesired = true
+	}
+	if targetHealthy && targetDesired {
+		if _, err := s.routes.Reconcile(ctx, record.SystemState.CaddyRouteID); err != nil {
+			return false, fmt.Errorf("reconcile target Caddy route: %w", err)
+		}
+		if err := s.waitForTrafficTarget(
+			ctx,
+			record.SystemState.CaddyRouteExternalID,
+			targetInstance,
+			trafficVerifyTimeout,
+		); err != nil {
+			return false, err
+		}
+		if err := s.waitForSlotHealth(
+			ctx,
+			s.publicHealth,
+			targetInstance,
+			record.Version,
+			trafficVerifyTimeout,
+		); err != nil {
+			return false, fmt.Errorf("verify public target slot: %w", err)
+		}
+		record.Checkpoint.TrafficSwitched = true
+		record.Checkpoint.Phase = "public_healthy"
+		if err := s.persistCheckpoint(ctx, record); err != nil {
+			return false, err
+		}
 		return s.completeRecoveredUpdate(record)
 	}
 
-	cause := errors.New("interrupted update did not have a healthy target serving traffic")
+	cause := errors.New("interrupted update did not have a healthy target selected in database state")
 	if inspectionErr != nil {
 		cause = errors.Join(cause, inspectionErr)
 	}
-	if err := s.rollbackDeployment(record); err != nil {
-		return errors.Join(cause, err)
+	stopSelf, rollbackErr := s.rollbackDeployment(record)
+	if rollbackErr != nil {
+		return false, errors.Join(cause, rollbackErr)
 	}
-	return s.fail("reconcile", cause)
+	return stopSelf, s.fail("reconcile", cause)
 }
 
-func (s *SelfUpdate) completeRecoveredUpdate(record *selfUpdateDeployment) error {
+func (s *SelfUpdate) completeRecoveredUpdate(
+	record *selfUpdateDeployment,
+) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -397,15 +459,18 @@ func (s *SelfUpdate) completeRecoveredUpdate(record *selfUpdateDeployment) error
 		"Finalizing enabled service instance",
 	)
 	if err := runSystemctl(ctx, "enable", serviceForInstance(targetInstance)); err != nil {
-		return err
+		return false, err
 	}
 	if err := runSystemctl(ctx, "disable", serviceForInstance(activeInstance)); err != nil {
-		return err
+		return false, err
 	}
 	record.Checkpoint.BootStateSwitched = true
 	record.Checkpoint.Phase = "boot_state_switched"
 	if err := s.persistCheckpoint(ctx, record); err != nil {
-		return err
+		return false, err
+	}
+	if s.instanceSlot == activeInstance {
+		return true, nil
 	}
 
 	s.transition(SelfUpdateInProgress, "stop_previous_instance", "Stopping previous instance")
@@ -414,29 +479,33 @@ func (s *SelfUpdate) completeRecoveredUpdate(record *selfUpdateDeployment) error
 		serviceForInstance(activeInstance),
 		30*time.Second,
 	); err != nil {
-		return err
+		return false, err
 	}
 	running, err := s.runningInstance(ctx)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if running != targetInstance {
-		return fmt.Errorf("expected %s to be the only active slot, got %s", targetInstance, running)
+		return false, fmt.Errorf(
+			"expected %s to be the only active slot, got %s",
+			targetInstance,
+			running,
+		)
 	}
 	record.Checkpoint.Phase = "old_instance_stopped"
 	if err := s.persistCheckpoint(ctx, record); err != nil {
-		return err
+		return false, err
 	}
 	if err := s.succeed(record.Version, targetInstance); err != nil {
-		return err
+		return false, err
 	}
 	if err := s.pruneReleases(ctx); err != nil {
 		slog.WarnContext(ctx, "failed to prune orphaned DeployCrate CE releases", "error", err)
 	}
-	return nil
+	return false, nil
 }
 
-func (s *SelfUpdate) rollbackDeployment(record *selfUpdateDeployment) error {
+func (s *SelfUpdate) rollbackDeployment(record *selfUpdateDeployment) (bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -449,7 +518,11 @@ func (s *SelfUpdate) rollbackDeployment(record *selfUpdateDeployment) error {
 	)
 	rollbackErr = errors.Join(
 		rollbackErr,
-		s.configureTraffic(ctx, record.SystemState.CaddyRouteExternalID, activeInstance),
+		s.waitForHealth(ctx, internalHealthURL(activeInstance), trafficVerifyTimeout),
+	)
+	rollbackErr = errors.Join(
+		rollbackErr,
+		s.switchDatabaseTraffic(ctx, record, activeInstance),
 	)
 	rollbackErr = errors.Join(
 		rollbackErr,
@@ -463,6 +536,21 @@ func (s *SelfUpdate) rollbackDeployment(record *selfUpdateDeployment) error {
 		rollbackErr,
 		s.restoreSlot(ctx, targetInstance, record.Checkpoint.PreviousSlotTarget),
 	)
+	if rollbackErr != nil {
+		return false, rollbackErr
+	}
+
+	record.Checkpoint.TargetStarted = false
+	record.Checkpoint.TrafficSwitched = false
+	record.Checkpoint.BootStateSwitched = false
+	record.Checkpoint.Phase = "rolled_back"
+	if err := s.persistCheckpoint(ctx, record); err != nil {
+		return false, err
+	}
+	if s.instanceSlot == targetInstance {
+		return true, nil
+	}
+
 	rollbackErr = errors.Join(
 		rollbackErr,
 		stopServiceAndWait(ctx, serviceForInstance(targetInstance), 30*time.Second),
@@ -481,14 +569,9 @@ func (s *SelfUpdate) rollbackDeployment(record *selfUpdateDeployment) error {
 		)
 	}
 	if rollbackErr != nil {
-		return rollbackErr
+		return false, rollbackErr
 	}
-
-	record.Checkpoint.TargetStarted = false
-	record.Checkpoint.TrafficSwitched = false
-	record.Checkpoint.BootStateSwitched = false
-	record.Checkpoint.Phase = "rolled_back"
-	return s.persistCheckpoint(ctx, record)
+	return false, nil
 }
 
 func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
@@ -602,13 +685,21 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 	inactiveInstance := deployment.InactiveSlot
 	s.setInstances(activeInstance, activeInstance)
 	rollback := func(cause error) {
-		if rollbackErr := s.rollbackDeployment(deployment); rollbackErr != nil {
+		stopSelf, rollbackErr := s.rollbackDeployment(deployment)
+		if rollbackErr != nil {
 			cause = errors.Join(cause, fmt.Errorf("rollback failed: %w", rollbackErr))
 			s.reportUnresolvedFailure(s.Status().CurrentStep, cause)
 			return
 		}
 		s.setInstances(activeInstance, activeInstance)
 		s.fail(s.Status().CurrentStep, cause)
+		if stopSelf {
+			if s.requestSelfStop() {
+				s.mu.Lock()
+				s.handingOff = true
+				s.mu.Unlock()
+			}
+		}
 	}
 
 	if err := s.recordArtifact(digest); err != nil {
@@ -667,10 +758,15 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 	}
 
 	s.transition(SelfUpdateInProgress, "prepare_traffic", "Preparing blue-green traffic route")
-	if err := s.configureTraffic(
+	if _, err := s.routes.Reconcile(ctx, deployment.SystemState.CaddyRouteID); err != nil {
+		rollback(fmt.Errorf("prepare Caddy blue-green route: %w", err))
+		return
+	}
+	if err := s.waitForTrafficTarget(
 		ctx,
 		deployment.SystemState.CaddyRouteExternalID,
 		activeInstance,
+		trafficVerifyTimeout,
 	); err != nil {
 		rollback(err)
 		return
@@ -698,9 +794,11 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 		"verify_inactive_instance",
 		"Waiting for inactive instance health",
 	)
-	if err := s.waitForHealth(
+	if err := s.waitForSlotHealth(
 		ctx,
 		internalHealthURL(inactiveInstance),
+		inactiveInstance,
+		deployment.Version,
 		30*time.Second,
 	); err != nil {
 		rollback(err)
@@ -713,11 +811,7 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 	}
 
 	s.transition(SelfUpdateInProgress, "switch_traffic", "Switching traffic to updated instance")
-	if err := s.setTraffic(
-		ctx,
-		deployment.SystemState.CaddyRouteExternalID,
-		inactiveInstance,
-	); err != nil {
+	if err := s.switchDatabaseTraffic(ctx, deployment, inactiveInstance); err != nil {
 		rollback(err)
 		return
 	}
@@ -730,7 +824,13 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 	s.setInstances(activeInstance, inactiveInstance)
 
 	s.transition(SelfUpdateInProgress, "verify_public_path", "Verifying public application health")
-	if err := s.waitForHealth(ctx, s.publicHealth, 15*time.Second); err != nil {
+	if err := s.waitForSlotHealth(
+		ctx,
+		s.publicHealth,
+		inactiveInstance,
+		deployment.Version,
+		trafficVerifyTimeout,
+	); err != nil {
 		rollback(err)
 		return
 	}
@@ -775,6 +875,9 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 		rollback(err)
 		return
 	}
+	s.mu.Lock()
+	s.handingOff = true
+	s.mu.Unlock()
 }
 
 func (s *SelfUpdate) runningInstance(ctx context.Context) (string, error) {
@@ -874,49 +977,58 @@ func (s *SelfUpdate) slotBinaryPath(slot string) string {
 	return filepath.Join(s.slotsRoot, slot, "deploycrate-ce")
 }
 
-func (s *SelfUpdate) configureTraffic(ctx context.Context, routeID, activeInstance string) error {
-	route, handlePath, err := s.readTrafficRoute(ctx, routeID)
-	if err != nil {
-		return err
-	}
-	handle, _ := findReverseProxy(route.Handle, "handle")
-	if handle == nil {
-		return errors.New("Caddy self-update route has no reverse_proxy handler")
-	}
-
-	upstreams := []caddyUpstream{
-		{Dial: fmt.Sprintf("127.0.0.1:%d", bluePort)},
-		{Dial: fmt.Sprintf("127.0.0.1:%d", greenPort)},
-	}
-	handle.Upstreams = upstreams
-	handle.LoadBalancing.TryDuration = backendTryDuration
-	handle.LoadBalancing.TryInterval = backendTryInterval
-	handle.HealthChecks = caddyHealthChecks{Active: caddyActiveHealthChecks{
-		URI:      "/api/health",
-		Interval: backendHealthInterval,
-		Timeout:  backendHealthTimeout,
-	}}
-	switch activeInstance {
-	case blueInstance:
-		handle.LoadBalancing.SelectionPolicy.Weights = []int{100, 0}
-	case greenInstance:
-		handle.LoadBalancing.SelectionPolicy.Weights = []int{0, 100}
+func (s *SelfUpdate) switchDatabaseTraffic(
+	ctx context.Context,
+	record *selfUpdateDeployment,
+	targetInstance string,
+) error {
+	weights := map[uuid.UUID]int32{}
+	var releaseID uuid.UUID
+	var desiredInstanceID uuid.UUID
+	switch targetInstance {
+	case record.SystemState.ActiveInstanceSlot:
+		releaseID = record.SystemState.ActiveReleaseID
+		desiredInstanceID = record.SystemState.ActiveInstanceID
+		weights[record.SystemState.ActiveInstanceID] = 100
+		weights[record.InstanceID] = 0
+	case record.InactiveSlot:
+		releaseID = record.ReleaseID
+		desiredInstanceID = record.InstanceID
+		weights[record.SystemState.ActiveInstanceID] = 0
+		weights[record.InstanceID] = 100
 	default:
-		return fmt.Errorf("invalid active instance %q", activeInstance)
+		return fmt.Errorf("invalid traffic target %q", targetInstance)
 	}
-	return s.patchCaddyValue(ctx, routeID, handlePath, handle, "configure Caddy blue-green route")
-}
 
-func (s *SelfUpdate) setTraffic(ctx context.Context, routeID, targetInstance string) error {
-	route, handlePath, err := s.readTrafficRoute(ctx, routeID)
-	if err != nil {
-		return err
+	switchErr := s.routes.SwitchTraffic(
+		ctx,
+		record.SystemState.CaddyRouteID,
+		releaseID,
+		weights,
+	)
+	if switchErr != nil {
+		desiredState, stateErr := s.loadSystemState(ctx)
+		if stateErr != nil || desiredState.ActiveInstanceID != desiredInstanceID {
+			return switchErr
+		}
+		slog.WarnContext(
+			ctx,
+			"Caddy route apply failed after desired traffic was persisted; retrying",
+			"target_slot",
+			targetInstance,
+			"error",
+			switchErr,
+		)
+		if _, err := s.routes.Reconcile(ctx, record.SystemState.CaddyRouteID); err != nil {
+			return errors.Join(switchErr, err)
+		}
 	}
-	handle, _ := findReverseProxy(route.Handle, "handle")
-	if handle == nil {
-		return errors.New("Caddy self-update route has no reverse_proxy handler")
-	}
-	return s.patchTrafficWeights(ctx, routeID, handlePath, handle.Upstreams, targetInstance)
+	return s.waitForTrafficTarget(
+		ctx,
+		record.SystemState.CaddyRouteExternalID,
+		targetInstance,
+		trafficVerifyTimeout,
+	)
 }
 
 func (s *SelfUpdate) trafficTarget(ctx context.Context, routeID string) (string, error) {
@@ -958,6 +1070,34 @@ func (s *SelfUpdate) trafficTarget(ctx context.Context, routeID string) (string,
 	return target, nil
 }
 
+func (s *SelfUpdate) waitForTrafficTarget(
+	ctx context.Context,
+	routeID, targetInstance string,
+	wait time.Duration,
+) error {
+	deadline := time.Now().Add(wait)
+	var lastErr error
+	for {
+		target, err := s.trafficTarget(ctx, routeID)
+		switch {
+		case err != nil:
+			lastErr = err
+		case target != targetInstance:
+			lastErr = fmt.Errorf("Caddy traffic targets %s, want %s", target, targetInstance)
+		default:
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("Caddy traffic did not converge: %w", lastErr)
+		}
+		select {
+		case <-ctx.Done():
+			return errors.Join(ctx.Err(), lastErr)
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
+}
+
 func (s *SelfUpdate) readTrafficRoute(
 	ctx context.Context,
 	routeID string,
@@ -993,81 +1133,6 @@ func (s *SelfUpdate) readTrafficRoute(
 	return route, handlePath, nil
 }
 
-func (s *SelfUpdate) patchTrafficWeights(
-	ctx context.Context,
-	routeID, handlePath string,
-	upstreams []caddyUpstream,
-	targetInstance string,
-) error {
-	weights := make([]int, len(upstreams))
-	foundGreen := false
-	foundBlue := false
-	for index, upstream := range upstreams {
-		switch normalizeDial(upstream.Dial) {
-		case fmt.Sprintf("127.0.0.1:%d", greenPort):
-			foundGreen = true
-			if targetInstance == greenInstance {
-				weights[index] = 100
-			}
-		case fmt.Sprintf("127.0.0.1:%d", bluePort):
-			foundBlue = true
-			if targetInstance == blueInstance {
-				weights[index] = 100
-			}
-		default:
-			return fmt.Errorf("unexpected Caddy upstream %q", upstream.Dial)
-		}
-	}
-	if !foundGreen || !foundBlue {
-		return errors.New("Caddy self-update route must contain green and blue upstreams")
-	}
-	return s.patchCaddyValue(
-		ctx,
-		routeID,
-		handlePath+"/load_balancing/selection_policy/weights",
-		weights,
-		"switch Caddy traffic",
-	)
-}
-
-func (s *SelfUpdate) patchCaddyValue(
-	ctx context.Context,
-	routeID, path string,
-	value any,
-	operation string,
-) error {
-	body, err := json.Marshal(value)
-	if err != nil {
-		return err
-	}
-	patchURL := fmt.Sprintf("%s/id/%s/%s", s.caddyAdminURL, url.PathEscape(routeID), path)
-	patch, err := http.NewRequestWithContext(
-		ctx,
-		http.MethodPatch,
-		patchURL,
-		strings.NewReader(string(body)),
-	)
-	if err != nil {
-		return err
-	}
-	patch.Header.Set("Content-Type", "application/json")
-	patchResponse, err := s.client.Do(patch)
-	if err != nil {
-		return fmt.Errorf("%s: %w", operation, err)
-	}
-	defer patchResponse.Body.Close()
-	if patchResponse.StatusCode >= http.StatusMultipleChoices {
-		responseBody, _ := io.ReadAll(io.LimitReader(patchResponse.Body, 1024))
-		return fmt.Errorf(
-			"%s: status %d: %s",
-			operation,
-			patchResponse.StatusCode,
-			strings.TrimSpace(string(responseBody)),
-		)
-	}
-	return nil
-}
-
 func findReverseProxy(handles []caddyHandle, prefix string) (*caddyHandle, string) {
 	for index := range handles {
 		path := fmt.Sprintf("%s/%d", prefix, index)
@@ -1084,6 +1149,147 @@ func findReverseProxy(handles []caddyHandle, prefix string) (*caddyHandle, strin
 		}
 	}
 	return nil, ""
+}
+
+func (s *SelfUpdate) healSteadyStateLocked(ctx context.Context) (bool, error) {
+	if s.instanceSlot != blueInstance && s.instanceSlot != greenInstance {
+		return false, nil
+	}
+	state, err := s.loadSystemState(ctx)
+	if err != nil {
+		return false, err
+	}
+	desiredInstance := state.ActiveInstanceSlot
+	fallbackInstance := otherInstance(desiredInstance)
+	desiredActive, err := serviceActive(ctx, serviceForInstance(desiredInstance))
+	if err != nil {
+		return false, err
+	}
+	if !desiredActive {
+		if err := runSystemctl(ctx, "start", serviceForInstance(desiredInstance)); err != nil {
+			return false, fmt.Errorf("start database-selected slot %s: %w", desiredInstance, err)
+		}
+	}
+	if err := s.waitForSlotHealth(
+		ctx,
+		internalHealthURL(desiredInstance),
+		desiredInstance,
+		"",
+		trafficVerifyTimeout,
+	); err != nil {
+		return false, fmt.Errorf("database-selected slot %s is not healthy: %w", desiredInstance, err)
+	}
+	if _, err := s.routes.Reconcile(ctx, state.CaddyRouteID); err != nil {
+		return false, fmt.Errorf("reconcile database-selected Caddy route: %w", err)
+	}
+	if err := s.waitForTrafficTarget(
+		ctx,
+		state.CaddyRouteExternalID,
+		desiredInstance,
+		trafficVerifyTimeout,
+	); err != nil {
+		return false, err
+	}
+	if err := s.waitForSlotHealth(
+		ctx,
+		s.publicHealth,
+		desiredInstance,
+		"",
+		trafficVerifyTimeout,
+	); err != nil {
+		return false, fmt.Errorf("verify database-selected public slot: %w", err)
+	}
+	if err := runSystemctl(ctx, "enable", serviceForInstance(desiredInstance)); err != nil {
+		return false, err
+	}
+	if err := runSystemctl(ctx, "disable", serviceForInstance(fallbackInstance)); err != nil {
+		return false, err
+	}
+	fallbackActive, err := serviceActive(ctx, serviceForInstance(fallbackInstance))
+	if err != nil || !fallbackActive {
+		return false, err
+	}
+	if s.instanceSlot == fallbackInstance {
+		return true, nil
+	}
+	if err := stopServiceAndWait(
+		ctx,
+		serviceForInstance(fallbackInstance),
+		30*time.Second,
+	); err != nil {
+		return false, err
+	}
+	return false, nil
+}
+
+func (s *SelfUpdate) requestSelfStop() bool {
+	if s.instanceSlot != blueInstance && s.instanceSlot != greenInstance {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := runSudo(
+		ctx,
+		"systemctl",
+		"stop",
+		"--no-block",
+		serviceForInstance(s.instanceSlot),
+	); err != nil {
+		slog.Error("failed to stop superseded DeployCrate CE slot", "error", err)
+		return false
+	}
+	return true
+}
+
+func (s *SelfUpdate) waitForSlotHealth(
+	ctx context.Context,
+	healthURL, expectedSlot, expectedVersion string,
+	wait time.Duration,
+) error {
+	deadline := time.Now().Add(wait)
+	var lastErr error
+	for {
+		requestCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+		req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, healthURL, nil)
+		if err == nil {
+			resp, requestErr := s.client.Do(req)
+			if requestErr == nil {
+				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1024))
+				resp.Body.Close()
+				slot := strings.TrimSpace(resp.Header.Get(healthSlotHeader))
+				version := normalizeVersion(resp.Header.Get(healthVersionHeader))
+				switch {
+				case resp.StatusCode != http.StatusOK:
+					lastErr = fmt.Errorf("health check returned status %d", resp.StatusCode)
+				case slot != expectedSlot:
+					lastErr = fmt.Errorf("health check reached slot %q, want %q", slot, expectedSlot)
+				case expectedVersion != "" && version != normalizeVersion(expectedVersion):
+					lastErr = fmt.Errorf(
+						"health check reached version %q, want %q",
+						version,
+						normalizeVersion(expectedVersion),
+					)
+				default:
+					cancel()
+					return nil
+				}
+			} else {
+				lastErr = requestErr
+			}
+		} else {
+			lastErr = err
+		}
+		cancel()
+
+		if time.Now().After(deadline) {
+			return fmt.Errorf("health check %s failed: %w", healthURL, lastErr)
+		}
+		select {
+		case <-ctx.Done():
+			return errors.Join(ctx.Err(), lastErr)
+		case <-time.After(250 * time.Millisecond):
+		}
+	}
 }
 
 func (s *SelfUpdate) waitForHealth(
@@ -1155,6 +1361,8 @@ func (s *SelfUpdate) fail(step string, err error) error {
 	if finishErr := s.finishDeployment(false, err); finishErr != nil {
 		finalized = false
 		err = errors.Join(err, fmt.Errorf("record failed deployment: %w", finishErr))
+	} else {
+		s.reconcileFinalSystemRoute()
 	}
 	s.mu.Lock()
 	now := time.Now()
@@ -1214,6 +1422,7 @@ func (s *SelfUpdate) succeed(version, instance string) error {
 	if err := s.finishDeployment(true, nil); err != nil {
 		return err
 	}
+	s.reconcileFinalSystemRoute()
 	s.mu.Lock()
 	now := time.Now()
 	s.status.State = SelfUpdateSucceeded
@@ -1230,6 +1439,20 @@ func (s *SelfUpdate) succeed(version, instance string) error {
 	s.persistStatusLocked()
 	s.mu.Unlock()
 	return nil
+}
+
+func (s *SelfUpdate) reconcileFinalSystemRoute() {
+	s.mu.RLock()
+	record := s.currentDeployment
+	s.mu.RUnlock()
+	if record == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), trafficVerifyTimeout)
+	defer cancel()
+	if _, err := s.routes.Reconcile(ctx, record.SystemState.CaddyRouteID); err != nil {
+		slog.WarnContext(ctx, "failed to reconcile finalized system Caddy route", "error", err)
+	}
 }
 
 func (s *SelfUpdate) loadStatus() {

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"deploycrate-ce/config"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/router"
 	"deploycrate-ce/router/routes"
@@ -17,10 +18,20 @@ import (
 type API struct {
 	db           storage.Pool
 	environments *services.EnvironmentSetup
+	slot         string
+	version      string
 }
 
-func NewAPI(db storage.Pool, environments *services.EnvironmentSetup) API {
-	return API{db: db, environments: environments}
+func NewAPI(
+	db storage.Pool,
+	environments *services.EnvironmentSetup,
+	configuration config.Config,
+	version services.CurrentVersion,
+) API {
+	return API{
+		db: db, environments: environments,
+		slot: configuration.App.Slot, version: string(version),
+	}
 }
 
 func (a API) RegisterRoutes(r *router.Router) error {
@@ -86,5 +97,7 @@ func (a API) Health(etx *echo.Context) error {
 	if err := a.db.Conn().PingContext(etx.Request().Context()); err != nil {
 		return etx.JSON(http.StatusServiceUnavailable, "app database is unavailable")
 	}
+	etx.Response().Header().Set("X-DeployCrate-Slot", a.slot)
+	etx.Response().Header().Set("X-DeployCrate-Version", a.version)
 	return etx.JSON(http.StatusOK, "app is healthy and running")
 }
