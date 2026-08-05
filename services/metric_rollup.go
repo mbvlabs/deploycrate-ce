@@ -514,7 +514,9 @@ func (service MetricRollupService) SystemTelemetry(
 		if historyErr != nil {
 			queryErrors = append(queryErrors, historyErr)
 		}
-		result.Platform = attributedTelemetryRows(platform, platformHistory, service.now().UTC())
+		result.Platform = latestNativeTelemetryRows(
+			attributedTelemetryRows(platform, platformHistory, service.now().UTC()),
+		)
 	}
 	containers, err := client.LatestAttributedMetricValues(ctx, "container", server, "")
 	if err != nil {
@@ -530,6 +532,24 @@ func (service MetricRollupService) SystemTelemetry(
 		result.SystemContainers = mergeSystemContainerInventory(rows, inventory)
 	}
 	return result, errors.Join(queryErrors...)
+}
+
+func latestNativeTelemetryRows(rows []AttributedTelemetryRow) []AttributedTelemetryRow {
+	latest := make(map[string]AttributedTelemetryRow, len(rows))
+	for _, row := range rows {
+		current, exists := latest[row.Component]
+		if !exists || row.ObservedAt.After(current.ObservedAt) {
+			latest[row.Component] = row
+		}
+	}
+	result := make([]AttributedTelemetryRow, 0, len(latest))
+	for _, row := range latest {
+		result = append(result, row)
+	}
+	slices.SortFunc(result, func(a, b AttributedTelemetryRow) int {
+		return strings.Compare(a.Component, b.Component)
+	})
+	return result
 }
 
 func mergeSystemContainerInventory(
