@@ -35,6 +35,9 @@ func (service *WorkloadReconciliation) Reconcile(ctx context.Context) error {
 	var unresolved []models.DeploymentEntity
 	if err := service.db.Executor().NewSelect().Model(&unresolved).
 		Join("JOIN releases AS release ON release.id = deployments.release_id").
+		Join("JOIN environments AS environment ON environment.id = release.environment_id").
+		Join("JOIN applications AS application ON application.id = environment.application_id").
+		Where("application.slug <> ?", models.SystemApplicationSlug).
 		Where("deployments.status IN ('queued', 'running')").OrderExpr("deployments.created_at").Scan(ctx); err != nil {
 		return fmt.Errorf("load unresolved workload Deployments: %w", err)
 	}
@@ -82,6 +85,9 @@ func (service *WorkloadReconciliation) Reconcile(ctx context.Context) error {
 	var routes []models.CaddyRouteEntity
 	if err := service.db.Executor().NewSelect().Model(&routes).
 		Join("JOIN releases AS release ON release.id = caddy_routes.release_id").
+		Join("JOIN environments AS environment ON environment.id = release.environment_id").
+		Join("JOIN applications AS application ON application.id = environment.application_id").
+		Where("application.slug <> ?", models.SystemApplicationSlug).
 		Where("caddy_routes.removed_at IS NULL").Where("caddy_routes.state IN ('pending', 'applied')").Scan(ctx); err != nil {
 		return fmt.Errorf("load active workload Caddy routes: %w", err)
 	}
@@ -145,6 +151,9 @@ func (service *WorkloadReconciliation) reconcileServingInstances(ctx context.Con
 	if err := service.db.Executor().NewSelect().Model(&instances).
 		Join("JOIN deployments AS deployment ON deployment.id = instances.deployment_id AND deployment.status = 'succeeded'").
 		Join("JOIN releases AS release ON release.id = instances.release_id").
+		Join("JOIN environments AS environment ON environment.id = release.environment_id").
+		Join("JOIN applications AS application ON application.id = environment.application_id").
+		Where("application.slug <> ?", models.SystemApplicationSlug).
 		Where("EXISTS (SELECT 1 FROM instances web JOIN caddy_route_backends backend ON backend.instance_id = web.id AND backend.removed_at IS NULL AND backend.weight = 100 JOIN caddy_routes route ON route.id = backend.caddy_route_id AND route.removed_at IS NULL WHERE web.deployment_id = instances.deployment_id AND web.process_kind = 'web' AND route.environment_target_id = instances.environment_target_id)").
 		Where("instances.state = 'serving'").Where("instances.removed_at IS NULL").OrderExpr("instances.created_at").Scan(ctx); err != nil {
 		return err
@@ -257,9 +266,12 @@ func (service *WorkloadReconciliation) cleanupOldBackends(ctx context.Context) e
 		ColumnExpr("backend.caddy_route_id AS route_id, instance.id AS instance_id, instance.deployment_id AS deployment_id, target.server_id AS server_id").
 		Join("JOIN caddy_routes AS route ON route.id = backend.caddy_route_id AND route.removed_at IS NULL").
 		Join("JOIN releases AS release ON release.id = route.release_id").
+		Join("JOIN environments AS environment ON environment.id = release.environment_id").
+		Join("JOIN applications AS application ON application.id = environment.application_id").
 		Join("JOIN instances AS instance ON instance.id = backend.instance_id AND instance.removed_at IS NULL").
 		Join("JOIN environment_targets AS target ON target.id = instance.environment_target_id").
 		Join("JOIN deployments AS deployment ON deployment.id = instance.deployment_id AND deployment.status NOT IN ('queued', 'running')").
+		Where("application.slug <> ?", models.SystemApplicationSlug).
 		Where("backend.removed_at IS NULL").Where("backend.weight = 0").Scan(ctx, &rows)
 	if err != nil {
 		return err
@@ -299,7 +311,10 @@ func cleanupUnroutedWorkloadInstances(
 		ColumnExpr("instance.id AS instance_id, instance.deployment_id AS deployment_id, target.server_id AS server_id").
 		Join("JOIN deployments AS deployment ON deployment.id = instance.deployment_id AND deployment.status NOT IN ('queued', 'running')").
 		Join("JOIN releases AS release ON release.id = instance.release_id").
+		Join("JOIN environments AS environment ON environment.id = release.environment_id").
+		Join("JOIN applications AS application ON application.id = environment.application_id").
 		Join("JOIN environment_targets AS target ON target.id = instance.environment_target_id").
+		Where("application.slug <> ?", models.SystemApplicationSlug).
 		Where("instance.removed_at IS NULL").
 		Where(`NOT EXISTS (
 			SELECT 1 FROM caddy_route_backends AS own_backend

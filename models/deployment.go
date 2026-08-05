@@ -389,7 +389,7 @@ func (d deployment) FindUnresolvedSystemUpdate(
 		Join("JOIN instances AS previous_instance ON previous_instance.id = previous_backend.instance_id AND previous_instance.removed_at IS NULL").
 		Where("change.kind = ?", "system_update").
 		Where("change.cause_system = ?", "deploycrate-ce").
-		Where("deployment.status IN (?)", bun.In([]string{"queued", "in_progress"})).
+		Where("deployment.status IN (?)", bun.In([]string{"queued", "running", "in_progress"})).
 		OrderExpr("deployment.created_at DESC").
 		Limit(1).
 		Scan(ctx, &unresolved)

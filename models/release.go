@@ -339,7 +339,7 @@ func (r release) UnresolvedSystemUpdateArtifacts(
 		Join("JOIN changes AS change ON change.id = deployment.change_id").
 		Where("change.kind = ?", "system_update").
 		Where("change.cause_system = ?", "deploycrate-ce").
-		Where("deployment.status IN (?)", bun.In([]string{"queued", "in_progress"})).
+		Where("deployment.status IN (?)", bun.In([]string{"queued", "running", "in_progress"})).
 		Scan(ctx, &paths)
 	return paths, err
 }

@@ -252,7 +252,7 @@ func (s *SelfUpdate) recordTransition(status SelfUpdateState, step, message stri
 	now := time.Now().UTC()
 	dbStatus := string(status)
 	if status == SelfUpdateInProgress {
-		dbStatus = "in_progress"
+		dbStatus = "running"
 	}
 	if err := models.Deployment.RecordProgress(
 		ctx,
