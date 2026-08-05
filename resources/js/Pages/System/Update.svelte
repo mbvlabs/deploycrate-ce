@@ -1,41 +1,19 @@
 <script lang="ts">
-  import AlertTriangleIcon from '@lucide/svelte/icons/triangle-alert'
-  import CheckCircleIcon from '@lucide/svelte/icons/circle-check'
   import DownloadIcon from '@lucide/svelte/icons/download'
   import EyeIcon from '@lucide/svelte/icons/eye'
   import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw'
   import { router } from '@inertiajs/svelte'
 
-  import * as Alert from '@/Components/ui/alert'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
   import * as Empty from '@/Components/ui/empty'
-  import { Progress } from '@/Components/ui/progress'
-  import * as ScrollArea from '@/Components/ui/scroll-area'
   import * as Table from '@/Components/ui/table'
   import DeploymentDialog, { type Deployment } from '@/Components/System/DeploymentDialog.svelte'
+  import UpdateDialog, { type UpdateStatus } from '@/Components/System/UpdateDialog.svelte'
   import StatusBadge from '@/Components/StatusBadge.svelte'
   import { Spinner } from '@/Components/ui/spinner'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
-
-  type UpdateEvent = {
-    id: string
-    message: string
-    occurredAt: string
-  }
-
-  type UpdateStatus = {
-    state: 'idle' | 'queued' | 'in_progress' | 'succeeded' | 'failed'
-    currentStep: string
-    targetVersion: string
-    activeInstanceBefore: string
-    activeInstance: string
-    error: string
-    startedAt?: string
-    finishedAt?: string
-    events: UpdateEvent[] | null
-  }
 
   type UpdateStatusResponse = {
     currentVersion: string
@@ -57,19 +35,19 @@
   let liveStatus = $state<UpdateStatusResponse | null>(null)
   let starting = $state(false)
   let reconnecting = $state(false)
+  let updateDialogOpen = $state(false)
+  let updateDialogTracking = $state(false)
   let deploymentDialogOpen = $state(false)
   let selectedDeployment = $state<Deployment | null>(null)
   const currentVersion = $derived(liveStatus?.currentVersion ?? initialCurrentVersion)
   const update = $derived(liveStatus?.update ?? initialUpdate)
   const running = $derived(update.state === 'queued' || update.state === 'in_progress')
   const canUpdate = $derived(!running)
-  const updateEvents = $derived(update.events ?? [])
-  const updateProgress = $derived.by(() => {
-    if (update.state === 'succeeded' || update.state === 'failed') return 100
-    if (update.state === 'queued') return 10
-    const steps = ['download', 'verify', 'install', 'start', 'health', 'cutover', 'cleanup']
-    const index = steps.findIndex((step) => update.currentStep.toLowerCase().includes(step))
-    return index < 0 ? 40 : Math.round(((index + 1) / steps.length) * 90)
+
+  $effect(() => {
+    if (!running) return
+    updateDialogTracking = true
+    updateDialogOpen = true
   })
 
   $effect(() => {
@@ -117,16 +95,22 @@
   })
 
   function startUpdate() {
+    updateDialogTracking = true
+    starting = true
     liveStatus = null
     router.post(
       routes.systemUpdateCreate(),
       {},
       {
         preserveScroll: true,
-        onStart: () => (starting = true),
         onFinish: () => (starting = false),
       },
     )
+  }
+
+  function openUpdateDialog() {
+    updateDialogTracking = running
+    updateDialogOpen = true
   }
 
   function openDeployment(deployment: Deployment) {
@@ -137,10 +121,6 @@
   function versionLabel(version: string) {
     if (!version) return 'Unavailable'
     return version === 'dev' ? 'Development build' : `v${version.replace(/^v/, '')}`
-  }
-
-  function stepLabel(step: string) {
-    return step ? step.replaceAll('_', ' ') : 'Waiting'
   }
 
   function timestamp(value: string) {
@@ -170,7 +150,7 @@
           <RefreshCwIcon />
           Check for updates
         </Button>
-        <Button onclick={startUpdate} disabled={!canUpdate || starting} aria-busy={running || starting}>
+        <Button onclick={openUpdateDialog} disabled={starting} aria-busy={running || starting}>
           {#if running || starting}
             <Spinner />
             Updating
@@ -181,22 +161,6 @@
         </Button>
       </div>
     </section>
-
-    {#if update.state === 'failed'}
-      <Alert.Root variant="destructive">
-        <AlertTriangleIcon />
-        <Alert.Title>Update failed during {stepLabel(update.currentStep)}</Alert.Title>
-        <Alert.Description>{update.error}</Alert.Description>
-      </Alert.Root>
-    {:else if update.state === 'succeeded'}
-      <Alert.Root>
-        <CheckCircleIcon />
-        <Alert.Title>Update completed</Alert.Title>
-        <Alert.Description>
-          DeployCrate CE is serving from the {update.activeInstance} instance on {versionLabel(update.targetVersion)}.
-        </Alert.Description>
-      </Alert.Root>
-    {/if}
 
     <Card.Root>
       <Card.Header>
@@ -210,63 +174,30 @@
         <Card.Title>Current installation</Card.Title>
         <Card.Description>Development builds published to get-dev.deploycrate.com.</Card.Description>
       </Card.Header>
-      <Card.Content class="grid gap-6 lg:grid-cols-[minmax(16rem,0.65fr)_minmax(0,1fr)]">
-        <div class="space-y-4 border border-border bg-muted/30 p-4">
+      <Card.Content>
+        <div class="grid gap-5 border border-border bg-muted/30 p-4 sm:grid-cols-3">
           <div>
             <p class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Installed version</p>
             <p class="mt-2 font-mono text-lg font-semibold">{versionLabel(currentVersion)}</p>
           </div>
+          <div>
+            <p class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Previous instance</p>
+            <p class="mt-2 font-mono text-sm">{update.activeInstanceBefore || 'Unknown'}</p>
+          </div>
+          <div>
+            <p class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Serving instance</p>
+            <p class="mt-2 font-mono text-sm">{update.activeInstance || 'Unknown'}</p>
+          </div>
+          <p class="text-xs leading-5 text-muted-foreground sm:col-span-3 sm:border-t sm:border-border sm:pt-4">
+            Updates use a blue-green cutover and restore the previous binary if health validation fails. Progress is shown in the update dialog.
+          </p>
           {#if running}
-            <div class="space-y-2">
-              <div class="flex justify-between gap-3 text-xs">
-                <span class="capitalize">{stepLabel(update.currentStep)}</span>
-                <span>{updateProgress}%</span>
-              </div>
-              <Progress value={updateProgress} aria-label="System update progress" />
+            <div class="sm:col-span-3">
+              <Button variant="outline" size="sm" onclick={openUpdateDialog}>
+                <Spinner />
+                View update progress
+              </Button>
             </div>
-          {:else}
-            <p class="text-xs leading-5 text-muted-foreground">Updates use a blue-green cutover and restore the previous binary if health validation fails.</p>
-          {/if}
-          {#if update.activeInstanceBefore || update.activeInstance}
-            <dl class="grid grid-cols-2 gap-4 border-t border-border pt-4 text-xs">
-              <div>
-                <dt class="text-muted-foreground">Previous instance</dt>
-                <dd class="mt-1 font-mono">{update.activeInstanceBefore || 'Unknown'}</dd>
-              </div>
-              <div>
-                <dt class="text-muted-foreground">Serving instance</dt>
-                <dd class="mt-1 font-mono">{update.activeInstance || 'Unknown'}</dd>
-              </div>
-            </dl>
-          {/if}
-        </div>
-
-        <div class="min-w-0">
-          <h2 class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Update activity</h2>
-          {#if updateEvents.length === 0}
-            <Empty.Root class="py-8">
-              <Empty.Header>
-                <Empty.Title>No update activity</Empty.Title>
-                <Empty.Description>Deployment and cutover events will appear after an update starts.</Empty.Description>
-              </Empty.Header>
-            </Empty.Root>
-          {:else}
-            <ScrollArea.Root class="mt-4 max-h-72">
-              <ol class="space-y-0 pr-3">
-                {#each [...updateEvents].reverse() as event, index (event.id)}
-                  <li class="grid grid-cols-[0.75rem_1fr] gap-3">
-                    <div class="flex flex-col items-center">
-                      <span class="mt-1.5 size-2 border border-primary bg-primary/20"></span>
-                      {#if index < updateEvents.length - 1}<span class="w-px flex-1 bg-border"></span>{/if}
-                    </div>
-                    <div class="pb-4">
-                      <p class="text-sm leading-5">{event.message}</p>
-                      <p class="mt-1 text-[10px] uppercase tracking-[0.12em] text-muted-foreground">{timestamp(event.occurredAt)}</p>
-                    </div>
-                  </li>
-                {/each}
-              </ol>
-            </ScrollArea.Root>
           {/if}
         </div>
       </Card.Content>
@@ -326,6 +257,17 @@
       </Card.Content>
     </Card.Root>
 
+    <UpdateDialog
+      bind:open={updateDialogOpen}
+      tracking={updateDialogTracking}
+      {currentVersion}
+      {update}
+      {running}
+      {starting}
+      {reconnecting}
+      {canUpdate}
+      onStart={startUpdate}
+    />
     <DeploymentDialog bind:open={deploymentDialogOpen} deployment={selectedDeployment} />
   </div>
 </DashboardLayout>
