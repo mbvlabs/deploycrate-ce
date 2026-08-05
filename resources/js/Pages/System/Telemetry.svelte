@@ -9,7 +9,7 @@
   import TelemetryHistory from '@/Components/System/TelemetryHistory.svelte'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
-  import { router } from '@inertiajs/svelte'
+  import { page, router } from '@inertiajs/svelte'
 
   type SystemIdentity = {
     applicationName: string
@@ -219,6 +219,8 @@
     hasMore: boolean
   }
 
+  type TelemetryView = 'overview' | 'services' | 'logs' | 'traces'
+
   let { auth, system, telemetry, applicationTelemetry, telemetryRange }: {
     auth: { email: string }
     system: SystemIdentity
@@ -241,8 +243,16 @@
   let traceError = $state('')
   let selectedAttributionID = $state('')
   let attributionComparison = $state<'host' | 'service'>('host')
-  let activeView = $state<'overview' | 'services' | 'logs' | 'traces'>('overview')
   let live = $state(false)
+
+  const activeView = $derived.by<TelemetryView>(() => {
+    const view = new URLSearchParams($page.url.split('?')[1] ?? '').get('view')
+    return view === 'services' || view === 'logs' || view === 'traces' ? view : 'overview'
+  })
+  const telemetryHref = (view: TelemetryView, range: string) => {
+    const query = new URLSearchParams({ view, range })
+    return `${routes.systemTelemetry()}?${query.toString()}`
+  }
 
   const formatBytes = (value: number) => {
     if (!Number.isFinite(value) || value < 0) return 'Unavailable'
@@ -290,7 +300,18 @@
     if (row.installation) return `Managed resource ${short(row.resource)}`
     return label(row.component)
   }
-  const attributionID = (row: AttributedTelemetry) => [row.scope, row.component, row.resource, row.installation].join(':')
+  const attributionID = (row: AttributedTelemetry) => JSON.stringify([
+    row.scope,
+    row.component,
+    row.application,
+    row.environment,
+    row.release,
+    row.deployment,
+    row.target,
+    row.instance,
+    row.resource,
+    row.installation,
+  ])
   const attributionOptions = $derived(attributionRows.map((row) => ({
     id: attributionID(row),
     label: rowName(row),
@@ -520,7 +541,7 @@
             size="sm"
             variant={telemetryRange === option.value ? 'default' : 'outline'}
             aria-pressed={telemetryRange === option.value}
-            href={`${routes.systemTelemetry()}?range=${option.value}`}
+            href={telemetryHref(activeView, option.value)}
           >{option.label}</Button>
         {/each}
         <Button size="sm" variant={live ? 'default' : 'outline'} aria-pressed={live} onclick={() => (live = !live)}>
@@ -531,10 +552,10 @@
     </header>
 
     <nav class="flex flex-wrap gap-2 border-b border-border pb-3" aria-label="Telemetry views">
-      <Button size="sm" variant={activeView === 'overview' ? 'default' : 'ghost'} onclick={() => (activeView = 'overview')}>Overview</Button>
-      <Button size="sm" variant={activeView === 'services' ? 'default' : 'ghost'} onclick={() => (activeView = 'services')}>Services</Button>
-      <Button size="sm" variant={activeView === 'logs' ? 'default' : 'ghost'} onclick={() => (activeView = 'logs')}>Logs</Button>
-      <Button size="sm" variant={activeView === 'traces' ? 'default' : 'ghost'} onclick={() => (activeView = 'traces')}>Traces</Button>
+      <Button size="sm" variant={activeView === 'overview' ? 'default' : 'ghost'} href={telemetryHref('overview', telemetryRange)}>Overview</Button>
+      <Button size="sm" variant={activeView === 'services' ? 'default' : 'ghost'} href={telemetryHref('services', telemetryRange)}>Services</Button>
+      <Button size="sm" variant={activeView === 'logs' ? 'default' : 'ghost'} href={telemetryHref('logs', telemetryRange)}>Logs</Button>
+      <Button size="sm" variant={activeView === 'traces' ? 'default' : 'ghost'} href={telemetryHref('traces', telemetryRange)}>Traces</Button>
     </nav>
 
     {#if activeView === 'overview'}
@@ -640,7 +661,7 @@
               <Table.Root class="min-w-[900px] text-xs">
                 <Table.Header class="border-y border-border bg-muted/30"><Table.Row><Table.Head>Service</Table.Head><Table.Head>CPU</Table.Head><Table.Head>Memory</Table.Head><Table.Head>Disk read / write</Table.Head><Table.Head>Network</Table.Head><Table.Head>Tasks</Table.Head></Table.Row></Table.Header>
                 <Table.Body>
-                  {#each platform as row (`${row.component}:${row.installation}`)}
+                  {#each platform as row (attributionID(row))}
                     <Table.Row>
                       <Table.Cell><div class="flex items-center gap-2"><p class="font-medium text-sm">{label(row.component)}</p>{#if !row.available}<StatusBadge status="stale" label="Stale" />{/if}</div>{#if row.installation}<p class="mt-1 font-mono text-[11px] text-muted-foreground">Installation {short(row.installation)}</p>{/if}</Table.Cell>
                       <Table.Cell>{current(row, row.cpuAvailable, formatCores(row.cpuCores))}</Table.Cell><Table.Cell>{current(row, row.memoryAvailable, formatBytes(row.memoryBytes))}</Table.Cell>
@@ -663,7 +684,7 @@
               <Table.Root class="min-w-[1180px] text-xs">
                 <Table.Header class="border-y border-border bg-muted/30"><Table.Row><Table.Head>Service</Table.Head><Table.Head>CPU</Table.Head><Table.Head>Memory</Table.Head><Table.Head>Disk read / write</Table.Head><Table.Head>Network receive / transmit</Table.Head><Table.Head>Tasks</Table.Head><Table.Head>Throttling / OOM</Table.Head></Table.Row></Table.Header>
                 <Table.Body>
-                  {#each systemContainers as row (`${row.component}:${row.resource}:${row.installation}`)}
+                  {#each systemContainers as row (attributionID(row))}
                     <Table.Row>
                       <Table.Cell><div class="flex items-center gap-2"><p class="font-medium text-sm">{systemContainerName(row)}</p>{#if !row.available}<StatusBadge status="stale" label="Stale" />{/if}</div><p class="mt-1 font-mono text-[11px] text-muted-foreground">{systemContainerIdentity(row)}</p></Table.Cell>
                       <Table.Cell>{current(row, row.cpuAvailable, formatCores(row.cpuCores))}</Table.Cell><Table.Cell>{current(row, row.memoryAvailable, formatBytes(row.memoryBytes))}</Table.Cell>
