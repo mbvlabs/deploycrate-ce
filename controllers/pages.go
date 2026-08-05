@@ -22,14 +22,16 @@ type Pages struct {
 	db         storage.Pool
 	insertOnly queue.InsertOnly
 	dashboard  *services.Dashboard
+	metric     services.MetricRollupService
 }
 
 func NewPages(
 	db storage.Pool,
 	insertOnly queue.InsertOnly,
 	dashboard *services.Dashboard,
+	metric services.MetricRollupService,
 ) Pages {
-	return Pages{db: db, insertOnly: insertOnly, dashboard: dashboard}
+	return Pages{db: db, insertOnly: insertOnly, dashboard: dashboard, metric: metric}
 }
 
 func (p Pages) RegisterRoutes(r *router.Router) error {
@@ -88,12 +90,22 @@ func (p Pages) Home(etx *echo.Context) error {
 		slog.ErrorContext(ctx, "failed to load dashboard", "error", err)
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
+	overview, err := models.Application.FindSystemOverview(ctx, p.db.Executor())
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to load system server for dashboard telemetry", "error", err)
+		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
+	}
+	telemetry, err := p.metric.HostTelemetry(ctx, overview.ServerID)
+	if err != nil {
+		slog.WarnContext(ctx, "failed to load dashboard host telemetry", "error", err)
+	}
 
 	return inertia.Page(etx, "Home", inertia.Props{
 		"auth": inertia.Props{
 			"email": appSession.Email,
 		},
 		"dashboard": dashboard,
+		"telemetry": telemetry,
 	})
 }
 

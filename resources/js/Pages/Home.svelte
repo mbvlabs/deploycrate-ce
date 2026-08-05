@@ -8,10 +8,11 @@
   import PlusIcon from '@lucide/svelte/icons/plus'
   import RocketIcon from '@lucide/svelte/icons/rocket'
   import ServerIcon from '@lucide/svelte/icons/server'
-  import SparklesIcon from '@lucide/svelte/icons/sparkles'
   import { Link } from '@inertiajs/svelte'
 
   import StatusBadge from '@/Components/StatusBadge.svelte'
+  import UsageHistory from '@/Components/System/UsageHistory.svelte'
+  import UsageDonut from '@/Components/System/UsageDonut.svelte'
   import { Button } from '@/Components/ui/button'
   import * as Card from '@/Components/ui/card'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
@@ -66,9 +67,22 @@
     applications: Application[]
   }
 
-  let { auth, dashboard }: { auth: { email: string }; dashboard: Dashboard } = $props()
+  type SystemTelemetry = {
+    available: boolean
+    observedAt: string
+    cpu: { used: number; free: number }
+    memory: { used: number; free: number }
+    storage: { used: number; free: number }
+    memoryHistory: Array<{ observedAt: string; used: number; free: number }>
+    storageHistory: Array<{ observedAt: string; used: number; free: number }>
+  }
 
-  const hasApplications = $derived(dashboard.metrics.applications > 0)
+  let { auth, dashboard, telemetry }: {
+    auth: { email: string }
+    dashboard: Dashboard
+    telemetry: SystemTelemetry
+  } = $props()
+
   const maxActivity = $derived(Math.max(1, ...dashboard.deploymentActivity.map((point) => point.total)))
   const dayFormatter = new Intl.DateTimeFormat(undefined, { weekday: 'short' })
   const dateTimeFormatter = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
@@ -120,6 +134,16 @@
   function revisionLabel(value: string) {
     return value ? value.slice(0, 8) : 'manual'
   }
+
+  function formatBytes(value: number) {
+    if (!Number.isFinite(value) || value < 0) return 'Unavailable'
+    if (value === 0) return '0 B'
+    const units = ['B', 'KB', 'MB', 'GB', 'TB']
+    const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1)
+    return `${(value / (1024 ** index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`
+  }
+
+  const formatPercent = (value: number) => `${value.toFixed(1)}%`
 </script>
 
 <svelte:head>
@@ -128,41 +152,24 @@
 
 <DashboardLayout email={auth.email}>
   <div class="space-y-6 lg:space-y-8">
-    <section class="relative isolate overflow-hidden border border-border bg-card px-5 py-6 sm:px-8 sm:py-8" aria-labelledby="dashboard-title">
-      <div class="absolute inset-0 -z-10 bg-[radial-gradient(circle_at_80%_0%,color-mix(in_srgb,var(--primary)_18%,transparent),transparent_38%)]"></div>
-      <div class="absolute -right-10 -top-16 -z-10 size-64 border border-primary/20"></div>
-      <div class="absolute right-10 top-10 -z-10 size-28 border border-primary/25 bg-primary/5"></div>
-
-      <div class="flex flex-col gap-8 lg:flex-row lg:items-end lg:justify-between">
-        <div class="max-w-2xl">
-          <div class="flex items-center gap-2 text-[10px] font-medium uppercase tracking-[0.24em] text-primary">
-            <SparklesIcon class="size-3.5" />
-            Deployment command center
-          </div>
-          <h1 id="dashboard-title" class="mt-4 text-3xl font-semibold tracking-tight sm:text-4xl lg:text-5xl">
-            {hasApplications ? 'Everything is in motion.' : 'Your next release starts here.'}
-          </h1>
-          <p class="mt-4 max-w-xl text-sm leading-6 text-muted-foreground">
-            {#if hasApplications}
-              See what is running, what just shipped, and where your platform needs attention.
-            {:else}
-              Create your first application, connect its source, and take it from commit to production.
-            {/if}
-          </p>
+    <section aria-labelledby="host-usage-heading">
+      <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 id="host-usage-heading" class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Host usage</h1>
+          <p class="mt-1 text-xs text-muted-foreground">Latest ClickHouse telemetry for the system server</p>
         </div>
-
-        <div class="flex flex-col gap-2 sm:flex-row">
-          <Button size="lg">
-            {#snippet child({ props })}
-              <Link {...props} href={routes.applicationNew()}><PlusIcon />New application</Link>
-            {/snippet}
-          </Button>
-          <Button size="lg" variant="outline">
-            {#snippet child({ props })}
-              <Link {...props} href={routes.environments()}>View environments<ArrowRightIcon data-icon="inline-end" /></Link>
-            {/snippet}
-          </Button>
-        </div>
+        {#if telemetry.available}
+          <p class="text-xs text-muted-foreground">Observed {new Date(telemetry.observedAt).toLocaleString()}</p>
+        {/if}
+      </div>
+      <div class="grid gap-3 lg:grid-cols-3">
+        <UsageDonut label="CPU" used={telemetry.cpu.used} free={telemetry.cpu.free} formatValue={formatPercent} available={telemetry.available} />
+        <UsageDonut label="Memory" used={telemetry.memory.used} free={telemetry.memory.free} formatValue={formatBytes} available={telemetry.available} />
+        <UsageDonut label="Storage" used={telemetry.storage.used} free={telemetry.storage.free} formatValue={formatBytes} available={telemetry.available} />
+      </div>
+      <div class="mt-3 grid gap-3 xl:grid-cols-2">
+        <UsageHistory label="Memory usage" points={telemetry.memoryHistory ?? []} />
+        <UsageHistory label="Storage usage" points={telemetry.storageHistory ?? []} />
       </div>
     </section>
 

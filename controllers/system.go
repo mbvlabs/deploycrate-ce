@@ -108,23 +108,12 @@ func (s System) Overview(etx *echo.Context) error {
 	if err != nil {
 		return s.renderLoadError(etx, "backup health", err)
 	}
-	telemetry, err := s.metric.HostTelemetry(etx.Request().Context(), overview.ServerID)
-	if err != nil {
-		slog.WarnContext(
-			etx.Request().Context(),
-			"failed to load DeployCrate CE system telemetry",
-			"error",
-			err,
-		)
-	}
-
 	return inertia.Page(etx, "System/Overview", inertia.Props{
 		"auth":      s.authProps(etx),
 		"system":    overview,
 		"resources": resources,
 		"health":    s.health.Run(etx.Request().Context()),
 		"backups":   backups,
-		"telemetry": telemetry,
 	})
 }
 

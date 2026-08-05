@@ -6,8 +6,6 @@
   import { Button } from '@/Components/ui/button'
   import * as Empty from '@/Components/ui/empty'
   import { Separator } from '@/Components/ui/separator'
-  import UsageHistory from '@/Components/System/UsageHistory.svelte'
-  import UsageDonut from '@/Components/System/UsageDonut.svelte'
   import StatusBadge from '@/Components/StatusBadge.svelte'
   import DashboardLayout from '@/Layouts/DashboardLayout.svelte'
   import { routes } from '@/routes'
@@ -90,23 +88,12 @@
     activeOrRetrying: boolean
   }
 
-  type SystemTelemetry = {
-    available: boolean
-    observedAt: string
-    cpu: { used: number; free: number }
-    memory: { used: number; free: number }
-    storage: { used: number; free: number }
-    memoryHistory: Array<{ observedAt: string; used: number; free: number }>
-    storageHistory: Array<{ observedAt: string; used: number; free: number }>
-  }
-
-  let { auth, system, resources, health, backups, telemetry }: {
+  let { auth, system, resources, health, backups }: {
     auth: { email: string }
     system: SystemOverview
     resources: SystemResource[]
     health: SystemHealth
     backups: BackupHealthPolicy[]
-    telemetry: SystemTelemetry
   } = $props()
   let openSections = $state(['network', 'runtime', 'resource', 'backups', 'deployments'])
 
@@ -127,7 +114,6 @@
     const index = Math.min(Math.floor(Math.log(value) / Math.log(1024)), units.length - 1)
     return `${(value / (1024 ** index)).toFixed(index === 0 ? 0 : 1)} ${units[index]}`
   }
-  const formatPercent = (value: number) => `${value.toFixed(1)}%`
   const capabilityValue = (value: unknown): string => {
     if (typeof value === 'boolean') return value ? 'Available' : 'Unavailable'
     if (typeof value === 'string') return checkLabel(value)
@@ -165,45 +151,6 @@
           <Link {...props} href={routes.systemUpdate()}>Manage updates</Link>
         {/snippet}
       </Button>
-    </section>
-
-    <section aria-labelledby="host-usage-heading">
-      <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2 id="host-usage-heading" class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground">Host usage</h2>
-          <p class="mt-1 text-xs text-muted-foreground">Latest ClickHouse telemetry for the system server</p>
-        </div>
-        {#if telemetry.available}
-          <p class="text-xs text-muted-foreground">Observed {new Date(telemetry.observedAt).toLocaleString()}</p>
-        {/if}
-      </div>
-      <div class="grid gap-3 lg:grid-cols-3">
-        <UsageDonut
-          label="CPU"
-          used={telemetry.cpu.used}
-          free={telemetry.cpu.free}
-          formatValue={formatPercent}
-          available={telemetry.available}
-        />
-        <UsageDonut
-          label="Memory"
-          used={telemetry.memory.used}
-          free={telemetry.memory.free}
-          formatValue={formatBytes}
-          available={telemetry.available}
-        />
-        <UsageDonut
-          label="Storage"
-          used={telemetry.storage.used}
-          free={telemetry.storage.free}
-          formatValue={formatBytes}
-          available={telemetry.available}
-        />
-      </div>
-      <div class="mt-3 grid gap-3 xl:grid-cols-2">
-        <UsageHistory label="Memory usage" points={telemetry.memoryHistory ?? []} />
-        <UsageHistory label="Storage usage" points={telemetry.storageHistory ?? []} />
-      </div>
     </section>
 
     <Accordion.Root type="multiple" bind:value={openSections} class="grid gap-3">
