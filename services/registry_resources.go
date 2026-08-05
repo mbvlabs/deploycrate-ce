@@ -236,7 +236,7 @@ func (service *RegistryResources) CreateExternal(ctx context.Context, input Exte
 	if count > 0 {
 		return models.RegistryResourceEntity{}, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: "endpoint", Code: "taken", Message: "Registry endpoint is already connected"}})
 	}
-	resource, err := models.Resource.Create(ctx, tx, models.CreateResourceData{Name: input.Name, Slug: slug.Make(input.Name), ResourceType: models.ResourceTypeService, Configuration: json.RawMessage(`{"engine":"registry"}`)})
+	resource, err := models.Resource.Create(ctx, tx, models.CreateResourceData{Name: input.Name, Slug: slug.Make(input.Name), ResourceType: models.ResourceTypeService, Configuration: json.RawMessage(`{"engine":"registry"}`), EnvironmentAttachable: false})
 	if err != nil {
 		return models.RegistryResourceEntity{}, err
 	}
@@ -287,7 +287,7 @@ func (service *RegistryResources) ArchiveExternal(ctx context.Context, resourceI
 		return err
 	}
 	resource.ArchivedAt = sql.NullTime{Time: now, Valid: true}
-	if _, err := models.Resource.Update(ctx, tx, models.UpdateResourceData{ID: resource.ID, Name: resource.Name, Slug: resource.Slug, ResourceType: resource.ResourceType, Configuration: resource.Configuration, SystemManaged: resource.SystemManaged, ArchivedAt: resource.ArchivedAt}); err != nil {
+	if _, err := models.Resource.Update(ctx, tx, models.UpdateResourceData{ID: resource.ID, Name: resource.Name, Slug: resource.Slug, ResourceType: resource.ResourceType, Configuration: resource.Configuration, SystemManaged: resource.SystemManaged, EnvironmentAttachable: resource.EnvironmentAttachable, ArchivedAt: resource.ArchivedAt}); err != nil {
 		return err
 	}
 	return tx.Commit()

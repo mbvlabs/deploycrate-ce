@@ -239,6 +239,7 @@ func resourceListProps(items []models.ResourceListItem) []inertia.Props {
 	for _, item := range items {
 		props = append(props, inertia.Props{
 			"id": item.ID, "name": item.Name, "resourceType": item.ResourceType.String(), "engine": item.Engine,
+			"systemManaged": item.SystemManaged, "environmentAttachable": item.EnvironmentAttachable,
 			"databaseCount": item.DatabaseCount, "connectionCount": item.ConnectionCount,
 			"installationCount": item.InstallationCount,
 			"endpointCount":     item.EndpointCount, "health": item.Health,

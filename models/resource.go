@@ -15,16 +15,17 @@ import (
 )
 
 type ResourceEntity struct {
-	bun.BaseModel `bun:"table:resources,alias:resources"`
-	ID            uuid.UUID        `bun:"id,pk,type:uuid"`
-	CreatedAt     time.Time        `bun:"created_at"`
-	UpdatedAt     time.Time        `bun:"updated_at"`
-	Name          string           `bun:"name"`
-	Slug          string           `bun:"slug"`
-	ResourceType  ResourceTypeEnum `bun:"resource_type"`
-	Configuration json.RawMessage  `bun:"configuration,type:jsonb"`
-	SystemManaged bool             `bun:"system_managed"`
-	ArchivedAt    sql.NullTime     `bun:"archived_at"`
+	bun.BaseModel         `bun:"table:resources,alias:resources"`
+	ID                    uuid.UUID        `bun:"id,pk,type:uuid"`
+	CreatedAt             time.Time        `bun:"created_at"`
+	UpdatedAt             time.Time        `bun:"updated_at"`
+	Name                  string           `bun:"name"`
+	Slug                  string           `bun:"slug"`
+	ResourceType          ResourceTypeEnum `bun:"resource_type"`
+	Configuration         json.RawMessage  `bun:"configuration,type:jsonb"`
+	SystemManaged         bool             `bun:"system_managed"`
+	EnvironmentAttachable bool             `bun:"environment_attachable"`
+	ArchivedAt            sql.NullTime     `bun:"archived_at"`
 }
 
 type ResourceConfiguration struct {
@@ -194,12 +195,13 @@ func (r resource) Find(
 }
 
 type CreateResourceData struct {
-	Name          string
-	Slug          string
-	ResourceType  ResourceTypeEnum
-	Configuration json.RawMessage
-	SystemManaged bool
-	ArchivedAt    sql.NullTime
+	Name                  string
+	Slug                  string
+	ResourceType          ResourceTypeEnum
+	Configuration         json.RawMessage
+	SystemManaged         bool
+	EnvironmentAttachable bool
+	ArchivedAt            sql.NullTime
 }
 
 func (r resource) Create(
@@ -208,15 +210,16 @@ func (r resource) Create(
 	data CreateResourceData,
 ) (ResourceEntity, error) {
 	entity := ResourceEntity{
-		ID:            uuid.New(),
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
-		Name:          data.Name,
-		Slug:          data.Slug,
-		ResourceType:  data.ResourceType,
-		Configuration: data.Configuration,
-		ArchivedAt:    data.ArchivedAt,
-		SystemManaged: data.SystemManaged,
+		ID:                    uuid.New(),
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
+		Name:                  data.Name,
+		Slug:                  data.Slug,
+		ResourceType:          data.ResourceType,
+		Configuration:         data.Configuration,
+		ArchivedAt:            data.ArchivedAt,
+		SystemManaged:         data.SystemManaged,
+		EnvironmentAttachable: data.EnvironmentAttachable,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -237,14 +240,15 @@ func (r resource) Create(
 }
 
 type UpdateResourceData struct {
-	ID            uuid.UUID
-	UpdatedAt     time.Time
-	Name          string
-	Slug          string
-	ResourceType  ResourceTypeEnum
-	Configuration json.RawMessage
-	SystemManaged bool
-	ArchivedAt    sql.NullTime
+	ID                    uuid.UUID
+	UpdatedAt             time.Time
+	Name                  string
+	Slug                  string
+	ResourceType          ResourceTypeEnum
+	Configuration         json.RawMessage
+	SystemManaged         bool
+	EnvironmentAttachable bool
+	ArchivedAt            sql.NullTime
 }
 
 func (r resource) Update(
@@ -253,14 +257,15 @@ func (r resource) Update(
 	data UpdateResourceData,
 ) (ResourceEntity, error) {
 	entity := ResourceEntity{
-		ID:            data.ID,
-		UpdatedAt:     time.Now(),
-		Name:          data.Name,
-		Slug:          data.Slug,
-		ResourceType:  data.ResourceType,
-		Configuration: data.Configuration,
-		ArchivedAt:    data.ArchivedAt,
-		SystemManaged: data.SystemManaged,
+		ID:                    data.ID,
+		UpdatedAt:             time.Now(),
+		Name:                  data.Name,
+		Slug:                  data.Slug,
+		ResourceType:          data.ResourceType,
+		Configuration:         data.Configuration,
+		ArchivedAt:            data.ArchivedAt,
+		SystemManaged:         data.SystemManaged,
+		EnvironmentAttachable: data.EnvironmentAttachable,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -281,6 +286,7 @@ func (r resource) Update(
 		Column("resource_type").
 		Column("configuration").
 		Column("system_managed").
+		Column("environment_attachable").
 		Column("archived_at").
 		WherePK().
 		Returning("*").
@@ -368,15 +374,16 @@ func (r resource) Upsert(
 	data CreateResourceData,
 ) (ResourceEntity, error) {
 	entity := ResourceEntity{
-		ID:            uuid.New(),
-		CreatedAt:     time.Now(),
-		UpdatedAt:     time.Now(),
-		Name:          data.Name,
-		Slug:          data.Slug,
-		ResourceType:  data.ResourceType,
-		Configuration: data.Configuration,
-		ArchivedAt:    data.ArchivedAt,
-		SystemManaged: data.SystemManaged,
+		ID:                    uuid.New(),
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
+		Name:                  data.Name,
+		Slug:                  data.Slug,
+		ResourceType:          data.ResourceType,
+		Configuration:         data.Configuration,
+		ArchivedAt:            data.ArchivedAt,
+		SystemManaged:         data.SystemManaged,
+		EnvironmentAttachable: data.EnvironmentAttachable,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -397,6 +404,7 @@ func (r resource) Upsert(
 		Set("resource_type = excluded.resource_type").
 		Set("configuration = excluded.configuration").
 		Set("system_managed = excluded.system_managed").
+		Set("environment_attachable = excluded.environment_attachable").
 		Set("archived_at = excluded.archived_at").
 		Returning("*").
 		Scan(ctx); err != nil {

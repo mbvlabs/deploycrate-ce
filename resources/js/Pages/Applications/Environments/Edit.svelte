@@ -24,6 +24,7 @@
 
   function attachedResourceOption(resource: ResourceInput) {
     return options.resources.find((option) => option.id === resource.resourceId && option.endpointId === resource.endpointId && option.credentialId === resource.credentialId)
+      ?? options.resources.find((option) => option.id === resource.resourceId && option.endpointId === resource.endpointId && option.engine === 'opentelemetry')
   }
 
   function resourceAlias(engine: string) {
@@ -94,7 +95,7 @@
     <Card.Root>
       <Card.Header><Card.Title>Resources</Card.Title><Card.Description>Replace active Resource connections. Injected key names are managed from each Resource.</Card.Description></Card.Header>
       <Card.Content class="space-y-4">
-        <div class="flex flex-col gap-2 sm:flex-row"><NativeSelect.Root bind:value={selectedResource} class="w-full flex-1"><NativeSelect.Option value="">Select a Resource</NativeSelect.Option>{#each availableResources as option}<NativeSelect.Option value={`${option.id}:${option.endpointId}:${option.credentialId ?? ''}`}>{option.name} · {option.engine}{option.database ? ` · ${option.database}` : ''} · {option.endpoint} · {option.credential || 'without credentials'}</NativeSelect.Option>{/each}</NativeSelect.Root><Button type="button" variant="outline" disabled={!selectedResource} onclick={addResource}>Attach</Button></div>
+        <div class="flex flex-col gap-2 sm:flex-row"><NativeSelect.Root bind:value={selectedResource} class="w-full flex-1"><NativeSelect.Option value="">Select a Resource</NativeSelect.Option>{#each availableResources as option}<NativeSelect.Option value={`${option.id}:${option.endpointId}:${option.credentialId ?? ''}`}>{option.name} · {option.engine}{option.database ? ` · ${option.database}` : ''} · {option.endpoint} · {option.credential || (option.engine === 'opentelemetry' ? 'Environment credential created on attach' : 'without credentials')}</NativeSelect.Option>{/each}</NativeSelect.Root><Button type="button" variant="outline" disabled={!selectedResource} onclick={addResource}>Attach</Button></div>
         {#each $form.resources as resource, index}
           <div class="grid gap-3 border border-border p-4 sm:grid-cols-2">
             <FormField label="Connection alias" error={$form.errors[`resources.${index}.alias`]}><Input bind:value={resource.alias} /></FormField>

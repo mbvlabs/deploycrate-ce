@@ -15,16 +15,18 @@ type ResourceListFilters struct {
 }
 
 type ResourceListItem struct {
-	ID                uuid.UUID        `bun:"id"`
-	Name              string           `bun:"name"`
-	Slug              string           `bun:"slug"`
-	ResourceType      ResourceTypeEnum `bun:"resource_type"`
-	Engine            string           `bun:"engine"`
-	DatabaseCount     int              `bun:"database_count"`
-	ConnectionCount   int              `bun:"connection_count"`
-	InstallationCount int              `bun:"installation_count"`
-	EndpointCount     int              `bun:"endpoint_count"`
-	Health            string           `bun:"health"`
+	ID                    uuid.UUID        `bun:"id"`
+	Name                  string           `bun:"name"`
+	Slug                  string           `bun:"slug"`
+	ResourceType          ResourceTypeEnum `bun:"resource_type"`
+	Engine                string           `bun:"engine"`
+	SystemManaged         bool             `bun:"system_managed"`
+	EnvironmentAttachable bool             `bun:"environment_attachable"`
+	DatabaseCount         int              `bun:"database_count"`
+	ConnectionCount       int              `bun:"connection_count"`
+	InstallationCount     int              `bun:"installation_count"`
+	EndpointCount         int              `bun:"endpoint_count"`
+	Health                string           `bun:"health"`
 }
 
 type ResourceInstallationDetail struct {

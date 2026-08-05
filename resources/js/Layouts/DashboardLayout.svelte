@@ -77,7 +77,7 @@
     if (path.startsWith(routes.systemTasks())) return [{ label: 'System', href: routes.systemOverview() }, { label: 'Tasks' }]
     if (path.startsWith(routes.systemUpdate())) return [{ label: 'System', href: routes.systemOverview() }, { label: 'Updates' }]
     if (path.startsWith(routes.systemDeployments())) return [{ label: 'System', href: routes.systemOverview() }, { label: 'Deployments' }]
-    if (path.startsWith(routes.systemResources())) return [{ label: 'System', href: routes.systemOverview() }, { label: 'Resources' }]
+    if (path.startsWith(routes.systemResources())) return [{ label: 'Resources', href: routes.resources() }, { label: 'System Resource' }]
     return [{ label: 'Overview' }]
   })
 
@@ -316,16 +316,6 @@
                   <Link {...props} href={routes.systemDeployments()} aria-current={$page.url === routes.systemDeployments() ? 'page' : undefined}>
                     <GitBranchIcon />
                     <span>Deployments</span>
-                  </Link>
-                {/snippet}
-              </Sidebar.MenuButton>
-            </Sidebar.MenuItem>
-            <Sidebar.MenuItem>
-              <Sidebar.MenuButton isActive={$page.url.startsWith(routes.systemResources())} tooltipContent="Resources">
-                {#snippet child({ props })}
-                  <Link {...props} href={routes.systemResources()} aria-current={$page.url.startsWith(routes.systemResources()) ? 'page' : undefined}>
-                    <DatabaseIcon />
-                    <span>Resources</span>
                   </Link>
                 {/snippet}
               </Sidebar.MenuButton>

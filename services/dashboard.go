@@ -78,7 +78,7 @@ func (service *Dashboard) Snapshot(ctx context.Context) (DashboardSnapshot, erro
 		ColumnExpr("(SELECT COUNT(*) FROM deployments AS deployment JOIN releases AS release ON release.id = deployment.release_id JOIN environments AS environment ON environment.id = release.environment_id JOIN applications AS application ON application.id = environment.application_id WHERE application.slug <> ? AND deployment.status IN ('queued', 'running', 'in_progress')) AS active_deployments", models.SystemApplicationSlug).
 		ColumnExpr("(SELECT COUNT(*) FROM deployments AS deployment JOIN releases AS release ON release.id = deployment.release_id JOIN environments AS environment ON environment.id = release.environment_id JOIN applications AS application ON application.id = environment.application_id WHERE application.slug <> ? AND deployment.status = 'succeeded') AS successful_deployments", models.SystemApplicationSlug).
 		ColumnExpr("(SELECT COUNT(*) FROM deployments AS deployment JOIN releases AS release ON release.id = deployment.release_id JOIN environments AS environment ON environment.id = release.environment_id JOIN applications AS application ON application.id = environment.application_id WHERE application.slug <> ? AND deployment.status IN ('succeeded', 'failed')) AS finished_deployments", models.SystemApplicationSlug).
-		ColumnExpr("(SELECT COUNT(*) FROM resources WHERE archived_at IS NULL AND system_managed = FALSE) AS resources").
+		ColumnExpr("(SELECT COUNT(*) FROM resources WHERE archived_at IS NULL) AS resources").
 		ColumnExpr("(SELECT COUNT(*) FROM servers WHERE archived_at IS NULL) AS nodes").
 		Scan(ctx, &metrics); err != nil {
 		return DashboardSnapshot{}, fmt.Errorf("load dashboard metrics: %w", err)

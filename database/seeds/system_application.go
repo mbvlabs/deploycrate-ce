@@ -151,6 +151,7 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		factories.WithResourcesResourceType(models.ResourceTypeDatabase),
 		factories.WithResourcesConfiguration(json.RawMessage(`{"engine":"postgresql","databases":[{"name":"deploycrate"}]}`)),
 		factories.WithResourcesSystemManaged(true),
+		factories.WithResourcesEnvironmentAttachable(false),
 		factories.WithResourcesArchivedAt(sql.NullTime{}),
 	)
 	if err != nil {
@@ -224,6 +225,7 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		factories.WithResourcesResourceType(models.ResourceTypeDatabase),
 		factories.WithResourcesConfiguration(json.RawMessage(`{"engine":"clickhouse","databases":[{"name":"deploycrate"}]}`)),
 		factories.WithResourcesSystemManaged(true),
+		factories.WithResourcesEnvironmentAttachable(false),
 		factories.WithResourcesArchivedAt(sql.NullTime{}),
 	)
 	if err != nil {
@@ -290,7 +292,7 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 
 	telemetry, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
 		Name: "DeployCrate Telemetry", Slug: "deploycrate-telemetry", ResourceType: models.ResourceTypeService,
-		Configuration: json.RawMessage(`{"engine":"opentelemetry"}`), SystemManaged: true,
+		Configuration: json.RawMessage(`{"engine":"opentelemetry"}`), SystemManaged: true, EnvironmentAttachable: true,
 	})
 	if err != nil {
 		return fmt.Errorf("create DeployCrate Telemetry Resource: %w", err)

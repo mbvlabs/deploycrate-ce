@@ -11,6 +11,7 @@ CREATE TABLE resources (
     resource_type TEXT NOT NULL,
     configuration JSONB NOT NULL,
     system_managed BOOLEAN NOT NULL,
+    environment_attachable BOOLEAN NOT NULL,
     archived_at TIMESTAMPTZ
 );
 -- +goose StatementEnd

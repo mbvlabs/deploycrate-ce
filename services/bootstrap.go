@@ -602,7 +602,7 @@ func createBootstrapClickHouseResource(
 		Name:         "DeployCrate CE ClickHouse",
 		Slug:         "deploycrate-ce-clickhouse",
 		ResourceType: models.ResourceTypeDatabase, Configuration: json.RawMessage(`{"engine":"clickhouse","databases":[{"name":"deploycrate"}]}`),
-		SystemManaged: true,
+		SystemManaged: true, EnvironmentAttachable: false,
 	})
 	if err != nil {
 		return fmt.Errorf("create bootstrap ClickHouse resource: %w", err)
@@ -717,11 +717,12 @@ func createBootstrapTelemetryResource(
 		return fmt.Errorf("encode bootstrap OpenTelemetry Resource: %w", err)
 	}
 	resource, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
-		Name:          "DeployCrate Telemetry",
-		Slug:          "deploycrate-telemetry",
-		ResourceType:  models.ResourceTypeService,
-		Configuration: configuration,
-		SystemManaged: true,
+		Name:                  "DeployCrate Telemetry",
+		Slug:                  "deploycrate-telemetry",
+		ResourceType:          models.ResourceTypeService,
+		Configuration:         configuration,
+		SystemManaged:         true,
+		EnvironmentAttachable: true,
 	})
 	if err != nil {
 		return fmt.Errorf("create bootstrap OpenTelemetry Resource: %w", err)
@@ -792,7 +793,7 @@ func createBootstrapRegistryResource(
 		Name:         "DeployCrate CE Registry",
 		Slug:         "deploycrate-ce-registry",
 		ResourceType: models.ResourceTypeService, Configuration: json.RawMessage(`{"engine":"registry"}`),
-		SystemManaged: true,
+		SystemManaged: true, EnvironmentAttachable: false,
 	})
 	if err != nil {
 		return fmt.Errorf("create bootstrap registry Resource: %w", err)
@@ -900,7 +901,7 @@ func createBootstrapDatabaseResource(
 		Name:         "DeployCrate CE PostgreSQL",
 		Slug:         "deploycrate-ce-postgresql",
 		ResourceType: models.ResourceTypeDatabase, Configuration: configuration,
-		SystemManaged: true,
+		SystemManaged: true, EnvironmentAttachable: false,
 	})
 	if err != nil {
 		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap PostgreSQL Resource: %w", err)

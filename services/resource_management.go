@@ -35,11 +35,10 @@ type ResourceManagement struct {
 	container *ContainerExecution
 	postgres  postgresqlclient.Client
 	secrets   *EnvironmentSecrets
-	telemetry *TelemetryIdentity
 }
 
-func NewResourceManagement(db storage.Pool, cfg config.Config, secrets *EnvironmentSecrets, container *ContainerExecution, telemetry *TelemetryIdentity) *ResourceManagement {
-	return &ResourceManagement{db: db, config: cfg, container: container, postgres: postgresqlclient.New(), secrets: secrets, telemetry: telemetry}
+func NewResourceManagement(db storage.Pool, cfg config.Config, secrets *EnvironmentSecrets, container *ContainerExecution) *ResourceManagement {
+	return &ResourceManagement{db: db, config: cfg, container: container, postgres: postgresqlclient.New(), secrets: secrets}
 }
 
 type ResourceInput struct {
@@ -92,6 +91,15 @@ func resourceCredentialMetadataDatabase(metadata json.RawMessage) string {
 	}
 	_ = json.Unmarshal(metadata, &value)
 	return strings.TrimSpace(value.Database)
+}
+
+func resourceCredentialMetadataEnvironmentID(metadata json.RawMessage) uuid.UUID {
+	var value struct {
+		EnvironmentID string `json:"environment_id"`
+	}
+	_ = json.Unmarshal(metadata, &value)
+	environmentID, _ := uuid.Parse(strings.TrimSpace(value.EnvironmentID))
+	return environmentID
 }
 
 func resourceHasDatabase(resource models.ResourceEntity, name string) bool {
@@ -168,7 +176,7 @@ func (service *ResourceManagement) List(ctx context.Context, filters models.Reso
 	items := make([]models.ResourceListItem, 0)
 	query := service.db.Executor().NewSelect().
 		TableExpr("resources AS resource").
-		ColumnExpr("resource.id, resource.name, resource.slug, resource.resource_type, resource.configuration ->> 'engine' AS engine").
+		ColumnExpr("resource.id, resource.name, resource.slug, resource.resource_type, resource.configuration ->> 'engine' AS engine, resource.system_managed, resource.environment_attachable").
 		ColumnExpr("CASE WHEN resource.resource_type = 'database' THEN jsonb_array_length(COALESCE(resource.configuration -> 'databases', '[]'::jsonb)) ELSE 0 END AS database_count").
 		ColumnExpr("(SELECT count(*) FROM environment_resources AS connection WHERE connection.resource_id = resource.id AND connection.archived_at IS NULL) AS connection_count").
 		ColumnExpr("(SELECT count(*) FROM resource_installations AS installation WHERE installation.resource_id = resource.id AND installation.archived_at IS NULL) AS installation_count").
@@ -198,8 +206,7 @@ func (service *ResourceManagement) List(ctx context.Context, filters models.Reso
 			ELSE 'unknown'
 		END AS health`).
 		Where("resource.archived_at IS NULL").
-		Where("resource.system_managed = FALSE").
-		OrderExpr("resource.name ASC")
+		OrderExpr("resource.system_managed ASC, resource.name ASC")
 	if search := strings.TrimSpace(filters.Search); search != "" {
 		query = query.Where("resource.name ILIKE ?", "%"+search+"%")
 	}
@@ -384,7 +391,7 @@ func (service *ResourceManagement) CreateResource(ctx context.Context, input Cre
 		Name:         input.Resource.Name,
 		Slug:         input.Resource.Slug,
 		ResourceType: input.Resource.ResourceType, Configuration: normalizedJSON(input.Resource.Configuration),
-		SystemManaged: false,
+		SystemManaged: false, EnvironmentAttachable: true,
 	})
 	if err != nil {
 		return models.ResourceEntity{}, mapResourceConflict(err)
@@ -487,7 +494,7 @@ func (service *ResourceManagement) UpdateResource(ctx context.Context, resourceI
 	updated, err := models.Resource.Update(ctx, tx, models.UpdateResourceData{
 		ID: resource.ID, Name: input.Name, Slug: input.Slug,
 		ResourceType: input.ResourceType, Configuration: normalizedJSON(input.Configuration),
-		SystemManaged: resource.SystemManaged, ArchivedAt: resource.ArchivedAt,
+		SystemManaged: resource.SystemManaged, EnvironmentAttachable: resource.EnvironmentAttachable, ArchivedAt: resource.ArchivedAt,
 	})
 	if err != nil {
 		return models.ResourceEntity{}, mapResourceConflict(err)
@@ -1017,7 +1024,7 @@ func (service *ResourceManagement) CreateDatabase(ctx context.Context, resourceI
 	}
 	updated, err := models.Resource.Update(ctx, tx, models.UpdateResourceData{
 		ID: resource.ID, Name: resource.Name, Slug: resource.Slug, ResourceType: resource.ResourceType,
-		Configuration: encoded, SystemManaged: resource.SystemManaged, ArchivedAt: resource.ArchivedAt,
+		Configuration: encoded, SystemManaged: resource.SystemManaged, EnvironmentAttachable: resource.EnvironmentAttachable, ArchivedAt: resource.ArchivedAt,
 	})
 	if err != nil {
 		if created {
@@ -1778,14 +1785,12 @@ func (service *ResourceManagement) resourceProjectionValuesForEnvironment(
 	projection string,
 	resourceKeys map[string]string,
 ) (map[string]string, map[string]string, error) {
-	identityToken := ""
-	var err error
 	if resource.Engine() == "opentelemetry" {
-		identityToken, err = service.telemetry.EnvironmentToken(environmentID)
-		if err != nil {
-			return nil, nil, err
+		if credential == nil || resourceCredentialMetadataEnvironmentID(credential.Metadata) != environmentID {
+			return nil, nil, errors.New("OpenTelemetry Resource credential does not belong to this Environment")
 		}
 	}
+	identityToken := credentialValues["token"]
 	return resourceProjectionValues(resource, endpoint, credential, credentialValues, projection, resourceKeys, identityToken)
 }
 
