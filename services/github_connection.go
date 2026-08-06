@@ -68,6 +68,14 @@ type GitHubConnectionState struct {
 	HealthMessage string                      `json:"healthMessage"`
 }
 
+type GitHubInstallationDetail struct {
+	App           models.GitHubAppEntity          `json:"app"`
+	Installation  GitHubInstallationSummary       `json:"installation"`
+	Repositories  []models.GitHubRepositoryEntity `json:"repositories"`
+	Degraded      bool                            `json:"degraded"`
+	HealthMessage string                          `json:"healthMessage"`
+}
+
 type GitHubConnection struct {
 	db     storage.Pool
 	cfg    config.Config
@@ -499,6 +507,42 @@ func (service *GitHubConnection) State(ctx context.Context) (GitHubConnectionSta
 		state.HealthMessage = "GitHub App credentials and installations are available"
 	}
 	return state, nil
+}
+
+func (service *GitHubConnection) InstallationDetail(ctx context.Context, id uuid.UUID) (GitHubInstallationDetail, error) {
+	installation, err := models.GitHubInstallation.Find(ctx, service.db.Executor(), id)
+	if errors.Is(err, sql.ErrNoRows) || installation.ArchivedAt.Valid {
+		return GitHubInstallationDetail{}, models.ErrNotFound
+	}
+	if err != nil {
+		return GitHubInstallationDetail{}, err
+	}
+	app, err := models.GitHubApp.Find(ctx, service.db.Executor(), installation.GitHubAppID)
+	if errors.Is(err, sql.ErrNoRows) || app.ArchivedAt.Valid {
+		return GitHubInstallationDetail{}, models.ErrNotFound
+	}
+	if err != nil {
+		return GitHubInstallationDetail{}, err
+	}
+	repositories, err := models.GitHubRepository.ListActive(ctx, service.db.Executor(), installation.ID)
+	if err != nil {
+		return GitHubInstallationDetail{}, err
+	}
+	_, credentialErr := service.authentication(ctx, app)
+	degraded := credentialErr != nil || installation.SuspendedAt.Valid
+	detail := GitHubInstallationDetail{
+		App:           app,
+		Installation:  GitHubInstallationSummary{GitHubInstallationEntity: installation, RepositoryCount: len(repositories)},
+		Repositories:  repositories,
+		Degraded:      degraded,
+		HealthMessage: "GitHub App credentials and installation access are available",
+	}
+	if credentialErr != nil {
+		detail.HealthMessage = "The GitHub App credential is unavailable or invalid"
+	} else if installation.SuspendedAt.Valid {
+		detail.HealthMessage = "This GitHub installation is suspended and requires attention"
+	}
+	return detail, nil
 }
 
 func (service *GitHubConnection) authentication(ctx context.Context, app models.GitHubAppEntity) (githubclient.AppAuthentication, error) {

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"deploycrate-ce/internal/inertia"
+	"deploycrate-ce/models"
 	"deploycrate-ce/router"
 	"deploycrate-ce/router/cookies"
 	"deploycrate-ce/router/middleware"
@@ -46,6 +47,7 @@ func (controller GitHubConnections) RegisterRoutes(r *router.Router) error {
 		{http.MethodGet, routes.GitHubAppCallback, controller.CompleteAppSetup, admin},
 		{http.MethodPost, routes.GitHubInstall, controller.StartInstallation, admin},
 		{http.MethodGet, routes.GitHubInstallCallback, controller.CompleteInstallation, admin},
+		{http.MethodGet, routes.GitHubInstallationShow, controller.ShowInstallation, admin},
 		{http.MethodPost, routes.GitHubInstallationSync, controller.SyncInstallation, admin},
 		{http.MethodPost, routes.GitHubInstallationVerify, controller.VerifyInstallation, admin},
 		{http.MethodDelete, routes.GitHubInstallationDestroy, controller.DestroyInstallation, admin},
@@ -68,6 +70,21 @@ func (controller GitHubConnections) Show(etx *echo.Context) error {
 		return controller.renderError(etx, "load GitHub connection", err)
 	}
 	return inertia.Page(etx, "Connections/GitHub", inertia.Props{"auth": authProps(etx), "connection": state})
+}
+
+func (controller GitHubConnections) ShowInstallation(etx *echo.Context) error {
+	id, err := uuid.Parse(etx.Param("id"))
+	if err != nil {
+		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
+	}
+	detail, err := controller.connection.InstallationDetail(etx.Request().Context(), id)
+	if errors.Is(err, models.ErrNotFound) {
+		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
+	}
+	if err != nil {
+		return controller.renderError(etx, "load GitHub installation", err)
+	}
+	return inertia.Page(etx, "Connections/GitHub/Show", inertia.Props{"auth": authProps(etx), "connection": detail})
 }
 
 func (controller GitHubConnections) StartAppSetup(etx *echo.Context) error {
@@ -112,12 +129,12 @@ func (controller GitHubConnections) CompleteInstallation(etx *echo.Context) erro
 	if err != nil || externalID <= 0 {
 		return controller.redirectWithError(etx, routes.GitHubConnection.URL(), services.ErrGitHubSetupState)
 	}
-	_, err = controller.connection.CompleteInstallation(etx.Request().Context(), cookies.ExtractFromCookieApp(etx).UserID, etx.QueryParam("state"), externalID)
+	installation, err := controller.connection.CompleteInstallation(etx.Request().Context(), cookies.ExtractFromCookieApp(etx).UserID, etx.QueryParam("state"), externalID)
 	if err != nil {
 		return controller.redirectWithError(etx, routes.GitHubConnection.URL(), err)
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "GitHub installation synchronized")
-	return inertia.Redirect(etx, routes.GitHubConnection.URL(), http.StatusSeeOther)
+	return inertia.Redirect(etx, routes.GitHubInstallationShow.URL(installation.ID), http.StatusSeeOther)
 }
 
 func (controller GitHubConnections) SyncInstallation(etx *echo.Context) error {
@@ -129,7 +146,7 @@ func (controller GitHubConnections) SyncInstallation(etx *echo.Context) error {
 		return controller.redirectWithError(etx, routes.GitHubConnection.URL(), err)
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "GitHub repositories synchronized")
-	return inertia.Redirect(etx, routes.GitHubConnection.URL(), http.StatusSeeOther)
+	return inertia.Redirect(etx, routes.GitHubInstallationShow.URL(id), http.StatusSeeOther)
 }
 
 func (controller GitHubConnections) VerifyInstallation(etx *echo.Context) error {
@@ -141,7 +158,7 @@ func (controller GitHubConnections) VerifyInstallation(etx *echo.Context) error 
 		return controller.redirectWithError(etx, routes.GitHubConnection.URL(), err)
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "GitHub installation access verified")
-	return inertia.Redirect(etx, routes.GitHubConnection.URL(), http.StatusSeeOther)
+	return inertia.Redirect(etx, routes.GitHubInstallationShow.URL(id), http.StatusSeeOther)
 }
 
 func (controller GitHubConnections) DestroyInstallation(etx *echo.Context) error {

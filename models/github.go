@@ -249,7 +249,7 @@ func (githubInstallation) FindByExternal(ctx context.Context, db storage.Executo
 
 func (githubInstallation) ListForApp(ctx context.Context, db storage.Executor, appID uuid.UUID) ([]GitHubInstallationEntity, error) {
 	var entities []GitHubInstallationEntity
-	err := db.NewSelect().Model(&entities).Where("github_app_id = ?", appID).OrderExpr("account_login ASC").Scan(ctx)
+	err := db.NewSelect().Model(&entities).Where("github_app_id = ?", appID).Where("archived_at IS NULL").OrderExpr("account_login ASC").Scan(ctx)
 	return entities, err
 }
 

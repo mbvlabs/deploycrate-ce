@@ -168,7 +168,13 @@
             { label: "Details" },
           ];
     if (path.startsWith(routes.gitHubConnection()))
-      return [{ label: "Connections" }, { label: "GitHub" }];
+      return path === routes.gitHubConnection()
+        ? [{ label: "Connections" }, { label: "GitHub" }]
+        : [
+            { label: "Connections" },
+            { label: "GitHub", href: routes.gitHubConnection() },
+            { label: "Details" },
+          ];
     if (path.startsWith(routes.systemTelemetry()))
       return [
         { label: "System", href: routes.systemOverview() },
