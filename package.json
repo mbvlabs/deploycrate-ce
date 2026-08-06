@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "format": "prettier --write \"resources/js/**/*.{ts,svelte}\""
   },
   "dependencies": {
     "@inertiajs/svelte": "^2.0.0",
@@ -20,6 +21,8 @@
     "bits-ui": "^2.18.1",
     "clsx": "^2.1.1",
     "mode-watcher": "^1.1.0",
+    "prettier": "^3.9.6",
+    "prettier-plugin-svelte": "^4.1.1",
     "shadcn-svelte": "^1.4.2",
     "svelte-sonner": "^1.1.1",
     "tailwind-merge": "^3.6.0",

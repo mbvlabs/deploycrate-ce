@@ -1,8 +1,18 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte'
-  import * as Field from '@/Components/ui/field'
+  import type { Snippet } from "svelte";
+  import * as Field from "@/Components/ui/field";
 
-  let { label, description, error, children }: { label: string; description?: string; error?: string; children: Snippet } = $props()
+  let {
+    label,
+    description,
+    error,
+    children,
+  }: {
+    label: string;
+    description?: string;
+    error?: string;
+    children: Snippet;
+  } = $props();
 </script>
 
 <Field.Field data-invalid={Boolean(error)}>
