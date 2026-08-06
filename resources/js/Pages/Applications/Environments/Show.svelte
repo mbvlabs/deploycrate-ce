@@ -1609,9 +1609,10 @@
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
                   <span class="flex justify-between">
-                    <p class="font-mono">id: {short(release.id)}</p>
+                    <p class="font-mono">ID {short(release.id)}</p>
+					<p class="font-mono mx-2">·</p>
                     <p class="font-mono">
-                      revision: {short(release.sourceRevision)}
+                      Revision {short(release.sourceRevision)}
                     </p>
                   </span>
                   <p class="mt-1 text-xs text-muted-foreground">
