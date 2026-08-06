@@ -2,11 +2,13 @@ package queue
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"deploycrate-ce/queue/jobs"
 	"deploycrate-ce/services"
 
+	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 )
 
@@ -36,10 +38,25 @@ func (worker *DNSReconciliationWorker) Work(ctx context.Context, job *river.Job[
 	if intent == nil {
 		return nil
 	}
-	if _, err := worker.environments.QueueSourceDeployment(
-		ctx, intent.ApplicationID, intent.EnvironmentID, intent.ActorID, intent.TriggerType, intent.Reference,
-	); err != nil {
-		return err
+	if intent.TriggerType == services.ReleaseRedeployTriggerType {
+		if intent.ActorID == nil {
+			return errors.New("release redeploy dispatch requires a user actor")
+		}
+		releaseID, err := uuid.Parse(intent.Reference)
+		if err != nil {
+			return err
+		}
+		if _, err := worker.environments.QueueReleaseDeployment(
+			ctx, intent.ApplicationID, intent.EnvironmentID, releaseID, *intent.ActorID,
+		); err != nil {
+			return err
+		}
+	} else {
+		if _, err := worker.environments.QueueSourceDeployment(
+			ctx, intent.ApplicationID, intent.EnvironmentID, intent.ActorID, intent.TriggerType, intent.Reference,
+		); err != nil {
+			return err
+		}
 	}
 	return worker.dns.MarkDeploymentDispatched(ctx, intent.BindingID, intent.Generation)
 }

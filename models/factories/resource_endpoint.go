@@ -21,7 +21,11 @@ type ResourceEndpointFactory struct {
 
 type ResourceEndpointOption func(*ResourceEndpointFactory)
 
-func BuildResourceEndpoint(resourceID uuid.UUID, privateNetworkID *uuid.UUID, opts ...ResourceEndpointOption) models.ResourceEndpointEntity {
+func BuildResourceEndpoint(
+	resourceID uuid.UUID,
+	privateNetworkID *uuid.UUID,
+	opts ...ResourceEndpointOption,
+) models.ResourceEndpointEntity {
 	f := &ResourceEndpointFactory{
 		ResourceEndpointEntity: models.ResourceEndpointEntity{
 			Name:             faker.Word(),
@@ -29,7 +33,7 @@ func BuildResourceEndpoint(resourceID uuid.UUID, privateNetworkID *uuid.UUID, op
 			Address:          faker.Word(),
 			Port:             randomInt(1, 1000, 100),
 			Protocol:         faker.Word(),
-			TlsMode:          faker.Word(),
+			TLSMode:          faker.Word(),
 			Settings:         json.RawMessage{},
 			ArchivedAt:       sql.NullTime{Time: time.Now(), Valid: true},
 			ResourceID:       resourceID,
@@ -44,7 +48,13 @@ func BuildResourceEndpoint(resourceID uuid.UUID, privateNetworkID *uuid.UUID, op
 	return f.ResourceEndpointEntity
 }
 
-func CreateResourceEndpoint(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, privateNetworkID *uuid.UUID, opts ...ResourceEndpointOption) (models.ResourceEndpointEntity, error) {
+func CreateResourceEndpoint(
+	ctx context.Context,
+	exec storage.Executor,
+	resourceID uuid.UUID,
+	privateNetworkID *uuid.UUID,
+	opts ...ResourceEndpointOption,
+) (models.ResourceEndpointEntity, error) {
 	built := BuildResourceEndpoint(resourceID, privateNetworkID, opts...)
 
 	entity := models.ResourceEndpointEntity{
@@ -56,7 +66,7 @@ func CreateResourceEndpoint(ctx context.Context, exec storage.Executor, resource
 		Address:          built.Address,
 		Port:             built.Port,
 		Protocol:         built.Protocol,
-		TlsMode:          built.TlsMode,
+		TLSMode:          built.TLSMode,
 		Settings:         built.Settings,
 		ArchivedAt:       built.ArchivedAt,
 		ResourceID:       built.ResourceID,
@@ -70,7 +80,14 @@ func CreateResourceEndpoint(ctx context.Context, exec storage.Executor, resource
 	return entity, nil
 }
 
-func CreateResourceEndpoints(ctx context.Context, exec storage.Executor, resourceID uuid.UUID, privateNetworkID *uuid.UUID, count int, opts ...ResourceEndpointOption) ([]models.ResourceEndpointEntity, error) {
+func CreateResourceEndpoints(
+	ctx context.Context,
+	exec storage.Executor,
+	resourceID uuid.UUID,
+	privateNetworkID *uuid.UUID,
+	count int,
+	opts ...ResourceEndpointOption,
+) ([]models.ResourceEndpointEntity, error) {
 	resourceendpoints := make([]models.ResourceEndpointEntity, 0, count)
 
 	for i := range count {
@@ -116,7 +133,7 @@ func WithResourceEndpointsProtocol(value string) ResourceEndpointOption {
 
 func WithResourceEndpointsTlsMode(value string) ResourceEndpointOption {
 	return func(f *ResourceEndpointFactory) {
-		f.ResourceEndpointEntity.TlsMode = value
+		f.ResourceEndpointEntity.TLSMode = value
 	}
 }
 

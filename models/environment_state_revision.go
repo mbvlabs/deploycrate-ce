@@ -19,7 +19,7 @@ import (
 	"github.com/uptrace/bun"
 )
 
-const EnvironmentStateSchemaVersion = 2
+const EnvironmentStateSchemaVersion = 3
 
 type EnvironmentSecretDescriptor struct {
 	ID         uuid.UUID `json:"id"`
@@ -30,9 +30,9 @@ type EnvironmentSecretDescriptor struct {
 }
 
 type EnvironmentRuntimeState struct {
-	Runtime       string `json:"runtime"`
-	BPGOTargets   string `json:"bp_go_targets,omitempty"`
-	RestartPolicy string `json:"restart_policy"`
+	Runtime       string            `json:"runtime"`
+	BPGOTargets   []GoProcessTarget `json:"bp_go_targets,omitempty"`
+	RestartPolicy string            `json:"restart_policy"`
 }
 
 type EnvironmentProcessState struct {
@@ -151,6 +151,9 @@ func validateEnvironmentDesiredState(state *EnvironmentDesiredState) error {
 	}
 	if state.Runtime.RestartPolicy != "unless-stopped" {
 		builder.Add("runtime.restartPolicy", "unsupported", "restart policy must be unless-stopped")
+	}
+	if err := ValidateGoProcessTargets(state.Runtime.BPGOTargets); err != nil {
+		builder.Add("runtime.bpGoTargets", "invalid", err.Error())
 	}
 	processInputs := make([]EnvironmentProcessInput, 0, len(state.Processes))
 	for _, process := range state.Processes {

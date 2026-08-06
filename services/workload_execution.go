@@ -654,6 +654,12 @@ func validateWorkloadTargetState(target workloadExecutionTarget, state container
 	if state.Labels[containerclient.WorkloadLabelProcessKind] != "web" {
 		return nil
 	}
+	if !state.Running {
+		if state.ExitCode != 0 {
+			return fmt.Errorf("workload target web process exited during startup with exit code %d", state.ExitCode)
+		}
+		return errors.New("workload target web process is not running")
+	}
 	if state.HostAddress == "" || state.HostPort == 0 {
 		return errors.New("workload target address is unavailable")
 	}

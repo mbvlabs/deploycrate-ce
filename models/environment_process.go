@@ -30,6 +30,8 @@ const (
 
 var environmentProcessNamePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
 
+var environmentGoTargetPattern = regexp.MustCompile(`^[A-Za-z0-9_./*-]+$`)
+
 type EnvironmentProcessEntity struct {
 	bun.BaseModel  `bun:"table:environment_processes,alias:environment_processes"`
 	ID             uuid.UUID       `json:"id" bun:"id,pk,type:uuid"`
@@ -56,6 +58,12 @@ type EnvironmentProcessInput struct {
 	ContainerPort  *int32   `json:"containerPort,omitempty"`
 	HealthPath     string   `json:"healthPath,omitempty"`
 	TimeoutSeconds *int32   `json:"timeoutSeconds,omitempty"`
+	Target         *string  `json:"target,omitempty"`
+}
+
+type GoProcessTarget struct {
+	Process string `json:"process"`
+	Target  string `json:"target"`
 }
 
 func NormalizeEnvironmentProcessInput(input EnvironmentProcessInput) EnvironmentProcessInput {
@@ -69,11 +77,61 @@ func NormalizeEnvironmentProcessInput(input EnvironmentProcessInput) Environment
 			input.Command = &command
 		}
 	}
+	if input.Target != nil {
+		target := strings.TrimSpace(*input.Target)
+		if target == "" {
+			input.Target = nil
+		} else {
+			input.Target = &target
+		}
+	}
 	if input.Arguments == nil {
 		input.Arguments = []string{}
 	}
 	input.HealthPath = strings.TrimSpace(input.HealthPath)
 	return input
+}
+
+func NormalizeGoProcessTargets(targets []GoProcessTarget) []GoProcessTarget {
+	normalized := make([]GoProcessTarget, 0, len(targets))
+	for _, target := range targets {
+		target.Process = strings.ToLower(strings.TrimSpace(target.Process))
+		target.Target = strings.TrimSpace(target.Target)
+		if target.Process == "" || target.Target == "" {
+			continue
+		}
+		normalized = append(normalized, target)
+	}
+	return normalized
+}
+
+func ValidateGoProcessTargets(targets []GoProcessTarget) error {
+	normalized := NormalizeGoProcessTargets(targets)
+	builder := validation.NewBuilder()
+	names := make(map[string]struct{}, len(normalized))
+	for index, target := range normalized {
+		field := fmt.Sprintf("processes.%d.target", index)
+		if !environmentProcessNamePattern.MatchString(target.Process) {
+			builder.Add(field, "invalid", "process name is invalid")
+		}
+		if _, exists := names[target.Process]; exists {
+			builder.Add(field, "duplicate", "process targets must be unique")
+		}
+		names[target.Process] = struct{}{}
+		if !environmentGoTargetPattern.MatchString(target.Target) || strings.HasPrefix(target.Target, "/") || strings.Contains(target.Target, "..") || len(target.Target) > MaxProcessCommandBytes {
+			builder.Add(field, "invalid", "target must be a repository-relative Go package path")
+		}
+	}
+	return builder.Err()
+}
+
+func FlattenGoProcessTargets(targets []GoProcessTarget) string {
+	normalized := NormalizeGoProcessTargets(targets)
+	flattened := make([]string, 0, len(normalized))
+	for _, target := range normalized {
+		flattened = append(flattened, target.Target)
+	}
+	return strings.Join(flattened, ":")
 }
 
 func ValidateEnvironmentProcessFormation(inputs []EnvironmentProcessInput) ([]EnvironmentProcessInput, error) {
@@ -98,6 +156,9 @@ func ValidateEnvironmentProcessFormation(inputs []EnvironmentProcessInput) ([]En
 		}
 		if value.Command != nil && (len(*value.Command) > MaxProcessCommandBytes || strings.ContainsRune(*value.Command, '\x00') || !utf8.ValidString(*value.Command)) {
 			builder.Add(field+".command", "invalid", "process command is invalid")
+		}
+		if value.Target != nil && (!environmentGoTargetPattern.MatchString(*value.Target) || strings.HasPrefix(*value.Target, "/") || strings.Contains(*value.Target, "..") || len(*value.Target) > MaxProcessCommandBytes) {
+			builder.Add(field+".target", "invalid", "target must be a repository-relative Go package path")
 		}
 		if len(value.Arguments) > MaxProcessArguments {
 			builder.Add(field+".arguments", "limit", "process has too many arguments")

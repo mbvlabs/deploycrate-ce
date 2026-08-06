@@ -170,6 +170,7 @@ func newCORSConfig(
 	if applicationOrigin == "" {
 		return echomw.CORSConfig{}, errors.New("application origin must not be empty")
 	}
+
 	if strings.Contains(applicationOrigin, "*") {
 		return echomw.CORSConfig{}, fmt.Errorf(
 			"credentialed CORS origin %q must not contain a wildcard",
@@ -183,12 +184,14 @@ func newCORSConfig(
 		if origin == "" {
 			continue
 		}
+
 		if strings.Contains(origin, "*") {
 			return echomw.CORSConfig{}, fmt.Errorf(
 				"credentialed CORS origin %q must not contain a wildcard",
 				origin,
 			)
 		}
+
 		origins = append(origins, origin)
 	}
 

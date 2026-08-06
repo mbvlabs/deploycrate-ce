@@ -233,7 +233,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	if err := service.caddy.Verify(ctx, route.ExternalID); err != nil {
 		return err
 	}
-	if err := service.caddy.VerifyPublic(ctx, scope.Domain.Hostname, webProcess.HealthPath); err != nil {
+	if err := waitForWorkloadHealth(ctx, webCandidate.HostAddress, webCandidate.HostPort, webProcess.HealthPath); err != nil {
 		if !first && len(previous) > 0 {
 			rollback := map[uuid.UUID]int32{scope.Instance.ID: 0}
 			fallback := uuid.Nil
@@ -253,7 +253,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 			_ = service.caddy.DestroyManaged(context.WithoutCancel(ctx), route.ID)
 			service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
 		}
-		return fail(fmt.Errorf("public Environment health verification failed: %w", err))
+		return fail(fmt.Errorf("workload health verification after route configuration failed: %w", err))
 	}
 	if err := service.markSucceeded(ctx, scope, candidates); err != nil {
 		return err
@@ -643,7 +643,7 @@ func validateCandidateOwnership(candidate containerclient.WorkloadState, scope d
 func waitForWorkloadHealth(ctx context.Context, host string, port int32, healthPath string) error {
 	deadline := time.NewTimer(90 * time.Second)
 	defer deadline.Stop()
-	ticker := time.NewTicker(2 * time.Second)
+	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 	check := func() bool {
 		address := net.JoinHostPort(host, strconv.Itoa(int(port)))

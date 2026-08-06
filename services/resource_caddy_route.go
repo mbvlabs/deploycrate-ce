@@ -36,22 +36,22 @@ type ResourceCaddyPublication struct {
 }
 
 type ManagedResourceCaddyRoute struct {
-	ID           string `json:"id"`
-	ExternalID   string `json:"externalId"`
-	Hostname     string `json:"hostname"`
-	State        string `json:"state"`
-	LastError    string `json:"lastError"`
-	ResourceID   string `json:"resourceId"`
-	ResourceName string `json:"resourceName"`
-	EndpointName string `json:"endpointName"`
-	Origin       string `json:"origin"`
+	ID             string `json:"id"`
+	ExternalID     string `json:"externalId"`
+	Hostname       string `json:"hostname"`
+	State          string `json:"state"`
+	LastError      string `json:"lastError"`
+	ResourceID     string `json:"resourceId"`
+	ResourceName   string `json:"resourceName"`
+	EndpointName   string `json:"endpointName"`
+	Origin         string `json:"origin"`
 	OriginAddress  string `json:"originAddress"`
 	OriginPort     int32  `json:"originPort"`
 	OriginProtocol string `json:"originProtocol"`
 	OriginTLSMode  string `json:"originTlsMode"`
 	HealthPath     string `json:"healthPath"`
-	AppliedAt    string `json:"appliedAt"`
-	ObservedAt   string `json:"observedAt"`
+	AppliedAt      string `json:"appliedAt"`
+	ObservedAt     string `json:"observedAt"`
 }
 
 type ResourceCaddyRouteUpdateInput struct {
@@ -84,7 +84,12 @@ func resourceCaddySupportsOrigin(protocol string) bool {
 	return protocol == "http" || protocol == "https"
 }
 
-func (service CaddyRouteService) ValidateResourcePublication(ctx context.Context, resourceID, endpointID uuid.UUID, originProtocol string, input ResourceCaddyPublicationInput) error {
+func (service CaddyRouteService) ValidateResourcePublication(
+	ctx context.Context,
+	resourceID, endpointID uuid.UUID,
+	originProtocol string,
+	input ResourceCaddyPublicationInput,
+) error {
 	if !input.Enabled {
 		return nil
 	}
@@ -97,11 +102,19 @@ func (service CaddyRouteService) ValidateResourcePublication(ctx context.Context
 	}
 	originProtocol = strings.ToLower(strings.TrimSpace(originProtocol))
 	if !resourceCaddySupportsOrigin(originProtocol) {
-		return domainError("protocol", "unsupported", "Caddy publication requires an HTTP or HTTPS origin")
+		return domainError(
+			"protocol",
+			"unsupported",
+			"Caddy publication requires an HTTP or HTTPS origin",
+		)
 	}
 	hostname := models.NormalizeHostname(input.Hostname)
 	if !models.IsValidHostname(hostname) {
-		return domainError("hostname", "format", "hostname must be a valid fully qualified domain name")
+		return domainError(
+			"hostname",
+			"format",
+			"hostname must be a valid fully qualified domain name",
+		)
 	}
 	conflicts, err := service.db.Executor().NewSelect().TableExpr("environment_domains").
 		Where("lower(hostname) = ?", hostname).Where("archived_at IS NULL").Count(ctx)
@@ -127,17 +140,32 @@ func (service CaddyRouteService) ValidateResourcePublication(ctx context.Context
 	return nil
 }
 
-func (service CaddyRouteService) PrepareResourcePublication(ctx context.Context, resourceID, endpointID uuid.UUID, origin ResourceEndpointInput, publication ResourceCaddyPublicationInput) (ResourceEndpointInput, error) {
+func (service CaddyRouteService) PrepareResourcePublication(
+	ctx context.Context,
+	resourceID, endpointID uuid.UUID,
+	origin ResourceEndpointInput,
+	publication ResourceCaddyPublicationInput,
+) (ResourceEndpointInput, error) {
 	if !publication.Enabled {
 		return origin, nil
 	}
-	if err := service.ValidateResourcePublication(ctx, resourceID, endpointID, origin.Protocol, publication); err != nil {
+	if err := service.ValidateResourcePublication(
+		ctx,
+		resourceID,
+		endpointID,
+		origin.Protocol,
+		publication,
+	); err != nil {
 		return ResourceEndpointInput{}, err
 	}
 	settings := map[string]any{}
 	if len(origin.Settings) > 0 {
 		if err := json.Unmarshal(origin.Settings, &settings); err != nil {
-			return ResourceEndpointInput{}, domainError("settings", "invalid", "endpoint settings must be a JSON object")
+			return ResourceEndpointInput{}, domainError(
+				"settings",
+				"invalid",
+				"endpoint settings must be a JSON object",
+			)
 		}
 	}
 	if settings == nil {
@@ -175,7 +203,9 @@ func (service CaddyRouteService) PrepareResourcePublication(ctx context.Context,
 	return prepared, nil
 }
 
-func (service CaddyRouteService) ResourceRouteSnapshot(ctx context.Context) ([]ManagedResourceCaddyRoute, error) {
+func (service CaddyRouteService) ResourceRouteSnapshot(
+	ctx context.Context,
+) ([]ManagedResourceCaddyRoute, error) {
 	items, err := service.managedResourceEndpoints(ctx, uuid.Nil)
 	if err != nil {
 		return nil, err
@@ -188,21 +218,35 @@ func (service CaddyRouteService) ResourceRouteSnapshot(ctx context.Context) ([]M
 		}
 		state, lastError, observedAt := service.observeResourceRoute(ctx, item.Endpoint.ID)
 		result = append(result, ManagedResourceCaddyRoute{
-			ID: item.Endpoint.ID.String(), ExternalID: resourceCaddyRouteID(item.Endpoint.ID),
-			Hostname: item.Endpoint.Address, State: state, LastError: lastError,
-			ResourceID: item.Resource.ID.String(), ResourceName: item.Resource.Name,
+			ID:           item.Endpoint.ID.String(),
+			ExternalID:   resourceCaddyRouteID(item.Endpoint.ID),
+			Hostname:     item.Endpoint.Address,
+			State:        state,
+			LastError:    lastError,
+			ResourceID:   item.Resource.ID.String(),
+			ResourceName: item.Resource.Name,
 			EndpointName: item.Endpoint.Name,
-			Origin:       fmt.Sprintf("%s://%s", resourceCaddyOriginProtocol(settings.OriginProtocol, settings.OriginTLSMode), net.JoinHostPort(settings.OriginAddress, fmt.Sprint(settings.OriginPort))),
-			OriginAddress: settings.OriginAddress, OriginPort: settings.OriginPort,
-			OriginProtocol: settings.OriginProtocol, OriginTLSMode: settings.OriginTLSMode,
-			HealthPath: settings.HealthPath,
-			ObservedAt:   observedAt,
+			Origin: fmt.Sprintf(
+				"%s://%s",
+				resourceCaddyOriginProtocol(settings.OriginProtocol, settings.OriginTLSMode),
+				net.JoinHostPort(settings.OriginAddress, fmt.Sprint(settings.OriginPort)),
+			),
+			OriginAddress:  settings.OriginAddress,
+			OriginPort:     settings.OriginPort,
+			OriginProtocol: settings.OriginProtocol,
+			OriginTLSMode:  settings.OriginTLSMode,
+			HealthPath:     settings.HealthPath,
+			ObservedAt:     observedAt,
 		})
 	}
 	return result, nil
 }
 
-func (service CaddyRouteService) UpdateResourceRoute(ctx context.Context, endpointID uuid.UUID, input ResourceCaddyRouteUpdateInput) (string, error) {
+func (service CaddyRouteService) UpdateResourceRoute(
+	ctx context.Context,
+	endpointID uuid.UUID,
+	input ResourceCaddyRouteUpdateInput,
+) (string, error) {
 	endpoint, err := models.ResourceEndpoint.Find(ctx, service.db.Executor(), endpointID)
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && endpoint.ArchivedAt.Valid) {
 		return "", models.ErrNotFound
@@ -219,7 +263,17 @@ func (service CaddyRouteService) UpdateResourceRoute(ctx context.Context, endpoi
 	input.OriginProtocol = resourceCaddyOriginProtocol(input.OriginProtocol, input.OriginTLSMode)
 	input.OriginTLSMode = strings.ToLower(strings.TrimSpace(input.OriginTLSMode))
 	input.HealthPath = strings.TrimSpace(input.HealthPath)
-	if err := service.ValidateResourcePublication(ctx, endpoint.ResourceID, endpoint.ID, input.OriginProtocol, ResourceCaddyPublicationInput{Enabled: true, Hostname: input.Hostname, HealthPath: input.HealthPath}); err != nil {
+	if err := service.ValidateResourcePublication(
+		ctx,
+		endpoint.ResourceID,
+		endpoint.ID,
+		input.OriginProtocol,
+		ResourceCaddyPublicationInput{
+			Enabled:    true,
+			Hostname:   input.Hostname,
+			HealthPath: input.HealthPath,
+		},
+	); err != nil {
 		return "", err
 	}
 	settings := map[string]any{}
@@ -244,26 +298,49 @@ func (service CaddyRouteService) UpdateResourceRoute(ctx context.Context, endpoi
 	updated.Address = input.Hostname
 	updated.Port = 443
 	updated.Protocol = "https"
-	updated.TlsMode = "require"
+	updated.TLSMode = "require"
 	updated.Settings = rawSettings
 	if err := updated.ValidateForKind(resource.Engine()); err != nil {
 		return "", errors.Join(models.ErrDomainValidation, err)
 	}
-	if _, err := models.ResourceEndpoint.Update(ctx, service.db.Executor(), models.UpdateResourceEndpointData{
-		ID: updated.ID, Name: updated.Name, Role: updated.Role, Address: updated.Address,
-		Port: updated.Port, Protocol: updated.Protocol, TlsMode: updated.TlsMode,
-		Settings: updated.Settings, ArchivedAt: updated.ArchivedAt, ResourceID: updated.ResourceID,
-		PrivateNetworkID: updated.PrivateNetworkID,
-	}); err != nil {
+	if _, err := models.ResourceEndpoint.Update(
+		ctx,
+		service.db.Executor(),
+		models.UpdateResourceEndpointData{
+			ID:               updated.ID,
+			Name:             updated.Name,
+			Role:             updated.Role,
+			Address:          updated.Address,
+			Port:             updated.Port,
+			Protocol:         updated.Protocol,
+			TlsMode:          updated.TLSMode,
+			Settings:         updated.Settings,
+			ArchivedAt:       updated.ArchivedAt,
+			ResourceID:       updated.ResourceID,
+			PrivateNetworkID: updated.PrivateNetworkID,
+		},
+	); err != nil {
 		return "", err
 	}
-	if err := service.SyncResourcePublication(ctx, endpoint.ResourceID, endpoint.ID, ResourceCaddyPublicationInput{Enabled: true, Hostname: input.Hostname, HealthPath: input.HealthPath}); err != nil {
+	if err := service.SyncResourcePublication(
+		ctx,
+		endpoint.ResourceID,
+		endpoint.ID,
+		ResourceCaddyPublicationInput{
+			Enabled:    true,
+			Hostname:   input.Hostname,
+			HealthPath: input.HealthPath,
+		},
+	); err != nil {
 		return "", err
 	}
 	return resourceCaddyRouteID(endpoint.ID), nil
 }
 
-func (service CaddyRouteService) ResourcePublications(ctx context.Context, resourceID uuid.UUID) ([]ResourceCaddyPublication, error) {
+func (service CaddyRouteService) ResourcePublications(
+	ctx context.Context,
+	resourceID uuid.UUID,
+) ([]ResourceCaddyPublication, error) {
 	items, err := service.managedResourceEndpoints(ctx, resourceID)
 	if err != nil {
 		return nil, err
@@ -276,32 +353,52 @@ func (service CaddyRouteService) ResourcePublications(ctx context.Context, resou
 		}
 		state, lastError, observedAt := service.observeResourceRoute(ctx, item.Endpoint.ID)
 		result = append(result, ResourceCaddyPublication{
-			ID: item.Endpoint.ID.String(), ResourceEndpointID: item.Endpoint.ID.String(),
-			ExternalID: resourceCaddyRouteID(item.Endpoint.ID), Hostname: item.Endpoint.Address,
-			HealthPath: settings.HealthPath, State: state, LastError: lastError, ObservedAt: observedAt,
+			ID:                 item.Endpoint.ID.String(),
+			ResourceEndpointID: item.Endpoint.ID.String(),
+			ExternalID:         resourceCaddyRouteID(item.Endpoint.ID),
+			Hostname:           item.Endpoint.Address,
+			HealthPath:         settings.HealthPath,
+			State:              state,
+			LastError:          lastError,
+			ObservedAt:         observedAt,
 		})
 	}
 	return result, nil
 }
 
-func (service CaddyRouteService) SyncResourcePublication(ctx context.Context, resourceID, endpointID uuid.UUID, input ResourceCaddyPublicationInput) error {
+func (service CaddyRouteService) SyncResourcePublication(
+	ctx context.Context,
+	resourceID, endpointID uuid.UUID,
+	input ResourceCaddyPublicationInput,
+) error {
 	if !input.Enabled {
 		return service.RemoveResourcePublication(ctx, resourceID, endpointID)
 	}
 	endpoint, err := models.ResourceEndpoint.Find(ctx, service.db.Executor(), endpointID)
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && (endpoint.ResourceID != resourceID || endpoint.ArchivedAt.Valid)) {
+	if errors.Is(err, sql.ErrNoRows) ||
+		(err == nil && (endpoint.ResourceID != resourceID || endpoint.ArchivedAt.Valid)) {
 		return models.ErrNotFound
 	}
 	if err != nil {
 		return err
 	}
 	if err := service.ReconcileResourceRoute(ctx, endpointID); err != nil {
-		slog.WarnContext(ctx, "Resource Caddy endpoint is pending reconciliation", "endpoint_id", endpointID, "error", err)
+		slog.WarnContext(
+			ctx,
+			"Resource Caddy endpoint is pending reconciliation",
+			"endpoint_id",
+			endpointID,
+			"error",
+			err,
+		)
 	}
 	return nil
 }
 
-func (service CaddyRouteService) RemoveResourcePublication(ctx context.Context, resourceID, endpointID uuid.UUID) error {
+func (service CaddyRouteService) RemoveResourcePublication(
+	ctx context.Context,
+	resourceID, endpointID uuid.UUID,
+) error {
 	endpoint, err := models.ResourceEndpoint.Find(ctx, service.db.Executor(), endpointID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
@@ -315,7 +412,10 @@ func (service CaddyRouteService) RemoveResourcePublication(ctx context.Context, 
 	return service.caddy.DeleteRoute(ctx, resourceCaddyRouteID(endpointID))
 }
 
-func (service CaddyRouteService) ReconcileResourceRoute(ctx context.Context, endpointID uuid.UUID) error {
+func (service CaddyRouteService) ReconcileResourceRoute(
+	ctx context.Context,
+	endpointID uuid.UUID,
+) error {
 	endpoint, err := models.ResourceEndpoint.Find(ctx, service.db.Executor(), endpointID)
 	if err != nil {
 		return err
@@ -326,13 +426,22 @@ func (service CaddyRouteService) ReconcileResourceRoute(ctx context.Context, end
 	}
 	originProtocol := resourceCaddyOriginProtocol(settings.OriginProtocol, settings.OriginTLSMode)
 	if !resourceCaddySupportsOrigin(originProtocol) {
-		return fmt.Errorf("Caddy publication requires an HTTP or HTTPS origin, got %s", originProtocol)
+		return fmt.Errorf(
+			"Caddy publication requires an HTTP or HTTPS origin, got %s",
+			originProtocol,
+		)
 	}
 	return service.caddy.ApplyRoute(ctx, caddyclients.Route{
 		ID: resourceCaddyRouteID(endpoint.ID), Domain: endpoint.Address,
-		Backends: []caddyclients.Backend{{
-			Dial: net.JoinHostPort(settings.OriginAddress, fmt.Sprint(settings.OriginPort)), Weight: 100,
-		}},
+		Backends: []caddyclients.Backend{
+			{
+				Dial: net.JoinHostPort(
+					settings.OriginAddress,
+					fmt.Sprint(settings.OriginPort),
+				),
+				Weight: 100,
+			},
+		},
 		HealthPath: settings.HealthPath, DisableActiveHealthChecks: settings.HealthPath == "",
 		UpstreamTLS: originProtocol == "https",
 	})
@@ -350,7 +459,10 @@ func (service CaddyRouteService) ReconcileManagedResourceEndpoints(ctx context.C
 	return result
 }
 
-func (service CaddyRouteService) managedResourceEndpoints(ctx context.Context, resourceID uuid.UUID) ([]managedResourceEndpoint, error) {
+func (service CaddyRouteService) managedResourceEndpoints(
+	ctx context.Context,
+	resourceID uuid.UUID,
+) ([]managedResourceEndpoint, error) {
 	endpoints := make([]models.ResourceEndpointEntity, 0)
 	query := service.db.Executor().NewSelect().Model(&endpoints).
 		Where("archived_at IS NULL").
@@ -378,19 +490,29 @@ func (service CaddyRouteService) managedResourceEndpoints(ctx context.Context, r
 	return result, nil
 }
 
-func (service CaddyRouteService) observeResourceRoute(ctx context.Context, endpointID uuid.UUID) (string, string, string) {
+func (service CaddyRouteService) observeResourceRoute(
+	ctx context.Context,
+	endpointID uuid.UUID,
+) (string, string, string) {
 	endpoint, loadErr := models.ResourceEndpoint.Find(ctx, service.db.Executor(), endpointID)
 	if loadErr == nil {
 		settings := endpoint.ParsedSettings().Caddy
 		if settings != nil {
-			originProtocol := resourceCaddyOriginProtocol(settings.OriginProtocol, settings.OriginTLSMode)
+			originProtocol := resourceCaddyOriginProtocol(
+				settings.OriginProtocol,
+				settings.OriginTLSMode,
+			)
 			if !resourceCaddySupportsOrigin(originProtocol) {
-				return models.CaddyRouteFailed.String(), "Caddy publication requires an HTTP or HTTPS origin", time.Now().UTC().Format(time.RFC3339)
+				return models.CaddyRouteFailed.String(), "Caddy publication requires an HTTP or HTTPS origin", time.Now().
+					UTC().
+					Format(time.RFC3339)
 			}
 		}
 	}
 	if loadErr != nil {
-		return models.CaddyRouteFailed.String(), loadErr.Error(), time.Now().UTC().Format(time.RFC3339)
+		return models.CaddyRouteFailed.String(), loadErr.Error(), time.Now().
+			UTC().
+			Format(time.RFC3339)
 	}
 	err := service.caddy.VerifyRoute(ctx, resourceCaddyRouteID(endpointID))
 	observedAt := time.Now().UTC().Format(time.RFC3339)

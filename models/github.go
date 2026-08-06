@@ -355,7 +355,7 @@ func (githubEnvironmentSource) MatchingActive(ctx context.Context, db storage.Ex
 		ColumnExpr("source.id AS environment_source_id").ColumnExpr("source.environment_id").ColumnExpr("source.reference").ColumnExpr("source.auto_build").ColumnExpr("repository.full_name AS repository_full_name").
 		ColumnExpr("buildpack.context_path, buildpack.builder_reference, buildpack.settings AS buildpack_settings, buildpack.image_repository, buildpack.server_id AS build_server_id").
 		ColumnExpr("registry_resource.id AS registry_resource_id, registry_credential.id AS registry_credential_id").
-		ColumnExpr("CASE WHEN registry_endpoint.port IN (80, 443) THEN registry_endpoint.address ELSE registry_endpoint.address || ':' || registry_endpoint.port::text END AS registry_endpoint").
+		ColumnExpr("CASE WHEN registry_resource.system_managed THEN COALESCE(NULLIF(registry.configuration ->> 'route_host', ''), registry_endpoint.address) WHEN registry_endpoint.port IN (80, 443) THEN registry_endpoint.address ELSE registry_endpoint.address || ':' || registry_endpoint.port::text END AS registry_endpoint").
 		Join("JOIN environment_sources AS source ON source.id = binding.environment_source_id").
 		Join("JOIN environments AS environment ON environment.id = source.environment_id").
 		Join("JOIN github_repositories AS repository ON repository.id = binding.github_repository_id").

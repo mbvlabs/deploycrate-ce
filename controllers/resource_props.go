@@ -10,19 +10,30 @@ import (
 	"deploycrate-ce/models"
 )
 
-func resourceDetailProps(detail models.ResourceDetails, privateAccess models.ResourcePrivateAccessDetails) inertia.Props {
+func resourceDetailProps(
+	detail models.ResourceDetails,
+	privateAccess models.ResourcePrivateAccessDetails,
+) inertia.Props {
 	resource := detail.Resource
 	connections := make([]inertia.Props, 0, len(detail.Connections))
 	for _, connection := range detail.Connections {
 		connections = append(connections, inertia.Props{
-			"id": connection.ID, "createdAt": connection.CreatedAt, "updatedAt": connection.UpdatedAt,
-			"alias": connection.Alias, "configuration": connection.Configuration,
-			"database":      resourceConnectionDatabase(connection.CredentialMetadata),
-			"environmentId": connection.EnvironmentID, "environmentName": connection.EnvironmentName,
-			"environmentKind": connection.EnvironmentKind, "environmentArchived": connection.EnvironmentArchived,
-			"applicationName": connection.ApplicationName, "applicationSlug": connection.ApplicationSlug,
-			"applicationArchived": connection.ApplicationArchived, "resourceEndpointId": connection.ResourceEndpointID,
-			"endpointName": connection.EndpointName, "resourceCredentialId": connection.ResourceCredentialID,
+			"id":                      connection.ID,
+			"createdAt":               connection.CreatedAt,
+			"updatedAt":               connection.UpdatedAt,
+			"alias":                   connection.Alias,
+			"configuration":           connection.Configuration,
+			"database":                resourceConnectionDatabase(connection.CredentialMetadata),
+			"environmentId":           connection.EnvironmentID,
+			"environmentName":         connection.EnvironmentName,
+			"environmentKind":         connection.EnvironmentKind,
+			"environmentArchived":     connection.EnvironmentArchived,
+			"applicationName":         connection.ApplicationName,
+			"applicationSlug":         connection.ApplicationSlug,
+			"applicationArchived":     connection.ApplicationArchived,
+			"resourceEndpointId":      connection.ResourceEndpointID,
+			"endpointName":            connection.EndpointName,
+			"resourceCredentialId":    connection.ResourceCredentialID,
 			"credentialName":          connection.CredentialName,
 			"environmentKeys":         connection.EnvironmentKeys,
 			"environmentKeyOverrides": connection.EnvironmentKeyOverrides,
@@ -31,7 +42,8 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 	var privateAccessEndpoint *models.ResourceEndpointEntity
 	for index := range detail.Endpoints {
 		endpoint := &detail.Endpoints[index]
-		if endpoint.Role == "wireguard" && endpoint.PrivateNetworkID != nil && endpoint.Name == "Private access" {
+		if endpoint.Role == "wireguard" && endpoint.PrivateNetworkID != nil &&
+			endpoint.Name == "Private access" {
 			privateAccessEndpoint = endpoint
 			break
 		}
@@ -39,34 +51,55 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 	endpoints := make([]inertia.Props, 0, len(detail.Endpoints))
 	for _, endpoint := range detail.Endpoints {
 		endpoints = append(endpoints, inertia.Props{
-			"id": endpoint.ID, "createdAt": endpoint.CreatedAt, "updatedAt": endpoint.UpdatedAt,
-			"name": endpoint.Name, "role": endpoint.Role, "address": endpoint.Address,
-			"port": endpoint.Port, "protocol": endpoint.Protocol, "tlsMode": endpoint.TlsMode,
+			"id":               endpoint.ID,
+			"createdAt":        endpoint.CreatedAt,
+			"updatedAt":        endpoint.UpdatedAt,
+			"name":             endpoint.Name,
+			"role":             endpoint.Role,
+			"address":          endpoint.Address,
+			"port":             endpoint.Port,
+			"protocol":         endpoint.Protocol,
+			"tlsMode":          endpoint.TLSMode,
 			"settings":         endpoint.Settings,
 			"privateNetworkId": endpoint.PrivateNetworkID,
-			"managed":          privateAccessEndpoint != nil && endpoint.ID == privateAccessEndpoint.ID,
+			"managed": privateAccessEndpoint != nil &&
+				endpoint.ID == privateAccessEndpoint.ID,
 		})
 	}
 	credentials := make([]inertia.Props, 0, len(detail.Credentials))
 	for _, credential := range detail.Credentials {
 		credentials = append(credentials, inertia.Props{
-			"id": credential.ID, "createdAt": credential.CreatedAt, "updatedAt": credential.UpdatedAt,
-			"name": credential.Name, "username": nullString(credential.Username),
-			"metadata": credential.Metadata, "hasEncryptedPayload": len(credential.EncPayload) > 0,
+			"id":                  credential.ID,
+			"createdAt":           credential.CreatedAt,
+			"updatedAt":           credential.UpdatedAt,
+			"name":                credential.Name,
+			"username":            nullString(credential.Username),
+			"metadata":            credential.Metadata,
+			"hasEncryptedPayload": len(credential.EncPayload) > 0,
 		})
 	}
 	installations := make([]inertia.Props, 0, len(detail.Installations))
 	for _, installation := range detail.Installations {
 		installations = append(installations, inertia.Props{
-			"id": installation.ID, "createdAt": installation.CreatedAt, "updatedAt": installation.UpdatedAt,
-			"imageReference": installation.ImageReference, "imageDigest": nullString(installation.ImageDigest),
-			"containerName": installation.ContainerName, "restartPolicy": installation.RestartPolicy,
-			"configuration": installation.Configuration, "serverId": installation.ServerID,
-			"serverName": installation.ServerName, "serverAddress": installation.ServerAddress,
-			"registryCredentialId": installation.RegistryCredentialID, "state": installation.State,
-			"serviceState": installation.ServiceState, "health": installation.Health,
-			"healthReason": installation.HealthReason, "observedAt": nullTime(installation.ObservedAt),
-			"containerDetails": installation.ContainerDetails, "canControl": installation.CanControl,
+			"id":                   installation.ID,
+			"createdAt":            installation.CreatedAt,
+			"updatedAt":            installation.UpdatedAt,
+			"imageReference":       installation.ImageReference,
+			"imageDigest":          nullString(installation.ImageDigest),
+			"containerName":        installation.ContainerName,
+			"restartPolicy":        installation.RestartPolicy,
+			"configuration":        installation.Configuration,
+			"serverId":             installation.ServerID,
+			"serverName":           installation.ServerName,
+			"serverAddress":        installation.ServerAddress,
+			"registryCredentialId": installation.RegistryCredentialID,
+			"state":                installation.State,
+			"serviceState":         installation.ServiceState,
+			"health":               installation.Health,
+			"healthReason":         installation.HealthReason,
+			"observedAt":           nullTime(installation.ObservedAt),
+			"containerDetails":     installation.ContainerDetails,
+			"canControl":           installation.CanControl,
 		})
 	}
 	volumes := make([]inertia.Props, 0, len(detail.Volumes))
@@ -80,26 +113,42 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 	mounts := make([]inertia.Props, 0, len(detail.Mounts))
 	for _, mount := range detail.Mounts {
 		mounts = append(mounts, inertia.Props{
-			"id": mount.ID, "createdAt": mount.CreatedAt, "updatedAt": mount.UpdatedAt,
-			"mountPath": mount.MountPath, "readOnly": mount.ReadOnly,
-			"resourceVolumeId": mount.ResourceVolumeID, "resourceInstallationId": mount.ResourceInstallationID,
-			"volumeName": mount.VolumeName, "containerName": mount.ContainerName,
+			"id":                     mount.ID,
+			"createdAt":              mount.CreatedAt,
+			"updatedAt":              mount.UpdatedAt,
+			"mountPath":              mount.MountPath,
+			"readOnly":               mount.ReadOnly,
+			"resourceVolumeId":       mount.ResourceVolumeID,
+			"resourceInstallationId": mount.ResourceInstallationID,
+			"volumeName":             mount.VolumeName,
+			"containerName":          mount.ContainerName,
 		})
 	}
 	healthChecks := make([]inertia.Props, 0, len(detail.HealthChecks))
 	for _, healthCheck := range detail.HealthChecks {
 		healthChecks = append(healthChecks, inertia.Props{
-			"id": healthCheck.ID, "createdAt": healthCheck.CreatedAt, "updatedAt": healthCheck.UpdatedAt,
-			"name": healthCheck.Name, "kind": healthCheck.Kind, "configuration": healthCheck.Configuration,
-			"intervalSeconds": healthCheck.IntervalSeconds, "timeoutSeconds": healthCheck.TimeoutSeconds,
-			"failureThreshold": healthCheck.FailureThreshold, "successThreshold": healthCheck.SuccessThreshold,
-			"enabled":            healthCheck.Enabled,
-			"resourceEndpointId": healthCheck.ResourceEndpointID, "resourceCredentialId": healthCheck.ResourceCredentialID,
-			"state": healthCheck.State, "message": healthCheck.Message,
+			"id":                   healthCheck.ID,
+			"createdAt":            healthCheck.CreatedAt,
+			"updatedAt":            healthCheck.UpdatedAt,
+			"name":                 healthCheck.Name,
+			"kind":                 healthCheck.Kind,
+			"configuration":        healthCheck.Configuration,
+			"intervalSeconds":      healthCheck.IntervalSeconds,
+			"timeoutSeconds":       healthCheck.TimeoutSeconds,
+			"failureThreshold":     healthCheck.FailureThreshold,
+			"successThreshold":     healthCheck.SuccessThreshold,
+			"enabled":              healthCheck.Enabled,
+			"resourceEndpointId":   healthCheck.ResourceEndpointID,
+			"resourceCredentialId": healthCheck.ResourceCredentialID,
+			"state":                healthCheck.State,
+			"message":              healthCheck.Message,
 			"latencyMs":            nullInt32(healthCheck.LatencyMs),
 			"consecutiveSuccesses": healthCheck.ConsecutiveSuccesses,
 			"consecutiveFailures":  healthCheck.ConsecutiveFailures,
-			"observedAt":           nullTime(healthCheck.ObservedAt), "expiresAt": nullTime(healthCheck.ExpiresAt),
+			"observedAt": nullTime(
+				healthCheck.ObservedAt,
+			),
+			"expiresAt": nullTime(healthCheck.ExpiresAt),
 		})
 	}
 	deviceGrants := make([]inertia.Props, 0, len(privateAccess.DeviceGrants))
@@ -108,18 +157,27 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 	if privateAccessEndpoint != nil {
 		privateAccessState = "configured"
 		privateAccessProp = inertia.Props{
-			"id": privateAccessEndpoint.ID, "address": privateAccessEndpoint.Address,
-			"port": privateAccessEndpoint.Port, "protocol": privateAccessEndpoint.Protocol,
-			"tlsMode": privateAccessEndpoint.TlsMode, "privateNetworkId": privateAccessEndpoint.PrivateNetworkID,
+			"id":               privateAccessEndpoint.ID,
+			"address":          privateAccessEndpoint.Address,
+			"port":             privateAccessEndpoint.Port,
+			"protocol":         privateAccessEndpoint.Protocol,
+			"tlsMode":          privateAccessEndpoint.TLSMode,
+			"privateNetworkId": privateAccessEndpoint.PrivateNetworkID,
 		}
 	}
 	allApplied := len(privateAccess.DeviceGrants) > 0
 	for _, grant := range privateAccess.DeviceGrants {
 		deviceGrants = append(deviceGrants, inertia.Props{
-			"deviceId": grant.DeviceID, "deviceName": grant.DeviceName, "ownerEmail": grant.OwnerEmail,
-			"privateAddress": grant.PrivateAddress, "grantId": grant.GrantID, "grantedAt": grant.GrantedAt,
-			"applicationState": grant.ApplicationState, "applicationError": grant.ApplicationError,
-			"latestHandshakeAt": grant.LatestHandshakeAt, "observedAt": grant.ObservedAt,
+			"deviceId":          grant.DeviceID,
+			"deviceName":        grant.DeviceName,
+			"ownerEmail":        grant.OwnerEmail,
+			"privateAddress":    grant.PrivateAddress,
+			"grantId":           grant.GrantID,
+			"grantedAt":         grant.GrantedAt,
+			"applicationState":  grant.ApplicationState,
+			"applicationError":  grant.ApplicationError,
+			"latestHandshakeAt": grant.LatestHandshakeAt,
+			"observedAt":        grant.ObservedAt,
 		})
 		if grant.ApplicationState == "failed" {
 			privateAccessState = "failed"
@@ -147,14 +205,27 @@ func resourceDetailProps(detail models.ResourceDetails, privateAccess models.Res
 		})
 	}
 	return inertia.Props{
-		"id": resource.ID, "createdAt": resource.CreatedAt, "updatedAt": resource.UpdatedAt,
-		"name": resource.Name, "slug": resource.Slug, "resourceType": resource.ResourceType.String(), "engine": resource.Engine(),
-		"configuration": resource.Configuration, "databases": databases,
-		"connectionCount": len(connections), "connections": connections,
-		"endpoints": endpoints, "credentials": credentials, "installations": installations,
-		"volumes": volumes, "mounts": mounts, "healthChecks": healthChecks,
-		"privateAccess": privateAccessProp, "privateAccessState": privateAccessState, "deviceGrants": deviceGrants,
-		"availableDevices": availableDevices,
+		"id":                 resource.ID,
+		"createdAt":          resource.CreatedAt,
+		"updatedAt":          resource.UpdatedAt,
+		"name":               resource.Name,
+		"slug":               resource.Slug,
+		"resourceType":       resource.ResourceType.String(),
+		"engine":             resource.Engine(),
+		"configuration":      resource.Configuration,
+		"databases":          databases,
+		"connectionCount":    len(connections),
+		"connections":        connections,
+		"endpoints":          endpoints,
+		"credentials":        credentials,
+		"installations":      installations,
+		"volumes":            volumes,
+		"mounts":             mounts,
+		"healthChecks":       healthChecks,
+		"privateAccess":      privateAccessProp,
+		"privateAccessState": privateAccessState,
+		"deviceGrants":       deviceGrants,
+		"availableDevices":   availableDevices,
 	}
 }
 
@@ -162,9 +233,15 @@ func resourceBackupProps(catalog models.ResourceBackupCatalog) inertia.Props {
 	destinations := make([]inertia.Props, 0, len(catalog.Destinations))
 	for _, destination := range catalog.Destinations {
 		destinations = append(destinations, inertia.Props{
-			"id": destination.ID, "name": destination.Name, "provider": destination.Provider,
-			"endpoint": destination.Endpoint, "region": destination.Region, "bucket": destination.Bucket,
-			"prefix": destination.Prefix, "verifiedAt": destination.VerifiedAt, "lastUsedAt": destination.LastUsedAt,
+			"id":         destination.ID,
+			"name":       destination.Name,
+			"provider":   destination.Provider,
+			"endpoint":   destination.Endpoint,
+			"region":     destination.Region,
+			"bucket":     destination.Bucket,
+			"prefix":     destination.Prefix,
+			"verifiedAt": destination.VerifiedAt,
+			"lastUsedAt": destination.LastUsedAt,
 		})
 	}
 	databases := make([]inertia.Props, 0, len(catalog.Databases))
@@ -177,7 +254,9 @@ func resourceBackupProps(catalog models.ResourceBackupCatalog) inertia.Props {
 func resourceDatabaseBackupProps(detail models.ResourceBackupDetails) inertia.Props {
 	activeRestore := false
 	for _, restore := range detail.Restores {
-		if restore.Status == models.ResourceRestoreStatusPending || restore.Status == models.ResourceRestoreStatusSafetyBackup || restore.Status == models.ResourceRestoreStatusRestoring {
+		if restore.Status == models.ResourceRestoreStatusPending ||
+			restore.Status == models.ResourceRestoreStatusSafetyBackup ||
+			restore.Status == models.ResourceRestoreStatusRestoring {
 			activeRestore = true
 			break
 		}
@@ -185,10 +264,18 @@ func resourceDatabaseBackupProps(detail models.ResourceBackupDetails) inertia.Pr
 	history := make([]inertia.Props, 0, len(detail.History))
 	for _, backup := range detail.History {
 		history = append(history, inertia.Props{
-			"id": backup.ID, "status": backup.Status, "triggerType": backup.TriggerType,
-			"scheduledAt": backup.ScheduledAt, "finishedAt": backup.FinishedAt,
-			"verifiedAt": backup.VerifiedAt, "sizeBytes": backup.SizeBytes, "error": backup.Error,
-			"canRestore": backup.Status == models.BackupStatusVerified && detail.Policy != nil && detail.Policy.Schedulable() && detail.Eligibility.Eligible && !activeRestore,
+			"id":          backup.ID,
+			"status":      backup.Status,
+			"triggerType": backup.TriggerType,
+			"scheduledAt": backup.ScheduledAt,
+			"finishedAt":  backup.FinishedAt,
+			"verifiedAt":  backup.VerifiedAt,
+			"sizeBytes":   backup.SizeBytes,
+			"error":       backup.Error,
+			"canRestore": backup.Status == models.BackupStatusVerified && detail.Policy != nil &&
+				detail.Policy.Schedulable() &&
+				detail.Eligibility.Eligible &&
+				!activeRestore,
 		})
 	}
 	restores := make([]inertia.Props, 0, len(detail.Restores))
@@ -238,11 +325,17 @@ func resourceListProps(items []models.ResourceListItem) []inertia.Props {
 	props := make([]inertia.Props, 0, len(items))
 	for _, item := range items {
 		props = append(props, inertia.Props{
-			"id": item.ID, "name": item.Name, "resourceType": item.ResourceType.String(), "engine": item.Engine,
-			"systemManaged": item.SystemManaged, "environmentAttachable": item.EnvironmentAttachable,
-			"databaseCount": item.DatabaseCount, "connectionCount": item.ConnectionCount,
-			"installationCount": item.InstallationCount,
-			"endpointCount":     item.EndpointCount, "health": item.Health,
+			"id":                    item.ID,
+			"name":                  item.Name,
+			"resourceType":          item.ResourceType.String(),
+			"engine":                item.Engine,
+			"systemManaged":         item.SystemManaged,
+			"environmentAttachable": item.EnvironmentAttachable,
+			"databaseCount":         item.DatabaseCount,
+			"connectionCount":       item.ConnectionCount,
+			"installationCount":     item.InstallationCount,
+			"endpointCount":         item.EndpointCount,
+			"health":                item.Health,
 		})
 	}
 	return props
@@ -253,22 +346,44 @@ func resourceOptionsProps(options models.ResourceFormOptions) inertia.Props {
 	for _, kind := range options.Engines {
 		fields := make([]inertia.Props, 0, len(kind.CredentialFields))
 		for _, field := range kind.CredentialFields {
-			fields = append(fields, inertia.Props{"name": field.Name, "label": field.Label, "required": field.Required, "secret": field.Secret})
+			fields = append(
+				fields,
+				inertia.Props{
+					"name":     field.Name,
+					"label":    field.Label,
+					"required": field.Required,
+					"secret":   field.Secret,
+				},
+			)
 		}
 		environmentKeys := make([]inertia.Props, 0, len(kind.EnvironmentKeys))
 		for _, key := range kind.EnvironmentKeys {
-			environmentKeys = append(environmentKeys, inertia.Props{"name": key.Name, "label": key.Label, "defaultKey": key.DefaultKey})
+			environmentKeys = append(
+				environmentKeys,
+				inertia.Props{"name": key.Name, "label": key.Label, "defaultKey": key.DefaultKey},
+			)
 		}
 		engines = append(engines, inertia.Props{
-			"engine": kind.Engine, "label": kind.Label, "resourceType": kind.ResourceType.String(),
-			"protocols": kind.Protocols, "endpointRoles": kind.EndpointRoles, "tlsModes": kind.TLSModes,
-			"credentialFields": fields, "environmentKeys": environmentKeys, "healthCheckKinds": kind.HealthCheckKinds,
-			"defaultPort": kind.DefaultPort, "defaultProtocol": kind.DefaultProtocol, "defaultTlsMode": kind.DefaultTLSMode,
+			"engine":           kind.Engine,
+			"label":            kind.Label,
+			"resourceType":     kind.ResourceType.String(),
+			"protocols":        kind.Protocols,
+			"endpointRoles":    kind.EndpointRoles,
+			"tlsModes":         kind.TLSModes,
+			"credentialFields": fields,
+			"environmentKeys":  environmentKeys,
+			"healthCheckKinds": kind.HealthCheckKinds,
+			"defaultPort":      kind.DefaultPort,
+			"defaultProtocol":  kind.DefaultProtocol,
+			"defaultTlsMode":   kind.DefaultTLSMode,
 		})
 	}
 	servers := make([]inertia.Props, 0, len(options.Servers))
 	for _, server := range options.Servers {
-		servers = append(servers, inertia.Props{"id": server.ID, "name": server.Name, "address": server.Address})
+		servers = append(
+			servers,
+			inertia.Props{"id": server.ID, "name": server.Name, "address": server.Address},
+		)
 	}
 	networks := make([]inertia.Props, 0, len(options.PrivateNetworks))
 	for _, network := range options.PrivateNetworks {
@@ -276,11 +391,22 @@ func resourceOptionsProps(options models.ResourceFormOptions) inertia.Props {
 		for serverID, address := range network.ServerAddresses {
 			serverAddresses[serverID.String()] = address
 		}
-		networks = append(networks, inertia.Props{"id": network.ID, "name": network.Name, "serverIds": network.ServerIDs, "serverAddresses": serverAddresses})
+		networks = append(
+			networks,
+			inertia.Props{
+				"id":              network.ID,
+				"name":            network.Name,
+				"serverIds":       network.ServerIDs,
+				"serverAddresses": serverAddresses,
+			},
+		)
 	}
 	credentials := make([]inertia.Props, 0, len(options.RegistryCredentials))
 	for _, credential := range options.RegistryCredentials {
-		credentials = append(credentials, inertia.Props{"id": credential.ID, "name": credential.Name})
+		credentials = append(
+			credentials,
+			inertia.Props{"id": credential.ID, "name": credential.Name},
+		)
 	}
 	return inertia.Props{
 		"resourceTypes": options.ResourceTypes, "engines": engines, "servers": servers,

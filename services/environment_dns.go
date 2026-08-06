@@ -9,8 +9,12 @@ import (
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
 	"deploycrate-ce/queue/jobs"
+	"deploycrate-ce/telemetry"
 	"errors"
 	"fmt"
+	"io"
+	"net"
+	"net/http"
 	"net/netip"
 	"sort"
 	"strings"
@@ -23,6 +27,8 @@ import (
 const (
 	DNSModeManual     = "manual"
 	DNSModeCloudflare = "cloudflare"
+
+	ReleaseRedeployTriggerType = "release_redeploy"
 )
 
 type EnvironmentDNS struct {
@@ -347,6 +353,32 @@ func (service *EnvironmentDNS) Retry(ctx context.Context, environmentID uuid.UUI
 	return service.requeue(ctx, environmentID, false)
 }
 
+func (service *EnvironmentDNS) Refresh(ctx context.Context, environmentID uuid.UUID) error {
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	binding, err := models.EnvironmentDNSBinding.ActiveForEnvironment(ctx, tx, environmentID)
+	if err != nil {
+		return err
+	}
+	if binding.State == models.EnvironmentDNSReconciling {
+		return errors.Join(models.ErrDomainValidation, errors.New("DNS reconciliation is already in progress"))
+	}
+	if binding.State == models.EnvironmentDNSRemoving || binding.State == models.EnvironmentDNSRemovalFailed {
+		return errors.Join(models.ErrDomainValidation, errors.New("DNS removal is in progress; wait for it to finish"))
+	}
+	binding, err = models.EnvironmentDNSBinding.Refresh(ctx, tx, binding.ID)
+	if err != nil {
+		return err
+	}
+	if err := service.enqueueTx(ctx, tx, binding); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
 func (service *EnvironmentDNS) requeue(ctx context.Context, environmentID uuid.UUID, adopt bool) error {
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -468,7 +500,7 @@ func (service *EnvironmentDNS) Reconcile(ctx context.Context, bindingID uuid.UUI
 	sort.Slice(owned, func(i, j int) bool { return owned[i].ID < owned[j].ID })
 	applied := make([]cloudflareclient.DNSRecord, 0, len(desired))
 	for index, address := range desired {
-		input := cloudflareclient.DNSRecordInput{Type: "A", Name: scope.Hostname, Content: address, TTL: 1, Proxied: false, Comment: marker}
+		input := cloudflareclient.DNSRecordInput{Type: "A", Name: scope.Hostname, Content: address, TTL: 1, Proxied: true, Comment: marker}
 		var record cloudflareclient.DNSRecord
 		if index < len(owned) && strings.EqualFold(owned[index].Type, "A") {
 			record, err = service.client.UpdateARecord(ctx, string(token), scope.ZoneExternalID, owned[index].ID, input)
@@ -613,22 +645,29 @@ func (service *EnvironmentDNS) scope(ctx context.Context, bindingID uuid.UUID) (
 	return scope, err
 }
 
+type dnsServerAddress struct {
+	ID   uuid.UUID `bun:"id"`
+	Kind string    `bun:"kind"`
+	IPv4 string    `bun:"ipv4_address"`
+	Addr string    `bun:"address"`
+}
+
 func (service *EnvironmentDNS) desiredIPv4(ctx context.Context, db storage.Executor, environmentID uuid.UUID) ([]string, error) {
-	addresses := make([]string, 0)
-	if err := db.NewSelect().TableExpr("environment_targets AS target").ColumnExpr("server.ipv4_address").
+	servers := make([]dnsServerAddress, 0)
+	if err := db.NewSelect().TableExpr("environment_targets AS target").
+		ColumnExpr("server.id, server.kind, server.ipv4_address, server.address").
 		Join("JOIN servers AS server ON server.id = target.server_id AND server.archived_at IS NULL").
 		Where("target.environment_id = ?", environmentID).Where("target.detached_at IS NULL").
-		OrderExpr("server.ipv4_address").Scan(ctx, &addresses); err != nil {
+		OrderExpr("server.ipv4_address").Scan(ctx, &servers); err != nil {
 		return nil, err
 	}
-	unique := make([]string, 0, len(addresses))
-	seen := make(map[string]struct{}, len(addresses))
-	for _, value := range addresses {
-		address, err := netip.ParseAddr(strings.TrimSpace(value))
-		if err != nil || !address.Is4() || !address.IsGlobalUnicast() || address.IsPrivate() || address.IsLoopback() || address.IsLinkLocalUnicast() {
-			return nil, errors.Join(models.ErrDomainValidation, errors.New("Cloudflare-managed DNS requires a public IPv4 address on every selected runtime Server"))
+	unique := make([]string, 0, len(servers))
+	seen := make(map[string]struct{}, len(servers))
+	for _, entry := range servers {
+		value, err := service.resolvePublicIPv4(ctx, db, entry)
+		if err != nil {
+			return nil, err
 		}
-		value = address.String()
 		if _, exists := seen[value]; !exists {
 			seen[value] = struct{}{}
 			unique = append(unique, value)
@@ -639,6 +678,65 @@ func (service *EnvironmentDNS) desiredIPv4(ctx context.Context, db storage.Execu
 	}
 	sort.Strings(unique)
 	return unique, nil
+}
+
+func (service *EnvironmentDNS) resolvePublicIPv4(ctx context.Context, db storage.Executor, server dnsServerAddress) (string, error) {
+	for _, candidate := range []string{server.IPv4, server.Addr} {
+		if parsed, err := netip.ParseAddr(strings.TrimSpace(candidate)); err == nil && isPublicIPv4(parsed) {
+			return parsed.String(), nil
+		}
+	}
+	if server.Kind != "self_hosted" {
+		return "", errors.Join(models.ErrDomainValidation, fmt.Errorf("Cloudflare-managed DNS requires a public IPv4 address on runtime Server %s; set one in the Server settings", server.ID))
+	}
+	detected, err := detectHostPublicIPv4(ctx)
+	if err != nil {
+		return "", errors.Join(models.ErrDomainValidation, err)
+	}
+	if _, err := db.NewUpdate().TableExpr("servers").Set("ipv4_address = ?", detected).Set("updated_at = ?", time.Now().UTC()).Where("id = ?", server.ID).Exec(ctx); err != nil {
+		return "", err
+	}
+	return detected, nil
+}
+
+func detectHostPublicIPv4(ctx context.Context) (string, error) {
+	var lastErr error
+	for _, endpoint := range []string{"1.1.1.1:53", "8.8.8.8:53", "9.9.9.9:53"} {
+		connection, err := (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp4", endpoint)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		local := connection.LocalAddr()
+		_ = connection.Close()
+		if tcpAddress, ok := local.(*net.TCPAddr); ok {
+			if address, ok := netip.AddrFromSlice(tcpAddress.IP); ok && isPublicIPv4(address) {
+				return tcpAddress.IP.String(), nil
+			}
+		}
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api4.ipify.org", nil)
+	if err != nil {
+		return "", lastErr
+	}
+	response, err := telemetry.NewHTTPClient(5 * time.Second).Do(request)
+	if err != nil {
+		return "", errors.Join(lastErr, err)
+	}
+	defer response.Body.Close()
+	body, readErr := io.ReadAll(io.LimitReader(response.Body, 64))
+	if readErr != nil {
+		return "", errors.Join(lastErr, readErr)
+	}
+	value := strings.TrimSpace(string(body))
+	if parsed, err := netip.ParseAddr(value); err == nil && isPublicIPv4(parsed) {
+		return parsed.String(), nil
+	}
+	return "", errors.Join(lastErr, errors.New("could not detect the host's public IPv4 address"))
+}
+
+func isPublicIPv4(address netip.Addr) bool {
+	return address.Is4() && address.IsGlobalUnicast() && !address.IsPrivate() && !address.IsLoopback() && !address.IsLinkLocalUnicast()
 }
 
 func (service *EnvironmentDNS) markReconciling(ctx context.Context, bindingID uuid.UUID, generation int64) (bool, error) {

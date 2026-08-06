@@ -739,7 +739,7 @@ func (service *BuildExecution) RegistryCredentials(ctx context.Context, registry
 	}
 	err := service.db.Executor().NewSelect().TableExpr("registry_resources AS registry").
 		ColumnExpr("registry.provider").
-		ColumnExpr("CASE WHEN endpoint.port IN (80, 443) THEN endpoint.address ELSE endpoint.address || ':' || endpoint.port::text END AS endpoint").
+		ColumnExpr("CASE WHEN resource.system_managed THEN COALESCE(NULLIF(registry.configuration ->> 'route_host', ''), endpoint.address) WHEN endpoint.port IN (80, 443) THEN endpoint.address ELSE endpoint.address || ':' || endpoint.port::text END AS endpoint").
 		ColumnExpr("(SELECT count(*) FROM resource_endpoints candidate WHERE candidate.resource_id = registry.resource_id AND candidate.archived_at IS NULL) AS endpoint_count").
 		ColumnExpr("(SELECT count(*) FROM resource_credentials candidate WHERE candidate.resource_id = registry.resource_id AND candidate.archived_at IS NULL) AS credential_count").
 		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.archived_at IS NULL").

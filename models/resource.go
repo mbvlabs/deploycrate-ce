@@ -16,16 +16,19 @@ import (
 
 type ResourceEntity struct {
 	bun.BaseModel         `bun:"table:resources,alias:resources"`
-	ID                    uuid.UUID        `bun:"id,pk,type:uuid"`
-	CreatedAt             time.Time        `bun:"created_at"`
-	UpdatedAt             time.Time        `bun:"updated_at"`
-	Name                  string           `bun:"name"`
-	Slug                  string           `bun:"slug"`
-	ResourceType          ResourceTypeEnum `bun:"resource_type"`
-	Configuration         json.RawMessage  `bun:"configuration,type:jsonb"`
-	SystemManaged         bool             `bun:"system_managed"`
-	EnvironmentAttachable bool             `bun:"environment_attachable"`
-	ArchivedAt            sql.NullTime     `bun:"archived_at"`
+	ID                    uuid.UUID                  `bun:"id,pk,type:uuid"`
+	CreatedAt             time.Time                  `bun:"created_at"`
+	UpdatedAt             time.Time                  `bun:"updated_at"`
+	Name                  string                     `bun:"name"`
+	Slug                  string                     `bun:"slug"`
+	ResourceType          ResourceTypeEnum           `bun:"resource_type"`
+	Configuration         json.RawMessage            `bun:"configuration,type:jsonb"`
+	SystemManaged         bool                       `bun:"system_managed"`
+	EnvironmentAttachable bool                       `bun:"environment_attachable"`
+	ArchivedAt            sql.NullTime               `bun:"archived_at"`
+	Endpoints             []ResourceEndpointEntity   `bun:",rel:has-many,join:id=resource_id"`
+	Credentials           []ResourceCredentialEntity `bun:",rel:has-many,join:id=resource_id"`
+	Installation          ResourceInstallationEntity `bun:"rel:has-one,join:id=resource_id"`
 }
 
 type ResourceConfiguration struct {
@@ -51,7 +54,10 @@ func (e ResourceEntity) ParsedConfiguration() ResourceConfiguration {
 	var configuration ResourceConfiguration
 	_ = json.Unmarshal(e.Configuration, &configuration)
 	configuration.Engine = strings.ToLower(strings.TrimSpace(configuration.Engine))
-	if definition, ok := FindResourceEngine(configuration.Engine); ok && len(configuration.EnvironmentKeys) == 0 {
+	if definition, ok := FindResourceEngine(
+		configuration.Engine,
+	); ok &&
+		len(configuration.EnvironmentKeys) == 0 {
 		configuration.EnvironmentKeys = definition.DefaultEnvironmentKeys()
 	}
 	return configuration
@@ -125,21 +131,31 @@ func (e *ResourceEntity) Validate() error {
 		configuration := e.ParsedConfiguration()
 		definition, ok := FindResourceEngine(configuration.Engine)
 		if !ok || definition.ResourceType != e.ResourceType {
-			builder.Add("configuration.engine", "unsupported", "engine is not supported by this resource type")
+			builder.Add(
+				"configuration.engine",
+				"unsupported",
+				"engine is not supported by this resource type",
+			)
 		} else {
 			normalized := make(map[string]string, len(configuration.EnvironmentKeys))
 			seen := make(map[string]string, len(configuration.EnvironmentKeys))
 			supported := make(map[string]struct{}, len(definition.EnvironmentKeys))
 			for _, keyDefinition := range definition.EnvironmentKeys {
 				supported[keyDefinition.Name] = struct{}{}
-				value := NormalizeEnvironmentSecretKey(configuration.EnvironmentKeys[keyDefinition.Name])
+				value := NormalizeEnvironmentSecretKey(
+					configuration.EnvironmentKeys[keyDefinition.Name],
+				)
 				field := "configuration.environment_keys." + keyDefinition.Name
 				if value == "" {
 					builder.Add(field, "required", keyDefinition.Label+" key is required")
 					continue
 				}
 				if err := ValidateEnvironmentSecretKey(value, false); err != nil {
-					builder.Add(field, "format", "key must match [A-Z_][A-Z0-9_]* and must not be reserved")
+					builder.Add(
+						field,
+						"format",
+						"key must match [A-Z_][A-Z0-9_]* and must not be reserved",
+					)
 				}
 				if _, reserved := resourceEnvironmentReservedKeys[value]; reserved {
 					builder.Add(field, "reserved", "key is reserved by the platform")
@@ -152,7 +168,11 @@ func (e *ResourceEntity) Validate() error {
 			}
 			for logicalName := range configuration.EnvironmentKeys {
 				if _, exists := supported[logicalName]; !exists {
-					builder.Add("configuration.environment_keys."+logicalName, "unsupported", "key role is not supported by this Resource engine")
+					builder.Add(
+						"configuration.environment_keys."+logicalName,
+						"unsupported",
+						"key role is not supported by this Resource engine",
+					)
 				}
 			}
 			if err := builder.Err(); err == nil {
@@ -165,6 +185,7 @@ func (e *ResourceEntity) Validate() error {
 			}
 		}
 	}
+
 	return builder.Err()
 }
 
@@ -315,6 +336,43 @@ func (r resource) All(ctx context.Context, db storage.Executor) ([]ResourceEntit
 	}
 
 	return entities, nil
+}
+
+type AttachableResource struct {
+	ID            uuid.UUID       `bun:"id"`
+	Name          string          `bun:"name"`
+	Engine        string          `bun:"engine"`
+	Configuration json.RawMessage `bun:"resource_configuration"`
+	Database      string          `bun:"database_name"`
+	EndpointID    uuid.UUID       `bun:"endpoint_id"`
+	Endpoint      string          `bun:"endpoint"`
+	CredentialID  *uuid.UUID      `bun:"credential_id"`
+	Credential    string          `bun:"credential"`
+	ServerID      *uuid.UUID      `bun:"server_id"`
+}
+
+func (r resource) AllAttachable(
+	ctx context.Context,
+	db storage.Executor,
+) ([]AttachableResource, error) {
+	options := make([]AttachableResource, 0)
+	if err := db.NewSelect().
+		TableExpr("resources AS resource").
+		ColumnExpr("resource.id, resource.name, resource.configuration ->> 'engine' AS engine, resource.configuration AS resource_configuration, COALESCE(credential.metadata ->> 'database', '') AS database_name, endpoint.id AS endpoint_id").
+		ColumnExpr("endpoint.address || ':' || endpoint.port::text AS endpoint").
+		ColumnExpr("credential.id AS credential_id, COALESCE(credential.name, '') AS credential, installation.server_id AS server_id").
+		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = resource.id AND endpoint.archived_at IS NULL").
+		Join("LEFT JOIN resource_installations AS installation ON installation.resource_id = resource.id AND installation.archived_at IS NULL").
+		Join("LEFT JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.metadata ->> 'purpose' = 'application' AND credential.metadata ->> 'environment_id' IS NULL AND credential.archived_at IS NULL").
+		Where("resource.archived_at IS NULL").
+		Where("resource.environment_attachable = TRUE").
+		Where("resource.configuration ->> 'engine' <> 'opentelemetry' OR endpoint.settings ->> 'exposure' = ?", ResourceEndpointExposureEnvironment).
+		OrderExpr("resource.name, endpoint.role, credential.name").
+		Scan(ctx, &options); err != nil {
+		return nil, err
+	}
+
+	return options, nil
 }
 
 type PaginatedResources struct {

@@ -9,6 +9,7 @@ const ReleaseCommandQueue = "release_commands"
 
 type ReleaseCommandArgs struct {
 	ReleaseCommandExecutionID uuid.UUID `json:"release_command_execution_id" river:"unique"`
+	Attempt                   int32     `json:"attempt" river:"unique"`
 }
 
 func (ReleaseCommandArgs) Kind() string { return "release_command" }
@@ -21,7 +22,7 @@ func (ReleaseCommandArgs) InsertOpts() river.InsertOpts {
 	}
 }
 
-func ReleaseCommandInsertOpts(executionID uuid.UUID) *river.InsertOpts {
-	opts := ReleaseCommandArgs{ReleaseCommandExecutionID: executionID}.InsertOpts()
+func ReleaseCommandInsertOpts(executionID uuid.UUID, attempt int32) *river.InsertOpts {
+	opts := ReleaseCommandArgs{ReleaseCommandExecutionID: executionID, Attempt: attempt}.InsertOpts()
 	return &opts
 }

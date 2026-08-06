@@ -87,7 +87,8 @@ func (e *EnvironmentSecretEntity) Validate() error {
 	if len(e.Digest) != 32 {
 		builder.Add("value", "digest", "secret digest must be 32 bytes")
 	}
-	if e.SourceType != EnvironmentSecretSourceUser && e.SourceType != EnvironmentSecretSourceResource {
+	if e.SourceType != EnvironmentSecretSourceUser &&
+		e.SourceType != EnvironmentSecretSourceResource {
 		builder.Add("sourceType", "unsupported", "secret source type is unsupported")
 	}
 	if e.SourceID == uuid.Nil {
@@ -104,6 +105,7 @@ func (e EnvironmentSecretEntity) Sanitized() EnvironmentSecretMetadata {
 		ID: e.ID, Key: e.Key, SourceType: e.SourceType,
 		SourceID: e.SourceID, CreatedAt: e.CreatedAt,
 	}
+
 	if len(e.Digest) >= 8 {
 		const hexDigits = "0123456789abcdef"
 		prefix := make([]byte, 16)
@@ -113,14 +115,20 @@ func (e EnvironmentSecretEntity) Sanitized() EnvironmentSecretMetadata {
 		}
 		metadata.DigestPrefix = "hmac-sha256:" + string(prefix)
 	}
+
 	if e.ArchivedAt.Valid {
 		archivedAt := e.ArchivedAt.Time
 		metadata.ArchivedAt = &archivedAt
 	}
+
 	return metadata
 }
 
-func (es environmentSecret) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentSecretEntity, error) {
+func (es environmentSecret) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (EnvironmentSecretEntity, error) {
 	var entity EnvironmentSecretEntity
 	if err := db.NewSelect().Model(&entity).Where("id = ?", id).Scan(ctx); err != nil {
 		return EnvironmentSecretEntity{}, err
@@ -128,15 +136,28 @@ func (es environmentSecret) Find(ctx context.Context, db storage.Executor, id uu
 	return entity, nil
 }
 
-func (es environmentSecret) FindForEnvironment(ctx context.Context, db storage.Executor, environmentID, id uuid.UUID) (EnvironmentSecretEntity, error) {
+func (es environmentSecret) FindForEnvironment(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID, id uuid.UUID,
+) (EnvironmentSecretEntity, error) {
 	var entity EnvironmentSecretEntity
-	if err := db.NewSelect().Model(&entity).Where("id = ?", id).Where("environment_id = ?", environmentID).Scan(ctx); err != nil {
+	if err := db.NewSelect().
+		Model(&entity).
+		Where("id = ?", id).
+		Where("environment_id = ?", environmentID).
+		Scan(ctx); err != nil {
 		return EnvironmentSecretEntity{}, err
 	}
 	return entity, nil
 }
 
-func (es environmentSecret) ActiveByKey(ctx context.Context, db storage.Executor, environmentID uuid.UUID, key string) (EnvironmentSecretEntity, error) {
+func (es environmentSecret) ActiveByKey(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+	key string,
+) (EnvironmentSecretEntity, error) {
 	var entity EnvironmentSecretEntity
 	if err := db.NewSelect().Model(&entity).
 		Where("environment_id = ?", environmentID).
@@ -148,7 +169,11 @@ func (es environmentSecret) ActiveByKey(ctx context.Context, db storage.Executor
 	return entity, nil
 }
 
-func (es environmentSecret) ActiveForEnvironment(ctx context.Context, db storage.Executor, environmentID uuid.UUID) ([]EnvironmentSecretEntity, error) {
+func (es environmentSecret) ActiveForEnvironment(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) ([]EnvironmentSecretEntity, error) {
 	entities := make([]EnvironmentSecretEntity, 0)
 	if err := db.NewSelect().Model(&entities).
 		Where("environment_id = ?", environmentID).
@@ -169,7 +194,11 @@ type CreateEnvironmentSecretData struct {
 	EnvironmentID uuid.UUID
 }
 
-func (es environmentSecret) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentSecretData) (EnvironmentSecretEntity, error) {
+func (es environmentSecret) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentSecretData,
+) (EnvironmentSecretEntity, error) {
 	entity := EnvironmentSecretEntity{
 		ID: uuid.New(), CreatedAt: time.Now().UTC(), UpdatedAt: time.Now().UTC(),
 		Key: data.Key, EncValue: data.EncValue,
@@ -180,9 +209,16 @@ func (es environmentSecret) Create(ctx context.Context, db storage.Executor, dat
 		return EnvironmentSecretEntity{}, errors.Join(ErrDomainValidation, err)
 	}
 	if err := ensureActiveUnique(
-		ctx, db, "environment-secret:"+entity.EnvironmentID.String()+":"+entity.Key, entity.ID,
-		db.NewSelect().Model((*EnvironmentSecretEntity)(nil)).Where("environment_id = ?", entity.EnvironmentID).Where("lower(key) = ?", strings.ToLower(entity.Key)),
-		"key", "an active secret already uses this key",
+		ctx,
+		db,
+		"environment-secret:"+entity.EnvironmentID.String()+":"+entity.Key,
+		entity.ID,
+		db.NewSelect().
+			Model((*EnvironmentSecretEntity)(nil)).
+			Where("environment_id = ?", entity.EnvironmentID).
+			Where("lower(key) = ?", strings.ToLower(entity.Key)),
+		"key",
+		"an active secret already uses this key",
 	); err != nil {
 		return EnvironmentSecretEntity{}, err
 	}
@@ -192,7 +228,11 @@ func (es environmentSecret) Create(ctx context.Context, db storage.Executor, dat
 	return entity, nil
 }
 
-func (es environmentSecret) Archive(ctx context.Context, db storage.Executor, environmentID, id uuid.UUID) error {
+func (es environmentSecret) Archive(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID, id uuid.UUID,
+) error {
 	now := time.Now().UTC()
 	result, err := db.NewUpdate().Model((*EnvironmentSecretEntity)(nil)).
 		Set("archived_at = ?", now).Set("updated_at = ?", now).

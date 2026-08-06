@@ -92,7 +92,7 @@ func (service *ReleaseDeployment) OrchestrateTx(ctx context.Context, tx bun.Tx, 
 		if err != nil {
 			return ReleaseOrchestrationResult{}, err
 		}
-		if _, err := service.queue.InsertTx(ctx, tx.Tx, jobs.ReleaseCommandArgs{ReleaseCommandExecutionID: execution.ID}, jobs.ReleaseCommandInsertOpts(execution.ID)); err != nil {
+		if _, err := service.queue.InsertTx(ctx, tx.Tx, jobs.ReleaseCommandArgs{ReleaseCommandExecutionID: execution.ID, Attempt: execution.Attempt}, jobs.ReleaseCommandInsertOpts(execution.ID, execution.Attempt)); err != nil {
 			return ReleaseOrchestrationResult{}, err
 		}
 		return ReleaseOrchestrationResult{ReleaseCommand: &execution}, nil

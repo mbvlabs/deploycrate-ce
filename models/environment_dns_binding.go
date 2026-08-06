@@ -138,7 +138,7 @@ func (environmentDNSBinding) Reconfigure(
 ) (EnvironmentDNSBindingEntity, error) {
 	var entity EnvironmentDNSBindingEntity
 	now := time.Now().UTC()
-	if err := db.NewUpdate().Model(&entity).Table("environment_dns_bindings").
+	if err := db.NewUpdate().Model(&entity).
 		Set("updated_at = ?", now).Set("dns_zone_id = ?", zoneID).
 		Set("state = ?", EnvironmentDNSPending).Set("generation = generation + 1").
 		Set("last_error = NULL").Set("adoption_confirmed_at = NULL").Set("applied_at = NULL").
@@ -161,7 +161,7 @@ func (environmentDNSBinding) MarkRemoving(
 ) (EnvironmentDNSBindingEntity, error) {
 	var entity EnvironmentDNSBindingEntity
 	now := time.Now().UTC()
-	if err := db.NewUpdate().Model(&entity).Table("environment_dns_bindings").
+	if err := db.NewUpdate().Model(&entity).
 		Set("updated_at = ?", now).Set("state = ?", EnvironmentDNSRemoving).
 		Set("generation = generation + 1").Set("last_error = NULL").
 		Set("deploy_after_apply = ?", deployAfterApply).Set("deployment_actor_id = ?", actorID).
@@ -177,7 +177,7 @@ func (environmentDNSBinding) MarkRemoving(
 func (environmentDNSBinding) ConfirmAdoption(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentDNSBindingEntity, error) {
 	var entity EnvironmentDNSBindingEntity
 	now := time.Now().UTC()
-	if err := db.NewUpdate().Model(&entity).Table("environment_dns_bindings").
+	if err := db.NewUpdate().Model(&entity).
 		Set("updated_at = ?", now).Set("state = ?", EnvironmentDNSPending).
 		Set("generation = generation + 1").Set("last_error = NULL").Set("adoption_confirmed_at = ?", now).
 		Where("id = ?", id).Where("archived_at IS NULL").Returning("*").Scan(ctx); err != nil {
@@ -195,7 +195,7 @@ func (environmentDNSBinding) PrepareDeployment(
 ) (EnvironmentDNSBindingEntity, error) {
 	var entity EnvironmentDNSBindingEntity
 	now := time.Now().UTC()
-	if err := db.NewUpdate().Model(&entity).Table("environment_dns_bindings").
+	if err := db.NewUpdate().Model(&entity).
 		Set("updated_at = ?", now).Set("deploy_after_apply = TRUE").
 		Set("deployment_actor_id = ?", actorID).Set("deployment_trigger_type = ?", triggerType).
 		Set("deployment_reference = ?", reference).Set("deployment_dispatched_at = NULL").
@@ -210,7 +210,7 @@ func (environmentDNSBinding) PrepareDeployment(
 func (environmentDNSBinding) Retry(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentDNSBindingEntity, error) {
 	var entity EnvironmentDNSBindingEntity
 	now := time.Now().UTC()
-	if err := db.NewUpdate().Model(&entity).Table("environment_dns_bindings").
+	if err := db.NewUpdate().Model(&entity).
 		Set("updated_at = ?", now).Set("state = ?", EnvironmentDNSPending).
 		Set("generation = generation + 1").Set("last_error = NULL").
 		Where("id = ?", id).Where("archived_at IS NULL").Returning("*").Scan(ctx); err != nil {
@@ -219,10 +219,23 @@ func (environmentDNSBinding) Retry(ctx context.Context, db storage.Executor, id 
 	return entity, nil
 }
 
+func (environmentDNSBinding) Refresh(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentDNSBindingEntity, error) {
+	var entity EnvironmentDNSBindingEntity
+	now := time.Now().UTC()
+	if err := db.NewUpdate().Model(&entity).
+		Set("updated_at = ?", now).Set("state = ?", EnvironmentDNSPending).
+		Set("generation = generation + 1").Set("last_error = NULL").Set("applied_at = NULL").
+		Where("id = ?", id).Where("archived_at IS NULL").Where("state <> ?", EnvironmentDNSReconciling).
+		Returning("*").Scan(ctx); err != nil {
+		return EnvironmentDNSBindingEntity{}, err
+	}
+	return entity, nil
+}
+
 func (environmentDNSBinding) RetryRemoval(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentDNSBindingEntity, error) {
 	var entity EnvironmentDNSBindingEntity
 	now := time.Now().UTC()
-	if err := db.NewUpdate().Model(&entity).Table("environment_dns_bindings").
+	if err := db.NewUpdate().Model(&entity).
 		Set("updated_at = ?", now).Set("state = ?", EnvironmentDNSRemoving).
 		Set("generation = generation + 1").Set("last_error = NULL").
 		Where("id = ?", id).Where("archived_at IS NULL").Returning("*").Scan(ctx); err != nil {

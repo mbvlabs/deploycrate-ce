@@ -40,7 +40,11 @@ func (e *ResourceCredentialEntity) Validate() error {
 		builder.Add("metadata", "secret", "metadata must not contain raw credentials")
 	}
 	if len(e.EncPayload) == 0 {
-		builder.Add("secretValues", "required", "at least one encrypted credential value is required")
+		builder.Add(
+			"secretValues",
+			"required",
+			"at least one encrypted credential value is required",
+		)
 	}
 	if len(e.Digest) != 32 {
 		builder.Add("secretValues", "digest", "credential digest is invalid")
@@ -98,7 +102,18 @@ func (rc resourceCredential) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceCredentialEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if err := ensureActiveUnique(ctx, db, "resource-credential:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceCredentialEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active credential already uses this name"); err != nil {
+	if err := ensureActiveUnique(
+		ctx,
+		db,
+		"resource-credential:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name),
+		entity.ID,
+		db.NewSelect().
+			Model((*ResourceCredentialEntity)(nil)).
+			Where("resource_id = ?", entity.ResourceID).
+			Where("lower(name) = ?", strings.ToLower(entity.Name)),
+		"name",
+		"an active credential already uses this name",
+	); err != nil {
 		return ResourceCredentialEntity{}, err
 	}
 
@@ -141,7 +156,18 @@ func (rc resourceCredential) Update(
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceCredentialEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if err := ensureActiveUnique(ctx, db, "resource-credential:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceCredentialEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active credential already uses this name"); err != nil {
+	if err := ensureActiveUnique(
+		ctx,
+		db,
+		"resource-credential:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name),
+		entity.ID,
+		db.NewSelect().
+			Model((*ResourceCredentialEntity)(nil)).
+			Where("resource_id = ?", entity.ResourceID).
+			Where("lower(name) = ?", strings.ToLower(entity.Name)),
+		"name",
+		"an active credential already uses this name",
+	); err != nil {
 		return ResourceCredentialEntity{}, err
 	}
 
@@ -259,7 +285,18 @@ func (rc resourceCredential) Upsert(
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceCredentialEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if err := ensureActiveUnique(ctx, db, "resource-credential:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceCredentialEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active credential already uses this name"); err != nil {
+	if err := ensureActiveUnique(
+		ctx,
+		db,
+		"resource-credential:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name),
+		entity.ID,
+		db.NewSelect().
+			Model((*ResourceCredentialEntity)(nil)).
+			Where("resource_id = ?", entity.ResourceID).
+			Where("lower(name) = ?", strings.ToLower(entity.Name)),
+		"name",
+		"an active credential already uses this name",
+	); err != nil {
 		return ResourceCredentialEntity{}, err
 	}
 

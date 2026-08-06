@@ -72,6 +72,7 @@ var EnvironmentDeploymentRetry = routing.NewRouteWithParams[EnvironmentDeploymen
 var EnvironmentAPITokenRotate = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/api-token", "applications.environments.api-token.rotate", ApplicationsPrefix)
 var EnvironmentDNSAdopt = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/dns/adopt", "applications.environments.dns.adopt", ApplicationsPrefix)
 var EnvironmentDNSRetry = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/dns/retry", "applications.environments.dns.retry", ApplicationsPrefix)
+var EnvironmentDNSRefresh = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/dns/refresh", "applications.environments.dns.refresh", ApplicationsPrefix)
 var EnvironmentDeploymentEvents = routing.NewRouteWithParams[EnvironmentDeploymentEventParams]("/:environmentID/deployments/:deploymentID/events", "environments.deployments.events", EnvironmentsPrefix)
 var EnvironmentBuildLogs = routing.NewRouteWithParams[EnvironmentBuildParams]("/:environmentID/builds/:buildID/logs", "environments.builds.logs", EnvironmentsPrefix)
 var EnvironmentBuildStart = routing.NewRouteWithParams[EnvironmentBuildActionParams]("/:applicationID/environments/:environmentID/builds/:buildID/start", "applications.environments.builds.start", ApplicationsPrefix)

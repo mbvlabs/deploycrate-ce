@@ -422,7 +422,8 @@ func (service *ReleaseCommandExecution) Retry(ctx context.Context, applicationID
 	if err := models.Change.ResetForRetry(ctx, tx, execution.ChangeID, now); err != nil {
 		return err
 	}
-	if _, err := service.queue.InsertTx(ctx, tx.Tx, jobs.ReleaseCommandArgs{ReleaseCommandExecutionID: execution.ID}, jobs.ReleaseCommandInsertOpts(execution.ID)); err != nil {
+	nextAttempt := execution.Attempt + 1
+	if _, err := service.queue.InsertTx(ctx, tx.Tx, jobs.ReleaseCommandArgs{ReleaseCommandExecutionID: execution.ID, Attempt: nextAttempt}, jobs.ReleaseCommandInsertOpts(execution.ID, nextAttempt)); err != nil {
 		return err
 	}
 	return tx.Commit()

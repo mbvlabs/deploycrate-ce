@@ -19,6 +19,7 @@ import (
 
 const (
 	workloadDockerExecutable    = "/usr/bin/docker"
+	cnbLifecycleLauncher        = "/cnb/lifecycle/launcher"
 	labelApplication            = "com.deploycrate.application"
 	labelEnvironment            = "com.deploycrate.environment"
 	labelTarget                 = "com.deploycrate.target"
@@ -319,7 +320,13 @@ func PrepareWorkloadRun(spec WorkloadRunSpec) (PreparedWorkloadRun, error) {
 		arguments = append(arguments, "--env", key)
 		childEnvironment = append(childEnvironment, key+"="+spec.Environment[key])
 	}
+	if len(spec.Command) > 0 {
+		arguments = append(arguments, "--entrypoint", cnbLifecycleLauncher)
+	}
 	arguments = append(arguments, spec.ImageReference)
+	if len(spec.Command) > 0 {
+		arguments = append(arguments, "--")
+	}
 	arguments = append(arguments, spec.Command...)
 	return PreparedWorkloadRun{Arguments: arguments, Environment: childEnvironment}, nil
 }
@@ -438,7 +445,13 @@ func PrepareOneOffCreate(spec OneOffRunSpec) (PreparedWorkloadRun, error) {
 		arguments = append(arguments, "--env", key)
 		childEnvironment = append(childEnvironment, key+"="+spec.Environment[key])
 	}
+	if len(spec.Command) > 0 {
+		arguments = append(arguments, "--entrypoint", cnbLifecycleLauncher)
+	}
 	arguments = append(arguments, spec.ImageReference)
+	if len(spec.Command) > 0 {
+		arguments = append(arguments, "--")
+	}
 	arguments = append(arguments, spec.Command...)
 	return PreparedWorkloadRun{Arguments: arguments, Environment: childEnvironment}, nil
 }

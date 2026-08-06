@@ -227,7 +227,7 @@ func (service *GitHubWebhook) processPush(ctx context.Context, delivery models.G
 			ImageRepository: source.ImageRepository, RegistryResourceID: source.RegistryResourceID,
 			RegistryCredentialID: source.RegistryCredentialID,
 			RegistryEndpoint:     source.RegistryEndpoint, Settings: source.BuildpackSettings,
-			BPGOTargets: state.Runtime.BPGOTargets,
+			BPGOTargets: models.FlattenGoProcessTargets(state.Runtime.BPGOTargets),
 			ServerID:    source.BuildServerID,
 		})
 		if err != nil {
