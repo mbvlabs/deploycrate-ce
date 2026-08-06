@@ -1608,7 +1608,12 @@
             <div class="border border-border p-3 text-sm">
               <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0">
-                  <p class="font-mono">{short(release.sourceRevision)}</p>
+                  <span class="flex justify-between">
+                    <p class="font-mono">id: {short(release.id)}</p>
+                    <p class="font-mono">
+                      revision: {short(release.sourceRevision)}
+                    </p>
+                  </span>
                   <p class="mt-1 text-xs text-muted-foreground">
                     {stamp(release.createdAt)}
                   </p>
