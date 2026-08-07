@@ -14,6 +14,7 @@
     ApplicationTelemetry,
     OpenTelemetryLog,
     OpenTelemetryLogSnapshot,
+    QueryTelemetry,
     TelemetryRange,
     TraceSpan,
   } from "@/Pages/Applications/Environments/show.types";
@@ -50,6 +51,10 @@
   let traceSpans = $state<TraceSpan[]>([]);
   let traceLoading = $state(false);
   let traceError = $state("");
+  let expandedSlowQueries = $state<QueryTelemetry[] | null>(null);
+  let expandedSlowQueriesKey = $state("");
+  let slowQueriesLoading = $state(false);
+  let slowQueriesError = $state("");
 
   const activeView = $derived.by<OpenTelemetryView>(() => {
     const view = new URLSearchParams($page.url.split("?")[1] ?? "").get("view");
@@ -84,7 +89,15 @@
   const databaseHistory = $derived(telemetry.database?.history ?? []);
   const recentTraces = $derived(telemetry.recentTraces ?? []);
   const slowRoutes = $derived((telemetry.routes ?? []).slice(0, 20));
-  const slowQueries = $derived((telemetry.queries ?? []).slice(0, 20));
+  const slowQueriesKey = $derived(
+    `${applicationId}:${environmentId}:${telemetryRange}`,
+  );
+  const slowQueriesExpanded = $derived(
+    expandedSlowQueries !== null && expandedSlowQueriesKey === slowQueriesKey,
+  );
+  const slowQueries = $derived(
+    slowQueriesExpanded ? (expandedSlowQueries ?? []) : (telemetry.queries ?? []),
+  );
   const trafficSeries = $derived<ChartSeries[]>([
     {
       label: "Requests",
@@ -286,6 +299,44 @@
       traceError = "This trace could not be loaded.";
     } finally {
       if (!signal.aborted) traceLoading = false;
+    }
+  }
+
+  async function toggleSlowQueries() {
+    if (slowQueriesExpanded) {
+      expandedSlowQueries = null;
+      expandedSlowQueriesKey = "";
+      slowQueriesError = "";
+      return;
+    }
+    if (slowQueriesLoading) return;
+
+    const requestKey = slowQueriesKey;
+    const range = telemetryRange;
+    slowQueriesLoading = true;
+    slowQueriesError = "";
+    try {
+      const endpoint = new URL(
+        routes.environmentTelemetryQueries(applicationId, environmentId),
+        window.location.origin,
+      );
+      endpoint.searchParams.set("range", range);
+      const response = await window.fetch(endpoint, {
+        cache: "no-store",
+        credentials: "same-origin",
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok)
+        throw new Error(`Slow queries returned ${response.status}`);
+      const snapshot = (await response.json()) as { queries: QueryTelemetry[] };
+      if (requestKey !== slowQueriesKey) return;
+      expandedSlowQueries = snapshot.queries;
+      expandedSlowQueriesKey = requestKey;
+    } catch {
+      if (requestKey === slowQueriesKey)
+        slowQueriesError = "The additional slow queries could not be loaded.";
+    } finally {
+      slowQueriesLoading = false;
     }
   }
 
@@ -982,6 +1033,25 @@
                 </Table.Body>
               </Table.Root>
             </div>
+            {#if telemetry.moreQueries || slowQueriesExpanded}
+              <div class="mt-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onclick={toggleSlowQueries}
+                  disabled={slowQueriesLoading}
+                  aria-expanded={slowQueriesExpanded}
+                >{slowQueriesExpanded
+                  ? "Show top 10"
+                  : slowQueriesLoading
+                    ? "Loading top 25..."
+                    : "Show top 25"}</Button
+                >
+              </div>
+            {/if}
+            {#if slowQueriesError}
+              <p class="mt-3 text-sm text-destructive">{slowQueriesError}</p>
+            {/if}
           {:else}
             <Empty.Root class="py-10">
               <Empty.Header>

@@ -57,6 +57,7 @@ export const routes = {
   environmentStart: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/start`,
   environmentTelemetry: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/telemetry`,
   environmentTelemetryLogs: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/telemetry/logs`,
+  environmentTelemetryQueries: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/telemetry/queries`,
   environmentTelemetryTrace: (applicationID: string, environmentID: string, traceID: string) => `/applications/${applicationID}/environments/${environmentID}/telemetry/traces/${traceID}`,
   environmentUpdate: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}`,
   environments: () => '/environments',

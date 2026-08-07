@@ -33,6 +33,7 @@ type ApplicationTelemetry struct {
 	RecentTraces          []TraceSummary              `json:"recentTraces"`
 	Routes                []RouteTelemetry            `json:"routes"`
 	Queries               []QueryTelemetry            `json:"queries"`
+	MoreQueries           bool                        `json:"moreQueries"`
 }
 
 type RouteTelemetry struct {
@@ -151,6 +152,15 @@ func (client Client) EnvironmentApplicationTelemetry(
 	bucket time.Duration,
 ) (ApplicationTelemetry, error) {
 	return client.applicationTelemetry(ctx, environmentTelemetryScope(environment), since, bucket)
+}
+
+func (client Client) EnvironmentSlowQueries(
+	ctx context.Context,
+	environment string,
+	since time.Time,
+) ([]QueryTelemetry, error) {
+	queries, _, err := client.slowQueries(ctx, environmentTelemetryScope(environment), since, 25)
+	return queries, err
 }
 
 func (client Client) applicationTelemetry(
@@ -283,7 +293,7 @@ FORMAT JSONEachRow`, scope)
 	if err != nil {
 		return ApplicationTelemetry{}, err
 	}
-	result.Queries, err = client.slowQueries(ctx, scope, since)
+	result.Queries, result.MoreQueries, err = client.slowQueries(ctx, scope, since, 10)
 	if err != nil {
 		return ApplicationTelemetry{}, err
 	}
@@ -333,7 +343,7 @@ FROM
 	)),
 	  argMax(BucketCounts, TimeUnix), argMin(BucketCounts, TimeUnix)) AS bucket_counts,
     argMax(ExplicitBounds, TimeUnix) AS explicit_bounds,
-    argMax(Max, TimeUnix) AS maximum
+    max(Max) AS maximum
   FROM otel_metrics_histogram
   WHERE {{scope}}
     AND MetricName IN ('http.server.request.duration', 'db.client.operation.duration')
@@ -474,6 +484,14 @@ func (aggregate aggregatedHistogram) quantile(value float64) float64 {
 			continue
 		}
 		if index < len(aggregate.bounds) {
+			// Histogram boundaries are upper bounds, not sampled durations. This is
+			// particularly important for Environment workloads, which can use the
+			// OpenTelemetry default boundaries (for example, a 5 s bucket). Max is
+			// recorded with the histogram, so it prevents a fast operation from
+			// being reported as the upper edge of its coarse bucket.
+			if aggregate.maximum > 0 && aggregate.maximum < aggregate.bounds[index] {
+				return aggregate.maximum
+			}
 			return aggregate.bounds[index]
 		}
 		return aggregate.maximum
@@ -663,7 +681,8 @@ func (client Client) slowQueries(
 	ctx context.Context,
 	scope applicationTelemetryScope,
 	since time.Time,
-) ([]QueryTelemetry, error) {
+	limit int,
+) ([]QueryTelemetry, bool, error) {
 	query := telemetryQuery(`
 SELECT query, database_system, operation, toString(count()) AS executions,
   quantile(0.95)(Duration) / 1000000.0 AS p95_duration_milliseconds
@@ -693,7 +712,7 @@ FROM
 WHERE query != ''
 GROUP BY query, database_system, operation
 ORDER BY p95_duration_milliseconds DESC, executions DESC, query
-LIMIT 20
+LIMIT {limit:UInt8}
 FORMAT JSONEachRow`, scope)
 	type slowQueryRow struct {
 		Query          string  `json:"query"`
@@ -704,22 +723,27 @@ FORMAT JSONEachRow`, scope)
 	}
 	rows, err := queryJSONRows[slowQueryRow](ctx, client, query, scope.params(map[string]string{
 		"since_seconds": strconv.FormatInt(since.Unix(), 10),
+		"limit":         strconv.Itoa(limit + 1),
 	}))
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	queries := make([]QueryTelemetry, 0, len(rows))
 	for _, row := range rows {
 		executions, parseErr := strconv.ParseUint(row.Executions, 10, 64)
 		if parseErr != nil {
-			return nil, fmt.Errorf("decode ClickHouse slow query executions: %w", parseErr)
+			return nil, false, fmt.Errorf("decode ClickHouse slow query executions: %w", parseErr)
 		}
 		queries = append(queries, QueryTelemetry{
 			Query: row.Query, DatabaseSystem: row.DatabaseSystem, Operation: row.Operation,
 			Executions: executions, P95DurationMS: row.P95DurationMS,
 		})
 	}
-	return queries, nil
+	more := len(queries) > limit
+	if more {
+		queries = queries[:limit]
+	}
+	return queries, more, nil
 }
 
 func (client Client) Trace(ctx context.Context, traceID string) ([]TraceSpan, error) {

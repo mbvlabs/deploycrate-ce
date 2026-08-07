@@ -68,6 +68,7 @@ var EnvironmentCreate = routing.NewRouteWithParams[ApplicationEnvironmentParams]
 var EnvironmentShow = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID", "applications.environments.show", ApplicationsPrefix)
 var EnvironmentTelemetry = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/telemetry", "applications.environments.telemetry", ApplicationsPrefix)
 var EnvironmentTelemetryLogs = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/telemetry/logs", "applications.environments.telemetry.logs", ApplicationsPrefix)
+var EnvironmentTelemetryQueries = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/telemetry/queries", "applications.environments.telemetry.queries", ApplicationsPrefix)
 var EnvironmentTelemetryTrace = routing.NewRouteWithParams[EnvironmentTelemetryTraceParams]("/:applicationID/environments/:environmentID/telemetry/traces/:traceID", "applications.environments.telemetry.trace", ApplicationsPrefix)
 var EnvironmentDeployments = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/deployments", "applications.environments.deployments", ApplicationsPrefix)
 var EnvironmentBuilds = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/builds", "applications.environments.builds", ApplicationsPrefix)

@@ -341,6 +341,7 @@ export type ApplicationTelemetry = {
   recentTraces: TraceSummary[];
   routes: RouteTelemetry[];
   queries: QueryTelemetry[];
+  moreQueries: boolean;
 };
 
 export type OpenTelemetryLog = {

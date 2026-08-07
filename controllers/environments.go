@@ -73,6 +73,7 @@ func (c Environments) RegisterRoutes(router *router.Router) error {
 		{http.MethodGet, routes.EnvironmentShow, c.Show},
 		{http.MethodGet, routes.EnvironmentTelemetry, c.Telemetry},
 		{http.MethodGet, routes.EnvironmentTelemetryLogs, c.TelemetryLogs},
+		{http.MethodGet, routes.EnvironmentTelemetryQueries, c.TelemetryQueries},
 		{http.MethodGet, routes.EnvironmentTelemetryTrace, c.TelemetryTrace},
 		{http.MethodGet, routes.EnvironmentDeployments, c.Deployments},
 		{http.MethodGet, routes.EnvironmentBuilds, c.Builds},
@@ -207,6 +208,36 @@ func (c Environments) TelemetryLogs(etx *echo.Context) error {
 	}
 	etx.Response().Header().Set("Cache-Control", "no-store")
 	return etx.JSON(http.StatusOK, snapshot)
+}
+
+func (c Environments) TelemetryQueries(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	if err != nil {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Environment not found"})
+	}
+	queries, err := c.appTelemetrySvc.SlowQueries(
+		etx.Request().Context(),
+		params.ApplicationID,
+		params.EnvironmentID,
+		services.ParseTelemetryRange(etx.QueryParam("range")),
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Environment not found"})
+	}
+	if errors.Is(err, services.ErrEnvironmentOpenTelemetryUnavailable) {
+		return etx.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
+	}
+	if err != nil {
+		slog.ErrorContext(
+			etx.Request().Context(),
+			"failed to load Environment OpenTelemetry slow queries",
+			"environment_id", params.EnvironmentID,
+			"error", err,
+		)
+		return etx.JSON(http.StatusInternalServerError, map[string]string{"error": "Slow queries could not be loaded"})
+	}
+	etx.Response().Header().Set("Cache-Control", "no-store")
+	return etx.JSON(http.StatusOK, map[string]any{"queries": queries})
 }
 
 func (c Environments) TelemetryTrace(etx *echo.Context) error {

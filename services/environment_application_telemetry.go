@@ -72,6 +72,26 @@ func (service *EnvironmentApplicationTelemetry) Snapshot(
 	)
 }
 
+func (service *EnvironmentApplicationTelemetry) SlowQueries(
+	ctx context.Context,
+	applicationID uuid.UUID,
+	environmentID uuid.UUID,
+	telemetryRange TelemetryRange,
+) ([]clickhouseclient.QueryTelemetry, error) {
+	if err := service.ensureEnabled(ctx, applicationID, environmentID); err != nil {
+		return nil, err
+	}
+	client, err := service.resource.Client(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return client.EnvironmentSlowQueries(
+		ctx,
+		environmentID.String(),
+		time.Now().UTC().Add(-telemetryRange.Duration()),
+	)
+}
+
 func (service *EnvironmentApplicationTelemetry) Logs(
 	ctx context.Context,
 	applicationID uuid.UUID,
