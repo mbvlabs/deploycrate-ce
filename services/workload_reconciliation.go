@@ -24,8 +24,20 @@ type WorkloadReconciliation struct {
 	releases  *ReleaseDeployment
 }
 
-func NewWorkloadReconciliation(db storage.Pool, queue storage.InsertQueue, caddy CaddyRouteService, workloads *WorkloadExecution, releases *ReleaseDeployment) *WorkloadReconciliation {
-	return &WorkloadReconciliation{db: db, queue: queue, caddy: caddy, workloads: workloads, releases: releases}
+func NewWorkloadReconciliation(
+	db storage.Pool,
+	queue storage.InsertQueue,
+	caddy CaddyRouteService,
+	workloads *WorkloadExecution,
+	releases *ReleaseDeployment,
+) *WorkloadReconciliation {
+	return &WorkloadReconciliation{
+		db:        db,
+		queue:     queue,
+		caddy:     caddy,
+		workloads: workloads,
+		releases:  releases,
+	}
 }
 
 func (service *WorkloadReconciliation) Reconcile(ctx context.Context) error {
@@ -38,44 +50,99 @@ func (service *WorkloadReconciliation) Reconcile(ctx context.Context) error {
 		Join("JOIN environments AS environment ON environment.id = release.environment_id").
 		Join("JOIN applications AS application ON application.id = environment.application_id").
 		Where("application.slug <> ?", models.SystemApplicationSlug).
-		Where("deployments.status IN ('queued', 'running')").OrderExpr("deployments.created_at").Scan(ctx); err != nil {
+		Where("deployments.status IN ('queued', 'running')").
+		OrderExpr("deployments.created_at").Scan(ctx); err != nil {
 		return fmt.Errorf("load unresolved workload Deployments: %w", err)
 	}
 	for _, deployment := range unresolved {
 		instances := make([]models.InstanceEntity, 0)
-		err := service.db.Executor().NewSelect().Model(&instances).Where("deployment_id = ?", deployment.ID).Where("removed_at IS NULL").OrderExpr("process_kind, process_name, replica_key").Scan(ctx)
+		err := service.db.Executor().
+			NewSelect().
+			Model(&instances).
+			Where("deployment_id = ?", deployment.ID).
+			Where("removed_at IS NULL").
+			OrderExpr("process_kind, process_name, replica_key").
+			Scan(ctx)
 		if err != nil {
-			slog.Error("workload startup reconciliation could not load candidate", "deployment_id", deployment.ID, "error", err)
+			slog.Error(
+				"workload startup reconciliation could not load candidate",
+				"deployment_id",
+				deployment.ID,
+				"error",
+				err,
+			)
 			continue
 		}
 		if len(instances) == 0 {
 			continue
 		}
-		target, targetErr := models.EnvironmentTarget.Find(ctx, service.db.Executor(), instances[0].EnvironmentTargetID)
+		target, targetErr := models.EnvironmentTarget.Find(
+			ctx,
+			service.db.Executor(),
+			instances[0].EnvironmentTargetID,
+		)
 		if targetErr != nil {
-			slog.Error("workload startup reconciliation could not load target", "deployment_id", deployment.ID, "error", targetErr)
+			slog.Error(
+				"workload startup reconciliation could not load target",
+				"deployment_id",
+				deployment.ID,
+				"error",
+				targetErr,
+			)
 			continue
 		}
 		for _, instance := range instances {
-			state, inspectErr := service.workloads.Find(ctx, target.ServerID, deployment.ID, instance.ID)
+			state, inspectErr := service.workloads.Find(
+				ctx,
+				target.ServerID,
+				deployment.ID,
+				instance.ID,
+			)
 			if inspectErr != nil {
-				slog.Error("workload startup reconciliation could not inspect candidate", "deployment_id", deployment.ID, "instance_id", instance.ID, "error", inspectErr)
+				slog.Error(
+					"workload startup reconciliation could not inspect candidate",
+					"deployment_id",
+					deployment.ID,
+					"instance_id",
+					instance.ID,
+					"error",
+					inspectErr,
+				)
 				continue
 			}
 			if state.Exists {
 				ports := json.RawMessage(`{}`)
 				if instance.ProcessKind == models.EnvironmentProcessWeb {
-					encodedPorts, _ := json.Marshal(map[string]any{"host": state.HostAddress, "http": state.HostPort})
+					encodedPorts, _ := json.Marshal(
+						map[string]any{"host": state.HostAddress, "http": state.HostPort},
+					)
 					ports = encodedPorts
 				}
 				now := time.Now().UTC()
-				_, _ = service.db.Executor().NewUpdate().TableExpr("instances").Set("external_id = ?", state.ID).
-					Set("state = ?", map[bool]string{true: "running", false: "failed"}[state.Running]).Set("ports = ?", ports).
-					Set("observed_at = ?", now).Set("updated_at = ?", now).Where("id = ?", instance.ID).Exec(ctx)
+				_, _ = service.db.Executor().
+					NewUpdate().
+					TableExpr("instances").
+					Set("external_id = ?", state.ID).
+					Set("state = ?", map[bool]string{true: "running", false: "failed"}[state.Running]).
+					Set("ports = ?", ports).
+					Set("observed_at = ?", now).
+					Set("updated_at = ?", now).
+					Where("id = ?", instance.ID).
+					Exec(ctx)
 			}
 		}
-		if _, insertErr := service.queue.Insert(ctx, jobs.DeployReleaseArgs{DeploymentID: deployment.ID}, jobs.DeployReleaseInsertOpts(deployment.ID)); insertErr != nil {
-			slog.Error("workload startup reconciliation could not requeue Deployment", "deployment_id", deployment.ID, "error", insertErr)
+		if _, insertErr := service.queue.Insert(
+			ctx,
+			jobs.DeployReleaseArgs{DeploymentID: deployment.ID},
+			jobs.DeployReleaseInsertOpts(deployment.ID),
+		); insertErr != nil {
+			slog.Error(
+				"workload startup reconciliation could not requeue Deployment",
+				"deployment_id",
+				deployment.ID,
+				"error",
+				insertErr,
+			)
 		}
 	}
 	if err := service.reconcileServingInstances(ctx); err != nil {
@@ -88,12 +155,19 @@ func (service *WorkloadReconciliation) Reconcile(ctx context.Context) error {
 		Join("JOIN environments AS environment ON environment.id = release.environment_id").
 		Join("JOIN applications AS application ON application.id = environment.application_id").
 		Where("application.slug <> ?", models.SystemApplicationSlug).
-		Where("caddy_routes.removed_at IS NULL").Where("caddy_routes.state IN ('pending', 'applied')").Scan(ctx); err != nil {
+		Where("caddy_routes.removed_at IS NULL").
+		Where("caddy_routes.state IN ('pending', 'applied')").Scan(ctx); err != nil {
 		return fmt.Errorf("load active workload Caddy routes: %w", err)
 	}
 	for _, route := range routes {
 		if _, err := service.caddy.Reconcile(ctx, route.ID); err != nil {
-			slog.Error("workload startup reconciliation could not apply Caddy route", "route_id", route.ID, "error", err)
+			slog.Error(
+				"workload startup reconciliation could not apply Caddy route",
+				"route_id",
+				route.ID,
+				"error",
+				err,
+			)
 		}
 	}
 	if err := service.cleanupOldBackends(ctx); err != nil {
@@ -104,7 +178,12 @@ func (service *WorkloadReconciliation) Reconcile(ctx context.Context) error {
 
 func (service *WorkloadReconciliation) reconcileReleaseCommands(ctx context.Context) error {
 	executions := make([]models.ReleaseCommandExecutionEntity, 0)
-	if err := service.db.Executor().NewSelect().Model(&executions).Where("status = 'running'").OrderExpr("created_at").Scan(ctx); err != nil {
+	if err := service.db.Executor().
+		NewSelect().
+		Model(&executions).
+		Where("status = 'running'").
+		OrderExpr("created_at").
+		Scan(ctx); err != nil {
 		return fmt.Errorf("load interrupted release commands: %w", err)
 	}
 	for _, execution := range executions {
@@ -112,13 +191,27 @@ func (service *WorkloadReconciliation) reconcileReleaseCommands(ctx context.Cont
 		if err != nil {
 			continue
 		}
-		target, err := models.EnvironmentTarget.Find(ctx, service.db.Executor(), execution.EnvironmentTargetID)
+		target, err := models.EnvironmentTarget.Find(
+			ctx,
+			service.db.Executor(),
+			execution.EnvironmentTargetID,
+		)
 		if err != nil {
 			continue
 		}
-		states, inspectErr := service.workloads.FindEnvironment(ctx, target.ServerID, release.EnvironmentID)
+		states, inspectErr := service.workloads.FindEnvironment(
+			ctx,
+			target.ServerID,
+			release.EnvironmentID,
+		)
 		if inspectErr != nil {
-			slog.Error("workload startup reconciliation could not inspect release command", "execution_id", execution.ID, "error", inspectErr)
+			slog.Error(
+				"workload startup reconciliation could not inspect release command",
+				"execution_id",
+				execution.ID,
+				"error",
+				inspectErr,
+			)
 			continue
 		}
 		containerFound := false
@@ -138,10 +231,24 @@ func (service *WorkloadReconciliation) reconcileReleaseCommands(ctx context.Cont
 			status = "failed"
 		}
 		now := time.Now().UTC()
-		if err := models.ReleaseCommandExecution.MarkFailed(ctx, service.db.Executor(), execution.ID, status, nil, operationErr, now); err != nil {
+		if err := models.ReleaseCommandExecution.MarkFailed(
+			ctx,
+			service.db.Executor(),
+			execution.ID,
+			status,
+			nil,
+			operationErr,
+			now,
+		); err != nil {
 			return err
 		}
-		_ = models.Change.MarkFailed(ctx, service.db.Executor(), execution.ChangeID, operationErr, now)
+		_ = models.Change.MarkFailed(
+			ctx,
+			service.db.Executor(),
+			execution.ChangeID,
+			operationErr,
+			now,
+		)
 	}
 	return nil
 }
@@ -155,46 +262,98 @@ func (service *WorkloadReconciliation) reconcileServingInstances(ctx context.Con
 		Join("JOIN applications AS application ON application.id = environment.application_id").
 		Where("application.slug <> ?", models.SystemApplicationSlug).
 		Where("EXISTS (SELECT 1 FROM instances web JOIN caddy_route_backends backend ON backend.instance_id = web.id AND backend.removed_at IS NULL AND backend.weight = 100 JOIN caddy_routes route ON route.id = backend.caddy_route_id AND route.removed_at IS NULL WHERE web.deployment_id = instances.deployment_id AND web.process_kind = 'web' AND route.environment_target_id = instances.environment_target_id)").
-		Where("instances.state = 'serving'").Where("instances.removed_at IS NULL").OrderExpr("instances.created_at").Scan(ctx); err != nil {
+		Where("instances.state = 'serving'").
+		Where("instances.removed_at IS NULL").
+		OrderExpr("instances.created_at").Scan(ctx); err != nil {
 		return err
 	}
 	for _, instance := range instances {
-		target, err := models.EnvironmentTarget.Find(ctx, service.db.Executor(), instance.EnvironmentTargetID)
+		target, err := models.EnvironmentTarget.Find(
+			ctx,
+			service.db.Executor(),
+			instance.EnvironmentTargetID,
+		)
 		if err != nil {
-			slog.Error("workload startup reconciliation could not load serving target", "instance_id", instance.ID, "error", err)
+			slog.Error(
+				"workload startup reconciliation could not load serving target",
+				"instance_id",
+				instance.ID,
+				"error",
+				err,
+			)
 			continue
 		}
-		state, err := service.workloads.Find(ctx, target.ServerID, instance.DeploymentID, instance.ID)
+		state, err := service.workloads.Find(
+			ctx,
+			target.ServerID,
+			instance.DeploymentID,
+			instance.ID,
+		)
 		if err != nil {
-			slog.Error("workload startup reconciliation could not inspect serving Instance", "instance_id", instance.ID, "error", err)
+			slog.Error(
+				"workload startup reconciliation could not inspect serving Instance",
+				"instance_id",
+				instance.ID,
+				"error",
+				err,
+			)
 			continue
 		}
 		if state.Exists && !state.Running {
-			state, err = service.workloads.Start(ctx, target.ServerID, instance.DeploymentID, instance.ID)
+			state, err = service.workloads.Start(
+				ctx,
+				target.ServerID,
+				instance.DeploymentID,
+				instance.ID,
+			)
 		}
 		if err != nil {
-			slog.Error("workload startup reconciliation could not restart serving Instance", "instance_id", instance.ID, "error", err)
+			slog.Error(
+				"workload startup reconciliation could not restart serving Instance",
+				"instance_id",
+				instance.ID,
+				"error",
+				err,
+			)
 			continue
 		}
 		if state.Exists {
 			ports := json.RawMessage(`{}`)
 			if instance.ProcessKind == models.EnvironmentProcessWeb {
-				encodedPorts, _ := json.Marshal(map[string]any{"host": state.HostAddress, "http": state.HostPort})
+				encodedPorts, _ := json.Marshal(
+					map[string]any{"host": state.HostAddress, "http": state.HostPort},
+				)
 				ports = encodedPorts
 			}
 			now := time.Now().UTC()
-			_, _ = service.db.Executor().NewUpdate().TableExpr("instances").Set("external_id = ?", state.ID).
-				Set("ports = ?", ports).Set("observed_at = ?", now).Set("updated_at = ?", now).Where("id = ?", instance.ID).Exec(ctx)
+			_, _ = service.db.Executor().
+				NewUpdate().
+				TableExpr("instances").
+				Set("external_id = ?", state.ID).
+				Set("ports = ?", ports).
+				Set("observed_at = ?", now).
+				Set("updated_at = ?", now).
+				Where("id = ?", instance.ID).
+				Exec(ctx)
 			continue
 		}
 		if err := service.queueMissingServingRecovery(ctx, instance); err != nil {
-			slog.Error("workload startup reconciliation could not queue missing Instance recovery", "instance_id", instance.ID, "error", err)
+			slog.Error(
+				"workload startup reconciliation could not queue missing Instance recovery",
+				"instance_id",
+				instance.ID,
+				"error",
+				err,
+			)
 		}
 	}
 	return nil
 }
 
-func (service *WorkloadReconciliation) queueMissingServingRecovery(ctx context.Context, instance models.InstanceEntity) error {
+func (service *WorkloadReconciliation) queueMissingServingRecovery(
+	ctx context.Context,
+	instance models.InstanceEntity,
+) error {
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -207,8 +366,11 @@ func (service *WorkloadReconciliation) queueMissingServingRecovery(ctx context.C
 	if _, err := models.Environment.Lock(ctx, tx, release.EnvironmentID); err != nil {
 		return err
 	}
-	unresolved, err := tx.NewSelect().Model((*models.DeploymentEntity)(nil)).Where("environment_target_id = ?", instance.EnvironmentTargetID).
-		Where("status IN ('queued', 'running')").Count(ctx)
+	unresolved, err := tx.NewSelect().
+		Model((*models.DeploymentEntity)(nil)).
+		Where("environment_target_id = ?", instance.EnvironmentTargetID).
+		Where("status IN ('queued', 'running')").
+		Count(ctx)
 	if err != nil || unresolved != 0 {
 		return err
 	}
@@ -219,7 +381,8 @@ func (service *WorkloadReconciliation) queueMissingServingRecovery(ctx context.C
 	var revision models.EnvironmentStateRevisionEntity
 	if err := tx.NewSelect().Model(&revision).
 		Join("JOIN change_state_revisions AS association ON association.environment_state_revision_id = environment_state_revisions.id").
-		Where("association.change_id = ?", previous.ChangeID).Where("association.role = 'result'").Limit(1).Scan(ctx); err != nil {
+		Where("association.change_id = ?", previous.ChangeID).
+		Where("association.role = 'result'").Limit(1).Scan(ctx); err != nil {
 		return err
 	}
 	now := time.Now().UTC()
@@ -228,28 +391,67 @@ func (service *WorkloadReconciliation) queueMissingServingRecovery(ctx context.C
 		return err
 	}
 	change, err := models.Change.Create(ctx, tx, models.CreateChangeData{
-		Sequence: sequence, Kind: "deployment_recovery", TriggerType: "system", ActorType: "system",
-		CauseSystem: sql.NullString{String: "startup_reconciliation", Valid: true}, CauseReference: sql.NullString{String: instance.ID.String(), Valid: true},
-		CorrelationID: uuid.New(), CorrectionContext: json.RawMessage(`{}`), Summary: "Recover missing serving workload",
-		Status: "committed", RequestedAt: now, CommittedAt: sql.NullTime{Time: now, Valid: true}, EnvironmentID: release.EnvironmentID,
+		Sequence:    sequence,
+		Kind:        "deployment_recovery",
+		TriggerType: "system",
+		ActorType:   "system",
+		CauseSystem: sql.NullString{
+			String: "startup_reconciliation",
+			Valid:  true,
+		},
+		CauseReference:    sql.NullString{String: instance.ID.String(), Valid: true},
+		CorrelationID:     uuid.New(),
+		CorrectionContext: json.RawMessage(`{}`),
+		Summary:           "Recover missing serving workload",
+		Status:            "committed",
+		RequestedAt:       now,
+		CommittedAt:       sql.NullTime{Time: now, Valid: true},
+		EnvironmentID:     release.EnvironmentID,
 	})
 	if err != nil {
 		return err
 	}
-	if _, err := models.ChangeRelease.Create(ctx, tx, models.CreateChangeReleaseData{ChangeID: change.ID, ReleaseID: release.ID}); err != nil {
+	if _, err := models.ChangeRelease.Create(
+		ctx,
+		tx,
+		models.CreateChangeReleaseData{ChangeID: change.ID, ReleaseID: release.ID},
+	); err != nil {
 		return err
 	}
-	if _, err := models.ChangeStateRevision.Create(ctx, tx, models.CreateChangeStateRevisionData{Role: "result", ChangeID: change.ID, EnvironmentStateRevisionID: revision.ID}); err != nil {
+	if _, err := models.ChangeStateRevision.Create(
+		ctx,
+		tx,
+		models.CreateChangeStateRevisionData{
+			Role:                       "result",
+			ChangeID:                   change.ID,
+			EnvironmentStateRevisionID: revision.ID,
+		},
+	); err != nil {
 		return err
 	}
 	var processes []models.EnvironmentProcessState
 	if json.Unmarshal(previous.ProcessConfiguration, &processes) != nil {
 		return errors.New("recovery Deployment process snapshot is invalid")
 	}
-	if _, err := service.releases.QueueTargetTx(ctx, tx, change.ID, release.ID, instance.EnvironmentTargetID, previous.Attempt+1, previous.Strategy, processes, now); err != nil {
+	if _, err := service.releases.QueueTargetTx(
+		ctx,
+		tx,
+		change.ID,
+		release.ID,
+		instance.EnvironmentTargetID,
+		previous.Attempt+1,
+		previous.Strategy,
+		processes,
+		now,
+	); err != nil {
 		return err
 	}
-	if _, err := tx.NewUpdate().TableExpr("instances").Set("state = 'failed'").Set("updated_at = ?", now).Where("id = ?", instance.ID).Exec(ctx); err != nil {
+	if _, err := tx.NewUpdate().
+		TableExpr("instances").
+		Set("state = 'failed'").
+		Set("updated_at = ?", now).
+		Where("id = ?", instance.ID).
+		Exec(ctx); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -277,7 +479,12 @@ func (service *WorkloadReconciliation) cleanupOldBackends(ctx context.Context) e
 		return err
 	}
 	for _, row := range rows {
-		if err := service.workloads.Remove(ctx, row.ServerID, row.DeploymentID, row.InstanceID); err != nil {
+		if err := service.workloads.Remove(
+			ctx,
+			row.ServerID,
+			row.DeploymentID,
+			row.InstanceID,
+		); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err
 			}
@@ -287,7 +494,14 @@ func (service *WorkloadReconciliation) cleanupOldBackends(ctx context.Context) e
 			continue
 		}
 		now := time.Now().UTC()
-		_, _ = service.db.Executor().NewUpdate().TableExpr("instances").Set("state = 'removed'").Set("removed_at = ?", now).Set("updated_at = ?", now).Where("id = ?", row.InstanceID).Exec(ctx)
+		_, _ = service.db.Executor().
+			NewUpdate().
+			TableExpr("instances").
+			Set("state = 'removed'").
+			Set("removed_at = ?", now).
+			Set("updated_at = ?", now).
+			Where("id = ?", row.InstanceID).
+			Exec(ctx)
 	}
 	return nil
 }
@@ -342,14 +556,26 @@ func cleanupUnroutedWorkloadInstances(
 		return err
 	}
 	for _, row := range rows {
-		if err := workloads.Remove(ctx, row.ServerID, row.DeploymentID, row.InstanceID); err != nil {
+		if err := workloads.Remove(
+			ctx,
+			row.ServerID,
+			row.DeploymentID,
+			row.InstanceID,
+		); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return err
 			}
 			continue
 		}
 		now := time.Now().UTC()
-		_, _ = db.Executor().NewUpdate().TableExpr("instances").Set("state = 'removed'").Set("removed_at = ?", now).Set("updated_at = ?", now).Where("id = ?", row.InstanceID).Exec(ctx)
+		_, _ = db.Executor().
+			NewUpdate().
+			TableExpr("instances").
+			Set("state = 'removed'").
+			Set("removed_at = ?", now).
+			Set("updated_at = ?", now).
+			Where("id = ?", row.InstanceID).
+			Exec(ctx)
 	}
 	return nil
 }

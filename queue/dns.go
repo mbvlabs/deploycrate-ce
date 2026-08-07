@@ -18,7 +18,10 @@ type DNSReconciliationWorker struct {
 	environments *services.EnvironmentSetup
 }
 
-func NewDNSReconciliationWorker(dns *services.EnvironmentDNS, environments *services.EnvironmentSetup) *DNSReconciliationWorker {
+func NewDNSReconciliationWorker(
+	dns *services.EnvironmentDNS,
+	environments *services.EnvironmentSetup,
+) *DNSReconciliationWorker {
 	return &DNSReconciliationWorker{dns: dns, environments: environments}
 }
 
@@ -26,11 +29,16 @@ func (worker *DNSReconciliationWorker) Register(workers *river.Workers) error {
 	return river.AddWorkerSafely(workers, worker)
 }
 
-func (worker *DNSReconciliationWorker) Timeout(*river.Job[jobs.DNSReconciliationArgs]) time.Duration {
+func (worker *DNSReconciliationWorker) Timeout(
+	*river.Job[jobs.DNSReconciliationArgs],
+) time.Duration {
 	return 2 * time.Minute
 }
 
-func (worker *DNSReconciliationWorker) Work(ctx context.Context, job *river.Job[jobs.DNSReconciliationArgs]) error {
+func (worker *DNSReconciliationWorker) Work(
+	ctx context.Context,
+	job *river.Job[jobs.DNSReconciliationArgs],
+) error {
 	intent, err := worker.dns.Reconcile(ctx, job.Args.BindingID, job.Args.Generation)
 	if err != nil {
 		return err
@@ -66,7 +74,12 @@ func (worker *DNSReconciliationWorker) Work(ctx context.Context, job *river.Job[
 		}
 	} else {
 		if _, err := worker.environments.QueueSourceDeployment(
-			ctx, intent.ApplicationID, intent.EnvironmentID, intent.ActorID, intent.TriggerType, intent.Reference,
+			ctx,
+			intent.ApplicationID,
+			intent.EnvironmentID,
+			intent.ActorID,
+			intent.TriggerType,
+			intent.Reference,
 		); err != nil {
 			return err
 		}

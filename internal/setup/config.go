@@ -95,7 +95,10 @@ type Config struct {
 }
 
 func (c Config) DatabaseInstallationID() uuid.UUID {
-	return uuid.NewSHA1(uuid.NameSpaceOID, []byte("deploycrate-ce:database-installation:"+c.InstanceID))
+	return uuid.NewSHA1(
+		uuid.NameSpaceOID,
+		[]byte("deploycrate-ce:database-installation:"+c.InstanceID),
+	)
 }
 
 func NewConfig(version string) (Config, error) {
@@ -157,8 +160,13 @@ func NewConfig(version string) (Config, error) {
 				Retention: BackupRetention{KeepDaily: 7, KeepWeekly: 4, KeepMonthly: 6},
 			},
 			DatabasePolicy: BackupPolicyConfig{
-				Schedule:  "0 */6 * * *",
-				Retention: BackupRetention{KeepLast: 12, KeepDaily: 7, KeepWeekly: 4, KeepMonthly: 6},
+				Schedule: "0 */6 * * *",
+				Retention: BackupRetention{
+					KeepLast:    12,
+					KeepDaily:   7,
+					KeepWeekly:  4,
+					KeepMonthly: 6,
+				},
 			},
 		},
 		Secrets: Secrets{
@@ -192,10 +200,14 @@ func (c Config) Validate(normalizeObjectStorage func(S3Config) (S3Config, error)
 	if !validHostname(c.Domain) {
 		errs = append(errs, errors.New("a valid domain without protocol is required"))
 	} else if !validHostname("registry-" + c.Domain) {
-		errs = append(errs, errors.New("domain is too long to create the managed registry hostname"))
+		errs = append(
+			errs,
+			errors.New("domain is too long to create the managed registry hostname"),
+		)
 	}
 	publicIPv4 := net.ParseIP(c.PublicIPv4)
-	if publicIPv4 == nil || publicIPv4.To4() == nil || publicIPv4.IsPrivate() || publicIPv4.IsLoopback() {
+	if publicIPv4 == nil || publicIPv4.To4() == nil || publicIPv4.IsPrivate() ||
+		publicIPv4.IsLoopback() {
 		errs = append(errs, errors.New("a valid public IPv4 address is required"))
 	}
 	for name, value := range map[string]string{
@@ -261,18 +273,30 @@ func (c Config) Validate(normalizeObjectStorage func(S3Config) (S3Config, error)
 		}
 		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 		if _, err := parser.Parse(c.S3.ServerPolicy.Schedule); err != nil {
-			errs = append(errs, errors.New("server backup schedule must be a five-field cron expression"))
+			errs = append(
+				errs,
+				errors.New("server backup schedule must be a five-field cron expression"),
+			)
 		}
 		if !c.Database.External {
 			if _, err := parser.Parse(c.S3.DatabasePolicy.Schedule); err != nil {
-				errs = append(errs, errors.New("database backup schedule must be a five-field cron expression"))
+				errs = append(
+					errs,
+					errors.New("database backup schedule must be a five-field cron expression"),
+				)
 			}
 		}
 		if !validBackupRetention(c.S3.ServerPolicy.Retention) {
-			errs = append(errs, errors.New("server backup retention must preserve at least one recovery point"))
+			errs = append(
+				errs,
+				errors.New("server backup retention must preserve at least one recovery point"),
+			)
 		}
 		if !c.Database.External && !validBackupRetention(c.S3.DatabasePolicy.Retention) {
-			errs = append(errs, errors.New("database backup retention must preserve at least one recovery point"))
+			errs = append(
+				errs,
+				errors.New("database backup retention must preserve at least one recovery point"),
+			)
 		}
 		if c.S3.ValidatedAt.IsZero() {
 			errs = append(errs, errors.New("object storage capability validation is required"))
@@ -345,7 +369,8 @@ func ConfigPaths() (string, string, string) {
 }
 
 func validHostname(value string) bool {
-	if value == "" || !strings.Contains(value, ".") || len(value) > 253 || strings.HasSuffix(value, ".") {
+	if value == "" || !strings.Contains(value, ".") || len(value) > 253 ||
+		strings.HasSuffix(value, ".") {
 		return false
 	}
 	for label := range strings.SplitSeq(value, ".") {

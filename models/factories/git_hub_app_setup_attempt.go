@@ -20,7 +20,11 @@ type GitHubAppSetupAttemptFactory struct {
 
 type GitHubAppSetupAttemptOption func(*GitHubAppSetupAttemptFactory)
 
-func BuildGitHubAppSetupAttempt(instanceID uuid.UUID, userID uuid.UUID, opts ...GitHubAppSetupAttemptOption) models.GitHubAppSetupAttemptEntity {
+func BuildGitHubAppSetupAttempt(
+	instanceID uuid.UUID,
+	userID uuid.UUID,
+	opts ...GitHubAppSetupAttemptOption,
+) models.GitHubAppSetupAttemptEntity {
 	f := &GitHubAppSetupAttemptFactory{
 		GitHubAppSetupAttemptEntity: models.GitHubAppSetupAttemptEntity{
 			InstanceID:  instanceID,
@@ -43,7 +47,13 @@ func BuildGitHubAppSetupAttempt(instanceID uuid.UUID, userID uuid.UUID, opts ...
 	return f.GitHubAppSetupAttemptEntity
 }
 
-func CreateGitHubAppSetupAttempt(ctx context.Context, exec storage.Executor, instanceID uuid.UUID, userID uuid.UUID, opts ...GitHubAppSetupAttemptOption) (models.GitHubAppSetupAttemptEntity, error) {
+func CreateGitHubAppSetupAttempt(
+	ctx context.Context,
+	exec storage.Executor,
+	instanceID uuid.UUID,
+	userID uuid.UUID,
+	opts ...GitHubAppSetupAttemptOption,
+) (models.GitHubAppSetupAttemptEntity, error) {
 	built := BuildGitHubAppSetupAttempt(instanceID, userID, opts...)
 
 	entity := models.GitHubAppSetupAttemptEntity{
@@ -69,7 +79,14 @@ func CreateGitHubAppSetupAttempt(ctx context.Context, exec storage.Executor, ins
 	return entity, nil
 }
 
-func CreateGitHubAppSetupAttempts(ctx context.Context, exec storage.Executor, instanceID uuid.UUID, userID uuid.UUID, count int, opts ...GitHubAppSetupAttemptOption) ([]models.GitHubAppSetupAttemptEntity, error) {
+func CreateGitHubAppSetupAttempts(
+	ctx context.Context,
+	exec storage.Executor,
+	instanceID uuid.UUID,
+	userID uuid.UUID,
+	count int,
+	opts ...GitHubAppSetupAttemptOption,
+) ([]models.GitHubAppSetupAttemptEntity, error) {
 	githubappsetupattempts := make([]models.GitHubAppSetupAttemptEntity, 0, count)
 
 	for i := range count {

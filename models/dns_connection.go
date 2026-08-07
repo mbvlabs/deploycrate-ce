@@ -25,9 +25,13 @@ var cloudflareAccountIDPattern = regexp.MustCompile(`^[0-9a-f]{32}$`)
 func NormalizeCloudflareAccountID(value string) (string, error) {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if !cloudflareAccountIDPattern.MatchString(value) {
-		return "", errors.Join(ErrDomainValidation, validation.ValidationErrors{{
-			Field: "accountId", Code: "format", Message: "Cloudflare account ID must be a 32-character hexadecimal ID",
-		}})
+		return "", errors.Join(ErrDomainValidation, validation.ValidationErrors{
+			{
+				Field:   "accountId",
+				Code:    "format",
+				Message: "Cloudflare account ID must be a 32-character hexadecimal ID",
+			},
+		})
 	}
 	return value, nil
 }
@@ -55,7 +59,11 @@ func (entity *DNSConnectionEntity) Validate() error {
 		builder.Add("provider", "unsupported", "DNS provider must be Cloudflare")
 	}
 	if !cloudflareAccountIDPattern.MatchString(entity.AccountID) {
-		builder.Add("accountId", "format", "Cloudflare account ID must be a 32-character hexadecimal ID")
+		builder.Add(
+			"accountId",
+			"format",
+			"Cloudflare account ID must be a 32-character hexadecimal ID",
+		)
 	}
 	if entity.CredentialID == uuid.Nil {
 		builder.Add("credentialId", "required", "credential is required")
@@ -72,12 +80,22 @@ type CreateDNSConnectionData struct {
 	CredentialID uuid.UUID
 }
 
-func (dnsConnection) Create(ctx context.Context, db storage.Executor, data CreateDNSConnectionData) (DNSConnectionEntity, error) {
+func (dnsConnection) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateDNSConnectionData,
+) (DNSConnectionEntity, error) {
 	now := time.Now().UTC()
 	entity := DNSConnectionEntity{
-		ID: uuid.New(), CreatedAt: now, UpdatedAt: now,
-		Name: data.Name, Provider: data.Provider, AccountID: data.AccountID, VerifiedAt: data.VerifiedAt,
-		LastSyncedAt: data.LastSyncedAt, CredentialID: data.CredentialID,
+		ID:           uuid.New(),
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		Name:         data.Name,
+		Provider:     data.Provider,
+		AccountID:    data.AccountID,
+		VerifiedAt:   data.VerifiedAt,
+		LastSyncedAt: data.LastSyncedAt,
+		CredentialID: data.CredentialID,
 	}
 	if err := validation.Validate(&entity); err != nil {
 		return DNSConnectionEntity{}, errors.Join(ErrDomainValidation, err)
@@ -87,7 +105,9 @@ func (dnsConnection) Create(ctx context.Context, db storage.Executor, data Creat
 		db,
 		"dns-connection-name:"+strings.ToLower(entity.Name),
 		entity.ID,
-		db.NewSelect().Model((*DNSConnectionEntity)(nil)).Where("lower(name) = ?", strings.ToLower(entity.Name)),
+		db.NewSelect().
+			Model((*DNSConnectionEntity)(nil)).
+			Where("lower(name) = ?", strings.ToLower(entity.Name)),
 		"name",
 		"an active DNS connection already uses this name",
 	); err != nil {
@@ -98,7 +118,9 @@ func (dnsConnection) Create(ctx context.Context, db storage.Executor, data Creat
 		db,
 		"dns-connection-credential:"+entity.CredentialID.String(),
 		entity.ID,
-		db.NewSelect().Model((*DNSConnectionEntity)(nil)).Where("credential_id = ?", entity.CredentialID),
+		db.NewSelect().
+			Model((*DNSConnectionEntity)(nil)).
+			Where("credential_id = ?", entity.CredentialID),
 		"credentialId",
 		"an active DNS connection already uses this credential",
 	); err != nil {
@@ -110,7 +132,11 @@ func (dnsConnection) Create(ctx context.Context, db storage.Executor, data Creat
 	return entity, nil
 }
 
-func (dnsConnection) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (DNSConnectionEntity, error) {
+func (dnsConnection) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (DNSConnectionEntity, error) {
 	var entity DNSConnectionEntity
 	if err := db.NewSelect().Model(&entity).Where("id = ?", id).Scan(ctx); err != nil {
 		return DNSConnectionEntity{}, err
@@ -118,20 +144,37 @@ func (dnsConnection) Find(ctx context.Context, db storage.Executor, id uuid.UUID
 	return entity, nil
 }
 
-func (dnsConnection) Active(ctx context.Context, db storage.Executor) ([]DNSConnectionEntity, error) {
+func (dnsConnection) Active(
+	ctx context.Context,
+	db storage.Executor,
+) ([]DNSConnectionEntity, error) {
 	entities := make([]DNSConnectionEntity, 0)
-	err := db.NewSelect().Model(&entities).Where("archived_at IS NULL").OrderExpr("lower(name)").Scan(ctx)
+	err := db.NewSelect().
+		Model(&entities).
+		Where("archived_at IS NULL").
+		OrderExpr("lower(name)").
+		Scan(ctx)
 	return entities, err
 }
 
-func (dnsConnection) MarkSynchronized(ctx context.Context, db storage.Executor, id uuid.UUID, at time.Time) error {
+func (dnsConnection) MarkSynchronized(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
 	_, err := db.NewUpdate().Model((*DNSConnectionEntity)(nil)).
 		Set("updated_at = ?", at).Set("verified_at = ?", at).Set("last_synced_at = ?", at).
 		Where("id = ?", id).Where("archived_at IS NULL").Exec(ctx)
 	return err
 }
 
-func (dnsConnection) Archive(ctx context.Context, db storage.Executor, id uuid.UUID, at time.Time) error {
+func (dnsConnection) Archive(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
 	_, err := db.NewUpdate().Model((*DNSConnectionEntity)(nil)).
 		Set("updated_at = ?", at).Set("archived_at = ?", at).
 		Where("id = ?", id).Where("archived_at IS NULL").Exec(ctx)

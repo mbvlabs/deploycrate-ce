@@ -21,7 +21,12 @@ type ChangeLogFactory struct {
 
 type ChangeLogOption func(*ChangeLogFactory)
 
-func BuildChangeLog(changeID uuid.UUID, changeTaskID *uuid.UUID, changeTaskAttemptID *uuid.UUID, opts ...ChangeLogOption) models.ChangeLogEntity {
+func BuildChangeLog(
+	changeID uuid.UUID,
+	changeTaskID *uuid.UUID,
+	changeTaskAttemptID *uuid.UUID,
+	opts ...ChangeLogOption,
+) models.ChangeLogEntity {
 	f := &ChangeLogFactory{
 		ChangeLogEntity: models.ChangeLogEntity{
 			OccurredAt:          time.Time{},
@@ -42,7 +47,14 @@ func BuildChangeLog(changeID uuid.UUID, changeTaskID *uuid.UUID, changeTaskAttem
 	return f.ChangeLogEntity
 }
 
-func CreateChangeLog(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID *uuid.UUID, changeTaskAttemptID *uuid.UUID, opts ...ChangeLogOption) (models.ChangeLogEntity, error) {
+func CreateChangeLog(
+	ctx context.Context,
+	exec storage.Executor,
+	changeID uuid.UUID,
+	changeTaskID *uuid.UUID,
+	changeTaskAttemptID *uuid.UUID,
+	opts ...ChangeLogOption,
+) (models.ChangeLogEntity, error) {
 	built := BuildChangeLog(changeID, changeTaskID, changeTaskAttemptID, opts...)
 
 	entity := models.ChangeLogEntity{
@@ -66,11 +78,25 @@ func CreateChangeLog(ctx context.Context, exec storage.Executor, changeID uuid.U
 	return entity, nil
 }
 
-func CreateChangeLogs(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID *uuid.UUID, changeTaskAttemptID *uuid.UUID, count int, opts ...ChangeLogOption) ([]models.ChangeLogEntity, error) {
+func CreateChangeLogs(
+	ctx context.Context,
+	exec storage.Executor,
+	changeID uuid.UUID,
+	changeTaskID *uuid.UUID,
+	changeTaskAttemptID *uuid.UUID,
+	count int,
+	opts ...ChangeLogOption,
+) ([]models.ChangeLogEntity, error) {
 	changelogs := make([]models.ChangeLogEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateChangeLog(ctx, exec, changeID, changeTaskID, changeTaskAttemptID, opts...)
+		entity, err := CreateChangeLog(
+			ctx,
+			exec,
+			changeID,
+			changeTaskID,
+			changeTaskAttemptID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create changelog %d: %w", i+1, err)
 		}

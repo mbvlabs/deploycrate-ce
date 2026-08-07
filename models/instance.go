@@ -22,8 +22,8 @@ type InstanceEntity struct {
 	UpdatedAt           time.Time       `bun:"updated_at"`
 	ExternalID          string          `bun:"external_id"`
 	Slot                string          `bun:"slot"`
-	ProcessName         string          `json:"processName" bun:"process_name"`
-	ProcessKind         string          `json:"processKind" bun:"process_kind"`
+	ProcessName         string          `bun:"process_name"                    json:"processName"`
+	ProcessKind         string          `bun:"process_kind"                    json:"processKind"`
 	ReplicaKey          string          `bun:"replica_key"`
 	State               string          `bun:"state"`
 	Ports               json.RawMessage `bun:"ports,type:jsonb"`
@@ -36,13 +36,19 @@ type InstanceEntity struct {
 
 func (e *InstanceEntity) Validate() error {
 	builder := validation.NewBuilder()
-	if e.ID == uuid.Nil || e.DeploymentID == uuid.Nil || e.ReleaseID == uuid.Nil || e.EnvironmentTargetID == uuid.Nil {
+	if e.ID == uuid.Nil || e.DeploymentID == uuid.Nil || e.ReleaseID == uuid.Nil ||
+		e.EnvironmentTargetID == uuid.Nil {
 		builder.Add("id", "required", "Instance ownership identifiers are required")
 	}
-	if strings.TrimSpace(e.ExternalID) == "" || strings.TrimSpace(e.ReplicaKey) == "" || !environmentProcessNamePattern.MatchString(e.ProcessName) || !slices.Contains([]string{EnvironmentProcessWeb, EnvironmentProcessWorker}, e.ProcessKind) {
+	if strings.TrimSpace(e.ExternalID) == "" || strings.TrimSpace(e.ReplicaKey) == "" ||
+		!environmentProcessNamePattern.MatchString(e.ProcessName) ||
+		!slices.Contains([]string{EnvironmentProcessWeb, EnvironmentProcessWorker}, e.ProcessKind) {
 		builder.Add("externalId", "required", "Instance identity is required")
 	}
-	if !slices.Contains([]string{"queued", "candidate", "running", "serving", "failed", "removed"}, e.State) {
+	if !slices.Contains(
+		[]string{"queued", "candidate", "running", "serving", "failed", "removed"},
+		e.State,
+	) {
 		builder.Add("state", "invalid", "Instance state is invalid")
 	}
 	if len(e.Ports) == 0 || !json.Valid(e.Ports) {
@@ -113,15 +119,27 @@ func (i instance) Create(
 	default:
 		return InstanceEntity{}, errors.New("Instance creation requires a transaction")
 	}
-	if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "deployment-instance:"+entity.DeploymentID.String()); err != nil {
+	if _, err := db.ExecContext(
+		ctx,
+		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+		"deployment-instance:"+entity.DeploymentID.String(),
+	); err != nil {
 		return InstanceEntity{}, err
 	}
-	count, err := db.NewSelect().Model((*InstanceEntity)(nil)).Where("deployment_id = ?", entity.DeploymentID).Where("process_name = ?", entity.ProcessName).Where("replica_key = ?", entity.ReplicaKey).Count(ctx)
+	count, err := db.NewSelect().
+		Model((*InstanceEntity)(nil)).
+		Where("deployment_id = ?", entity.DeploymentID).
+		Where("process_name = ?", entity.ProcessName).
+		Where("replica_key = ?", entity.ReplicaKey).
+		Count(ctx)
 	if err != nil {
 		return InstanceEntity{}, err
 	}
 	if count != 0 {
-		return InstanceEntity{}, errors.Join(ErrDomainValidation, errors.New("Instance replica identity must be unique within its Deployment process"))
+		return InstanceEntity{}, errors.Join(
+			ErrDomainValidation,
+			errors.New("Instance replica identity must be unique within its Deployment process"),
+		)
 	}
 
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {

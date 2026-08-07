@@ -33,7 +33,12 @@ func NewContainerExecution(servers *ServerExecution) *ContainerExecution {
 	return &ContainerExecution{local: containerclient.New(), servers: servers}
 }
 
-func (service *ContainerExecution) Run(ctx context.Context, serverID uuid.UUID, capability models.ServerCapability, spec containerclient.RunSpec) error {
+func (service *ContainerExecution) Run(
+	ctx context.Context,
+	serverID uuid.UUID,
+	capability models.ServerCapability,
+	spec containerclient.RunSpec,
+) error {
 	target, err := service.servers.Target(ctx, serverID, capability)
 	if err != nil {
 		return err
@@ -68,14 +73,29 @@ func (service *ContainerExecution) Run(ctx context.Context, serverID uuid.UUID, 
 	sort.Strings(keys)
 	for _, key := range keys {
 		script.WriteString("dc_value=\"$(/usr/bin/printf '%s' ")
-		script.WriteString(shellQuote(base64.StdEncoding.EncodeToString([]byte(spec.Environment[key]))))
+		script.WriteString(
+			shellQuote(base64.StdEncoding.EncodeToString([]byte(spec.Environment[key]))),
+		)
 		script.WriteString(" | /usr/bin/base64 --decode; /usr/bin/printf x)\"\nexport ")
 		script.WriteString(key)
 		script.WriteString("=\"${dc_value%x}\"\n")
 	}
-	arguments := []string{"run", "--detach", "--name", spec.ContainerName, "--label", resourceInstallationLabel + "=" + spec.InstallationID, "--restart", spec.RestartPolicy}
+	arguments := []string{
+		"run",
+		"--detach",
+		"--name",
+		spec.ContainerName,
+		"--label",
+		resourceInstallationLabel + "=" + spec.InstallationID,
+		"--restart",
+		spec.RestartPolicy,
+	}
 	for _, mapping := range spec.PortMappings {
-		published := target.Peer.PrivateAddress + ":" + strconv.Itoa(int(mapping.HostPort)) + ":" + strconv.Itoa(int(mapping.ContainerPort)) + "/" + mapping.Protocol
+		published := target.Peer.PrivateAddress + ":" + strconv.Itoa(
+			int(mapping.HostPort),
+		) + ":" + strconv.Itoa(
+			int(mapping.ContainerPort),
+		) + "/" + mapping.Protocol
 		arguments = append(arguments, "--publish", published)
 	}
 	for _, mount := range spec.VolumeMounts {
@@ -97,13 +117,24 @@ func (service *ContainerExecution) Run(ctx context.Context, serverID uuid.UUID, 
 		return err
 	}
 	if err := service.updateFirewall(ctx, target, spec.PortMappings, true); err != nil {
-		_, _ = service.remoteDocker(context.WithoutCancel(ctx), target, "rm", "--force", spec.ContainerName)
+		_, _ = service.remoteDocker(
+			context.WithoutCancel(ctx),
+			target,
+			"rm",
+			"--force",
+			spec.ContainerName,
+		)
 		return err
 	}
 	return nil
 }
 
-func (service *ContainerExecution) Inspect(ctx context.Context, serverID uuid.UUID, capability models.ServerCapability, installationID, containerName string) (containerclient.State, error) {
+func (service *ContainerExecution) Inspect(
+	ctx context.Context,
+	serverID uuid.UUID,
+	capability models.ServerCapability,
+	installationID, containerName string,
+) (containerclient.State, error) {
 	target, err := service.servers.Target(ctx, serverID, capability)
 	if err != nil {
 		return containerclient.State{}, err
@@ -114,9 +145,18 @@ func (service *ContainerExecution) Inspect(ctx context.Context, serverID uuid.UU
 	return service.inspectRemote(ctx, target, installationID, containerName)
 }
 
-func (service *ContainerExecution) Logs(ctx context.Context, serverID uuid.UUID, capability models.ServerCapability, installationID, containerName string, tail int) (string, error) {
+func (service *ContainerExecution) Logs(
+	ctx context.Context,
+	serverID uuid.UUID,
+	capability models.ServerCapability,
+	installationID, containerName string,
+	tail int,
+) (string, error) {
 	if tail < 1 || tail > maximumResourceContainerLogTail {
-		return "", fmt.Errorf("container log tail must be between 1 and %d", maximumResourceContainerLogTail)
+		return "", fmt.Errorf(
+			"container log tail must be between 1 and %d",
+			maximumResourceContainerLogTail,
+		)
 	}
 	target, err := service.servers.Target(ctx, serverID, capability)
 	if err != nil {
@@ -133,7 +173,16 @@ func (service *ContainerExecution) Logs(ctx context.Context, serverID uuid.UUID,
 	if !state.Exists {
 		return "", fmt.Errorf("container %q does not exist", containerName)
 	}
-	result, err := service.servers.RunRootCommand(ctx, target, nil, remoteDockerExecutable, "logs", "--tail", strconv.Itoa(tail), containerName)
+	result, err := service.servers.RunRootCommand(
+		ctx,
+		target,
+		nil,
+		remoteDockerExecutable,
+		"logs",
+		"--tail",
+		strconv.Itoa(tail),
+		containerName,
+	)
 	logs := result.Stdout
 	if result.Stderr != "" {
 		if logs != "" && !strings.HasSuffix(logs, "\n") {
@@ -144,7 +193,12 @@ func (service *ContainerExecution) Logs(ctx context.Context, serverID uuid.UUID,
 	return boundedContainerLogs(strings.TrimSpace(logs)), err
 }
 
-func (service *ContainerExecution) Exec(ctx context.Context, serverID uuid.UUID, capability models.ServerCapability, spec containerclient.ExecSpec) error {
+func (service *ContainerExecution) Exec(
+	ctx context.Context,
+	serverID uuid.UUID,
+	capability models.ServerCapability,
+	spec containerclient.ExecSpec,
+) error {
 	target, err := service.servers.Target(ctx, serverID, capability)
 	if err != nil {
 		return err
@@ -175,7 +229,9 @@ func (service *ContainerExecution) Exec(ctx context.Context, serverID uuid.UUID,
 		header.WriteByte('\n')
 		script.WriteString("IFS= read -r dc_value\nexport ")
 		script.WriteString(key)
-		script.WriteString("=\"$(/usr/bin/printf '%s' \"$dc_value\" | /usr/bin/base64 --decode)\"\n")
+		script.WriteString(
+			"=\"$(/usr/bin/printf '%s' \"$dc_value\" | /usr/bin/base64 --decode)\"\n",
+		)
 	}
 	arguments := []string{"exec", "--interactive"}
 	for _, key := range keys {
@@ -194,27 +250,69 @@ func (service *ContainerExecution) Exec(ctx context.Context, serverID uuid.UUID,
 	if output == nil {
 		output = io.Discard
 	}
-	return service.servers.RunRootCommandStreaming(ctx, target, io.MultiReader(strings.NewReader(header.String()), input), output, "/bin/bash", "-c", script.String())
+	return service.servers.RunRootCommandStreaming(
+		ctx,
+		target,
+		io.MultiReader(strings.NewReader(header.String()), input),
+		output,
+		"/bin/bash",
+		"-c",
+		script.String(),
+	)
 }
 
-func (service *ContainerExecution) Start(ctx context.Context, serverID uuid.UUID, capability models.ServerCapability, installationID, containerName string) error {
+func (service *ContainerExecution) Start(
+	ctx context.Context,
+	serverID uuid.UUID,
+	capability models.ServerCapability,
+	installationID, containerName string,
+) error {
 	return service.control(ctx, serverID, capability, installationID, containerName, "start")
 }
 
-func (service *ContainerExecution) Stop(ctx context.Context, serverID uuid.UUID, capability models.ServerCapability, installationID, containerName string) error {
+func (service *ContainerExecution) Stop(
+	ctx context.Context,
+	serverID uuid.UUID,
+	capability models.ServerCapability,
+	installationID, containerName string,
+) error {
 	return service.control(ctx, serverID, capability, installationID, containerName, "stop")
 }
 
-func (service *ContainerExecution) Restart(ctx context.Context, serverID uuid.UUID, capability models.ServerCapability, installationID, containerName string) error {
+func (service *ContainerExecution) Restart(
+	ctx context.Context,
+	serverID uuid.UUID,
+	capability models.ServerCapability,
+	installationID, containerName string,
+) error {
 	return service.control(ctx, serverID, capability, installationID, containerName, "restart")
 }
 
-func (service *ContainerExecution) Remove(ctx context.Context, serverID uuid.UUID, capability models.ServerCapability, installationID, containerName string) error {
-	return service.control(ctx, serverID, capability, installationID, containerName, "rm", "--force")
+func (service *ContainerExecution) Remove(
+	ctx context.Context,
+	serverID uuid.UUID,
+	capability models.ServerCapability,
+	installationID, containerName string,
+) error {
+	return service.control(
+		ctx,
+		serverID,
+		capability,
+		installationID,
+		containerName,
+		"rm",
+		"--force",
+	)
 }
 
-func (service *ContainerExecution) RemoveVolume(ctx context.Context, serverID uuid.UUID, capability models.ServerCapability, name string) error {
-	if strings.TrimSpace(name) != name || name == "" || strings.HasPrefix(name, "-") || strings.ContainsAny(name, " \t\r\n") {
+func (service *ContainerExecution) RemoveVolume(
+	ctx context.Context,
+	serverID uuid.UUID,
+	capability models.ServerCapability,
+	name string,
+) error {
+	if strings.TrimSpace(name) != name || name == "" || strings.HasPrefix(name, "-") ||
+		strings.ContainsAny(name, " \t\r\n") {
 		return errors.New("container volume name is invalid")
 	}
 	target, err := service.servers.Target(ctx, serverID, capability)
@@ -235,7 +333,13 @@ func (service *ContainerExecution) RemoveVolume(ctx context.Context, serverID uu
 	return err
 }
 
-func (service *ContainerExecution) control(ctx context.Context, serverID uuid.UUID, capability models.ServerCapability, installationID, containerName, operation string, extra ...string) error {
+func (service *ContainerExecution) control(
+	ctx context.Context,
+	serverID uuid.UUID,
+	capability models.ServerCapability,
+	installationID, containerName, operation string,
+	extra ...string,
+) error {
 	target, err := service.servers.Target(ctx, serverID, capability)
 	if err != nil {
 		return err
@@ -275,8 +379,20 @@ func (service *ContainerExecution) control(ctx context.Context, serverID uuid.UU
 	return nil
 }
 
-func (service *ContainerExecution) remotePortMappings(ctx context.Context, target ServerExecutionTarget, containerName string) ([]containerclient.PortMapping, error) {
-	result, err := service.remoteDocker(ctx, target, "container", "inspect", "--format", "{{json .NetworkSettings.Ports}}", containerName)
+func (service *ContainerExecution) remotePortMappings(
+	ctx context.Context,
+	target ServerExecutionTarget,
+	containerName string,
+) ([]containerclient.PortMapping, error) {
+	result, err := service.remoteDocker(
+		ctx,
+		target,
+		"container",
+		"inspect",
+		"--format",
+		"{{json .NetworkSettings.Ports}}",
+		containerName,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -303,20 +419,50 @@ func (service *ContainerExecution) remotePortMappings(ctx context.Context, targe
 			}
 			hostPort, parseErr := strconv.Atoi(binding.HostPort)
 			if parseErr == nil {
-				mappings = append(mappings, containerclient.PortMapping{HostPort: int32(hostPort), ContainerPort: int32(parsedContainerPort), Protocol: protocol})
+				mappings = append(
+					mappings,
+					containerclient.PortMapping{
+						HostPort:      int32(hostPort),
+						ContainerPort: int32(parsedContainerPort),
+						Protocol:      protocol,
+					},
+				)
 			}
 		}
 	}
 	return mappings, nil
 }
 
-func (service *ContainerExecution) updateFirewall(ctx context.Context, target ServerExecutionTarget, mappings []containerclient.PortMapping, allow bool) error {
+func (service *ContainerExecution) updateFirewall(
+	ctx context.Context,
+	target ServerExecutionTarget,
+	mappings []containerclient.PortMapping,
+	allow bool,
+) error {
 	for _, mapping := range mappings {
-		arguments := []string{"allow", "in", "on", "wg0", "from", WireGuardNodeCIDR, "to", target.Peer.PrivateAddress, "port", strconv.Itoa(int(mapping.HostPort)), "proto", mapping.Protocol}
+		arguments := []string{
+			"allow",
+			"in",
+			"on",
+			"wg0",
+			"from",
+			WireGuardNodeCIDR,
+			"to",
+			target.Peer.PrivateAddress,
+			"port",
+			strconv.Itoa(int(mapping.HostPort)),
+			"proto",
+			mapping.Protocol,
+		}
 		if !allow {
 			arguments = append([]string{"--force", "delete"}, arguments...)
 		}
-		if _, err := service.servers.RunRootCommand(ctx, target, nil, "/usr/sbin/ufw", arguments...); err != nil {
+		if _, err := service.servers.RunRootCommand(
+			ctx,
+			target,
+			nil,
+			"/usr/sbin/ufw",
+			arguments...); err != nil {
 			if !allow && strings.Contains(strings.ToLower(err.Error()), "non-existent") {
 				continue
 			}
@@ -326,11 +472,16 @@ func (service *ContainerExecution) updateFirewall(ctx context.Context, target Se
 	return nil
 }
 
-func (service *ContainerExecution) inspectRemote(ctx context.Context, target ServerExecutionTarget, installationID, containerName string) (containerclient.State, error) {
+func (service *ContainerExecution) inspectRemote(
+	ctx context.Context,
+	target ServerExecutionTarget,
+	installationID, containerName string,
+) (containerclient.State, error) {
 	result, err := service.remoteDocker(ctx, target, "container", "inspect", containerName)
 	if err != nil {
 		message := strings.ToLower(err.Error())
-		if strings.Contains(message, "no such container") || strings.Contains(message, "no such object") {
+		if strings.Contains(message, "no such container") ||
+			strings.Contains(message, "no such object") {
 			return containerclient.State{Exists: false, Name: containerName}, nil
 		}
 		return containerclient.State{}, err
@@ -352,21 +503,49 @@ func (service *ContainerExecution) inspectRemote(ctx context.Context, target Ser
 		} `json:"State"`
 	}
 	if err := json.Unmarshal([]byte(result), &values); err != nil || len(values) != 1 {
-		return containerclient.State{}, errors.New("Docker returned an invalid container inspection")
+		return containerclient.State{}, errors.New(
+			"Docker returned an invalid container inspection",
+		)
 	}
 	value := values[0]
 	if value.Config.Labels[resourceInstallationLabel] != installationID {
-		return containerclient.State{}, fmt.Errorf("container %q is not owned by this installation", containerName)
+		return containerclient.State{}, fmt.Errorf(
+			"container %q is not owned by this installation",
+			containerName,
+		)
 	}
 	health := ""
 	if value.State.Health != nil {
 		health = value.State.Health.Status
 	}
-	return containerclient.State{Exists: true, ID: value.ID, Name: strings.TrimPrefix(value.Name, "/"), ImageReference: value.Config.Image, ImageID: value.Image, Status: value.State.Status, Running: value.State.Running, Health: health, ExitCode: value.State.ExitCode, Error: value.State.Error, StartedAt: value.State.StartedAt, FinishedAt: value.State.FinishedAt, RestartCount: value.RestartCount}, nil
+	return containerclient.State{
+		Exists:         true,
+		ID:             value.ID,
+		Name:           strings.TrimPrefix(value.Name, "/"),
+		ImageReference: value.Config.Image,
+		ImageID:        value.Image,
+		Status:         value.State.Status,
+		Running:        value.State.Running,
+		Health:         health,
+		ExitCode:       value.State.ExitCode,
+		Error:          value.State.Error,
+		StartedAt:      value.State.StartedAt,
+		FinishedAt:     value.State.FinishedAt,
+		RestartCount:   value.RestartCount,
+	}, nil
 }
 
-func (service *ContainerExecution) remoteDocker(ctx context.Context, target ServerExecutionTarget, arguments ...string) (string, error) {
-	result, err := service.servers.RunRootCommand(ctx, target, nil, remoteDockerExecutable, arguments...)
+func (service *ContainerExecution) remoteDocker(
+	ctx context.Context,
+	target ServerExecutionTarget,
+	arguments ...string,
+) (string, error) {
+	result, err := service.servers.RunRootCommand(
+		ctx,
+		target,
+		nil,
+		remoteDockerExecutable,
+		arguments...)
 	if err != nil {
 		return "", fmt.Errorf("run Docker command on Server %s: %w", target.Server.Name, err)
 	}

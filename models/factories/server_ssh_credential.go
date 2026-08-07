@@ -19,7 +19,10 @@ type ServerSSHCredentialFactory struct {
 
 type ServerSSHCredentialOption func(*ServerSSHCredentialFactory)
 
-func BuildServerSSHCredential(serverID uuid.UUID, opts ...ServerSSHCredentialOption) models.ServerSSHCredentialEntity {
+func BuildServerSSHCredential(
+	serverID uuid.UUID,
+	opts ...ServerSSHCredentialOption,
+) models.ServerSSHCredentialEntity {
 	f := &ServerSSHCredentialFactory{
 		ServerSSHCredentialEntity: models.ServerSSHCredentialEntity{
 			Username:      faker.Word(),
@@ -37,7 +40,12 @@ func BuildServerSSHCredential(serverID uuid.UUID, opts ...ServerSSHCredentialOpt
 	return f.ServerSSHCredentialEntity
 }
 
-func CreateServerSSHCredential(ctx context.Context, exec storage.Executor, serverID uuid.UUID, opts ...ServerSSHCredentialOption) (models.ServerSSHCredentialEntity, error) {
+func CreateServerSSHCredential(
+	ctx context.Context,
+	exec storage.Executor,
+	serverID uuid.UUID,
+	opts ...ServerSSHCredentialOption,
+) (models.ServerSSHCredentialEntity, error) {
 	built := BuildServerSSHCredential(serverID, opts...)
 
 	entity := models.ServerSSHCredentialEntity{
@@ -58,7 +66,13 @@ func CreateServerSSHCredential(ctx context.Context, exec storage.Executor, serve
 	return entity, nil
 }
 
-func CreateServerSSHCredentials(ctx context.Context, exec storage.Executor, serverID uuid.UUID, count int, opts ...ServerSSHCredentialOption) ([]models.ServerSSHCredentialEntity, error) {
+func CreateServerSSHCredentials(
+	ctx context.Context,
+	exec storage.Executor,
+	serverID uuid.UUID,
+	count int,
+	opts ...ServerSSHCredentialOption,
+) ([]models.ServerSSHCredentialEntity, error) {
 	serversshcredentials := make([]models.ServerSSHCredentialEntity, 0, count)
 
 	for i := range count {

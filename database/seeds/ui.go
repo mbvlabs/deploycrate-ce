@@ -30,7 +30,9 @@ func UI(ctx context.Context, exec storage.Executor) error {
 		factories.WithServersPackageManager(sql.NullString{String: "apt", Valid: true}),
 		factories.WithServersInitSystem(sql.NullString{String: "systemd", Valid: true}),
 		factories.WithServersCapabilities(
-			json.RawMessage(`{"runtime":true,"resource":true,"database":true,"repository":true,"telemetry":true}`),
+			json.RawMessage(
+				`{"runtime":true,"resource":true,"database":true,"repository":true,"telemetry":true}`,
+			),
 		),
 		factories.WithServersIPv4Address("203.0.113.10"),
 		factories.WithServersIPv6Address("2001:db8::10"),
@@ -423,7 +425,9 @@ func UI(ctx context.Context, exec storage.Executor) error {
 		factories.WithResourceInstallationsContainerName("fake-deploycrate-ce-registry"),
 		factories.WithResourceInstallationsRestartPolicy("unless-stopped"),
 		factories.WithResourceInstallationsConfiguration(
-			json.RawMessage(`{"portMappings":[{"hostPort":5000,"containerPort":5000,"protocol":"tcp"}]}`),
+			json.RawMessage(
+				`{"portMappings":[{"hostPort":5000,"containerPort":5000,"protocol":"tcp"}]}`,
+			),
 		),
 		factories.WithResourceInstallationsArchivedAt(sql.NullTime{}),
 	)
@@ -484,7 +488,9 @@ func UI(ctx context.Context, exec storage.Executor) error {
 			sql.NullString{String: "deploycrate", Valid: true},
 		),
 		factories.WithResourceCredentialsMetadata(
-			json.RawMessage(`{"schema_version":1,"roles":["push","pull"],"basic_auth_hash":"fake-bcrypt-hash"}`),
+			json.RawMessage(
+				`{"schema_version":1,"roles":["push","pull"],"basic_auth_hash":"fake-bcrypt-hash"}`,
+			),
 		),
 		factories.WithResourceCredentialsEncPayload([]byte("encrypted-fake-registry-password")),
 		factories.WithResourceCredentialsDigest([]byte("fake-registry-password-digest")),

@@ -16,7 +16,26 @@ var SystemTask = routing.NewRouteWithBigSerialID(
 	SystemTasksPrefix,
 )
 
-var SystemTaskRun = routing.NewRouteWithBigSerialID("/:id/run", "system.task.run", SystemTasksPrefix)
-var SystemTaskRetry = routing.NewRouteWithBigSerialID("/:id/retry", "system.task.retry", SystemTasksPrefix)
-var SystemTaskCancel = routing.NewRouteWithBigSerialID("/:id/cancel", "system.task.cancel", SystemTasksPrefix)
-var SystemTaskDestroy = routing.NewRouteWithBigSerialID("/:id", "system.task.destroy", SystemTasksPrefix)
+var SystemTaskRun = routing.NewRouteWithBigSerialID(
+	"/:id/run",
+	"system.task.run",
+	SystemTasksPrefix,
+)
+
+var SystemTaskRetry = routing.NewRouteWithBigSerialID(
+	"/:id/retry",
+	"system.task.retry",
+	SystemTasksPrefix,
+)
+
+var SystemTaskCancel = routing.NewRouteWithBigSerialID(
+	"/:id/cancel",
+	"system.task.cancel",
+	SystemTasksPrefix,
+)
+
+var SystemTaskDestroy = routing.NewRouteWithBigSerialID(
+	"/:id",
+	"system.task.destroy",
+	SystemTasksPrefix,
+)

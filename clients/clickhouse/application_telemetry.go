@@ -142,7 +142,12 @@ func (client Client) ApplicationTelemetry(
 	since time.Time,
 	bucket time.Duration,
 ) (ApplicationTelemetry, error) {
-	return client.applicationTelemetry(ctx, serviceTelemetryScope(service, namespace), since, bucket)
+	return client.applicationTelemetry(
+		ctx,
+		serviceTelemetryScope(service, namespace),
+		since,
+		bucket,
+	)
 }
 
 func (client Client) EnvironmentApplicationTelemetry(
@@ -386,12 +391,23 @@ FORMAT JSONEachRow`, scope)
 		}
 		count, parseErr := strconv.ParseUint(row.Count, 10, 64)
 		if parseErr != nil {
-			return nil, DatabaseTelemetry{}, nil, fmt.Errorf("decode ClickHouse histogram count: %w", parseErr)
+			return nil, DatabaseTelemetry{}, nil, fmt.Errorf(
+				"decode ClickHouse histogram count: %w",
+				parseErr,
+			)
 		}
 		deltas = append(deltas, histogramDelta{
-			ObservedAt: observedAt, Metric: row.Metric, Status: row.Status, Operation: row.Operation,
-			Route: row.Route, Method: row.Method,
-			Count: count, Sum: row.Sum, BucketCounts: row.BucketCounts, Bounds: row.Bounds, Maximum: row.Maximum,
+			ObservedAt:   observedAt,
+			Metric:       row.Metric,
+			Status:       row.Status,
+			Operation:    row.Operation,
+			Route:        row.Route,
+			Method:       row.Method,
+			Count:        count,
+			Sum:          row.Sum,
+			BucketCounts: row.BucketCounts,
+			Bounds:       row.Bounds,
+			Maximum:      row.Maximum,
 		})
 	}
 
@@ -399,7 +415,12 @@ FORMAT JSONEachRow`, scope)
 	if err != nil {
 		return nil, DatabaseTelemetry{}, nil, err
 	}
-	httpHistory, database, routes := aggregateApplicationHistory(deltas, databaseErrors, bucket, time.Since(since))
+	httpHistory, database, routes := aggregateApplicationHistory(
+		deltas,
+		databaseErrors,
+		bucket,
+		time.Since(since),
+	)
 	return httpHistory, database, routes, nil
 }
 
@@ -459,7 +480,9 @@ type aggregatedHistogram struct {
 func (aggregate *aggregatedHistogram) add(delta histogramDelta) {
 	aggregate.count += delta.Count
 	if len(aggregate.bucketCounts) < len(delta.BucketCounts) {
-		aggregate.bucketCounts = append(aggregate.bucketCounts, make([]uint64, len(delta.BucketCounts)-len(aggregate.bucketCounts))...)
+		aggregate.bucketCounts = append(
+			aggregate.bucketCounts,
+			make([]uint64, len(delta.BucketCounts)-len(aggregate.bucketCounts))...)
 	}
 	for index, count := range delta.BucketCounts {
 		aggregate.bucketCounts[index] += count
@@ -562,21 +585,23 @@ func aggregateApplicationHistory(
 		observedAt := time.Unix(key, 0).UTC()
 		if current.http.count > 0 {
 			httpHistory = append(httpHistory, ApplicationTelemetryPoint{
-				ObservedAt: observedAt, RequestsPerSecond: float64(current.http.count) / bucketSeconds,
-				ClientErrorsPS: float64(current.clientErrors) / bucketSeconds,
-				ServerErrorsPS: float64(current.serverErrors) / bucketSeconds,
-				P50DurationMS:  current.http.quantile(0.50) * 1000,
-				P95DurationMS:  current.http.quantile(0.95) * 1000,
-				P99DurationMS:  current.http.quantile(0.99) * 1000,
+				ObservedAt:        observedAt,
+				RequestsPerSecond: float64(current.http.count) / bucketSeconds,
+				ClientErrorsPS:    float64(current.clientErrors) / bucketSeconds,
+				ServerErrorsPS:    float64(current.serverErrors) / bucketSeconds,
+				P50DurationMS:     current.http.quantile(0.50) * 1000,
+				P95DurationMS:     current.http.quantile(0.95) * 1000,
+				P99DurationMS:     current.http.quantile(0.99) * 1000,
 			})
 		}
 		if current.database.count > 0 {
 			databaseHistory = append(databaseHistory, DatabaseTelemetryPoint{
-				ObservedAt: observedAt, OperationsPerSecond: float64(current.database.count) / bucketSeconds,
-				ErrorsPerSecond: databaseErrors[key] / bucketSeconds,
-				P50DurationMS:   current.database.quantile(0.50) * 1000,
-				P95DurationMS:   current.database.quantile(0.95) * 1000,
-				P99DurationMS:   current.database.quantile(0.99) * 1000,
+				ObservedAt:          observedAt,
+				OperationsPerSecond: float64(current.database.count) / bucketSeconds,
+				ErrorsPerSecond:     databaseErrors[key] / bucketSeconds,
+				P50DurationMS:       current.database.quantile(0.50) * 1000,
+				P95DurationMS:       current.database.quantile(0.95) * 1000,
+				P99DurationMS:       current.database.quantile(0.99) * 1000,
 			})
 		}
 	}
@@ -670,8 +695,12 @@ FORMAT JSONEachRow`, scope)
 			return nil, fmt.Errorf("decode ClickHouse trace summary error count: %w", parseErr)
 		}
 		result = append(result, TraceSummary{
-			TraceID: row.TraceID, RootSpanName: row.RootSpanName, StartedAt: time.Unix(0, timestamp).UTC(),
-			DurationNS: duration, SpanCount: spanCount, ErrorCount: errorCount,
+			TraceID:      row.TraceID,
+			RootSpanName: row.RootSpanName,
+			StartedAt:    time.Unix(0, timestamp).UTC(),
+			DurationNS:   duration,
+			SpanCount:    spanCount,
+			ErrorCount:   errorCount,
 		})
 	}
 	return result, nil
@@ -750,7 +779,10 @@ func (client Client) Trace(ctx context.Context, traceID string) ([]TraceSpan, er
 	return client.trace(ctx, traceID, "", nil)
 }
 
-func (client Client) EnvironmentTrace(ctx context.Context, environment, traceID string) ([]TraceSpan, error) {
+func (client Client) EnvironmentTrace(
+	ctx context.Context,
+	environment, traceID string,
+) ([]TraceSpan, error) {
 	return client.trace(
 		ctx,
 		traceID,
@@ -821,7 +853,12 @@ FORMAT JSONEachRow`
 	return spans, nil
 }
 
-func queryJSONRows[T any](ctx context.Context, client Client, queryText string, parameters map[string]string) ([]T, error) {
+func queryJSONRows[T any](
+	ctx context.Context,
+	client Client,
+	queryText string,
+	parameters map[string]string,
+) ([]T, error) {
 	endpoint, err := url.Parse(client.baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("build ClickHouse URL: %w", err)
@@ -845,7 +882,11 @@ func queryJSONRows[T any](ctx context.Context, client Client, queryText string, 
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 1200))
-		return nil, fmt.Errorf("query ClickHouse telemetry: unexpected status %s: %s", response.Status, string(message))
+		return nil, fmt.Errorf(
+			"query ClickHouse telemetry: unexpected status %s: %s",
+			response.Status,
+			string(message),
+		)
 	}
 	rows := make([]T, 0)
 	decoder := json.NewDecoder(response.Body)

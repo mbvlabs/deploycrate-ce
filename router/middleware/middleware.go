@@ -29,7 +29,8 @@ func RegisterRequestMeta(
 	next echo.HandlerFunc,
 ) echo.HandlerFunc {
 	return func(c *echo.Context) error {
-		if isAssetsPath(c.Request().URL.Path) || isAPIPath(c.Request().URL.Path) || isGitHubWebhookPath(c.Request().URL.Path) {
+		if isAssetsPath(c.Request().URL.Path) || isAPIPath(c.Request().URL.Path) ||
+			isGitHubWebhookPath(c.Request().URL.Path) {
 			return next(c)
 		}
 
@@ -111,7 +112,8 @@ func ValidateSession(
 ) echo.HandlerFunc {
 	return func(c *echo.Context) error {
 		// Skip session validation for static assets and API routes
-		if isAssetsPath(c.Request().URL.Path) || isAPIPath(c.Request().URL.Path) || isGitHubWebhookPath(c.Request().URL.Path) {
+		if isAssetsPath(c.Request().URL.Path) || isAPIPath(c.Request().URL.Path) ||
+			isGitHubWebhookPath(c.Request().URL.Path) {
 			return next(c)
 		}
 		if err := cookies.RecoverInvalidSessions(c); err != nil {
@@ -185,7 +187,9 @@ func Logger(tel *telemetry.Telemetry) echo.MiddlewareFunc {
 			start := time.Now()
 
 			if tel.HasMetrics() && httpInFlight != nil {
-				attributes := metric.WithAttributes(attribute.String("http.request.method", c.Request().Method))
+				attributes := metric.WithAttributes(
+					attribute.String("http.request.method", c.Request().Method),
+				)
 				httpInFlight.Add(ctx, 1, attributes)
 				defer httpInFlight.Add(ctx, -1, attributes)
 			}

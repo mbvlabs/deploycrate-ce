@@ -46,13 +46,21 @@ func (e *RuntimeConfigurationEntity) Validate() error {
 	return builder.Err()
 }
 
-func ensureRuntimeConfigurationUnique(ctx context.Context, db storage.Executor, entity RuntimeConfigurationEntity) error {
+func ensureRuntimeConfigurationUnique(
+	ctx context.Context,
+	db storage.Executor,
+	entity RuntimeConfigurationEntity,
+) error {
 	switch db.(type) {
 	case bun.Tx, *bun.Tx:
 	default:
 		return errors.New("runtime configuration uniqueness checks require a transaction")
 	}
-	if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "runtime-configuration:"+entity.EnvironmentID.String()); err != nil {
+	if _, err := db.ExecContext(
+		ctx,
+		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+		"runtime-configuration:"+entity.EnvironmentID.String(),
+	); err != nil {
 		return err
 	}
 	count, err := db.NewSelect().Model((*RuntimeConfigurationEntity)(nil)).
@@ -61,7 +69,16 @@ func ensureRuntimeConfigurationUnique(ctx context.Context, db storage.Executor, 
 		return err
 	}
 	if count != 0 {
-		return errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "environmentId", Code: "taken", Message: "the Environment already has a runtime configuration"}})
+		return errors.Join(
+			ErrDomainValidation,
+			validation.ValidationErrors{
+				{
+					Field:   "environmentId",
+					Code:    "taken",
+					Message: "the Environment already has a runtime configuration",
+				},
+			},
+		)
 	}
 	return nil
 }

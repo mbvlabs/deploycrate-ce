@@ -62,8 +62,14 @@ type Client struct{}
 func New() Client { return Client{} }
 
 func (Client) Build(ctx context.Context, spec BuildSpec) (Result, error) {
-	if strings.TrimSpace(spec.Image) == "" || strings.TrimSpace(spec.Path) == "" || strings.TrimSpace(spec.ReportDirectory) == "" || strings.TrimSpace(spec.TemporaryDirectory) == "" || strings.TrimSpace(spec.BuildCache) == "" || strings.TrimSpace(spec.LaunchCache) == "" {
-		return Result{}, errors.New("Pack image, source path, report directory, temporary directory, and caches are required")
+	if strings.TrimSpace(spec.Image) == "" || strings.TrimSpace(spec.Path) == "" ||
+		strings.TrimSpace(spec.ReportDirectory) == "" ||
+		strings.TrimSpace(spec.TemporaryDirectory) == "" ||
+		strings.TrimSpace(spec.BuildCache) == "" ||
+		strings.TrimSpace(spec.LaunchCache) == "" {
+		return Result{}, errors.New(
+			"Pack image, source path, report directory, temporary directory, and caches are required",
+		)
 	}
 	if !validCacheName(spec.BuildCache, "build") || !validCacheName(spec.LaunchCache, "launch") {
 		return Result{}, errors.New("Pack caches must use Environment-owned DeployCrate names")
@@ -88,7 +94,9 @@ func (Client) Build(ctx context.Context, spec BuildSpec) (Result, error) {
 	}
 	arguments := []string{"build", spec.Image, "--path", spec.Path, "--builder", builder}
 	if spec.FrontendScript != "" {
-		assetsBuildpack, materializeErr := nodeassets.Materialize(filepath.Join(spec.TemporaryDirectory, "buildpacks"))
+		assetsBuildpack, materializeErr := nodeassets.Materialize(
+			filepath.Join(spec.TemporaryDirectory, "buildpacks"),
+		)
 		if materializeErr != nil {
 			return Result{}, materializeErr
 		}
@@ -98,12 +106,23 @@ func (Client) Build(ctx context.Context, spec BuildSpec) (Result, error) {
 			"--env", "BP_DEPLOYCRATE_FRONTEND_SCRIPT="+spec.FrontendScript,
 		)
 	}
-	arguments = append(arguments,
-		"--buildpack", goBuildpack, "--trust-extra-buildpacks", "--run-image", runImage, "--publish",
-		"--cache", cacheArgument("build", spec.BuildCache),
-		"--cache", cacheArgument("launch", spec.LaunchCache),
-		"--pull-policy", spec.PullPolicy, "--timestamps",
-		"--report-output-dir", spec.ReportDirectory,
+	arguments = append(
+		arguments,
+		"--buildpack",
+		goBuildpack,
+		"--trust-extra-buildpacks",
+		"--run-image",
+		runImage,
+		"--publish",
+		"--cache",
+		cacheArgument("build", spec.BuildCache),
+		"--cache",
+		cacheArgument("launch", spec.LaunchCache),
+		"--pull-policy",
+		spec.PullPolicy,
+		"--timestamps",
+		"--report-output-dir",
+		spec.ReportDirectory,
 	)
 	if spec.PreviousImage != "" {
 		arguments = append(arguments, "--previous-image", spec.PreviousImage)
@@ -122,7 +141,13 @@ func (Client) Build(ctx context.Context, spec BuildSpec) (Result, error) {
 	command.Stdout = commandOutput
 	command.Stderr = commandOutput
 	if err := command.Run(); err != nil {
-		return Result{Output: output.String()}, fmt.Errorf("Pack build failed: %w: %s", err, output.String())
+		return Result{
+				Output: output.String(),
+			}, fmt.Errorf(
+				"Pack build failed: %w: %s",
+				err,
+				output.String(),
+			)
 	}
 	return Result{Output: output.String()}, nil
 }
@@ -141,7 +166,8 @@ func (Client) DeleteEnvironmentCaches(ctx context.Context, environmentID uuid.UU
 		return err
 	}
 	for _, cache := range []string{caches.Build, caches.Launch} {
-		output, removeErr := sudo.CommandContext(ctx, dockerExecutable, "volume", "rm", cache).CombinedOutput()
+		output, removeErr := sudo.CommandContext(ctx, dockerExecutable, "volume", "rm", cache).
+			CombinedOutput()
 		if removeErr == nil {
 			continue
 		}
@@ -203,7 +229,10 @@ func PinnedBuilderForArchitecture(architecture string) (string, error) {
 	case "arm64":
 		return NobleBuilderARM64, nil
 	default:
-		return "", fmt.Errorf("Go Buildpacks are not approved for host architecture %s", architecture)
+		return "", fmt.Errorf(
+			"Go Buildpacks are not approved for host architecture %s",
+			architecture,
+		)
 	}
 }
 
@@ -218,7 +247,10 @@ func PinnedGoBuildpackForArchitecture(architecture string) (string, error) {
 	case "arm64":
 		return GoBuildpackARM64, nil
 	default:
-		return "", fmt.Errorf("Go Buildpacks are not approved for host architecture %s", architecture)
+		return "", fmt.Errorf(
+			"Go Buildpacks are not approved for host architecture %s",
+			architecture,
+		)
 	}
 }
 
@@ -233,7 +265,10 @@ func PinnedRunImageForArchitecture(architecture string) (string, error) {
 	case "arm64":
 		return NobleRunImageARM64, nil
 	default:
-		return "", fmt.Errorf("Go Buildpacks are not approved for host architecture %s", architecture)
+		return "", fmt.Errorf(
+			"Go Buildpacks are not approved for host architecture %s",
+			architecture,
+		)
 	}
 }
 

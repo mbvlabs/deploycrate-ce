@@ -188,7 +188,8 @@ func (c Environments) TelemetryLogs(etx *echo.Context) error {
 		services.ParseTelemetryRange(etx.QueryParam("range")),
 		etx.QueryParam("search"),
 	)
-	if errors.Is(err, services.ErrInvalidSystemLogCursor) || errors.Is(err, services.ErrInvalidSystemLogSearch) {
+	if errors.Is(err, services.ErrInvalidSystemLogCursor) ||
+		errors.Is(err, services.ErrInvalidSystemLogSearch) {
 		return etx.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 	if errors.Is(err, sql.ErrNoRows) {
@@ -204,7 +205,10 @@ func (c Environments) TelemetryLogs(etx *echo.Context) error {
 			"environment_id", params.EnvironmentID,
 			"error", err,
 		)
-		return etx.JSON(http.StatusInternalServerError, map[string]string{"error": "OpenTelemetry logs could not be loaded"})
+		return etx.JSON(
+			http.StatusInternalServerError,
+			map[string]string{"error": "OpenTelemetry logs could not be loaded"},
+		)
 	}
 	etx.Response().Header().Set("Cache-Control", "no-store")
 	return etx.JSON(http.StatusOK, snapshot)
@@ -234,7 +238,10 @@ func (c Environments) TelemetryQueries(etx *echo.Context) error {
 			"environment_id", params.EnvironmentID,
 			"error", err,
 		)
-		return etx.JSON(http.StatusInternalServerError, map[string]string{"error": "Slow queries could not be loaded"})
+		return etx.JSON(
+			http.StatusInternalServerError,
+			map[string]string{"error": "Slow queries could not be loaded"},
+		)
 	}
 	etx.Response().Header().Set("Cache-Control", "no-store")
 	return etx.JSON(http.StatusOK, map[string]any{"queries": queries})
@@ -267,7 +274,10 @@ func (c Environments) TelemetryTrace(etx *echo.Context) error {
 			"environment_id", params.EnvironmentID,
 			"error", err,
 		)
-		return etx.JSON(http.StatusInternalServerError, map[string]string{"error": "Trace could not be loaded"})
+		return etx.JSON(
+			http.StatusInternalServerError,
+			map[string]string{"error": "Trace could not be loaded"},
+		)
 	}
 	etx.Response().Header().Set("Cache-Control", "no-store")
 	return etx.JSON(http.StatusOK, map[string]any{"spans": spans})
@@ -845,8 +855,10 @@ func (c Environments) showSection(etx *echo.Context, section string) error {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
 	applicationTelemetry := clickhouseclient.ApplicationTelemetry{
-		History:      []clickhouseclient.ApplicationTelemetryPoint{},
-		Database:     clickhouseclient.DatabaseTelemetry{History: []clickhouseclient.DatabaseTelemetryPoint{}},
+		History: []clickhouseclient.ApplicationTelemetryPoint{},
+		Database: clickhouseclient.DatabaseTelemetry{
+			History: []clickhouseclient.DatabaseTelemetryPoint{},
+		},
 		RecentTraces: []clickhouseclient.TraceSummary{},
 		Routes:       []clickhouseclient.RouteTelemetry{},
 		Queries:      []clickhouseclient.QueryTelemetry{},

@@ -91,7 +91,11 @@ func node(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "DEPLOYCRATE_NODE_RESULT=%s\n", base64.RawStdEncoding.EncodeToString(encoded))
+	fmt.Fprintf(
+		stdout,
+		"DEPLOYCRATE_NODE_RESULT=%s\n",
+		base64.RawStdEncoding.EncodeToString(encoded),
+	)
 	return nil
 }
 
@@ -101,7 +105,11 @@ func sshCA(args []string, stdout io.Writer) error {
 	}
 	flags := flag.NewFlagSet("ssh-ca recover", flag.ContinueOnError)
 	bundlePath := flags.String("bundle", "", "path to deploycrate-ssh-ca-recovery-v1.age")
-	passphrasePath := flags.String("passphrase-file", "", "path to a file containing the age passphrase")
+	passphrasePath := flags.String(
+		"passphrase-file",
+		"",
+		"path to a file containing the age passphrase",
+	)
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -204,24 +212,25 @@ func resume(ctx context.Context, args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if err := setup.NewRunner(cfg, *dryRun, newSetupOperations()).Execute(ctx, cfg, func(event setup.Event) {
-		switch event.Kind {
-		case setup.EventStarted:
-			fmt.Fprintf(stdout, "[%d/%d] %s\n", event.Index, event.Total, event.Description)
-		case setup.EventLog:
-			fmt.Fprintln(stdout, "  "+event.Line)
-		case setup.EventCompleted:
-			fmt.Fprintln(stdout, "  complete")
-		case setup.EventSkipped:
-			fmt.Fprintf(
-				stdout,
-				"[%d/%d] %s: already complete\n",
-				event.Index,
-				event.Total,
-				event.Description,
-			)
-		}
-	}); err != nil {
+	if err := setup.NewRunner(cfg, *dryRun, newSetupOperations()).
+		Execute(ctx, cfg, func(event setup.Event) {
+			switch event.Kind {
+			case setup.EventStarted:
+				fmt.Fprintf(stdout, "[%d/%d] %s\n", event.Index, event.Total, event.Description)
+			case setup.EventLog:
+				fmt.Fprintln(stdout, "  "+event.Line)
+			case setup.EventCompleted:
+				fmt.Fprintln(stdout, "  complete")
+			case setup.EventSkipped:
+				fmt.Fprintf(
+					stdout,
+					"[%d/%d] %s: already complete\n",
+					event.Index,
+					event.Total,
+					event.Description,
+				)
+			}
+		}); err != nil {
 		return err
 	}
 	_, err = tea.NewProgram(setupui.NewHandoffModel(cfg, *dryRun, status == setup.InstallationCleanupPending)).

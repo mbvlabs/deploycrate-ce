@@ -41,11 +41,17 @@ func (service *ClickHouseBackup) Export(
 		return ClickHouseBackupArtifact{}, err
 	}
 	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
-		return ClickHouseBackupArtifact{}, fmt.Errorf("create ClickHouse backup staging directory: %w", err)
+		return ClickHouseBackupArtifact{}, fmt.Errorf(
+			"create ClickHouse backup staging directory: %w",
+			err,
+		)
 	}
 	file, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
-		return ClickHouseBackupArtifact{}, fmt.Errorf("create ClickHouse metric rollup export: %w", err)
+		return ClickHouseBackupArtifact{}, fmt.Errorf(
+			"create ClickHouse metric rollup export: %w",
+			err,
+		)
 	}
 	digest := sha256.New()
 	export, exportErr := client.ExportMetricRollups(ctx, io.MultiWriter(file, digest))
@@ -60,11 +66,19 @@ func (service *ClickHouseBackup) Export(
 	info, err := os.Stat(destination)
 	if err != nil {
 		_ = os.Remove(destination)
-		return ClickHouseBackupArtifact{}, fmt.Errorf("inspect ClickHouse metric rollup export: %w", err)
+		return ClickHouseBackupArtifact{}, fmt.Errorf(
+			"inspect ClickHouse metric rollup export: %w",
+			err,
+		)
 	}
 	return ClickHouseBackupArtifact{
-		Path: destination, Format: "JSONEachRow", SchemaVersion: clickHouseMetricRollupSchemaVersion,
-		Rows: export.Rows, FirstBucket: export.FirstBucket, LastBucket: export.LastBucket,
-		SizeBytes: info.Size(), SHA256: hex.EncodeToString(digest.Sum(nil)),
+		Path:          destination,
+		Format:        "JSONEachRow",
+		SchemaVersion: clickHouseMetricRollupSchemaVersion,
+		Rows:          export.Rows,
+		FirstBucket:   export.FirstBucket,
+		LastBucket:    export.LastBucket,
+		SizeBytes:     info.Size(),
+		SHA256:        hex.EncodeToString(digest.Sum(nil)),
 	}, nil
 }

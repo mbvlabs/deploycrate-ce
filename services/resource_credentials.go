@@ -30,7 +30,11 @@ type ResourceCredentials struct {
 	identity Identity
 }
 
-func NewResourceCredentials(db storage.Pool, cfg config.Config, identity Identity) *ResourceCredentials {
+func NewResourceCredentials(
+	db storage.Pool,
+	cfg config.Config,
+	identity Identity,
+) *ResourceCredentials {
 	return &ResourceCredentials{db: db, config: cfg, identity: identity}
 }
 
@@ -95,11 +99,15 @@ func (service *ResourceCredentials) reveal(
 		SchemaVersion int               `json:"schema_version"`
 		Values        map[string]string `json:"values"`
 	}
-	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 || len(payload.Values) == 0 {
+	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 ||
+		len(payload.Values) == 0 {
 		return RevealedResourceCredential{}, errors.New("Resource credential payload is invalid")
 	}
 
 	return RevealedResourceCredential{
-		ID: row.ID, Name: row.Name, Username: strings.TrimSpace(row.Username.String), Values: payload.Values,
+		ID:       row.ID,
+		Name:     row.Name,
+		Username: strings.TrimSpace(row.Username.String),
+		Values:   payload.Values,
 	}, nil
 }

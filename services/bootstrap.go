@@ -164,8 +164,13 @@ func (service BootstrapService) reconcileRegistryContainer(ctx context.Context) 
 		return err
 	}
 	var installation models.ResourceInstallationEntity
-	if err := service.db.Executor().NewSelect().Model(&installation).Where("resource_id = ?", registry.ResourceID).
-		Where("archived_at IS NULL").Limit(1).Scan(ctx); err != nil {
+	if err := service.db.Executor().
+		NewSelect().
+		Model(&installation).
+		Where("resource_id = ?", registry.ResourceID).
+		Where("archived_at IS NULL").
+		Limit(1).
+		Scan(ctx); err != nil {
 		return fmt.Errorf("load managed registry installation: %w", err)
 	}
 	var mounts []struct {
@@ -176,21 +181,35 @@ func (service BootstrapService) reconcileRegistryContainer(ctx context.Context) 
 	if err := service.db.Executor().NewSelect().TableExpr("resource_volume_mounts AS mount").
 		ColumnExpr("volume.name, mount.mount_path, mount.read_only").
 		Join("JOIN resource_volumes AS volume ON volume.id = mount.resource_volume_id AND volume.archived_at IS NULL").
-		Where("mount.resource_installation_id = ?", installation.ID).Where("mount.archived_at IS NULL").Scan(ctx, &mounts); err != nil {
+		Where("mount.resource_installation_id = ?", installation.ID).
+		Where("mount.archived_at IS NULL").Scan(ctx, &mounts); err != nil {
 		return fmt.Errorf("load managed registry volume: %w", err)
 	}
 	volumeMounts := make([]containerclient.VolumeMount, 0, len(mounts))
 	for _, mount := range mounts {
-		volumeMounts = append(volumeMounts, containerclient.VolumeMount{Name: mount.Name, MountPath: mount.MountPath, ReadOnly: mount.ReadOnly})
+		volumeMounts = append(
+			volumeMounts,
+			containerclient.VolumeMount{
+				Name:      mount.Name,
+				MountPath: mount.MountPath,
+				ReadOnly:  mount.ReadOnly,
+			},
+		)
 	}
 	imageReference := installation.ImageReference
 	if installation.ImageDigest.Valid && !strings.Contains(imageReference, "@") {
 		imageReference += "@" + installation.ImageDigest.String
 	}
 	if err := (containerclient.New()).Run(ctx, containerclient.RunSpec{
-		InstallationID: installation.ID.String(), ContainerName: installation.ContainerName, ImageReference: imageReference,
-		RestartPolicy: installation.RestartPolicy, PortMappings: []containerclient.PortMapping{{HostPort: 5000, ContainerPort: 5000, Protocol: "tcp"}},
-		VolumeMounts: volumeMounts, Environment: map[string]string{},
+		InstallationID: installation.ID.String(),
+		ContainerName:  installation.ContainerName,
+		ImageReference: imageReference,
+		RestartPolicy:  installation.RestartPolicy,
+		PortMappings: []containerclient.PortMapping{
+			{HostPort: 5000, ContainerPort: 5000, Protocol: "tcp"},
+		},
+		VolumeMounts: volumeMounts,
+		Environment:  map[string]string{},
 	}); err != nil {
 		return fmt.Errorf("run managed registry container: %w", err)
 	}
@@ -202,13 +221,25 @@ func (service BootstrapService) reconcileRegistry(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	endpoint, err := models.ResourceEndpoint.Find(ctx, service.db.Executor(), registry.ResourceEndpointID)
+	endpoint, err := models.ResourceEndpoint.Find(
+		ctx,
+		service.db.Executor(),
+		registry.ResourceEndpointID,
+	)
 	if err != nil {
 		return fmt.Errorf("load managed registry endpoint: %w", err)
 	}
 	return service.routes.ReconcileRegistry(
-		ctx, registryRouteID(registry.RouteHost), registry.RouteHost,
-		fmt.Sprintf("%s:%d", endpoint.Address, endpoint.Port), registry.Username, registry.BasicAuthHash,
+		ctx,
+		registryRouteID(registry.RouteHost),
+		registry.RouteHost,
+		fmt.Sprintf(
+			"%s:%d",
+			endpoint.Address,
+			endpoint.Port,
+		),
+		registry.Username,
+		registry.BasicAuthHash,
 	)
 }
 
@@ -246,10 +277,18 @@ func loadManagedRegistry(ctx context.Context, db storage.Executor) (managedRegis
 		BasicAuthHash string `json:"basic_auth_hash"`
 	}
 	if json.Unmarshal(row.Configuration, &configuration) != nil || strings.TrimSpace(configuration.RouteHost) == "" ||
-		json.Unmarshal(row.CredentialMetadata, &metadata) != nil || strings.TrimSpace(row.Username) == "" || strings.TrimSpace(metadata.BasicAuthHash) == "" {
+		json.Unmarshal(row.CredentialMetadata, &metadata) != nil ||
+		strings.TrimSpace(row.Username) == "" ||
+		strings.TrimSpace(metadata.BasicAuthHash) == "" {
 		return managedRegistry{}, errors.New("managed Registry authentication is invalid")
 	}
-	return managedRegistry{ResourceID: row.ResourceID, ResourceEndpointID: row.ResourceEndpointID, RouteHost: configuration.RouteHost, Username: row.Username, BasicAuthHash: metadata.BasicAuthHash}, nil
+	return managedRegistry{
+		ResourceID:         row.ResourceID,
+		ResourceEndpointID: row.ResourceEndpointID,
+		RouteHost:          configuration.RouteHost,
+		Username:           row.Username,
+		BasicAuthHash:      metadata.BasicAuthHash,
+	}, nil
 }
 
 func (service BootstrapService) VerifyRoute(ctx context.Context, externalID string) error {
@@ -285,7 +324,12 @@ func bootstrapServerCapabilities(
 	input BootstrapCapabilitiesInput,
 ) (json.RawMessage, error) {
 	capabilities, err := json.Marshal(map[string]any{
-		"build": true, "runtime": true, "resource": true, "database": true, "repository": true, "telemetry": true,
+		"build":      true,
+		"runtime":    true,
+		"resource":   true,
+		"database":   true,
+		"repository": true,
+		"telemetry":  true,
 		"container_engine": map[string]string{
 			"name":    "docker",
 			"version": input.DockerEngineVersion,
@@ -603,8 +647,12 @@ func createBootstrapClickHouseResource(
 	resource, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
 		Name:         "DeployCrate CE ClickHouse",
 		Slug:         "deploycrate-ce-clickhouse",
-		ResourceType: models.ResourceTypeDatabase, Configuration: json.RawMessage(`{"engine":"clickhouse","databases":[{"name":"deploycrate"}]}`),
-		SystemManaged: true, EnvironmentAttachable: false,
+		ResourceType: models.ResourceTypeDatabase,
+		Configuration: json.RawMessage(
+			`{"engine":"clickhouse","databases":[{"name":"deploycrate"}]}`,
+		),
+		SystemManaged:         true,
+		EnvironmentAttachable: false,
 	})
 	if err != nil {
 		return fmt.Errorf("create bootstrap ClickHouse resource: %w", err)
@@ -629,11 +677,20 @@ func createBootstrapClickHouseResource(
 	}
 	credentialDigest := hmac.New(sha256.New, credentialKey)
 	_, _ = credentialDigest.Write(credentialPayload)
-	credential, err := models.ResourceCredential.Create(ctx, exec, models.CreateResourceCredentialData{
-		Name: "Database administrator", Username: sql.NullString{String: input.ClickHouseUser, Valid: true},
-		Metadata:   json.RawMessage(`{"schema_version":1,"purpose":"administrator","superuser":true}`),
-		EncPayload: encryptedCredential, Digest: credentialDigest.Sum(nil), ResourceID: resource.ID,
-	})
+	credential, err := models.ResourceCredential.Create(
+		ctx,
+		exec,
+		models.CreateResourceCredentialData{
+			Name:     "Database administrator",
+			Username: sql.NullString{String: input.ClickHouseUser, Valid: true},
+			Metadata: json.RawMessage(
+				`{"schema_version":1,"purpose":"administrator","superuser":true}`,
+			),
+			EncPayload: encryptedCredential,
+			Digest:     credentialDigest.Sum(nil),
+			ResourceID: resource.ID,
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("create bootstrap ClickHouse administrator credential: %w", err)
 	}
@@ -680,13 +737,15 @@ func createBootstrapClickHouseResource(
 		return fmt.Errorf("create bootstrap ClickHouse endpoint: %w", err)
 	}
 	if _, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
-		Name:             "WireGuard ClickHouse HTTP",
-		Role:             "wireguard",
-		Address:          WireGuardPrivateAddress,
-		Port:             8123,
-		Protocol:         "http",
-		TlsMode:          "disable",
-		Settings:         json.RawMessage(`{"database":"deploycrate","user":"deploycrate","external":false}`),
+		Name:     "WireGuard ClickHouse HTTP",
+		Role:     "wireguard",
+		Address:  WireGuardPrivateAddress,
+		Port:     8123,
+		Protocol: "http",
+		TlsMode:  "disable",
+		Settings: json.RawMessage(
+			`{"database":"deploycrate","user":"deploycrate","external":false}`,
+		),
 		ResourceID:       resource.ID,
 		PrivateNetworkID: &networkID,
 	}); err != nil {
@@ -696,8 +755,10 @@ func createBootstrapClickHouseResource(
 		ctx,
 		exec,
 		models.CreateEnvironmentResourceData{
-			Alias:                "telemetry-storage",
-			Configuration:        json.RawMessage(`{"credential_source":"managed","database":"deploycrate"}`),
+			Alias: "telemetry-storage",
+			Configuration: json.RawMessage(
+				`{"credential_source":"managed","database":"deploycrate"}`,
+			),
 			EnvironmentID:        environmentID,
 			ResourceID:           resource.ID,
 			ResourceEndpointID:   endpoint.ID,
@@ -729,28 +790,36 @@ func createBootstrapTelemetryResource(
 	if err != nil {
 		return fmt.Errorf("create bootstrap OpenTelemetry Resource: %w", err)
 	}
-	localEndpoint, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
-		Name:             "Control-plane OTLP HTTP",
-		Role:             "local",
-		Address:          "127.0.0.1",
-		Port:             4318,
-		Protocol:         "http",
-		TlsMode:          "disable",
-		Settings:         json.RawMessage(`{"exposure":"system","transport":"http/protobuf","authentication":"none"}`),
-		ResourceID:       resource.ID,
-		PrivateNetworkID: nil,
-	})
+	localEndpoint, err := models.ResourceEndpoint.Create(
+		ctx,
+		exec,
+		models.CreateResourceEndpointData{
+			Name:     "Control-plane OTLP HTTP",
+			Role:     "local",
+			Address:  "127.0.0.1",
+			Port:     4318,
+			Protocol: "http",
+			TlsMode:  "disable",
+			Settings: json.RawMessage(
+				`{"exposure":"system","transport":"http/protobuf","authentication":"none"}`,
+			),
+			ResourceID:       resource.ID,
+			PrivateNetworkID: nil,
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("create bootstrap local OpenTelemetry endpoint: %w", err)
 	}
 	endpoint, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
-		Name:             "WireGuard OTLP HTTP",
-		Role:             "wireguard",
-		Address:          WireGuardPrivateAddress,
-		Port:             4318,
-		Protocol:         "http",
-		TlsMode:          "disable",
-		Settings:         json.RawMessage(`{"exposure":"environment","transport":"http/protobuf","authentication":"signed_identity"}`),
+		Name:     "WireGuard OTLP HTTP",
+		Role:     "wireguard",
+		Address:  WireGuardPrivateAddress,
+		Port:     4318,
+		Protocol: "http",
+		TlsMode:  "disable",
+		Settings: json.RawMessage(
+			`{"exposure":"environment","transport":"http/protobuf","authentication":"signed_identity"}`,
+		),
 		ResourceID:       resource.ID,
 		PrivateNetworkID: &networkID,
 	})
@@ -792,16 +861,20 @@ func createBootstrapRegistryResource(
 	serverID uuid.UUID,
 ) error {
 	resource, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
-		Name:         "DeployCrate CE Registry",
-		Slug:         "deploycrate-ce-registry",
-		ResourceType: models.ResourceTypeService, Configuration: json.RawMessage(`{"engine":"registry"}`),
-		SystemManaged: true, EnvironmentAttachable: false,
+		Name:                  "DeployCrate CE Registry",
+		Slug:                  "deploycrate-ce-registry",
+		ResourceType:          models.ResourceTypeService,
+		Configuration:         json.RawMessage(`{"engine":"registry"}`),
+		SystemManaged:         true,
+		EnvironmentAttachable: false,
 	})
 	if err != nil {
 		return fmt.Errorf("create bootstrap registry Resource: %w", err)
 	}
 	registryDomain := "registry-" + strings.TrimSpace(input.Domain)
-	registryConfiguration, err := json.Marshal(map[string]any{"schema_version": 1, "route_host": registryDomain})
+	registryConfiguration, err := json.Marshal(
+		map[string]any{"schema_version": 1, "route_host": registryDomain},
+	)
 	if err != nil {
 		return fmt.Errorf("encode managed Registry configuration: %w", err)
 	}
@@ -810,17 +883,36 @@ func createBootstrapRegistryResource(
 	}); err != nil {
 		return fmt.Errorf("create bootstrap Registry backing: %w", err)
 	}
-	installation, err := models.ResourceInstallation.Create(ctx, exec, models.CreateResourceInstallationData{
-		ImageReference: registryImageReference,
-		ImageDigest:    sql.NullString{String: "sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33", Valid: true},
-		ContainerName:  "deploycrate-ce-registry", RestartPolicy: "unless-stopped",
-		Configuration: json.RawMessage(`{"portMappings":[{"hostPort":5000,"containerPort":5000,"protocol":"tcp"}]}`),
-		ResourceID:    resource.ID, ServerID: serverID,
-	})
+	installation, err := models.ResourceInstallation.Create(
+		ctx,
+		exec,
+		models.CreateResourceInstallationData{
+			ImageReference: registryImageReference,
+			ImageDigest: sql.NullString{
+				String: "sha256:1be55279f18a2fe1a74edf2664cac61c1bea305b7b4642dab412e7affdcb3e33",
+				Valid:  true,
+			},
+			ContainerName: "deploycrate-ce-registry",
+			RestartPolicy: "unless-stopped",
+			Configuration: json.RawMessage(
+				`{"portMappings":[{"hostPort":5000,"containerPort":5000,"protocol":"tcp"}]}`,
+			),
+			ResourceID: resource.ID,
+			ServerID:   serverID,
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("create bootstrap registry installation: %w", err)
 	}
-	if err := createBootstrapResourceVolume(ctx, exec, resource.ID, installation.ID, serverID, "deploycrate-ce-registry", "/var/lib/registry"); err != nil {
+	if err := createBootstrapResourceVolume(
+		ctx,
+		exec,
+		resource.ID,
+		installation.ID,
+		serverID,
+		"deploycrate-ce-registry",
+		"/var/lib/registry",
+	); err != nil {
 		return fmt.Errorf("create bootstrap registry volume: %w", err)
 	}
 	endpoint, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
@@ -847,7 +939,11 @@ func createBootstrapRegistryResource(
 	if err != nil {
 		return fmt.Errorf("encode registry credential: %w", err)
 	}
-	encrypted, err := secretcrypto.EncryptForPurpose(payload, input.SessionEncryptionKey, registryCredentialPurpose)
+	encrypted, err := secretcrypto.EncryptForPurpose(
+		payload,
+		input.SessionEncryptionKey,
+		registryCredentialPurpose,
+	)
 	if err != nil {
 		return fmt.Errorf("encrypt registry credential: %w", err)
 	}
@@ -858,7 +954,9 @@ func createBootstrapRegistryResource(
 	digest := hmac.New(sha256.New, masterKey)
 	_, _ = digest.Write(payload)
 	resourceCredentialMetadata, err := json.Marshal(map[string]any{
-		"schema_version": 1, "roles": []string{"push", "pull"}, "basic_auth_hash": string(passwordHash),
+		"schema_version":  1,
+		"roles":           []string{"push", "pull"},
+		"basic_auth_hash": string(passwordHash),
 	})
 	if err != nil {
 		return fmt.Errorf("encode registry credential metadata: %w", err)
@@ -872,9 +970,16 @@ func createBootstrapRegistryResource(
 		return fmt.Errorf("create bootstrap registry credential: %w", err)
 	}
 	if _, err := models.ResourceHealthCheck.Create(ctx, exec, models.CreateResourceHealthCheckData{
-		Name: "Registry API", Kind: "http", Configuration: json.RawMessage(`{"path":"/v2/","expected_status":200}`),
-		IntervalSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 3, SuccessThreshold: 1, Enabled: true,
-		ResourceID: resource.ID, ResourceEndpointID: &endpoint.ID,
+		Name:               "Registry API",
+		Kind:               "http",
+		Configuration:      json.RawMessage(`{"path":"/v2/","expected_status":200}`),
+		IntervalSeconds:    15,
+		TimeoutSeconds:     3,
+		FailureThreshold:   3,
+		SuccessThreshold:   1,
+		Enabled:            true,
+		ResourceID:         resource.ID,
+		ResourceEndpointID: &endpoint.ID,
 	}); err != nil {
 		return fmt.Errorf("create bootstrap registry health check: %w", err)
 	}
@@ -897,7 +1002,10 @@ func createBootstrapDatabaseResource(
 		Databases: []models.ResourceDatabaseDefinition{{Name: input.DatabaseName}},
 	})
 	if err != nil {
-		return bootstrapDatabaseTopology{}, fmt.Errorf("encode bootstrap PostgreSQL Resource configuration: %w", err)
+		return bootstrapDatabaseTopology{}, fmt.Errorf(
+			"encode bootstrap PostgreSQL Resource configuration: %w",
+			err,
+		)
 	}
 	resource, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
 		Name:         "DeployCrate CE PostgreSQL",
@@ -906,21 +1014,47 @@ func createBootstrapDatabaseResource(
 		SystemManaged: true, EnvironmentAttachable: false,
 	})
 	if err != nil {
-		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap PostgreSQL Resource: %w", err)
+		return bootstrapDatabaseTopology{}, fmt.Errorf(
+			"create bootstrap PostgreSQL Resource: %w",
+			err,
+		)
 	}
 	var endpointNetworkID *uuid.UUID
 	if !input.DatabaseExternal {
-		installation, err := models.ResourceInstallation.Create(ctx, exec, models.CreateResourceInstallationData{
-			ID: input.DatabaseInstallationID, ImageReference: "postgres:17-alpine",
-			ContainerName: "deploycrate-ce-postgres", RestartPolicy: "unless-stopped",
-			Configuration: json.RawMessage(`{"portMappings":[{"hostPort":5432,"containerPort":5432,"protocol":"tcp"}]}`),
-			ResourceID:    resource.ID, ServerID: serverID,
-		})
+		installation, err := models.ResourceInstallation.Create(
+			ctx,
+			exec,
+			models.CreateResourceInstallationData{
+				ID:             input.DatabaseInstallationID,
+				ImageReference: "postgres:17-alpine",
+				ContainerName:  "deploycrate-ce-postgres",
+				RestartPolicy:  "unless-stopped",
+				Configuration: json.RawMessage(
+					`{"portMappings":[{"hostPort":5432,"containerPort":5432,"protocol":"tcp"}]}`,
+				),
+				ResourceID: resource.ID,
+				ServerID:   serverID,
+			},
+		)
 		if err != nil {
-			return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap PostgreSQL Resource installation: %w", err)
+			return bootstrapDatabaseTopology{}, fmt.Errorf(
+				"create bootstrap PostgreSQL Resource installation: %w",
+				err,
+			)
 		}
-		if err := createBootstrapResourceVolume(ctx, exec, resource.ID, installation.ID, serverID, "deploycrate-ce-postgres", "/var/lib/postgresql/data"); err != nil {
-			return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap PostgreSQL Resource volume: %w", err)
+		if err := createBootstrapResourceVolume(
+			ctx,
+			exec,
+			resource.ID,
+			installation.ID,
+			serverID,
+			"deploycrate-ce-postgres",
+			"/var/lib/postgresql/data",
+		); err != nil {
+			return bootstrapDatabaseTopology{}, fmt.Errorf(
+				"create bootstrap PostgreSQL Resource volume: %w",
+				err,
+			)
 		}
 		endpointNetworkID = &networkID
 	}
@@ -929,32 +1063,67 @@ func createBootstrapDatabaseResource(
 		"schema_version": 1, "values": map[string]string{"password": input.DatabasePassword},
 	})
 	if err != nil {
-		return bootstrapDatabaseTopology{}, fmt.Errorf("encode bootstrap Resource administrator credential: %w", err)
+		return bootstrapDatabaseTopology{}, fmt.Errorf(
+			"encode bootstrap Resource administrator credential: %w",
+			err,
+		)
 	}
-	encryptedCredential, err := secretcrypto.EncryptForPurpose(credentialPayload, input.SessionEncryptionKey, resourceCredentialPurpose)
+	encryptedCredential, err := secretcrypto.EncryptForPurpose(
+		credentialPayload,
+		input.SessionEncryptionKey,
+		resourceCredentialPurpose,
+	)
 	if err != nil {
-		return bootstrapDatabaseTopology{}, fmt.Errorf("encrypt bootstrap Resource administrator credential: %w", err)
+		return bootstrapDatabaseTopology{}, fmt.Errorf(
+			"encrypt bootstrap Resource administrator credential: %w",
+			err,
+		)
 	}
 	credentialKey, err := hex.DecodeString(input.SessionEncryptionKey)
 	if err != nil || len(credentialKey) != 32 {
-		return bootstrapDatabaseTopology{}, errors.New("bootstrap Resource credential digest key is invalid")
+		return bootstrapDatabaseTopology{}, errors.New(
+			"bootstrap Resource credential digest key is invalid",
+		)
 	}
 	credentialDigest := hmac.New(sha256.New, credentialKey)
 	_, _ = credentialDigest.Write(credentialPayload)
 	if _, err := models.ResourceCredential.Create(ctx, exec, models.CreateResourceCredentialData{
-		Name: "Database administrator", Username: sql.NullString{String: input.DatabaseUser, Valid: true},
-		Metadata: json.RawMessage(`{"schema_version":1,"purpose":"administrator","superuser":true}`), EncPayload: encryptedCredential,
-		Digest: credentialDigest.Sum(nil), ResourceID: resource.ID,
+		Name:     "Database administrator",
+		Username: sql.NullString{String: input.DatabaseUser, Valid: true},
+		Metadata: json.RawMessage(
+			`{"schema_version":1,"purpose":"administrator","superuser":true}`,
+		),
+		EncPayload: encryptedCredential,
+		Digest:     credentialDigest.Sum(nil),
+		ResourceID: resource.ID,
 	}); err != nil {
-		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap Resource administrator credential: %w", err)
+		return bootstrapDatabaseTopology{}, fmt.Errorf(
+			"create bootstrap Resource administrator credential: %w",
+			err,
+		)
 	}
-	resourceCredential, err := models.ResourceCredential.Create(ctx, exec, models.CreateResourceCredentialData{
-		Name: "Database user", Username: sql.NullString{String: input.DatabaseUser, Valid: true},
-		Metadata:   json.RawMessage(fmt.Sprintf(`{"schema_version":1,"purpose":"application","database":%q}`, input.DatabaseName)),
-		EncPayload: encryptedCredential, Digest: credentialDigest.Sum(nil), ResourceID: resource.ID,
-	})
+	resourceCredential, err := models.ResourceCredential.Create(
+		ctx,
+		exec,
+		models.CreateResourceCredentialData{
+			Name:     "Database user",
+			Username: sql.NullString{String: input.DatabaseUser, Valid: true},
+			Metadata: json.RawMessage(
+				fmt.Sprintf(
+					`{"schema_version":1,"purpose":"application","database":%q}`,
+					input.DatabaseName,
+				),
+			),
+			EncPayload: encryptedCredential,
+			Digest:     credentialDigest.Sum(nil),
+			ResourceID: resource.ID,
+		},
+	)
 	if err != nil {
-		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap Database Resource credential: %w", err)
+		return bootstrapDatabaseTopology{}, fmt.Errorf(
+			"create bootstrap Database Resource credential: %w",
+			err,
+		)
 	}
 	endpoint, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
 		Name: "Primary PostgreSQL", Role: "primary", Address: input.DatabaseHost,
@@ -963,14 +1132,28 @@ func createBootstrapDatabaseResource(
 		ResourceID: resource.ID, PrivateNetworkID: endpointNetworkID,
 	})
 	if err != nil {
-		return bootstrapDatabaseTopology{}, fmt.Errorf("publish bootstrap Database Resource endpoint: %w", err)
+		return bootstrapDatabaseTopology{}, fmt.Errorf(
+			"publish bootstrap Database Resource endpoint: %w",
+			err,
+		)
 	}
 	if _, err := models.ResourceHealthCheck.Create(ctx, exec, models.CreateResourceHealthCheckData{
-		Name: "PostgreSQL readiness", Kind: "postgresql", Configuration: json.RawMessage(fmt.Sprintf(`{"database":%q}`, input.DatabaseName)),
-		IntervalSeconds: 15, TimeoutSeconds: 3, FailureThreshold: 3, SuccessThreshold: 1, Enabled: true,
-		ResourceID: resource.ID, ResourceEndpointID: &endpoint.ID, ResourceCredentialID: &resourceCredential.ID,
+		Name:                 "PostgreSQL readiness",
+		Kind:                 "postgresql",
+		Configuration:        json.RawMessage(fmt.Sprintf(`{"database":%q}`, input.DatabaseName)),
+		IntervalSeconds:      15,
+		TimeoutSeconds:       3,
+		FailureThreshold:     3,
+		SuccessThreshold:     1,
+		Enabled:              true,
+		ResourceID:           resource.ID,
+		ResourceEndpointID:   &endpoint.ID,
+		ResourceCredentialID: &resourceCredential.ID,
 	}); err != nil {
-		return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap PostgreSQL Resource health check: %w", err)
+		return bootstrapDatabaseTopology{}, fmt.Errorf(
+			"create bootstrap PostgreSQL Resource health check: %w",
+			err,
+		)
 	}
 	if endpointNetworkID != nil {
 		_, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
@@ -980,17 +1163,26 @@ func createBootstrapDatabaseResource(
 			ResourceID: resource.ID, PrivateNetworkID: endpointNetworkID,
 		})
 		if err != nil {
-			return bootstrapDatabaseTopology{}, fmt.Errorf("create bootstrap WireGuard PostgreSQL Resource endpoint: %w", err)
+			return bootstrapDatabaseTopology{}, fmt.Errorf(
+				"create bootstrap WireGuard PostgreSQL Resource endpoint: %w",
+				err,
+			)
 		}
 	}
-	binding, err := models.EnvironmentResource.Create(ctx, exec, models.CreateEnvironmentResourceData{
-		Alias:                "database",
-		Configuration:        json.RawMessage(fmt.Sprintf(`{"database":%q}`, input.DatabaseName)),
-		EnvironmentID:        environmentID,
-		ResourceID:           resource.ID,
-		ResourceEndpointID:   endpoint.ID,
-		ResourceCredentialID: &resourceCredential.ID,
-	})
+	binding, err := models.EnvironmentResource.Create(
+		ctx,
+		exec,
+		models.CreateEnvironmentResourceData{
+			Alias: "database",
+			Configuration: json.RawMessage(
+				fmt.Sprintf(`{"database":%q}`, input.DatabaseName),
+			),
+			EnvironmentID:        environmentID,
+			ResourceID:           resource.ID,
+			ResourceEndpointID:   endpoint.ID,
+			ResourceCredentialID: &resourceCredential.ID,
+		},
+	)
 	if err != nil {
 		return bootstrapDatabaseTopology{}, fmt.Errorf("bind bootstrap database resource: %w", err)
 	}
@@ -1060,21 +1252,37 @@ func createBootstrapBackups(
 		Provider:   "backup_" + input.Backup.Provider,
 		Metadata:   metadata,
 		EncPayload: input.Backup.EncryptedCredentialPayload,
-		VerifiedAt: sql.NullTime{Time: input.Backup.ValidatedAt, Valid: !input.Backup.ValidatedAt.IsZero()},
+		VerifiedAt: sql.NullTime{
+			Time:  input.Backup.ValidatedAt,
+			Valid: !input.Backup.ValidatedAt.IsZero(),
+		},
 	})
 	if err != nil {
 		return fmt.Errorf("create backup credential: %w", err)
 	}
-	destination, err := models.BackupDestination.Create(ctx, exec, models.CreateBackupDestinationData{
-		Name:           "Control-plane backup storage",
-		Provider:       input.Backup.Provider,
-		Endpoint:       sql.NullString{String: input.Backup.Endpoint, Valid: input.Backup.Endpoint != ""},
-		Region:         sql.NullString{String: input.Backup.Region, Valid: input.Backup.Region != ""},
-		Bucket:         input.Backup.Bucket,
-		Prefix:         sql.NullString{String: input.Backup.Prefix, Valid: input.Backup.Prefix != ""},
-		ForcePathStyle: input.Backup.ForcePathStyle,
-		CredentialID:   credential.ID,
-	})
+	destination, err := models.BackupDestination.Create(
+		ctx,
+		exec,
+		models.CreateBackupDestinationData{
+			Name:     "Control-plane backup storage",
+			Provider: input.Backup.Provider,
+			Endpoint: sql.NullString{
+				String: input.Backup.Endpoint,
+				Valid:  input.Backup.Endpoint != "",
+			},
+			Region: sql.NullString{
+				String: input.Backup.Region,
+				Valid:  input.Backup.Region != "",
+			},
+			Bucket: input.Backup.Bucket,
+			Prefix: sql.NullString{
+				String: input.Backup.Prefix,
+				Valid:  input.Backup.Prefix != "",
+			},
+			ForcePathStyle: input.Backup.ForcePathStyle,
+			CredentialID:   credential.ID,
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("create backup destination: %w", err)
 	}
@@ -1083,14 +1291,18 @@ func createBootstrapBackups(
 		return fmt.Errorf("calculate first server backup: %w", err)
 	}
 	if _, err := models.BackupPolicy.Create(ctx, exec, models.CreateBackupPolicyData{
-		Name:                "Control-plane server state",
-		Schedule:            input.Backup.ServerSchedule,
-		Strategy:            "filesystem",
-		Driver:              "restic",
-		Retention:           input.Backup.ServerRetention,
-		Format:              "restic",
-		Verification:        json.RawMessage(`{"snapshot":true,"manifests":true,"repository_check":"weekly","data_subset_parts":7}`),
-		Settings:            json.RawMessage(`{"source_manifest_version":1,"exclude_manifest_version":1}`),
+		Name:      "Control-plane server state",
+		Schedule:  input.Backup.ServerSchedule,
+		Strategy:  "filesystem",
+		Driver:    "restic",
+		Retention: input.Backup.ServerRetention,
+		Format:    "restic",
+		Verification: json.RawMessage(
+			`{"snapshot":true,"manifests":true,"repository_check":"weekly","data_subset_parts":7}`,
+		),
+		Settings: json.RawMessage(
+			`{"source_manifest_version":1,"exclude_manifest_version":1}`,
+		),
 		TargetType:          "server",
 		Target:              json.RawMessage(`{}`),
 		ServerID:            &serverID,
@@ -1107,12 +1319,21 @@ func createBootstrapBackups(
 		return fmt.Errorf("calculate first database backup: %w", err)
 	}
 	if _, err := models.BackupPolicy.Create(ctx, exec, models.CreateBackupPolicyData{
-		Name: "Control-plane PostgreSQL", Schedule: input.Backup.DatabaseSchedule,
-		Strategy: "logical", Driver: "postgresql", Retention: input.Backup.DatabaseRetention,
-		Format: "tar.age", Verification: json.RawMessage(`{"every_backup":true,"pg_restore_list":true}`),
-		Settings: json.RawMessage(`{"exclude_table_data":["river_*"]}`), TargetType: "resource",
-		Target: json.RawMessage(fmt.Sprintf(`{"database":%q}`, input.DatabaseName)), ResourceID: &database.ResourceID,
-		NextRunAt: databaseNextRun, BackupDestinationID: destination.ID,
+		Name:         "Control-plane PostgreSQL",
+		Schedule:     input.Backup.DatabaseSchedule,
+		Strategy:     "logical",
+		Driver:       "postgresql",
+		Retention:    input.Backup.DatabaseRetention,
+		Format:       "tar.age",
+		Verification: json.RawMessage(`{"every_backup":true,"pg_restore_list":true}`),
+		Settings:     json.RawMessage(`{"exclude_table_data":["river_*"]}`),
+		TargetType:   "resource",
+		Target: json.RawMessage(
+			fmt.Sprintf(`{"database":%q}`, input.DatabaseName),
+		),
+		ResourceID:          &database.ResourceID,
+		NextRunAt:           databaseNextRun,
+		BackupDestinationID: destination.ID,
 	}); err != nil {
 		return fmt.Errorf("create database backup policy: %w", err)
 	}
@@ -1152,7 +1373,8 @@ func validateBootstrapInput(input BootstrapInput) error {
 		input.DatabasePort > 65535 {
 		return errors.New("bootstrap database endpoint is invalid")
 	}
-	if strings.TrimSpace(input.DatabaseName) == "" || strings.TrimSpace(input.DatabaseUser) == "" || input.DatabasePassword == "" {
+	if strings.TrimSpace(input.DatabaseName) == "" || strings.TrimSpace(input.DatabaseUser) == "" ||
+		input.DatabasePassword == "" {
 		return errors.New("bootstrap database identity and administrator credential are required")
 	}
 	if strings.TrimSpace(input.ClickHouseUser) == "" || input.ClickHousePassword == "" {
@@ -1179,8 +1401,10 @@ func validateBootstrapInput(input BootstrapInput) error {
 	}
 	if input.Backup.Enabled {
 		if input.Backup.InstanceID == "" || input.Backup.Provider == "" || input.Backup.Region == "" ||
-			input.Backup.Bucket == "" || len(input.Backup.EncryptedCredentialPayload) == 0 ||
-			input.Backup.ValidatedAt.IsZero() || input.Backup.ServerSchedule == "" ||
+			input.Backup.Bucket == "" ||
+			len(input.Backup.EncryptedCredentialPayload) == 0 ||
+			input.Backup.ValidatedAt.IsZero() ||
+			input.Backup.ServerSchedule == "" ||
 			len(input.Backup.ServerRetention) == 0 {
 			return errors.New("bootstrap backup configuration is incomplete")
 		}

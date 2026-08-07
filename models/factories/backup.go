@@ -21,7 +21,14 @@ type BackupFactory struct {
 
 type BackupOption func(*BackupFactory)
 
-func BuildBackup(changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid.UUID, serverID, resourceID, resourceInstallationID *uuid.UUID, backupDestinationID uuid.UUID, opts ...BackupOption) models.BackupEntity {
+func BuildBackup(
+	changeID uuid.UUID,
+	changeTaskID uuid.UUID,
+	backupPolicyID uuid.UUID,
+	serverID, resourceID, resourceInstallationID *uuid.UUID,
+	backupDestinationID uuid.UUID,
+	opts ...BackupOption,
+) models.BackupEntity {
 	f := &BackupFactory{
 		BackupEntity: models.BackupEntity{
 			TargetType:             faker.Word(),
@@ -62,8 +69,25 @@ func BuildBackup(changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid
 	return f.BackupEntity
 }
 
-func CreateBackup(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid.UUID, serverID, resourceID, resourceInstallationID *uuid.UUID, backupDestinationID uuid.UUID, opts ...BackupOption) (models.BackupEntity, error) {
-	built := BuildBackup(changeID, changeTaskID, backupPolicyID, serverID, resourceID, resourceInstallationID, backupDestinationID, opts...)
+func CreateBackup(
+	ctx context.Context,
+	exec storage.Executor,
+	changeID uuid.UUID,
+	changeTaskID uuid.UUID,
+	backupPolicyID uuid.UUID,
+	serverID, resourceID, resourceInstallationID *uuid.UUID,
+	backupDestinationID uuid.UUID,
+	opts ...BackupOption,
+) (models.BackupEntity, error) {
+	built := BuildBackup(
+		changeID,
+		changeTaskID,
+		backupPolicyID,
+		serverID,
+		resourceID,
+		resourceInstallationID,
+		backupDestinationID,
+		opts...)
 
 	entity := models.BackupEntity{
 		ID:                     uuid.New(),
@@ -106,11 +130,31 @@ func CreateBackup(ctx context.Context, exec storage.Executor, changeID uuid.UUID
 	return entity, nil
 }
 
-func CreateBackups(ctx context.Context, exec storage.Executor, changeID uuid.UUID, changeTaskID uuid.UUID, backupPolicyID uuid.UUID, serverID, resourceID, resourceInstallationID *uuid.UUID, backupDestinationID uuid.UUID, count int, opts ...BackupOption) ([]models.BackupEntity, error) {
+func CreateBackups(
+	ctx context.Context,
+	exec storage.Executor,
+	changeID uuid.UUID,
+	changeTaskID uuid.UUID,
+	backupPolicyID uuid.UUID,
+	serverID, resourceID, resourceInstallationID *uuid.UUID,
+	backupDestinationID uuid.UUID,
+	count int,
+	opts ...BackupOption,
+) ([]models.BackupEntity, error) {
 	backups := make([]models.BackupEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateBackup(ctx, exec, changeID, changeTaskID, backupPolicyID, serverID, resourceID, resourceInstallationID, backupDestinationID, opts...)
+		entity, err := CreateBackup(
+			ctx,
+			exec,
+			changeID,
+			changeTaskID,
+			backupPolicyID,
+			serverID,
+			resourceID,
+			resourceInstallationID,
+			backupDestinationID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create backup %d: %w", i+1, err)
 		}

@@ -32,9 +32,13 @@ const githubCredentialPurpose = "github-app-credential"
 var (
 	ErrGitHubAlreadyConfigured = errors.New("a GitHub App is already connected")
 	ErrGitHubNotConfigured     = errors.New("GitHub is not connected")
-	ErrGitHubSetupState        = errors.New("GitHub setup state is invalid, expired, or already used")
-	ErrGitHubDependencies      = errors.New("GitHub connection has active application dependencies")
-	ErrGitHubProductionOrigin  = errors.New("GitHub App setup requires a public HTTPS origin in production")
+	ErrGitHubSetupState        = errors.New(
+		"GitHub setup state is invalid, expired, or already used",
+	)
+	ErrGitHubDependencies     = errors.New("GitHub connection has active application dependencies")
+	ErrGitHubProductionOrigin = errors.New(
+		"GitHub App setup requires a public HTTPS origin in production",
+	)
 )
 
 type GitHubCredentialMetadata struct {
@@ -82,11 +86,20 @@ type GitHubConnection struct {
 	client *githubclient.Client
 }
 
-func NewGitHubConnection(db storage.Pool, cfg config.Config, client *githubclient.Client) *GitHubConnection {
+func NewGitHubConnection(
+	db storage.Pool,
+	cfg config.Config,
+	client *githubclient.Client,
+) *GitHubConnection {
 	return &GitHubConnection{db: db, cfg: cfg, client: client}
 }
 
-func (service *GitHubConnection) StartManifest(ctx context.Context, userID uuid.UUID, ownerType, ownerLogin string, isPublic bool) (GitHubManifestStart, error) {
+func (service *GitHubConnection) StartManifest(
+	ctx context.Context,
+	userID uuid.UUID,
+	ownerType, ownerLogin string,
+	isPublic bool,
+) (GitHubManifestStart, error) {
 	instanceID, err := service.instanceID()
 	if err != nil {
 		return GitHubManifestStart{}, err
@@ -94,9 +107,16 @@ func (service *GitHubConnection) StartManifest(ctx context.Context, userID uuid.
 	if err := validateGitHubOrigin(); err != nil {
 		return GitHubManifestStart{}, err
 	}
-	if _, err := models.GitHubApp.ActiveByInstance(ctx, service.db.Executor(), instanceID); err == nil {
+	if _, err := models.GitHubApp.ActiveByInstance(
+		ctx,
+		service.db.Executor(),
+		instanceID,
+	); err == nil {
 		return GitHubManifestStart{}, ErrGitHubAlreadyConfigured
-	} else if !errors.Is(err, sql.ErrNoRows) {
+	} else if !errors.Is(
+		err,
+		sql.ErrNoRows,
+	) {
 		return GitHubManifestStart{}, err
 	}
 
@@ -110,12 +130,20 @@ func (service *GitHubConnection) StartManifest(ctx context.Context, userID uuid.
 		storedType = "User"
 	case "organization":
 		if ownerLogin == "" || strings.ContainsAny(ownerLogin, "/?#") {
-			return GitHubManifestStart{}, errors.Join(models.ErrDomainValidation, errors.New("organization login is required"))
+			return GitHubManifestStart{}, errors.Join(
+				models.ErrDomainValidation,
+				errors.New("organization login is required"),
+			)
 		}
-		action = "https://github.com/organizations/" + url.PathEscape(ownerLogin) + "/settings/apps/new"
+		action = "https://github.com/organizations/" + url.PathEscape(
+			ownerLogin,
+		) + "/settings/apps/new"
 		storedType = "Organization"
 	default:
-		return GitHubManifestStart{}, errors.Join(models.ErrDomainValidation, errors.New("owner type must be personal or organization"))
+		return GitHubManifestStart{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("owner type must be personal or organization"),
+		)
 	}
 
 	state, digest, err := service.newState()
@@ -123,39 +151,54 @@ func (service *GitHubConnection) StartManifest(ctx context.Context, userID uuid.
 		return GitHubManifestStart{}, err
 	}
 	ownerLoginValue := sql.NullString{String: ownerLogin, Valid: ownerLogin != ""}
-	_, err = models.GitHubAppSetupAttempt.Create(ctx, service.db.Executor(), models.CreateGitHubAppSetupAttemptData{
-		InstanceID:  instanceID,
-		UserID:      userID,
-		Purpose:     models.GitHubSetupManifestRegistration,
-		StatePrefix: state[:8],
-		StateDigest: digest,
-		OwnerType:   sql.NullString{String: storedType, Valid: true},
-		OwnerLogin:  ownerLoginValue,
-		ExpiresAt:   time.Now().UTC().Add(15 * time.Minute),
-	})
+	_, err = models.GitHubAppSetupAttempt.Create(
+		ctx,
+		service.db.Executor(),
+		models.CreateGitHubAppSetupAttemptData{
+			InstanceID:  instanceID,
+			UserID:      userID,
+			Purpose:     models.GitHubSetupManifestRegistration,
+			StatePrefix: state[:8],
+			StateDigest: digest,
+			OwnerType:   sql.NullString{String: storedType, Valid: true},
+			OwnerLogin:  ownerLoginValue,
+			ExpiresAt:   time.Now().UTC().Add(15 * time.Minute),
+		},
+	)
 	if err != nil {
 		return GitHubManifestStart{}, err
 	}
 
 	shortID := strings.ReplaceAll(instanceID.String(), "-", "")[:8]
 	manifestBytes, err := json.Marshal(map[string]any{
-		"name":                "DeployCrate CE " + shortID,
-		"url":                 config.BaseURL,
-		"redirect_url":        routes.GitHubAppCallback.FullURL(config.BaseURL),
-		"setup_url":           routes.GitHubInstallCallback.FullURL(config.BaseURL),
-		"setup_on_update":     true,
-		"public":              isPublic,
-		"hook_attributes":     map[string]any{"url": routes.GitHubWebhook.FullURL(config.BaseURL), "active": true},
+		"name":            "DeployCrate CE " + shortID,
+		"url":             config.BaseURL,
+		"redirect_url":    routes.GitHubAppCallback.FullURL(config.BaseURL),
+		"setup_url":       routes.GitHubInstallCallback.FullURL(config.BaseURL),
+		"setup_on_update": true,
+		"public":          isPublic,
+		"hook_attributes": map[string]any{
+			"url":    routes.GitHubWebhook.FullURL(config.BaseURL),
+			"active": true,
+		},
 		"default_permissions": map[string]string{"contents": "read", "metadata": "read"},
 		"default_events":      []string{"push"},
 	})
 	if err != nil {
 		return GitHubManifestStart{}, err
 	}
-	return GitHubManifestStart{Action: action + "?state=" + url.QueryEscape(state), State: state, Manifest: string(manifestBytes)}, nil
+	return GitHubManifestStart{
+		Action:   action + "?state=" + url.QueryEscape(state),
+		State:    state,
+		Manifest: string(manifestBytes),
+	}, nil
 }
 
-func (service *GitHubConnection) CompleteManifest(ctx context.Context, userID uuid.UUID, state, code string) (models.GitHubAppEntity, error) {
+func (service *GitHubConnection) CompleteManifest(
+	ctx context.Context,
+	userID uuid.UUID,
+	state, code string,
+) (models.GitHubAppEntity, error) {
 	instanceID, err := service.instanceID()
 	if err != nil {
 		return models.GitHubAppEntity{}, err
@@ -164,7 +207,14 @@ func (service *GitHubConnection) CompleteManifest(ctx context.Context, userID uu
 	if err != nil {
 		return models.GitHubAppEntity{}, ErrGitHubSetupState
 	}
-	preflightAttempt, err := models.GitHubAppSetupAttempt.LockUsable(ctx, service.db.Executor(), digest, models.GitHubSetupManifestRegistration, instanceID, userID)
+	preflightAttempt, err := models.GitHubAppSetupAttempt.LockUsable(
+		ctx,
+		service.db.Executor(),
+		digest,
+		models.GitHubSetupManifestRegistration,
+		instanceID,
+		userID,
+	)
 	if err != nil {
 		return models.GitHubAppEntity{}, ErrGitHubSetupState
 	}
@@ -178,16 +228,40 @@ func (service *GitHubConnection) CompleteManifest(ctx context.Context, userID uu
 		registration.WebhookSecret == "" || registration.Slug == "" || registration.Name == "" ||
 		registration.Owner.ID <= 0 || registration.Owner.Login == "" || registration.HTMLURL == "" ||
 		registration.Permissions["contents"] != "read" || registration.Permissions["metadata"] != "read" ||
-		!containsGitHubEvent(registration.Events, "push") || githubclient.ValidateAppAuthentication(auth) != nil {
-		return models.GitHubAppEntity{}, errors.New("GitHub returned an incomplete or incompatible App registration")
+		!containsGitHubEvent(
+			registration.Events,
+			"push",
+		) || githubclient.ValidateAppAuthentication(auth) != nil {
+		return models.GitHubAppEntity{}, errors.New(
+			"GitHub returned an incomplete or incompatible App registration",
+		)
 	}
 	if !matchesGitHubOwner(preflightAttempt, registration.Owner.Type, registration.Owner.Login) {
-		return models.GitHubAppEntity{}, errors.New("GitHub created the App for a different owner than the selected account")
+		return models.GitHubAppEntity{}, errors.New(
+			"GitHub created the App for a different owner than the selected account",
+		)
 	}
 
-	metadata, _ := json.Marshal(GitHubCredentialMetadata{SchemaVersion: 1, InstanceID: instanceID.String(), CredentialKind: models.GitHubCredentialProvider})
-	payload, _ := json.Marshal(GitHubCredentialPayload{SchemaVersion: 1, PrivateKeyPEM: registration.PEM, WebhookSecret: registration.WebhookSecret, ClientSecret: registration.ClientSecret})
-	encrypted, err := secretcrypto.EncryptForPurpose(payload, service.cfg.App.SessionEncryptionKey, githubCredentialPurpose)
+	metadata, _ := json.Marshal(
+		GitHubCredentialMetadata{
+			SchemaVersion:  1,
+			InstanceID:     instanceID.String(),
+			CredentialKind: models.GitHubCredentialProvider,
+		},
+	)
+	payload, _ := json.Marshal(
+		GitHubCredentialPayload{
+			SchemaVersion: 1,
+			PrivateKeyPEM: registration.PEM,
+			WebhookSecret: registration.WebhookSecret,
+			ClientSecret:  registration.ClientSecret,
+		},
+	)
+	encrypted, err := secretcrypto.EncryptForPurpose(
+		payload,
+		service.cfg.App.SessionEncryptionKey,
+		githubCredentialPurpose,
+	)
 	if err != nil {
 		return models.GitHubAppEntity{}, err
 	}
@@ -200,10 +274,21 @@ func (service *GitHubConnection) CompleteManifest(ctx context.Context, userID uu
 		return models.GitHubAppEntity{}, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "github-app:"+instanceID.String()); err != nil {
+	if _, err := tx.ExecContext(
+		ctx,
+		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+		"github-app:"+instanceID.String(),
+	); err != nil {
 		return models.GitHubAppEntity{}, err
 	}
-	attempt, err := models.GitHubAppSetupAttempt.LockUsable(ctx, tx, digest, models.GitHubSetupManifestRegistration, instanceID, userID)
+	attempt, err := models.GitHubAppSetupAttempt.LockUsable(
+		ctx,
+		tx,
+		digest,
+		models.GitHubSetupManifestRegistration,
+		instanceID,
+		userID,
+	)
 	if err != nil {
 		return models.GitHubAppEntity{}, ErrGitHubSetupState
 	}
@@ -213,11 +298,39 @@ func (service *GitHubConnection) CompleteManifest(ctx context.Context, userID uu
 		return models.GitHubAppEntity{}, err
 	}
 	now := time.Now().UTC()
-	credential, err := models.Credential.Create(ctx, tx, models.CreateCredentialData{Name: "GitHub App " + registration.Name, Provider: models.GitHubCredentialProvider, Metadata: metadata, EncPayload: encrypted, VerifiedAt: sql.NullTime{Time: now, Valid: true}})
+	credential, err := models.Credential.Create(
+		ctx,
+		tx,
+		models.CreateCredentialData{
+			Name:       "GitHub App " + registration.Name,
+			Provider:   models.GitHubCredentialProvider,
+			Metadata:   metadata,
+			EncPayload: encrypted,
+			VerifiedAt: sql.NullTime{Time: now, Valid: true},
+		},
+	)
 	if err != nil {
 		return models.GitHubAppEntity{}, err
 	}
-	app, err := models.GitHubApp.Create(ctx, tx, models.CreateGitHubAppData{CredentialID: credential.ID, InstanceID: instanceID, ExternalID: registration.ID, ClientID: registration.ClientID, Slug: registration.Slug, Name: registration.Name, OwnerID: registration.Owner.ID, OwnerLogin: registration.Owner.Login, OwnerType: registration.Owner.Type, HTMLURL: registration.HTMLURL, Permissions: permissions, Events: events, VerifiedAt: sql.NullTime{Time: now, Valid: true}})
+	app, err := models.GitHubApp.Create(
+		ctx,
+		tx,
+		models.CreateGitHubAppData{
+			CredentialID: credential.ID,
+			InstanceID:   instanceID,
+			ExternalID:   registration.ID,
+			ClientID:     registration.ClientID,
+			Slug:         registration.Slug,
+			Name:         registration.Name,
+			OwnerID:      registration.Owner.ID,
+			OwnerLogin:   registration.Owner.Login,
+			OwnerType:    registration.Owner.Type,
+			HTMLURL:      registration.HTMLURL,
+			Permissions:  permissions,
+			Events:       events,
+			VerifiedAt:   sql.NullTime{Time: now, Valid: true},
+		},
+	)
 	if err != nil {
 		return models.GitHubAppEntity{}, err
 	}
@@ -230,7 +343,11 @@ func (service *GitHubConnection) CompleteManifest(ctx context.Context, userID uu
 	return app, nil
 }
 
-func (service *GitHubConnection) StartInstallation(ctx context.Context, userID uuid.UUID, ownerType, ownerLogin string) (string, error) {
+func (service *GitHubConnection) StartInstallation(
+	ctx context.Context,
+	userID uuid.UUID,
+	ownerType, ownerLogin string,
+) (string, error) {
 	instanceID, err := service.instanceID()
 	if err != nil {
 		return "", err
@@ -247,14 +364,34 @@ func (service *GitHubConnection) StartInstallation(ctx context.Context, userID u
 	if err != nil {
 		return "", err
 	}
-	_, err = models.GitHubAppSetupAttempt.Create(ctx, service.db.Executor(), models.CreateGitHubAppSetupAttemptData{InstanceID: instanceID, UserID: userID, Purpose: models.GitHubSetupInstallation, StatePrefix: state[:8], StateDigest: digest, OwnerType: targetType, OwnerLogin: targetLogin, ExpiresAt: time.Now().UTC().Add(15 * time.Minute)})
+	_, err = models.GitHubAppSetupAttempt.Create(
+		ctx,
+		service.db.Executor(),
+		models.CreateGitHubAppSetupAttemptData{
+			InstanceID:  instanceID,
+			UserID:      userID,
+			Purpose:     models.GitHubSetupInstallation,
+			StatePrefix: state[:8],
+			StateDigest: digest,
+			OwnerType:   targetType,
+			OwnerLogin:  targetLogin,
+			ExpiresAt:   time.Now().UTC().Add(15 * time.Minute),
+		},
+	)
 	if err != nil {
 		return "", err
 	}
-	return "https://github.com/apps/" + url.PathEscape(app.Slug) + "/installations/new?state=" + url.QueryEscape(state), nil
+	return "https://github.com/apps/" + url.PathEscape(
+		app.Slug,
+	) + "/installations/new?state=" + url.QueryEscape(
+		state,
+	), nil
 }
 
-func (service *GitHubConnection) installationTarget(ctx context.Context, ownerType, ownerLogin string) (sql.NullString, sql.NullString, int64, error) {
+func (service *GitHubConnection) installationTarget(
+	ctx context.Context,
+	ownerType, ownerLogin string,
+) (sql.NullString, sql.NullString, int64, error) {
 	ownerType = strings.ToLower(strings.TrimSpace(ownerType))
 	ownerLogin = strings.TrimSpace(ownerLogin)
 	switch ownerType {
@@ -262,22 +399,45 @@ func (service *GitHubConnection) installationTarget(ctx context.Context, ownerTy
 		return sql.NullString{String: "User", Valid: true}, sql.NullString{}, 0, nil
 	case "organization":
 		if ownerLogin == "" || strings.ContainsAny(ownerLogin, "/?#") {
-			return sql.NullString{}, sql.NullString{}, 0, errors.Join(models.ErrDomainValidation, errors.New("organization login is required"))
+			return sql.NullString{}, sql.NullString{}, 0, errors.Join(
+				models.ErrDomainValidation,
+				errors.New("organization login is required"),
+			)
 		}
 		account, err := service.client.LookupAccount(ctx, ownerLogin)
 		if err != nil {
-			return sql.NullString{}, sql.NullString{}, 0, errors.Join(models.ErrDomainValidation, fmt.Errorf("GitHub could not be found for the organization login: %w", err))
+			return sql.NullString{}, sql.NullString{}, 0, errors.Join(
+				models.ErrDomainValidation,
+				fmt.Errorf("GitHub could not be found for the organization login: %w", err),
+			)
 		}
 		if account.Type != "Organization" {
-			return sql.NullString{}, sql.NullString{}, 0, errors.Join(models.ErrDomainValidation, errors.New("the selected login is not a GitHub organization"))
+			return sql.NullString{}, sql.NullString{}, 0, errors.Join(
+				models.ErrDomainValidation,
+				errors.New("the selected login is not a GitHub organization"),
+			)
 		}
-		return sql.NullString{String: "Organization", Valid: true}, sql.NullString{String: account.Login, Valid: true}, account.ID, nil
+		return sql.NullString{
+				String: "Organization",
+				Valid:  true,
+			}, sql.NullString{
+				String: account.Login,
+				Valid:  true,
+			}, account.ID, nil
 	default:
-		return sql.NullString{}, sql.NullString{}, 0, errors.Join(models.ErrDomainValidation, errors.New("owner type must be personal or organization"))
+		return sql.NullString{}, sql.NullString{}, 0, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("owner type must be personal or organization"),
+		)
 	}
 }
 
-func (service *GitHubConnection) CompleteInstallation(ctx context.Context, userID uuid.UUID, state string, externalID int64) (models.GitHubInstallationEntity, error) {
+func (service *GitHubConnection) CompleteInstallation(
+	ctx context.Context,
+	userID uuid.UUID,
+	state string,
+	externalID int64,
+) (models.GitHubInstallationEntity, error) {
 	instanceID, err := service.instanceID()
 	if err != nil {
 		return models.GitHubInstallationEntity{}, err
@@ -286,7 +446,14 @@ func (service *GitHubConnection) CompleteInstallation(ctx context.Context, userI
 	if err != nil {
 		return models.GitHubInstallationEntity{}, ErrGitHubSetupState
 	}
-	attempt, err := models.GitHubAppSetupAttempt.LockUsable(ctx, service.db.Executor(), digest, models.GitHubSetupInstallation, instanceID, userID)
+	attempt, err := models.GitHubAppSetupAttempt.LockUsable(
+		ctx,
+		service.db.Executor(),
+		digest,
+		models.GitHubSetupInstallation,
+		instanceID,
+		userID,
+	)
 	if err != nil {
 		return models.GitHubInstallationEntity{}, ErrGitHubSetupState
 	}
@@ -295,14 +462,23 @@ func (service *GitHubConnection) CompleteInstallation(ctx context.Context, userI
 		return models.GitHubInstallationEntity{}, err
 	}
 	if !matchesGitHubOwner(attempt, installation.AccountType, installation.AccountLogin) {
-		return models.GitHubInstallationEntity{}, errors.New("GitHub installed the App on a different account than the one selected")
+		return models.GitHubInstallationEntity{}, errors.New(
+			"GitHub installed the App on a different account than the one selected",
+		)
 	}
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return models.GitHubInstallationEntity{}, err
 	}
 	defer tx.Rollback()
-	attempt, err = models.GitHubAppSetupAttempt.LockUsable(ctx, tx, digest, models.GitHubSetupInstallation, instanceID, userID)
+	attempt, err = models.GitHubAppSetupAttempt.LockUsable(
+		ctx,
+		tx,
+		digest,
+		models.GitHubSetupInstallation,
+		instanceID,
+		userID,
+	)
 	if err != nil {
 		return models.GitHubInstallationEntity{}, ErrGitHubSetupState
 	}
@@ -315,18 +491,26 @@ func (service *GitHubConnection) CompleteInstallation(ctx context.Context, userI
 	return installation, nil
 }
 
-func (service *GitHubConnection) Synchronize(ctx context.Context, id uuid.UUID) (models.GitHubInstallationEntity, error) {
+func (service *GitHubConnection) Synchronize(
+	ctx context.Context,
+	id uuid.UUID,
+) (models.GitHubInstallationEntity, error) {
 	installation, err := models.GitHubInstallation.Find(ctx, service.db.Executor(), id)
 	if err != nil {
 		return models.GitHubInstallationEntity{}, err
 	}
 	if installation.ArchivedAt.Valid {
-		return models.GitHubInstallationEntity{}, errors.New("archived GitHub installations cannot be synchronized")
+		return models.GitHubInstallationEntity{}, errors.New(
+			"archived GitHub installations cannot be synchronized",
+		)
 	}
 	return service.synchronizeExternal(ctx, installation.ExternalID)
 }
 
-func (service *GitHubConnection) synchronizeExternal(ctx context.Context, externalID int64) (models.GitHubInstallationEntity, error) {
+func (service *GitHubConnection) synchronizeExternal(
+	ctx context.Context,
+	externalID int64,
+) (models.GitHubInstallationEntity, error) {
 	instanceID, err := service.instanceID()
 	if err != nil {
 		return models.GitHubInstallationEntity{}, err
@@ -344,7 +528,9 @@ func (service *GitHubConnection) synchronizeExternal(ctx context.Context, extern
 		return models.GitHubInstallationEntity{}, err
 	}
 	if providerInstallation.AppID != app.ExternalID {
-		return models.GitHubInstallationEntity{}, errors.New("GitHub installation does not belong to the active App")
+		return models.GitHubInstallationEntity{}, errors.New(
+			"GitHub installation does not belong to the active App",
+		)
 	}
 	providerRepositories, err := service.client.ListInstallationRepositories(ctx, auth, externalID)
 	if err != nil {
@@ -363,7 +549,22 @@ func (service *GitHubConnection) synchronizeExternal(ctx context.Context, extern
 		return models.GitHubInstallationEntity{}, err
 	}
 	defer tx.Rollback()
-	installation, err := models.GitHubInstallation.Upsert(ctx, tx, models.UpsertGitHubInstallationData{GitHubAppID: app.ID, ExternalID: providerInstallation.ID, AccountID: providerInstallation.Account.ID, AccountLogin: providerInstallation.Account.Login, AccountType: providerInstallation.Account.Type, RepositorySelection: providerInstallation.RepositorySelection, Permissions: permissions, Events: events, SuspendedAt: suspendedAt, LastSyncedAt: sql.NullTime{Time: now, Valid: true}})
+	installation, err := models.GitHubInstallation.Upsert(
+		ctx,
+		tx,
+		models.UpsertGitHubInstallationData{
+			GitHubAppID:         app.ID,
+			ExternalID:          providerInstallation.ID,
+			AccountID:           providerInstallation.Account.ID,
+			AccountLogin:        providerInstallation.Account.Login,
+			AccountType:         providerInstallation.Account.Type,
+			RepositorySelection: providerInstallation.RepositorySelection,
+			Permissions:         permissions,
+			Events:              events,
+			SuspendedAt:         suspendedAt,
+			LastSyncedAt:        sql.NullTime{Time: now, Valid: true},
+		},
+	)
 	if err != nil {
 		return models.GitHubInstallationEntity{}, err
 	}
@@ -376,11 +577,32 @@ func (service *GitHubConnection) synchronizeExternal(ctx context.Context, extern
 			visibility = "public"
 		}
 		externalIDs = append(externalIDs, repository.ID)
-		if _, err := models.GitHubRepository.Upsert(ctx, tx, models.UpsertGitHubRepositoryData{GitHubInstallationID: installation.ID, ExternalID: repository.ID, NodeID: repository.NodeID, OwnerLogin: repository.Owner.Login, Name: repository.Name, FullName: repository.FullName, DefaultBranch: repository.DefaultBranch, Visibility: visibility, HTMLURL: repository.HTMLURL, LastSyncedAt: now}); err != nil {
+		if _, err := models.GitHubRepository.Upsert(
+			ctx,
+			tx,
+			models.UpsertGitHubRepositoryData{
+				GitHubInstallationID: installation.ID,
+				ExternalID:           repository.ID,
+				NodeID:               repository.NodeID,
+				OwnerLogin:           repository.Owner.Login,
+				Name:                 repository.Name,
+				FullName:             repository.FullName,
+				DefaultBranch:        repository.DefaultBranch,
+				Visibility:           visibility,
+				HTMLURL:              repository.HTMLURL,
+				LastSyncedAt:         now,
+			},
+		); err != nil {
 			return models.GitHubInstallationEntity{}, err
 		}
 	}
-	if err := models.GitHubRepository.MarkMissingRemoved(ctx, tx, installation.ID, externalIDs, now); err != nil {
+	if err := models.GitHubRepository.MarkMissingRemoved(
+		ctx,
+		tx,
+		installation.ID,
+		externalIDs,
+		now,
+	); err != nil {
 		return models.GitHubInstallationEntity{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -412,7 +634,10 @@ func (service *GitHubConnection) Verify(ctx context.Context, id uuid.UUID) error
 	return nil
 }
 
-func (service *GitHubConnection) RotateCredential(ctx context.Context, privateKeyPEM, webhookSecret, clientSecret string) error {
+func (service *GitHubConnection) RotateCredential(
+	ctx context.Context,
+	privateKeyPEM, webhookSecret, clientSecret string,
+) error {
 	instanceID, err := service.instanceID()
 	if err != nil {
 		return err
@@ -422,16 +647,32 @@ func (service *GitHubConnection) RotateCredential(ctx context.Context, privateKe
 		return ErrGitHubNotConfigured
 	}
 	if strings.TrimSpace(webhookSecret) == "" || strings.TrimSpace(clientSecret) == "" {
-		return errors.Join(models.ErrDomainValidation, errors.New("GitHub webhook and client secrets are required"))
+		return errors.Join(
+			models.ErrDomainValidation,
+			errors.New("GitHub webhook and client secrets are required"),
+		)
 	}
-	if err := githubclient.ValidateAppAuthentication(githubclient.AppAuthentication{AppID: app.ExternalID, PrivateKeyPEM: privateKeyPEM}); err != nil {
+	if err := githubclient.ValidateAppAuthentication(
+		githubclient.AppAuthentication{AppID: app.ExternalID, PrivateKeyPEM: privateKeyPEM},
+	); err != nil {
 		return errors.Join(models.ErrDomainValidation, err)
 	}
-	payload, err := json.Marshal(GitHubCredentialPayload{SchemaVersion: 1, PrivateKeyPEM: privateKeyPEM, WebhookSecret: webhookSecret, ClientSecret: clientSecret})
+	payload, err := json.Marshal(
+		GitHubCredentialPayload{
+			SchemaVersion: 1,
+			PrivateKeyPEM: privateKeyPEM,
+			WebhookSecret: webhookSecret,
+			ClientSecret:  clientSecret,
+		},
+	)
 	if err != nil {
 		return err
 	}
-	encrypted, err := secretcrypto.EncryptForPurpose(payload, service.cfg.App.SessionEncryptionKey, githubCredentialPurpose)
+	encrypted, err := secretcrypto.EncryptForPurpose(
+		payload,
+		service.cfg.App.SessionEncryptionKey,
+		githubCredentialPurpose,
+	)
 	if err != nil {
 		return err
 	}
@@ -441,7 +682,11 @@ func (service *GitHubConnection) RotateCredential(ctx context.Context, privateKe
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "github-app:"+instanceID.String()); err != nil {
+	if _, err := tx.ExecContext(
+		ctx,
+		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+		"github-app:"+instanceID.String(),
+	); err != nil {
 		return err
 	}
 	credential, err := models.Credential.Find(ctx, tx, app.CredentialID)
@@ -449,10 +694,28 @@ func (service *GitHubConnection) RotateCredential(ctx context.Context, privateKe
 		return err
 	}
 	now := time.Now().UTC()
-	if _, err := models.Credential.Update(ctx, tx, models.UpdateCredentialData{ID: credential.ID, Name: credential.Name, Provider: credential.Provider, Metadata: credential.Metadata, EncPayload: encrypted, VerifiedAt: sql.NullTime{Time: now, Valid: true}, LastUsedAt: credential.LastUsedAt, ArchivedAt: credential.ArchivedAt}); err != nil {
+	if _, err := models.Credential.Update(
+		ctx,
+		tx,
+		models.UpdateCredentialData{
+			ID:         credential.ID,
+			Name:       credential.Name,
+			Provider:   credential.Provider,
+			Metadata:   credential.Metadata,
+			EncPayload: encrypted,
+			VerifiedAt: sql.NullTime{Time: now, Valid: true},
+			LastUsedAt: credential.LastUsedAt,
+			ArchivedAt: credential.ArchivedAt,
+		},
+	); err != nil {
 		return err
 	}
-	if _, err := tx.NewUpdate().TableExpr("github_apps").Set("verified_at = ?", now).Set("updated_at = ?", now).Where("id = ? AND archived_at IS NULL", app.ID).Exec(ctx); err != nil {
+	if _, err := tx.NewUpdate().
+		TableExpr("github_apps").
+		Set("verified_at = ?", now).
+		Set("updated_at = ?", now).
+		Where("id = ? AND archived_at IS NULL", app.ID).
+		Exec(ctx); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -494,7 +757,12 @@ func (service *GitHubConnection) ArchiveApp(ctx context.Context) error {
 		return err
 	}
 	now := time.Now().UTC()
-	if _, err := tx.NewUpdate().TableExpr("credentials").Set("archived_at = ?", now).Set("updated_at = ?", now).Where("id = ?", app.CredentialID).Exec(ctx); err != nil {
+	if _, err := tx.NewUpdate().
+		TableExpr("credentials").
+		Set("archived_at = ?", now).
+		Set("updated_at = ?", now).
+		Where("id = ?", app.CredentialID).
+		Exec(ctx); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -520,14 +788,25 @@ func (service *GitHubConnection) State(ctx context.Context) (GitHubConnectionSta
 	_, credentialErr := service.authentication(ctx, app)
 	degraded := credentialErr != nil
 	for _, installation := range installations {
-		count, countErr := service.db.Executor().NewSelect().TableExpr("github_repositories").Where("github_installation_id = ?", installation.ID).Where("removed_at IS NULL").Count(ctx)
+		count, countErr := service.db.Executor().
+			NewSelect().
+			TableExpr("github_repositories").
+			Where("github_installation_id = ?", installation.ID).
+			Where("removed_at IS NULL").
+			Count(ctx)
 		if countErr != nil {
 			return GitHubConnectionState{}, countErr
 		}
 		if installation.SuspendedAt.Valid || installation.ArchivedAt.Valid {
 			degraded = true
 		}
-		summaries = append(summaries, GitHubInstallationSummary{GitHubInstallationEntity: installation, RepositoryCount: count})
+		summaries = append(
+			summaries,
+			GitHubInstallationSummary{
+				GitHubInstallationEntity: installation,
+				RepositoryCount:          count,
+			},
+		)
 	}
 	state := GitHubConnectionState{App: &app, Installations: summaries, Degraded: degraded}
 	if credentialErr != nil {
@@ -540,7 +819,10 @@ func (service *GitHubConnection) State(ctx context.Context) (GitHubConnectionSta
 	return state, nil
 }
 
-func (service *GitHubConnection) InstallationDetail(ctx context.Context, id uuid.UUID) (GitHubInstallationDetail, error) {
+func (service *GitHubConnection) InstallationDetail(
+	ctx context.Context,
+	id uuid.UUID,
+) (GitHubInstallationDetail, error) {
 	installation, err := models.GitHubInstallation.Find(ctx, service.db.Executor(), id)
 	if errors.Is(err, sql.ErrNoRows) || installation.ArchivedAt.Valid {
 		return GitHubInstallationDetail{}, models.ErrNotFound
@@ -555,15 +837,22 @@ func (service *GitHubConnection) InstallationDetail(ctx context.Context, id uuid
 	if err != nil {
 		return GitHubInstallationDetail{}, err
 	}
-	repositories, err := models.GitHubRepository.ListActive(ctx, service.db.Executor(), installation.ID)
+	repositories, err := models.GitHubRepository.ListActive(
+		ctx,
+		service.db.Executor(),
+		installation.ID,
+	)
 	if err != nil {
 		return GitHubInstallationDetail{}, err
 	}
 	_, credentialErr := service.authentication(ctx, app)
 	degraded := credentialErr != nil || installation.SuspendedAt.Valid
 	detail := GitHubInstallationDetail{
-		App:           app,
-		Installation:  GitHubInstallationSummary{GitHubInstallationEntity: installation, RepositoryCount: len(repositories)},
+		App: app,
+		Installation: GitHubInstallationSummary{
+			GitHubInstallationEntity: installation,
+			RepositoryCount:          len(repositories),
+		},
 		Repositories:  repositories,
 		Degraded:      degraded,
 		HealthMessage: "GitHub App credentials and installation access are available",
@@ -576,24 +865,41 @@ func (service *GitHubConnection) InstallationDetail(ctx context.Context, id uuid
 	return detail, nil
 }
 
-func (service *GitHubConnection) authentication(ctx context.Context, app models.GitHubAppEntity) (githubclient.AppAuthentication, error) {
+func (service *GitHubConnection) authentication(
+	ctx context.Context,
+	app models.GitHubAppEntity,
+) (githubclient.AppAuthentication, error) {
 	credential, err := models.Credential.Find(ctx, service.db.Executor(), app.CredentialID)
 	if err != nil {
 		return githubclient.AppAuthentication{}, err
 	}
 	var metadata GitHubCredentialMetadata
-	if json.Unmarshal(credential.Metadata, &metadata) != nil || metadata.InstanceID != app.InstanceID.String() || metadata.CredentialKind != models.GitHubCredentialProvider {
-		return githubclient.AppAuthentication{}, errors.New("GitHub App credential metadata does not match this instance")
+	if json.Unmarshal(credential.Metadata, &metadata) != nil ||
+		metadata.InstanceID != app.InstanceID.String() ||
+		metadata.CredentialKind != models.GitHubCredentialProvider {
+		return githubclient.AppAuthentication{}, errors.New(
+			"GitHub App credential metadata does not match this instance",
+		)
 	}
-	plaintext, err := secretcrypto.DecryptForPurpose(credential.EncPayload, service.cfg.App.SessionEncryptionKey, githubCredentialPurpose)
+	plaintext, err := secretcrypto.DecryptForPurpose(
+		credential.EncPayload,
+		service.cfg.App.SessionEncryptionKey,
+		githubCredentialPurpose,
+	)
 	if err != nil {
-		return githubclient.AppAuthentication{}, errors.New("GitHub App credential could not be decrypted")
+		return githubclient.AppAuthentication{}, errors.New(
+			"GitHub App credential could not be decrypted",
+		)
 	}
 	var payload GitHubCredentialPayload
-	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 || payload.PrivateKeyPEM == "" {
+	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 ||
+		payload.PrivateKeyPEM == "" {
 		return githubclient.AppAuthentication{}, errors.New("GitHub App credential is invalid")
 	}
-	return githubclient.AppAuthentication{AppID: app.ExternalID, PrivateKeyPEM: payload.PrivateKeyPEM}, nil
+	return githubclient.AppAuthentication{
+		AppID:         app.ExternalID,
+		PrivateKeyPEM: payload.PrivateKeyPEM,
+	}, nil
 }
 
 func (service *GitHubConnection) ResolveRevision(
@@ -605,7 +911,8 @@ func (service *GitHubConnection) ResolveRevision(
 	if service.client == nil {
 		return "", errors.New("GitHub provider client is unavailable")
 	}
-	if installation.ArchivedAt.Valid || installation.SuspendedAt.Valid || repository.RemovedAt.Valid ||
+	if installation.ArchivedAt.Valid || installation.SuspendedAt.Valid ||
+		repository.RemovedAt.Valid ||
 		repository.GitHubInstallationID != installation.ID {
 		return "", errors.New("GitHub source is unavailable")
 	}
@@ -617,7 +924,13 @@ func (service *GitHubConnection) ResolveRevision(
 	if err != nil {
 		return "", err
 	}
-	return service.client.ResolveRevision(ctx, authentication, installation.ExternalID, repository.FullName, reference)
+	return service.client.ResolveRevision(
+		ctx,
+		authentication,
+		installation.ExternalID,
+		repository.FullName,
+		reference,
+	)
 }
 
 func (service *GitHubConnection) DownloadArchive(
@@ -630,7 +943,8 @@ func (service *GitHubConnection) DownloadArchive(
 	if service.client == nil {
 		return errors.New("GitHub provider client is unavailable")
 	}
-	if installation.ArchivedAt.Valid || installation.SuspendedAt.Valid || repository.RemovedAt.Valid ||
+	if installation.ArchivedAt.Valid || installation.SuspendedAt.Valid ||
+		repository.RemovedAt.Valid ||
 		repository.GitHubInstallationID != installation.ID {
 		return errors.New("GitHub source is unavailable")
 	}
@@ -642,20 +956,35 @@ func (service *GitHubConnection) DownloadArchive(
 	if err != nil {
 		return err
 	}
-	return service.client.DownloadArchive(ctx, authentication, installation.ExternalID, repository.FullName, revision, destination)
+	return service.client.DownloadArchive(
+		ctx,
+		authentication,
+		installation.ExternalID,
+		repository.FullName,
+		revision,
+		destination,
+	)
 }
 
-func (service *GitHubConnection) webhookSecret(ctx context.Context, app models.GitHubAppEntity) (string, error) {
+func (service *GitHubConnection) webhookSecret(
+	ctx context.Context,
+	app models.GitHubAppEntity,
+) (string, error) {
 	credential, err := models.Credential.Find(ctx, service.db.Executor(), app.CredentialID)
 	if err != nil {
 		return "", err
 	}
-	plaintext, err := secretcrypto.DecryptForPurpose(credential.EncPayload, service.cfg.App.SessionEncryptionKey, githubCredentialPurpose)
+	plaintext, err := secretcrypto.DecryptForPurpose(
+		credential.EncPayload,
+		service.cfg.App.SessionEncryptionKey,
+		githubCredentialPurpose,
+	)
 	if err != nil {
 		return "", errors.New("GitHub App credential could not be decrypted")
 	}
 	var payload GitHubCredentialPayload
-	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 || payload.WebhookSecret == "" {
+	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 ||
+		payload.WebhookSecret == "" {
 		return "", errors.New("GitHub App webhook credential is invalid")
 	}
 	return payload.WebhookSecret, nil
@@ -698,7 +1027,10 @@ func validateGitHubOrigin() error {
 		return nil
 	}
 	parsed, err := url.Parse(config.BaseURL)
-	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" || parsed.Hostname() == "localhost" || parsed.Hostname() == "0.0.0.0" || parsed.Hostname() == "::" {
+	if err != nil || parsed.Scheme != "https" || parsed.Hostname() == "" ||
+		parsed.Hostname() == "localhost" ||
+		parsed.Hostname() == "0.0.0.0" ||
+		parsed.Hostname() == "::" {
 		return ErrGitHubProductionOrigin
 	}
 	return nil
@@ -708,9 +1040,14 @@ func containsGitHubEvent(values []string, expected string) bool {
 	return slices.Contains(values, expected)
 }
 
-func matchesGitHubOwner(attempt models.GitHubAppSetupAttemptEntity, ownerType, ownerLogin string) bool {
-	if !attempt.OwnerType.Valid || !strings.EqualFold(attempt.OwnerType.String, strings.TrimSpace(ownerType)) {
+func matchesGitHubOwner(
+	attempt models.GitHubAppSetupAttemptEntity,
+	ownerType, ownerLogin string,
+) bool {
+	if !attempt.OwnerType.Valid ||
+		!strings.EqualFold(attempt.OwnerType.String, strings.TrimSpace(ownerType)) {
 		return false
 	}
-	return !attempt.OwnerLogin.Valid || strings.EqualFold(attempt.OwnerLogin.String, strings.TrimSpace(ownerLogin))
+	return !attempt.OwnerLogin.Valid ||
+		strings.EqualFold(attempt.OwnerLogin.String, strings.TrimSpace(ownerLogin))
 }

@@ -20,7 +20,12 @@ type BackupPolicyFactory struct {
 
 type BackupPolicyOption func(*BackupPolicyFactory)
 
-func BuildBackupPolicy(serverID *uuid.UUID, resourceID *uuid.UUID, backupDestinationID uuid.UUID, opts ...BackupPolicyOption) models.BackupPolicyEntity {
+func BuildBackupPolicy(
+	serverID *uuid.UUID,
+	resourceID *uuid.UUID,
+	backupDestinationID uuid.UUID,
+	opts ...BackupPolicyOption,
+) models.BackupPolicyEntity {
 	f := &BackupPolicyFactory{
 		BackupPolicyEntity: models.BackupPolicyEntity{
 			Name:                faker.Word(),
@@ -50,7 +55,14 @@ func BuildBackupPolicy(serverID *uuid.UUID, resourceID *uuid.UUID, backupDestina
 	return f.BackupPolicyEntity
 }
 
-func CreateBackupPolicy(ctx context.Context, exec storage.Executor, serverID *uuid.UUID, resourceID *uuid.UUID, backupDestinationID uuid.UUID, opts ...BackupPolicyOption) (models.BackupPolicyEntity, error) {
+func CreateBackupPolicy(
+	ctx context.Context,
+	exec storage.Executor,
+	serverID *uuid.UUID,
+	resourceID *uuid.UUID,
+	backupDestinationID uuid.UUID,
+	opts ...BackupPolicyOption,
+) (models.BackupPolicyEntity, error) {
 	built := BuildBackupPolicy(serverID, resourceID, backupDestinationID, opts...)
 
 	entity := models.BackupPolicyEntity{
@@ -83,11 +95,25 @@ func CreateBackupPolicy(ctx context.Context, exec storage.Executor, serverID *uu
 	return entity, nil
 }
 
-func CreateBackupPolicys(ctx context.Context, exec storage.Executor, serverID *uuid.UUID, resourceID *uuid.UUID, backupDestinationID uuid.UUID, count int, opts ...BackupPolicyOption) ([]models.BackupPolicyEntity, error) {
+func CreateBackupPolicys(
+	ctx context.Context,
+	exec storage.Executor,
+	serverID *uuid.UUID,
+	resourceID *uuid.UUID,
+	backupDestinationID uuid.UUID,
+	count int,
+	opts ...BackupPolicyOption,
+) ([]models.BackupPolicyEntity, error) {
 	backuppolicys := make([]models.BackupPolicyEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateBackupPolicy(ctx, exec, serverID, resourceID, backupDestinationID, opts...)
+		entity, err := CreateBackupPolicy(
+			ctx,
+			exec,
+			serverID,
+			resourceID,
+			backupDestinationID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create backuppolicy %d: %w", i+1, err)
 		}

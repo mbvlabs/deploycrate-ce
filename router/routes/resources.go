@@ -8,12 +8,37 @@ var Resources = routing.NewSimpleRoute("", "resources.index", ResourcesPrefix)
 var ResourceNew = routing.NewSimpleRoute("/new", "resources.new", ResourcesPrefix)
 var ResourceCreate = routing.NewSimpleRoute("", "resources.create", ResourcesPrefix)
 var ResourceShow = routing.NewRouteWithUUIDID("/:id", "resources.show", ResourcesPrefix)
-var ResourceDatabases = routing.NewRouteWithUUIDID("/:id/databases", "resources.databases", ResourcesPrefix)
-var ResourceBackups = routing.NewRouteWithUUIDID("/:id/backups", "resources.backups", ResourcesPrefix)
-var ResourceEndpoints = routing.NewRouteWithUUIDID("/:id/endpoints", "resources.endpoints", ResourcesPrefix)
-var ResourceCredentials = routing.NewRouteWithUUIDID("/:id/credentials", "resources.credentials", ResourcesPrefix)
+
+var ResourceDatabases = routing.NewRouteWithUUIDID(
+	"/:id/databases",
+	"resources.databases",
+	ResourcesPrefix,
+)
+
+var ResourceBackups = routing.NewRouteWithUUIDID(
+	"/:id/backups",
+	"resources.backups",
+	ResourcesPrefix,
+)
+
+var ResourceEndpoints = routing.NewRouteWithUUIDID(
+	"/:id/endpoints",
+	"resources.endpoints",
+	ResourcesPrefix,
+)
+
+var ResourceCredentials = routing.NewRouteWithUUIDID(
+	"/:id/credentials",
+	"resources.credentials",
+	ResourcesPrefix,
+)
 var ResourceHealth = routing.NewRouteWithUUIDID("/:id/health", "resources.health", ResourcesPrefix)
-var ResourceSettings = routing.NewRouteWithUUIDID("/:id/settings", "resources.settings", ResourcesPrefix)
+
+var ResourceSettings = routing.NewRouteWithUUIDID(
+	"/:id/settings",
+	"resources.settings",
+	ResourcesPrefix,
+)
 var ResourceDeploy = routing.NewRouteWithUUIDID("/:id/deploy", "resources.deploy", ResourcesPrefix)
 var ResourceUpdate = routing.NewRouteWithUUIDID("/:id", "resources.update", ResourcesPrefix)
 var ResourceDestroy = routing.NewRouteWithUUIDID("/:id", "resources.destroy", ResourcesPrefix)
@@ -34,72 +59,209 @@ type ResourceEndpointParams struct {
 	EndpointID string `param:"endpointID"`
 }
 
-var ResourceEndpointCreate = routing.NewRouteWithUUIDID("/:id/endpoints", "resources.endpoints.create", ResourcesPrefix)
-var ResourceEndpointUpdate = routing.NewRouteWithParams[ResourceEndpointParams]("/:id/endpoints/:endpointID", "resources.endpoints.update", ResourcesPrefix)
-var ResourceEndpointDestroy = routing.NewRouteWithParams[ResourceEndpointParams]("/:id/endpoints/:endpointID", "resources.endpoints.destroy", ResourcesPrefix)
-var ResourceDatabaseCreateForResource = routing.NewRouteWithUUIDID("/:id/databases", "resources.databases.resource.create", ResourcesPrefix)
+var ResourceEndpointCreate = routing.NewRouteWithUUIDID(
+	"/:id/endpoints",
+	"resources.endpoints.create",
+	ResourcesPrefix,
+)
 
-var ResourcePrivateAccessCreate = routing.NewRouteWithUUIDID("/:id/private-access", "resources.private-access.create", ResourcesPrefix)
-var ResourcePrivateAccessDestroy = routing.NewRouteWithUUIDID("/:id/private-access", "resources.private-access.destroy", ResourcesPrefix)
+var ResourceEndpointUpdate = routing.NewRouteWithParams[ResourceEndpointParams](
+	"/:id/endpoints/:endpointID",
+	"resources.endpoints.update",
+	ResourcesPrefix,
+)
+
+var ResourceEndpointDestroy = routing.NewRouteWithParams[ResourceEndpointParams](
+	"/:id/endpoints/:endpointID",
+	"resources.endpoints.destroy",
+	ResourcesPrefix,
+)
+
+var ResourceDatabaseCreateForResource = routing.NewRouteWithUUIDID(
+	"/:id/databases",
+	"resources.databases.resource.create",
+	ResourcesPrefix,
+)
+
+var ResourcePrivateAccessCreate = routing.NewRouteWithUUIDID(
+	"/:id/private-access",
+	"resources.private-access.create",
+	ResourcesPrefix,
+)
+
+var ResourcePrivateAccessDestroy = routing.NewRouteWithUUIDID(
+	"/:id/private-access",
+	"resources.private-access.destroy",
+	ResourcesPrefix,
+)
 
 type ResourcePrivateAccessDeviceParams struct {
 	ResourceID string `param:"id"`
 	DeviceID   string `param:"deviceID"`
 }
 
-var ResourcePrivateAccessDeviceCreate = routing.NewRouteWithUUIDID("/:id/private-access/devices", "resources.private-access.devices.create", ResourcesPrefix)
-var ResourcePrivateAccessDeviceDestroy = routing.NewRouteWithParams[ResourcePrivateAccessDeviceParams]("/:id/private-access/devices/:deviceID", "resources.private-access.devices.destroy", ResourcesPrefix)
+var ResourcePrivateAccessDeviceCreate = routing.NewRouteWithUUIDID(
+	"/:id/private-access/devices",
+	"resources.private-access.devices.create",
+	ResourcesPrefix,
+)
+
+var ResourcePrivateAccessDeviceDestroy = routing.NewRouteWithParams[ResourcePrivateAccessDeviceParams](
+	"/:id/private-access/devices/:deviceID",
+	"resources.private-access.devices.destroy",
+	ResourcesPrefix,
+)
 
 type ResourceCredentialParams struct {
 	ResourceID   string `param:"id"`
 	CredentialID string `param:"credentialID"`
 }
 
-var ResourceCredentialCreate = routing.NewRouteWithUUIDID("/:id/credentials", "resources.credentials.create", ResourcesPrefix)
-var ResourceCredentialUpdate = routing.NewRouteWithParams[ResourceCredentialParams]("/:id/credentials/:credentialID", "resources.credentials.update", ResourcesPrefix)
-var ResourceCredentialDestroy = routing.NewRouteWithParams[ResourceCredentialParams]("/:id/credentials/:credentialID", "resources.credentials.destroy", ResourcesPrefix)
-var ResourceCredentialReveal = routing.NewRouteWithParams[ResourceCredentialParams]("/:id/credentials/:credentialID/reveal", "resources.credentials.reveal", ResourcesPrefix)
+var ResourceCredentialCreate = routing.NewRouteWithUUIDID(
+	"/:id/credentials",
+	"resources.credentials.create",
+	ResourcesPrefix,
+)
+
+var ResourceCredentialUpdate = routing.NewRouteWithParams[ResourceCredentialParams](
+	"/:id/credentials/:credentialID",
+	"resources.credentials.update",
+	ResourcesPrefix,
+)
+
+var ResourceCredentialDestroy = routing.NewRouteWithParams[ResourceCredentialParams](
+	"/:id/credentials/:credentialID",
+	"resources.credentials.destroy",
+	ResourcesPrefix,
+)
+
+var ResourceCredentialReveal = routing.NewRouteWithParams[ResourceCredentialParams](
+	"/:id/credentials/:credentialID/reveal",
+	"resources.credentials.reveal",
+	ResourcesPrefix,
+)
 
 type ResourceInstallationParams struct {
 	ResourceID     string `param:"id"`
 	InstallationID string `param:"installationID"`
 }
 
-var ResourceInstallationCreate = routing.NewRouteWithUUIDID("/:id/installations", "resources.installations.create", ResourcesPrefix)
-var ResourceInstallationUpdate = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID", "resources.installations.update", ResourcesPrefix)
-var ResourceInstallationDestroy = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID", "resources.installations.destroy", ResourcesPrefix)
-var ResourceInstallationLogs = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID/logs", "resources.installations.logs", ResourcesPrefix)
-var ResourceInstallationStart = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID/start", "resources.installations.start", ResourcesPrefix)
-var ResourceInstallationStop = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID/stop", "resources.installations.stop", ResourcesPrefix)
-var ResourceInstallationRestart = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID/restart", "resources.installations.restart", ResourcesPrefix)
-var ResourceInstallationRemove = routing.NewRouteWithParams[ResourceInstallationParams]("/:id/installations/:installationID/remove", "resources.installations.remove", ResourcesPrefix)
+var ResourceInstallationCreate = routing.NewRouteWithUUIDID(
+	"/:id/installations",
+	"resources.installations.create",
+	ResourcesPrefix,
+)
+
+var ResourceInstallationUpdate = routing.NewRouteWithParams[ResourceInstallationParams](
+	"/:id/installations/:installationID",
+	"resources.installations.update",
+	ResourcesPrefix,
+)
+
+var ResourceInstallationDestroy = routing.NewRouteWithParams[ResourceInstallationParams](
+	"/:id/installations/:installationID",
+	"resources.installations.destroy",
+	ResourcesPrefix,
+)
+
+var ResourceInstallationLogs = routing.NewRouteWithParams[ResourceInstallationParams](
+	"/:id/installations/:installationID/logs",
+	"resources.installations.logs",
+	ResourcesPrefix,
+)
+
+var ResourceInstallationStart = routing.NewRouteWithParams[ResourceInstallationParams](
+	"/:id/installations/:installationID/start",
+	"resources.installations.start",
+	ResourcesPrefix,
+)
+
+var ResourceInstallationStop = routing.NewRouteWithParams[ResourceInstallationParams](
+	"/:id/installations/:installationID/stop",
+	"resources.installations.stop",
+	ResourcesPrefix,
+)
+
+var ResourceInstallationRestart = routing.NewRouteWithParams[ResourceInstallationParams](
+	"/:id/installations/:installationID/restart",
+	"resources.installations.restart",
+	ResourcesPrefix,
+)
+
+var ResourceInstallationRemove = routing.NewRouteWithParams[ResourceInstallationParams](
+	"/:id/installations/:installationID/remove",
+	"resources.installations.remove",
+	ResourcesPrefix,
+)
 
 type ResourceVolumeParams struct {
 	ResourceID string `param:"id"`
 	VolumeID   string `param:"volumeID"`
 }
 
-var ResourceVolumeCreate = routing.NewRouteWithUUIDID("/:id/volumes", "resources.volumes.create", ResourcesPrefix)
-var ResourceVolumeUpdate = routing.NewRouteWithParams[ResourceVolumeParams]("/:id/volumes/:volumeID", "resources.volumes.update", ResourcesPrefix)
-var ResourceVolumeDestroy = routing.NewRouteWithParams[ResourceVolumeParams]("/:id/volumes/:volumeID", "resources.volumes.destroy", ResourcesPrefix)
+var ResourceVolumeCreate = routing.NewRouteWithUUIDID(
+	"/:id/volumes",
+	"resources.volumes.create",
+	ResourcesPrefix,
+)
+
+var ResourceVolumeUpdate = routing.NewRouteWithParams[ResourceVolumeParams](
+	"/:id/volumes/:volumeID",
+	"resources.volumes.update",
+	ResourcesPrefix,
+)
+
+var ResourceVolumeDestroy = routing.NewRouteWithParams[ResourceVolumeParams](
+	"/:id/volumes/:volumeID",
+	"resources.volumes.destroy",
+	ResourcesPrefix,
+)
 
 type ResourceMountParams struct {
 	ResourceID string `param:"id"`
 	MountID    string `param:"mountID"`
 }
 
-var ResourceMountCreate = routing.NewRouteWithUUIDID("/:id/mounts", "resources.mounts.create", ResourcesPrefix)
-var ResourceMountUpdate = routing.NewRouteWithParams[ResourceMountParams]("/:id/mounts/:mountID", "resources.mounts.update", ResourcesPrefix)
-var ResourceMountDestroy = routing.NewRouteWithParams[ResourceMountParams]("/:id/mounts/:mountID", "resources.mounts.destroy", ResourcesPrefix)
+var ResourceMountCreate = routing.NewRouteWithUUIDID(
+	"/:id/mounts",
+	"resources.mounts.create",
+	ResourcesPrefix,
+)
+
+var ResourceMountUpdate = routing.NewRouteWithParams[ResourceMountParams](
+	"/:id/mounts/:mountID",
+	"resources.mounts.update",
+	ResourcesPrefix,
+)
+
+var ResourceMountDestroy = routing.NewRouteWithParams[ResourceMountParams](
+	"/:id/mounts/:mountID",
+	"resources.mounts.destroy",
+	ResourcesPrefix,
+)
 
 type ResourceHealthCheckParams struct {
 	ResourceID    string `param:"id"`
 	HealthCheckID string `param:"healthCheckID"`
 }
 
-var ResourceHealthCheckCreate = routing.NewRouteWithUUIDID("/:id/health-checks", "resources.health-checks.create", ResourcesPrefix)
-var ResourceHealthCheckUpdate = routing.NewRouteWithParams[ResourceHealthCheckParams]("/:id/health-checks/:healthCheckID", "resources.health-checks.update", ResourcesPrefix)
-var ResourceHealthCheckDestroy = routing.NewRouteWithParams[ResourceHealthCheckParams]("/:id/health-checks/:healthCheckID", "resources.health-checks.destroy", ResourcesPrefix)
+var ResourceHealthCheckCreate = routing.NewRouteWithUUIDID(
+	"/:id/health-checks",
+	"resources.health-checks.create",
+	ResourcesPrefix,
+)
+
+var ResourceHealthCheckUpdate = routing.NewRouteWithParams[ResourceHealthCheckParams](
+	"/:id/health-checks/:healthCheckID",
+	"resources.health-checks.update",
+	ResourcesPrefix,
+)
+
+var ResourceHealthCheckDestroy = routing.NewRouteWithParams[ResourceHealthCheckParams](
+	"/:id/health-checks/:healthCheckID",
+	"resources.health-checks.destroy",
+	ResourcesPrefix,
+)
 
 type ResourceDatabaseParams struct {
 	ResourceID   string `param:"id"`
@@ -112,10 +274,44 @@ type ResourceDatabaseBackupPolicyParams struct {
 	BackupPolicyID string `param:"backupPolicyID"`
 }
 
-var ResourceBackupPolicyCreate = routing.NewRouteWithParams[ResourceDatabaseParams]("/:id/databases/:databaseName/backups", "resources.databases.backups.create", ResourcesPrefix)
-var ResourceBackupPolicyUpdate = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams]("/:id/databases/:databaseName/backups/:backupPolicyID", "resources.databases.backups.update", ResourcesPrefix)
-var ResourceBackupPolicyPause = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams]("/:id/databases/:databaseName/backups/:backupPolicyID/pause", "resources.databases.backups.pause", ResourcesPrefix)
-var ResourceBackupPolicyResume = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams]("/:id/databases/:databaseName/backups/:backupPolicyID/resume", "resources.databases.backups.resume", ResourcesPrefix)
-var ResourceBackupPolicyDestroy = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams]("/:id/databases/:databaseName/backups/:backupPolicyID", "resources.databases.backups.destroy", ResourcesPrefix)
-var ResourceBackupPolicyRun = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams]("/:id/databases/:databaseName/backups/:backupPolicyID/run", "resources.databases.backups.run", ResourcesPrefix)
-var ResourceRestoreCreate = routing.NewRouteWithParams[ResourceDatabaseParams]("/:id/databases/:databaseName/restores", "resources.databases.restores.create", ResourcesPrefix)
+var ResourceBackupPolicyCreate = routing.NewRouteWithParams[ResourceDatabaseParams](
+	"/:id/databases/:databaseName/backups",
+	"resources.databases.backups.create",
+	ResourcesPrefix,
+)
+
+var ResourceBackupPolicyUpdate = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams](
+	"/:id/databases/:databaseName/backups/:backupPolicyID",
+	"resources.databases.backups.update",
+	ResourcesPrefix,
+)
+
+var ResourceBackupPolicyPause = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams](
+	"/:id/databases/:databaseName/backups/:backupPolicyID/pause",
+	"resources.databases.backups.pause",
+	ResourcesPrefix,
+)
+
+var ResourceBackupPolicyResume = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams](
+	"/:id/databases/:databaseName/backups/:backupPolicyID/resume",
+	"resources.databases.backups.resume",
+	ResourcesPrefix,
+)
+
+var ResourceBackupPolicyDestroy = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams](
+	"/:id/databases/:databaseName/backups/:backupPolicyID",
+	"resources.databases.backups.destroy",
+	ResourcesPrefix,
+)
+
+var ResourceBackupPolicyRun = routing.NewRouteWithParams[ResourceDatabaseBackupPolicyParams](
+	"/:id/databases/:databaseName/backups/:backupPolicyID/run",
+	"resources.databases.backups.run",
+	ResourcesPrefix,
+)
+
+var ResourceRestoreCreate = routing.NewRouteWithParams[ResourceDatabaseParams](
+	"/:id/databases/:databaseName/restores",
+	"resources.databases.restores.create",
+	ResourcesPrefix,
+)

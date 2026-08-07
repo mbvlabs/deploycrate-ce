@@ -20,7 +20,13 @@ type ReleaseFactory struct {
 
 type ReleaseOption func(*ReleaseFactory)
 
-func BuildRelease(environmentID uuid.UUID, environmentSourceID *uuid.UUID, buildID *uuid.UUID, createdByChangeID uuid.UUID, opts ...ReleaseOption) models.ReleaseEntity {
+func BuildRelease(
+	environmentID uuid.UUID,
+	environmentSourceID *uuid.UUID,
+	buildID *uuid.UUID,
+	createdByChangeID uuid.UUID,
+	opts ...ReleaseOption,
+) models.ReleaseEntity {
 	f := &ReleaseFactory{
 		ReleaseEntity: models.ReleaseEntity{
 			Version:             sql.NullString{String: faker.Word(), Valid: true},
@@ -41,7 +47,15 @@ func BuildRelease(environmentID uuid.UUID, environmentSourceID *uuid.UUID, build
 	return f.ReleaseEntity
 }
 
-func CreateRelease(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, environmentSourceID *uuid.UUID, buildID *uuid.UUID, createdByChangeID uuid.UUID, opts ...ReleaseOption) (models.ReleaseEntity, error) {
+func CreateRelease(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentID uuid.UUID,
+	environmentSourceID *uuid.UUID,
+	buildID *uuid.UUID,
+	createdByChangeID uuid.UUID,
+	opts ...ReleaseOption,
+) (models.ReleaseEntity, error) {
 	built := BuildRelease(environmentID, environmentSourceID, buildID, createdByChangeID, opts...)
 
 	entity := models.ReleaseEntity{
@@ -65,11 +79,27 @@ func CreateRelease(ctx context.Context, exec storage.Executor, environmentID uui
 	return entity, nil
 }
 
-func CreateReleases(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, environmentSourceID *uuid.UUID, buildID *uuid.UUID, createdByChangeID uuid.UUID, count int, opts ...ReleaseOption) ([]models.ReleaseEntity, error) {
+func CreateReleases(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentID uuid.UUID,
+	environmentSourceID *uuid.UUID,
+	buildID *uuid.UUID,
+	createdByChangeID uuid.UUID,
+	count int,
+	opts ...ReleaseOption,
+) ([]models.ReleaseEntity, error) {
 	releases := make([]models.ReleaseEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateRelease(ctx, exec, environmentID, environmentSourceID, buildID, createdByChangeID, opts...)
+		entity, err := CreateRelease(
+			ctx,
+			exec,
+			environmentID,
+			environmentSourceID,
+			buildID,
+			createdByChangeID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create release %d: %w", i+1, err)
 		}

@@ -16,7 +16,10 @@ type EnvironmentProcessFactory struct {
 }
 type EnvironmentProcessOption func(*EnvironmentProcessFactory)
 
-func BuildEnvironmentProcess(environmentID uuid.UUID, opts ...EnvironmentProcessOption) models.EnvironmentProcessEntity {
+func BuildEnvironmentProcess(
+	environmentID uuid.UUID,
+	opts ...EnvironmentProcessOption,
+) models.EnvironmentProcessEntity {
 	f := &EnvironmentProcessFactory{EnvironmentProcessEntity: models.EnvironmentProcessEntity{
 		Name: "web", Kind: "web", Arguments: json.RawMessage(`[]`), Replicas: 1,
 		ContainerPort: sql.NullInt32{Int32: 8080, Valid: true}, EnvironmentID: environmentID,
@@ -27,7 +30,12 @@ func BuildEnvironmentProcess(environmentID uuid.UUID, opts ...EnvironmentProcess
 	return f.EnvironmentProcessEntity
 }
 
-func CreateEnvironmentProcess(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, opts ...EnvironmentProcessOption) (models.EnvironmentProcessEntity, error) {
+func CreateEnvironmentProcess(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentID uuid.UUID,
+	opts ...EnvironmentProcessOption,
+) (models.EnvironmentProcessEntity, error) {
 	entity := BuildEnvironmentProcess(environmentID, opts...)
 	entity.ID, entity.CreatedAt, entity.UpdatedAt = uuid.New(), time.Now(), time.Now()
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {

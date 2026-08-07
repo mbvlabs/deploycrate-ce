@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"net"
 	"strconv"
@@ -47,7 +48,10 @@ func NewWorkloadExecution(db storage.Pool, sshCA SSHCAService) *WorkloadExecutio
 	}
 }
 
-func (service *WorkloadExecution) ReconcileNetwork(ctx context.Context, serverID, environmentID uuid.UUID) (string, error) {
+func (service *WorkloadExecution) ReconcileNetwork(
+	ctx context.Context,
+	serverID, environmentID uuid.UUID,
+) (string, error) {
 	target, err := service.target(ctx, serverID)
 	if err != nil {
 		return "", err
@@ -58,7 +62,11 @@ func (service *WorkloadExecution) ReconcileNetwork(ctx context.Context, serverID
 	return service.reconcileRemoteNetwork(ctx, target, environmentID)
 }
 
-func (service *WorkloadExecution) ConnectResourceContainer(ctx context.Context, serverID, environmentID uuid.UUID, attachment containerclient.ResourceContainerAttachment) error {
+func (service *WorkloadExecution) ConnectResourceContainer(
+	ctx context.Context,
+	serverID, environmentID uuid.UUID,
+	attachment containerclient.ResourceContainerAttachment,
+) error {
 	target, err := service.target(ctx, serverID)
 	if err != nil {
 		return err
@@ -69,7 +77,11 @@ func (service *WorkloadExecution) ConnectResourceContainer(ctx context.Context, 
 	return service.connectRemoteResource(ctx, target, environmentID, attachment)
 }
 
-func (service *WorkloadExecution) PruneResourceContainers(ctx context.Context, serverID, environmentID uuid.UUID, keep []containerclient.ResourceContainerAttachment) error {
+func (service *WorkloadExecution) PruneResourceContainers(
+	ctx context.Context,
+	serverID, environmentID uuid.UUID,
+	keep []containerclient.ResourceContainerAttachment,
+) error {
 	target, err := service.target(ctx, serverID)
 	if err != nil {
 		return err
@@ -80,20 +92,29 @@ func (service *WorkloadExecution) PruneResourceContainers(ctx context.Context, s
 	return service.pruneRemoteResources(ctx, target, environmentID, keep)
 }
 
-func (service *WorkloadExecution) Find(ctx context.Context, serverID, deploymentID, instanceID uuid.UUID) (containerclient.WorkloadState, error) {
+func (service *WorkloadExecution) Find(
+	ctx context.Context,
+	serverID, deploymentID, instanceID uuid.UUID,
+) (containerclient.WorkloadState, error) {
 	target, err := service.target(ctx, serverID)
 	if err != nil {
 		return containerclient.WorkloadState{}, err
 	}
+
 	if !target.remote {
 		state, findErr := service.local.Find(ctx, deploymentID, instanceID)
 		return state, validateWorkloadTargetState(target, state, findErr)
 	}
+
 	state, findErr := service.findRemote(ctx, target, deploymentID, instanceID)
+
 	return state, validateWorkloadTargetState(target, state, findErr)
 }
 
-func (service *WorkloadExecution) FindEnvironment(ctx context.Context, serverID, environmentID uuid.UUID) ([]containerclient.WorkloadState, error) {
+func (service *WorkloadExecution) FindEnvironment(
+	ctx context.Context,
+	serverID, environmentID uuid.UUID,
+) ([]containerclient.WorkloadState, error) {
 	target, err := service.target(ctx, serverID)
 	if err != nil {
 		return nil, err
@@ -104,30 +125,45 @@ func (service *WorkloadExecution) FindEnvironment(ctx context.Context, serverID,
 	return service.findRemoteEnvironment(ctx, target, environmentID)
 }
 
-func (service *WorkloadExecution) Run(ctx context.Context, serverID uuid.UUID, spec containerclient.WorkloadRunSpec, credentials registryclient.Credentials) (containerclient.WorkloadState, error) {
+func (service *WorkloadExecution) Run(
+	ctx context.Context,
+	serverID uuid.UUID,
+	spec containerclient.WorkloadRunSpec,
+	credentials registryclient.Credentials,
+) (containerclient.WorkloadState, error) {
 	target, err := service.target(ctx, serverID)
 	if err != nil {
 		return containerclient.WorkloadState{}, err
 	}
+
 	spec.Environment = workloadTelemetryEnvironment(spec, target)
 	if !target.remote {
 		authentication, err := service.registry.Authenticate(ctx, credentials)
 		if err != nil {
 			return containerclient.WorkloadState{}, err
 		}
+
 		defer authentication.Close()
 		if err := service.registry.Pull(ctx, authentication, spec.ImageReference); err != nil {
 			return containerclient.WorkloadState{}, err
 		}
+
 		spec.PublishAddress = "127.0.0.1"
 		spec.DockerEnvironment = authentication.Environment()
 		state, runErr := service.local.Run(ctx, spec)
+
 		return state, validateWorkloadTargetState(target, state, runErr)
 	}
+
 	return service.runRemote(ctx, target, spec, credentials)
 }
 
-func (service *WorkloadExecution) RunOneOff(ctx context.Context, serverID uuid.UUID, spec containerclient.OneOffRunSpec, credentials registryclient.Credentials) (containerclient.OneOffRunResult, error) {
+func (service *WorkloadExecution) RunOneOff(
+	ctx context.Context,
+	serverID uuid.UUID,
+	spec containerclient.OneOffRunSpec,
+	credentials registryclient.Credentials,
+) (containerclient.OneOffRunResult, error) {
 	target, err := service.target(ctx, serverID)
 	if err != nil {
 		return containerclient.OneOffRunResult{}, err
@@ -148,8 +184,13 @@ func (service *WorkloadExecution) RunOneOff(ctx context.Context, serverID uuid.U
 	return service.runRemoteOneOff(ctx, target, spec, credentials)
 }
 
-func (service *WorkloadExecution) RemoveOneOff(ctx context.Context, serverID uuid.UUID, identifier string) error {
-	if strings.TrimSpace(identifier) == "" || strings.HasPrefix(identifier, "-") || strings.ContainsAny(identifier, " \t\r\n\x00") {
+func (service *WorkloadExecution) RemoveOneOff(
+	ctx context.Context,
+	serverID uuid.UUID,
+	identifier string,
+) error {
+	if strings.TrimSpace(identifier) == "" || strings.HasPrefix(identifier, "-") ||
+		strings.ContainsAny(identifier, " \t\r\n\x00") {
 		return errors.New("one-off workload container identity is invalid")
 	}
 	target, err := service.target(ctx, serverID)
@@ -163,7 +204,10 @@ func (service *WorkloadExecution) RemoveOneOff(ctx context.Context, serverID uui
 	return err
 }
 
-func (service *WorkloadExecution) Remove(ctx context.Context, serverID, deploymentID, instanceID uuid.UUID) error {
+func (service *WorkloadExecution) Remove(
+	ctx context.Context,
+	serverID, deploymentID, instanceID uuid.UUID,
+) error {
 	target, err := service.target(ctx, serverID)
 	if err != nil {
 		return err
@@ -174,7 +218,10 @@ func (service *WorkloadExecution) Remove(ctx context.Context, serverID, deployme
 	return service.removeRemote(ctx, target, deploymentID, instanceID)
 }
 
-func (service *WorkloadExecution) Start(ctx context.Context, serverID, deploymentID, instanceID uuid.UUID) (containerclient.WorkloadState, error) {
+func (service *WorkloadExecution) Start(
+	ctx context.Context,
+	serverID, deploymentID, instanceID uuid.UUID,
+) (containerclient.WorkloadState, error) {
 	target, err := service.target(ctx, serverID)
 	if err != nil {
 		return containerclient.WorkloadState{}, err
@@ -205,7 +252,10 @@ func (service *WorkloadExecution) Start(ctx context.Context, serverID, deploymen
 	return state, validateWorkloadTargetState(target, state, nil)
 }
 
-func (service *WorkloadExecution) Restart(ctx context.Context, serverID, deploymentID, instanceID uuid.UUID) (containerclient.WorkloadState, error) {
+func (service *WorkloadExecution) Restart(
+	ctx context.Context,
+	serverID, deploymentID, instanceID uuid.UUID,
+) (containerclient.WorkloadState, error) {
 	target, err := service.target(ctx, serverID)
 	if err != nil {
 		return containerclient.WorkloadState{}, err
@@ -234,7 +284,10 @@ func (service *WorkloadExecution) Restart(ctx context.Context, serverID, deploym
 	return state, validateWorkloadTargetState(target, state, nil)
 }
 
-func (service *WorkloadExecution) DeleteEnvironment(ctx context.Context, serverID, environmentID uuid.UUID) error {
+func (service *WorkloadExecution) DeleteEnvironment(
+	ctx context.Context,
+	serverID, environmentID uuid.UUID,
+) error {
 	target, err := service.target(ctx, serverID)
 	if err != nil {
 		return err
@@ -257,7 +310,10 @@ func (service *WorkloadExecution) DeleteEnvironment(ctx context.Context, serverI
 		identifiers = append(identifiers, state.ID)
 	}
 	if len(identifiers) > 0 {
-		if _, err := service.remoteDocker(ctx, target, append([]string{"rm", "--force"}, identifiers...)...); err != nil {
+		if _, err := service.remoteDocker(
+			ctx,
+			target,
+			append([]string{"rm", "--force"}, identifiers...)...); err != nil {
 			return err
 		}
 	}
@@ -271,36 +327,59 @@ func (service *WorkloadExecution) DeleteEnvironment(ctx context.Context, serverI
 	return nil
 }
 
-func (service *WorkloadExecution) target(ctx context.Context, serverID uuid.UUID) (workloadExecutionTarget, error) {
+func (service *WorkloadExecution) target(
+	ctx context.Context,
+	serverID uuid.UUID,
+) (workloadExecutionTarget, error) {
 	server, err := models.Server.Find(ctx, service.db.Executor(), serverID)
 	if err != nil || server.ArchivedAt.Valid || !server.IsConfigured {
 		return workloadExecutionTarget{}, errors.New("workload target Server is unavailable")
 	}
 	capabilities, err := models.ParseServerCapabilities(server.Capabilities)
 	if err != nil || !capabilities.Runtime {
-		return workloadExecutionTarget{}, errors.New("workload target Server does not support application runtime execution")
+		return workloadExecutionTarget{}, errors.New(
+			"workload target Server does not support application runtime execution",
+		)
 	}
 	target := workloadExecutionTarget{server: server, remote: server.Kind == "worker"}
 	if !target.remote {
 		if server.Kind != "self_hosted" {
-			return workloadExecutionTarget{}, errors.New("workload target Server kind is unsupported")
+			return workloadExecutionTarget{}, errors.New(
+				"workload target Server kind is unsupported",
+			)
 		}
 	}
-	target.peer, err = models.WireGuardPeer.FindActiveForServer(ctx, service.db.Executor(), server.ID)
+	target.peer, err = models.WireGuardPeer.FindActiveForServer(
+		ctx,
+		service.db.Executor(),
+		server.ID,
+	)
 	if err != nil {
-		return workloadExecutionTarget{}, errors.New("workload target Server has no active WireGuard peer")
+		return workloadExecutionTarget{}, errors.New(
+			"workload target Server has no active WireGuard peer",
+		)
 	}
 	if !target.remote {
 		return target, nil
 	}
-	target.credential, err = models.ServerSSHCredential.FindForServer(ctx, service.db.Executor(), server.ID)
-	if err != nil || !target.credential.HostKeyConfirmedAt.Valid || strings.TrimSpace(target.credential.KnownHostKey) == "" {
-		return workloadExecutionTarget{}, errors.New("workload target Server has no trusted SSH identity")
+	target.credential, err = models.ServerSSHCredential.FindForServer(
+		ctx,
+		service.db.Executor(),
+		server.ID,
+	)
+	if err != nil || !target.credential.HostKeyConfirmedAt.Valid ||
+		strings.TrimSpace(target.credential.KnownHostKey) == "" {
+		return workloadExecutionTarget{}, errors.New(
+			"workload target Server has no trusted SSH identity",
+		)
 	}
 	return target, nil
 }
 
-func workloadTelemetryEnvironment(spec containerclient.WorkloadRunSpec, target workloadExecutionTarget) map[string]string {
+func workloadTelemetryEnvironment(
+	spec containerclient.WorkloadRunSpec,
+	target workloadExecutionTarget,
+) map[string]string {
 	environment := make(map[string]string, len(spec.Environment)+1)
 	maps.Copy(environment, spec.Environment)
 	resourceAttributes := []string{
@@ -322,7 +401,10 @@ func workloadTelemetryEnvironment(spec containerclient.WorkloadRunSpec, target w
 	return environment
 }
 
-func oneOffTelemetryEnvironment(spec containerclient.OneOffRunSpec, target workloadExecutionTarget) map[string]string {
+func oneOffTelemetryEnvironment(
+	spec containerclient.OneOffRunSpec,
+	target workloadExecutionTarget,
+) map[string]string {
 	environment := make(map[string]string, len(spec.Environment)+1)
 	maps.Copy(environment, spec.Environment)
 	resourceAttributes := []string{
@@ -342,11 +424,25 @@ func oneOffTelemetryEnvironment(spec containerclient.OneOffRunSpec, target workl
 	return environment
 }
 
-func (service *WorkloadExecution) reconcileRemoteNetwork(ctx context.Context, target workloadExecutionTarget, environmentID uuid.UUID) (string, error) {
+func (service *WorkloadExecution) reconcileRemoteNetwork(
+	ctx context.Context,
+	target workloadExecutionTarget,
+	environmentID uuid.UUID,
+) (string, error) {
 	name := remoteNetworkName(environmentID)
 	output, err := service.remoteDocker(ctx, target, "network", "inspect", name)
 	if err != nil {
-		if _, createErr := service.remoteDocker(ctx, target, "network", "create", "--driver", "bridge", "--label", containerclient.WorkloadLabelNetworkOwner+"="+environmentID.String(), name); createErr != nil {
+		if _, createErr := service.remoteDocker(
+			ctx,
+			target,
+			"network",
+			"create",
+			"--driver",
+			"bridge",
+			"--label",
+			containerclient.WorkloadLabelNetworkOwner+"="+environmentID.String(),
+			name,
+		); createErr != nil {
 			return "", createErr
 		}
 		return name, nil
@@ -355,17 +451,31 @@ func (service *WorkloadExecution) reconcileRemoteNetwork(ctx context.Context, ta
 		Driver string            `json:"Driver"`
 		Labels map[string]string `json:"Labels"`
 	}
-	if json.Unmarshal([]byte(output), &networks) != nil || len(networks) != 1 || networks[0].Driver != "bridge" || networks[0].Labels[containerclient.WorkloadLabelNetworkOwner] != environmentID.String() {
+	if json.Unmarshal([]byte(output), &networks) != nil || len(networks) != 1 ||
+		networks[0].Driver != "bridge" ||
+		networks[0].Labels[containerclient.WorkloadLabelNetworkOwner] != environmentID.String() {
 		return "", errors.New("existing Environment network has invalid ownership")
 	}
 	return name, nil
 }
 
-func (service *WorkloadExecution) connectRemoteResource(ctx context.Context, target workloadExecutionTarget, environmentID uuid.UUID, attachment containerclient.ResourceContainerAttachment) error {
-	if environmentID == uuid.Nil || attachment.InstallationID == uuid.Nil || !validRemoteContainerName(attachment.ContainerName) {
+func (service *WorkloadExecution) connectRemoteResource(
+	ctx context.Context,
+	target workloadExecutionTarget,
+	environmentID uuid.UUID,
+	attachment containerclient.ResourceContainerAttachment,
+) error {
+	if environmentID == uuid.Nil || attachment.InstallationID == uuid.Nil ||
+		!validRemoteContainerName(attachment.ContainerName) {
 		return errors.New("Resource container attachment is invalid")
 	}
-	output, err := service.remoteDocker(ctx, target, "container", "inspect", attachment.ContainerName)
+	output, err := service.remoteDocker(
+		ctx,
+		target,
+		"container",
+		"inspect",
+		attachment.ContainerName,
+	)
 	if err != nil {
 		return err
 	}
@@ -394,11 +504,23 @@ func (service *WorkloadExecution) connectRemoteResource(ctx context.Context, tar
 	if _, connected := container.NetworkSettings.Networks[networkName]; connected {
 		return nil
 	}
-	_, err = service.remoteDocker(ctx, target, "network", "connect", networkName, attachment.ContainerName)
+	_, err = service.remoteDocker(
+		ctx,
+		target,
+		"network",
+		"connect",
+		networkName,
+		attachment.ContainerName,
+	)
 	return err
 }
 
-func (service *WorkloadExecution) pruneRemoteResources(ctx context.Context, target workloadExecutionTarget, environmentID uuid.UUID, keep []containerclient.ResourceContainerAttachment) error {
+func (service *WorkloadExecution) pruneRemoteResources(
+	ctx context.Context,
+	target workloadExecutionTarget,
+	environmentID uuid.UUID,
+	keep []containerclient.ResourceContainerAttachment,
+) error {
 	networkName := remoteNetworkName(environmentID)
 	output, err := service.remoteDocker(ctx, target, "network", "inspect", networkName)
 	if err != nil {
@@ -420,7 +542,13 @@ func (service *WorkloadExecution) pruneRemoteResources(ctx context.Context, targ
 		retained[attachment.InstallationID.String()+"\x00"+attachment.ContainerName] = struct{}{}
 	}
 	for identifier, connected := range networks[0].Containers {
-		containerOutput, inspectErr := service.remoteDocker(ctx, target, "container", "inspect", connected.Name)
+		containerOutput, inspectErr := service.remoteDocker(
+			ctx,
+			target,
+			"container",
+			"inspect",
+			connected.Name,
+		)
 		if inspectErr != nil {
 			return inspectErr
 		}
@@ -432,21 +560,35 @@ func (service *WorkloadExecution) pruneRemoteResources(ctx context.Context, targ
 		if json.Unmarshal([]byte(containerOutput), &containers) != nil || len(containers) != 1 {
 			return errors.New("Docker returned invalid connected container state")
 		}
-		installationID, parseErr := uuid.Parse(containers[0].Config.Labels[containerclient.WorkloadLabelResource])
+		installationID, parseErr := uuid.Parse(
+			containers[0].Config.Labels[containerclient.WorkloadLabelResource],
+		)
 		if parseErr != nil {
 			continue
 		}
 		if _, exists := retained[installationID.String()+"\x00"+connected.Name]; exists {
 			continue
 		}
-		if _, err := service.remoteDocker(ctx, target, "network", "disconnect", "--force", networkName, identifier); err != nil {
+		if _, err := service.remoteDocker(
+			ctx,
+			target,
+			"network",
+			"disconnect",
+			"--force",
+			networkName,
+			identifier,
+		); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (service *WorkloadExecution) findRemote(ctx context.Context, target workloadExecutionTarget, deploymentID, instanceID uuid.UUID) (containerclient.WorkloadState, error) {
+func (service *WorkloadExecution) findRemote(
+	ctx context.Context,
+	target workloadExecutionTarget,
+	deploymentID, instanceID uuid.UUID,
+) (containerclient.WorkloadState, error) {
 	output, err := service.remoteDocker(ctx, target, "ps", "--all", "--quiet",
 		"--filter", "label="+containerclient.WorkloadLabelDeployment+"="+deploymentID.String(),
 		"--filter", "label="+containerclient.WorkloadLabelInstance+"="+instanceID.String())
@@ -458,13 +600,27 @@ func (service *WorkloadExecution) findRemote(ctx context.Context, target workloa
 		return containerclient.WorkloadState{}, nil
 	}
 	if len(identifiers) != 1 {
-		return containerclient.WorkloadState{}, errors.New("multiple Docker containers claim the same Deployment and Instance")
+		return containerclient.WorkloadState{}, errors.New(
+			"multiple Docker containers claim the same Deployment and Instance",
+		)
 	}
 	return service.inspectRemoteWorkload(ctx, target, identifiers[0])
 }
 
-func (service *WorkloadExecution) findRemoteEnvironment(ctx context.Context, target workloadExecutionTarget, environmentID uuid.UUID) ([]containerclient.WorkloadState, error) {
-	output, err := service.remoteDocker(ctx, target, "ps", "--all", "--quiet", "--filter", "label="+containerclient.WorkloadLabelEnvironment+"="+environmentID.String())
+func (service *WorkloadExecution) findRemoteEnvironment(
+	ctx context.Context,
+	target workloadExecutionTarget,
+	environmentID uuid.UUID,
+) ([]containerclient.WorkloadState, error) {
+	output, err := service.remoteDocker(
+		ctx,
+		target,
+		"ps",
+		"--all",
+		"--quiet",
+		"--filter",
+		"label="+containerclient.WorkloadLabelEnvironment+"="+environmentID.String(),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -480,7 +636,11 @@ func (service *WorkloadExecution) findRemoteEnvironment(ctx context.Context, tar
 	return states, nil
 }
 
-func (service *WorkloadExecution) inspectRemoteWorkload(ctx context.Context, target workloadExecutionTarget, identifier string) (containerclient.WorkloadState, error) {
+func (service *WorkloadExecution) inspectRemoteWorkload(
+	ctx context.Context,
+	target workloadExecutionTarget,
+	identifier string,
+) (containerclient.WorkloadState, error) {
 	output, err := service.remoteDocker(ctx, target, "inspect", identifier)
 	if err != nil {
 		return containerclient.WorkloadState{}, err
@@ -488,9 +648,19 @@ func (service *WorkloadExecution) inspectRemoteWorkload(ctx context.Context, tar
 	return containerclient.ParseWorkloadInspect([]byte(output))
 }
 
-func (service *WorkloadExecution) runRemote(ctx context.Context, target workloadExecutionTarget, spec containerclient.WorkloadRunSpec, credentials registryclient.Credentials) (containerclient.WorkloadState, error) {
-	if strings.TrimSpace(credentials.Endpoint) == "" || strings.ContainsAny(credentials.Endpoint, " \t\r\n") || strings.TrimSpace(credentials.Username) == "" || credentials.Password == "" {
-		return containerclient.WorkloadState{}, errors.New("registry endpoint and credentials are required")
+func (service *WorkloadExecution) runRemote(
+	ctx context.Context,
+	target workloadExecutionTarget,
+	spec containerclient.WorkloadRunSpec,
+	credentials registryclient.Credentials,
+) (containerclient.WorkloadState, error) {
+	if strings.TrimSpace(credentials.Endpoint) == "" ||
+		strings.ContainsAny(credentials.Endpoint, " \t\r\n") ||
+		strings.TrimSpace(credentials.Username) == "" ||
+		credentials.Password == "" {
+		return containerclient.WorkloadState{}, errors.New(
+			"registry endpoint and credentials are required",
+		)
 	}
 	existing, err := service.findRemote(ctx, target, spec.DeploymentID, spec.InstanceID)
 	if err != nil || existing.Exists {
@@ -504,21 +674,34 @@ func (service *WorkloadExecution) runRemote(ctx context.Context, target workload
 	}
 	var script strings.Builder
 	script.WriteString("set -euo pipefail\n")
-	script.WriteString("dc_auth=\"$(/usr/bin/mktemp -d -p /var/lib/deploycrate-node registry-auth-XXXXXXXXXX)\"\n")
+	script.WriteString(
+		"dc_auth=\"$(/usr/bin/mktemp -d -p /var/lib/deploycrate-node registry-auth-XXXXXXXXXX)\"\n",
+	)
 	script.WriteString("trap '/usr/bin/rm -rf -- \"$dc_auth\"' EXIT\n")
 	script.WriteString("/usr/bin/chmod 0700 \"$dc_auth\"\n")
 	script.WriteString("export HOME=\"$dc_auth\" DOCKER_CONFIG=\"$dc_auth\"\n")
 	script.WriteString("/usr/bin/printf '%s' ")
 	script.WriteString(shellQuote(base64.StdEncoding.EncodeToString([]byte(credentials.Password))))
 	script.WriteString(" | /usr/bin/base64 --decode | ")
-	script.WriteString(shellJoin(remoteDockerExecutable, "login", credentials.Endpoint, "--username", credentials.Username, "--password-stdin"))
+	script.WriteString(
+		shellJoin(
+			remoteDockerExecutable,
+			"login",
+			credentials.Endpoint,
+			"--username",
+			credentials.Username,
+			"--password-stdin",
+		),
+	)
 	script.WriteString(" >/dev/null\n")
 	script.WriteString(shellJoin(remoteDockerExecutable, "pull", spec.ImageReference))
 	script.WriteString(" >/dev/null\n")
 	for _, pair := range prepared.Environment {
 		key, value, found := strings.Cut(pair, "=")
 		if !found || !validRemoteEnvironmentKey(key) {
-			return containerclient.WorkloadState{}, errors.New("workload environment cannot be represented by the remote shell")
+			return containerclient.WorkloadState{}, errors.New(
+				"workload environment cannot be represented by the remote shell",
+			)
 		}
 		script.WriteString("dc_value=\"$(/usr/bin/printf '%s' ")
 		script.WriteString(shellQuote(base64.StdEncoding.EncodeToString([]byte(value))))
@@ -536,25 +719,51 @@ func (service *WorkloadExecution) runRemote(ctx context.Context, target workload
 	}
 	state, err := service.findRemote(ctx, target, spec.DeploymentID, spec.InstanceID)
 	if err != nil {
-		_ = service.removeRemote(context.WithoutCancel(ctx), target, spec.DeploymentID, spec.InstanceID)
+		_ = service.removeRemote(
+			context.WithoutCancel(ctx),
+			target,
+			spec.DeploymentID,
+			spec.InstanceID,
+		)
 		return containerclient.WorkloadState{}, err
 	}
 	if err := validateWorkloadTargetState(target, state, nil); err != nil {
 		if state.ID != "" {
-			_, _ = service.remoteDocker(context.WithoutCancel(ctx), target, "rm", "--force", state.ID)
+			_, _ = service.remoteDocker(
+				context.WithoutCancel(ctx),
+				target,
+				"rm",
+				"--force",
+				state.ID,
+			)
 		}
 		return containerclient.WorkloadState{}, err
 	}
 	if err := service.updateRemoteFirewall(ctx, target, state, true); err != nil {
-		_ = service.removeRemote(context.WithoutCancel(ctx), target, spec.DeploymentID, spec.InstanceID)
+		_ = service.removeRemote(
+			context.WithoutCancel(ctx),
+			target,
+			spec.DeploymentID,
+			spec.InstanceID,
+		)
 		return containerclient.WorkloadState{}, err
 	}
 	return state, nil
 }
 
-func (service *WorkloadExecution) runRemoteOneOff(ctx context.Context, target workloadExecutionTarget, spec containerclient.OneOffRunSpec, credentials registryclient.Credentials) (containerclient.OneOffRunResult, error) {
-	if strings.TrimSpace(credentials.Endpoint) == "" || strings.ContainsAny(credentials.Endpoint, " \t\r\n") || strings.TrimSpace(credentials.Username) == "" || credentials.Password == "" {
-		return containerclient.OneOffRunResult{}, errors.New("registry endpoint and credentials are required")
+func (service *WorkloadExecution) runRemoteOneOff(
+	ctx context.Context,
+	target workloadExecutionTarget,
+	spec containerclient.OneOffRunSpec,
+	credentials registryclient.Credentials,
+) (containerclient.OneOffRunResult, error) {
+	if strings.TrimSpace(credentials.Endpoint) == "" ||
+		strings.ContainsAny(credentials.Endpoint, " \t\r\n") ||
+		strings.TrimSpace(credentials.Username) == "" ||
+		credentials.Password == "" {
+		return containerclient.OneOffRunResult{}, errors.New(
+			"registry endpoint and credentials are required",
+		)
 	}
 	prepared, err := containerclient.PrepareOneOffCreate(spec)
 	if err != nil {
@@ -562,21 +771,34 @@ func (service *WorkloadExecution) runRemoteOneOff(ctx context.Context, target wo
 	}
 	var script strings.Builder
 	script.WriteString("set -euo pipefail\n")
-	script.WriteString("dc_auth=\"$(/usr/bin/mktemp -d -p /var/lib/deploycrate-node registry-auth-XXXXXXXXXX)\"\n")
+	script.WriteString(
+		"dc_auth=\"$(/usr/bin/mktemp -d -p /var/lib/deploycrate-node registry-auth-XXXXXXXXXX)\"\n",
+	)
 	script.WriteString("trap '/usr/bin/rm -rf -- \"$dc_auth\"' EXIT\n")
 	script.WriteString("/usr/bin/chmod 0700 \"$dc_auth\"\n")
 	script.WriteString("export HOME=\"$dc_auth\" DOCKER_CONFIG=\"$dc_auth\"\n")
 	script.WriteString("/usr/bin/printf '%s' ")
 	script.WriteString(shellQuote(base64.StdEncoding.EncodeToString([]byte(credentials.Password))))
 	script.WriteString(" | /usr/bin/base64 --decode | ")
-	script.WriteString(shellJoin(remoteDockerExecutable, "login", credentials.Endpoint, "--username", credentials.Username, "--password-stdin"))
+	script.WriteString(
+		shellJoin(
+			remoteDockerExecutable,
+			"login",
+			credentials.Endpoint,
+			"--username",
+			credentials.Username,
+			"--password-stdin",
+		),
+	)
 	script.WriteString(" >/dev/null\n")
 	script.WriteString(shellJoin(remoteDockerExecutable, "pull", spec.ImageReference))
 	script.WriteString(" >/dev/null\n")
 	for _, pair := range prepared.Environment {
 		key, value, found := strings.Cut(pair, "=")
 		if !found || !validRemoteEnvironmentKey(key) {
-			return containerclient.OneOffRunResult{}, errors.New("one-off workload environment cannot be represented by the remote shell")
+			return containerclient.OneOffRunResult{}, errors.New(
+				"one-off workload environment cannot be represented by the remote shell",
+			)
 		}
 		script.WriteString("dc_value=\"$(/usr/bin/printf '%s' ")
 		script.WriteString(shellQuote(base64.StdEncoding.EncodeToString([]byte(value))))
@@ -594,20 +816,38 @@ func (service *WorkloadExecution) runRemoteOneOff(ctx context.Context, target wo
 		return containerclient.OneOffRunResult{}, err
 	}
 	identifier := strings.TrimSpace(created.Stdout)
-	result := containerclient.OneOffRunResult{ContainerCreated: true, State: containerclient.WorkloadState{Exists: true, ID: identifier, Name: spec.ContainerName}}
+	result := containerclient.OneOffRunResult{
+		ContainerCreated: true,
+		State: containerclient.WorkloadState{
+			Exists: true,
+			ID:     identifier,
+			Name:   spec.ContainerName,
+		},
+	}
 	if spec.Created != nil {
 		if err := spec.Created(identifier); err != nil {
 			return result, err
 		}
 	}
-	started, startErr := service.remoteRootCommand(ctx, target, remoteDockerExecutable, "start", "--attach", identifier)
+	started, startErr := service.remoteRootCommand(
+		ctx,
+		target,
+		remoteDockerExecutable,
+		"start",
+		"--attach",
+		identifier,
+	)
 	if spec.Stdout != nil && started.Stdout != "" {
 		_, _ = io.WriteString(spec.Stdout, started.Stdout)
 	}
 	if spec.Stderr != nil && started.Stderr != "" {
 		_, _ = io.WriteString(spec.Stderr, started.Stderr)
 	}
-	state, inspectErr := service.inspectRemoteWorkload(context.WithoutCancel(ctx), target, identifier)
+	state, inspectErr := service.inspectRemoteWorkload(
+		context.WithoutCancel(ctx),
+		target,
+		identifier,
+	)
 	if inspectErr == nil {
 		result.State = state
 	}
@@ -617,7 +857,11 @@ func (service *WorkloadExecution) runRemoteOneOff(ctx context.Context, target wo
 	return result, inspectErr
 }
 
-func (service *WorkloadExecution) removeRemote(ctx context.Context, target workloadExecutionTarget, deploymentID, instanceID uuid.UUID) error {
+func (service *WorkloadExecution) removeRemote(
+	ctx context.Context,
+	target workloadExecutionTarget,
+	deploymentID, instanceID uuid.UUID,
+) error {
 	state, err := service.findRemote(ctx, target, deploymentID, instanceID)
 	if err != nil || !state.Exists {
 		return err
@@ -632,14 +876,32 @@ func (service *WorkloadExecution) removeRemote(ctx context.Context, target workl
 	return err
 }
 
-func (service *WorkloadExecution) updateRemoteFirewall(ctx context.Context, target workloadExecutionTarget, state containerclient.WorkloadState, allow bool) error {
+func (service *WorkloadExecution) updateRemoteFirewall(
+	ctx context.Context,
+	target workloadExecutionTarget,
+	state containerclient.WorkloadState,
+	allow bool,
+) error {
 	if state.HostAddress == "" || state.HostPort == 0 {
 		return nil
 	}
 	if state.HostAddress != target.peer.PrivateAddress {
 		return errors.New("workload firewall address does not belong to its target Server")
 	}
-	arguments := []string{"allow", "in", "on", "wg0", "from", WireGuardNodeCIDR, "to", state.HostAddress, "port", fmt.Sprint(state.HostPort), "proto", "tcp"}
+	arguments := []string{
+		"allow",
+		"in",
+		"on",
+		"wg0",
+		"from",
+		WireGuardNodeCIDR,
+		"to",
+		state.HostAddress,
+		"port",
+		fmt.Sprint(state.HostPort),
+		"proto",
+		"tcp",
+	}
 	if !allow {
 		arguments = append([]string{"--force", "delete"}, arguments...)
 	}
@@ -650,7 +912,11 @@ func (service *WorkloadExecution) updateRemoteFirewall(ctx context.Context, targ
 	return err
 }
 
-func (service *WorkloadExecution) remoteDocker(ctx context.Context, target workloadExecutionTarget, arguments ...string) (string, error) {
+func (service *WorkloadExecution) remoteDocker(
+	ctx context.Context,
+	target workloadExecutionTarget,
+	arguments ...string,
+) (string, error) {
 	result, err := service.remoteRootCommand(ctx, target, remoteDockerExecutable, arguments...)
 	if err != nil {
 		return "", fmt.Errorf("run Docker command on node: %w", err)
@@ -658,17 +924,29 @@ func (service *WorkloadExecution) remoteDocker(ctx context.Context, target workl
 	return result.Stdout, nil
 }
 
-func (service *WorkloadExecution) remoteRootCommand(ctx context.Context, target workloadExecutionTarget, executable string, arguments ...string) (sshclient.Result, error) {
+func (service *WorkloadExecution) remoteRootCommand(
+	ctx context.Context,
+	target workloadExecutionTarget,
+	executable string,
+	arguments ...string,
+) (sshclient.Result, error) {
 	script := []byte("set -euo pipefail\nexec " + shellJoin(executable, arguments...) + "\n")
 	return service.remoteRootScript(ctx, target, script)
 }
 
-func (service *WorkloadExecution) remoteRootScript(ctx context.Context, target workloadExecutionTarget, script []byte) (sshclient.Result, error) {
+func (service *WorkloadExecution) remoteRootScript(
+	ctx context.Context,
+	target workloadExecutionTarget,
+	script []byte,
+) (sshclient.Result, error) {
 	certificate, err := service.sshCA.GenerateUserCertificate(5 * time.Minute)
 	if err != nil {
 		return sshclient.Result{}, err
 	}
-	address := net.JoinHostPort(target.peer.PrivateAddress, strconv.Itoa(int(target.credential.Port)))
+	address := net.JoinHostPort(
+		target.peer.PrivateAddress,
+		strconv.Itoa(int(target.credential.Port)),
+	)
 	return service.ssh.RunWithCertificate(
 		ctx, address, "admin", target.credential.KnownHostKey,
 		certificate.PrivateKey, certificate.Certificate,
@@ -676,29 +954,44 @@ func (service *WorkloadExecution) remoteRootScript(ctx context.Context, target w
 	)
 }
 
-func validateWorkloadTargetState(target workloadExecutionTarget, state containerclient.WorkloadState, operationErr error) error {
+func validateWorkloadTargetState(
+	target workloadExecutionTarget,
+	state containerclient.WorkloadState,
+	operationErr error,
+) error {
 	if operationErr != nil || !state.Exists {
 		return operationErr
 	}
+
 	if state.Labels[containerclient.WorkloadLabelProcessKind] != "web" {
 		return nil
 	}
+
 	if !state.Running {
 		if state.ExitCode != 0 {
-			return fmt.Errorf("workload target web process exited during startup with exit code %d", state.ExitCode)
+			return fmt.Errorf(
+				"workload target web process exited during startup with exit code %d",
+				state.ExitCode,
+			)
 		}
 		return errors.New("workload target web process is not running")
 	}
+
 	if state.HostAddress == "" || state.HostPort == 0 {
+		slog.Error("state for workload not good", "state", state)
+
 		return errors.New("workload target address is unavailable")
 	}
+
 	expectedAddress := "127.0.0.1"
 	if target.remote {
 		expectedAddress = target.peer.PrivateAddress
 	}
+
 	if state.HostAddress != expectedAddress {
 		return errors.New("workload address does not belong to its target Server")
 	}
+
 	return nil
 }
 
@@ -726,11 +1019,13 @@ func shellQuote(value string) string {
 
 func validRemoteContainerName(value string) bool {
 	value = strings.TrimSpace(value)
-	return value != "" && !strings.HasPrefix(value, "-") && !strings.ContainsAny(value, " \t\r\n\x00")
+	return value != "" && !strings.HasPrefix(value, "-") &&
+		!strings.ContainsAny(value, " \t\r\n\x00")
 }
 
 func validRemoteEnvironmentKey(value string) bool {
-	if value == "" || !((value[0] >= 'A' && value[0] <= 'Z') || (value[0] >= 'a' && value[0] <= 'z') || value[0] == '_') {
+	if value == "" ||
+		!((value[0] >= 'A' && value[0] <= 'Z') || (value[0] >= 'a' && value[0] <= 'z') || value[0] == '_') {
 		return false
 	}
 	for _, character := range value[1:] {

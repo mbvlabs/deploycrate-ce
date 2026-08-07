@@ -980,7 +980,7 @@ func waitForWorkloadHealth(ctx context.Context, host string, port int32, healthP
 	defer ticker.Stop()
 
 	check := func() bool {
-		address := net.JoinHostPort(host, strconv.Itoa(int(port)))
+		address := net.JoinHostPort("0.0.0.0", strconv.Itoa(int(port)))
 
 		slog.InfoContext(
 			ctx,
@@ -995,6 +995,7 @@ func waitForWorkloadHealth(ctx context.Context, host string, port int32, healthP
 
 		if healthPath == "" {
 			connection, err := net.DialTimeout("tcp", address, time.Second)
+			slog.InfoContext(ctx, "healthPath empty", "connection", connection)
 			if err == nil {
 				_ = connection.Close()
 				return true
@@ -1010,13 +1011,17 @@ func waitForWorkloadHealth(ctx context.Context, host string, port int32, healthP
 			nil,
 		)
 		if err != nil {
+			slog.InfoContext(ctx, "healthPath not empty | NewRequest", "err", err)
 			return false
 		}
 
 		response, err := telemetry.NewHTTPClient(2 * time.Second).Do(request)
 		if err != nil {
+			slog.InfoContext(ctx, "healthPath not empty | NewHTTPClient", "err", err)
 			return false
 		}
+
+		slog.InfoContext(ctx, "healthPath not empty", "status_code", response.StatusCode)
 
 		_ = response.Body.Close()
 

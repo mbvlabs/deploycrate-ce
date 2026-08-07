@@ -218,7 +218,10 @@ func RecoverSSHCA(bundlePath, passphrase string) error {
 	}
 
 	active := filepath.Dir(SSHCARecoveryBundlePath)
-	backup := filepath.Join(parent, fmt.Sprintf(".ssh-ca-before-recovery-%d", time.Now().UnixNano()))
+	backup := filepath.Join(
+		parent,
+		fmt.Sprintf(".ssh-ca-before-recovery-%d", time.Now().UnixNano()),
+	)
 	if err := os.Rename(active, backup); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("stage active SSH CA directory: %w", err)
 	}
@@ -331,7 +334,9 @@ func readSSHCARecoveryArchive(archive []byte) (map[string][]byte, error) {
 			continue
 		}
 		name := strings.TrimPrefix(filepath.Clean(header.Name), "deploycrate-ssh-ca-recovery-v1/")
-		allowed := name == "manifest.json" || name == "user-ca" || name == "user-ca.pub" || name == "host-ca" || name == "host-ca.pub"
+		allowed := name == "manifest.json" || name == "user-ca" || name == "user-ca.pub" ||
+			name == "host-ca" ||
+			name == "host-ca.pub"
 		if !allowed || header.Size < 1 || header.Size > 1024*1024 {
 			return nil, errors.New("SSH CA recovery archive contains an unexpected file")
 		}
@@ -351,17 +356,29 @@ func validateSSHCARecovery(files map[string][]byte) error {
 		}
 	}
 	var manifest sshCARecoveryManifest
-	if err := json.Unmarshal(files["manifest.json"], &manifest); err != nil || manifest.Version != 1 {
+	if err := json.Unmarshal(
+		files["manifest.json"],
+		&manifest,
+	); err != nil ||
+		manifest.Version != 1 {
 		return errors.New("SSH CA recovery manifest is invalid")
 	}
 	createdAt, err := time.Parse(time.RFC3339, manifest.CreatedAt)
 	if err != nil || createdAt.After(time.Now().UTC().Add(5*time.Minute)) {
 		return errors.New("SSH CA recovery manifest creation time is invalid")
 	}
-	if err := validateRecoveredKeyPair(files["user-ca"], files["user-ca.pub"], manifest.UserCAFingerprint); err != nil {
+	if err := validateRecoveredKeyPair(
+		files["user-ca"],
+		files["user-ca.pub"],
+		manifest.UserCAFingerprint,
+	); err != nil {
 		return fmt.Errorf("validate recovered user CA: %w", err)
 	}
-	if err := validateRecoveredKeyPair(files["host-ca"], files["host-ca.pub"], manifest.HostCAFingerprint); err != nil {
+	if err := validateRecoveredKeyPair(
+		files["host-ca"],
+		files["host-ca.pub"],
+		manifest.HostCAFingerprint,
+	); err != nil {
 		return fmt.Errorf("validate recovered host CA: %w", err)
 	}
 	for name, trustedPath := range map[string]string{
@@ -389,7 +406,8 @@ func validateRecoveredKeyPair(privateKey, publicKey []byte, expectedFingerprint 
 		return errors.New("public key is invalid")
 	}
 	fingerprint := ssh.FingerprintSHA256(public)
-	if fingerprint != expectedFingerprint || ssh.FingerprintSHA256(signer.PublicKey()) != fingerprint {
+	if fingerprint != expectedFingerprint ||
+		ssh.FingerprintSHA256(signer.PublicKey()) != fingerprint {
 		return errors.New("private key, public key, and manifest fingerprint do not match")
 	}
 	return nil

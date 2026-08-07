@@ -29,7 +29,10 @@ func (worker *BuildSourceWorker) Timeout(*river.Job[jobs.BuildSourceArgs]) time.
 	return 50 * time.Minute
 }
 
-func (worker *BuildSourceWorker) Work(ctx context.Context, job *river.Job[jobs.BuildSourceArgs]) error {
+func (worker *BuildSourceWorker) Work(
+	ctx context.Context,
+	job *river.Job[jobs.BuildSourceArgs],
+) error {
 	err := worker.service.Execute(ctx, job.Args.BuildID)
 	var permanent *services.PermanentBuildError
 	if errors.As(err, &permanent) {
@@ -42,8 +45,21 @@ func (worker *BuildSourceWorker) Work(ctx context.Context, job *river.Job[jobs.B
 	if err != nil {
 		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
-		if logErr := worker.service.RecordRetry(persistCtx, job.Args.BuildID, job.Attempt, job.MaxAttempts, err); logErr != nil {
-			slog.ErrorContext(persistCtx, "Build retry log could not be persisted", "build_id", job.Args.BuildID, "error", logErr)
+		if logErr := worker.service.RecordRetry(
+			persistCtx,
+			job.Args.BuildID,
+			job.Attempt,
+			job.MaxAttempts,
+			err,
+		); logErr != nil {
+			slog.ErrorContext(
+				persistCtx,
+				"Build retry log could not be persisted",
+				"build_id",
+				job.Args.BuildID,
+				"error",
+				logErr,
+			)
 		}
 	}
 	return err

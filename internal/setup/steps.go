@@ -216,7 +216,10 @@ func DefaultSteps(operations Operations) []Step {
 			},
 		),
 		healthStep(),
-		controlPlaneBootstrapStep(operations.BootstrapControlPlane, operations.VerifyControlPlaneRoute),
+		controlPlaneBootstrapStep(
+			operations.BootstrapControlPlane,
+			operations.VerifyControlPlaneRoute,
+		),
 		scriptSetupStep(
 			"ssh-hardening",
 			"Harden SSH and configure the firewall",
@@ -298,12 +301,18 @@ func databaseStep(validateDatabase func(context.Context, string) error) Step {
 				if err != nil {
 					return err
 				}
-				return runtime.Shell.Run(ctx, "database-resource-ownership-v2", script, map[string]string{
-					"DB_NAME":            cfg.Database.Name,
-					"DB_USER":            cfg.Database.User,
-					"DB_PASSWORD":        cfg.Secrets.DatabasePassword,
-					"DB_INSTALLATION_ID": cfg.DatabaseInstallationID().String(),
-				}, report)
+				return runtime.Shell.Run(
+					ctx,
+					"database-resource-ownership-v2",
+					script,
+					map[string]string{
+						"DB_NAME":            cfg.Database.Name,
+						"DB_USER":            cfg.Database.User,
+						"DB_PASSWORD":        cfg.Secrets.DatabasePassword,
+						"DB_INSTALLATION_ID": cfg.DatabaseInstallationID().String(),
+					},
+					report,
+				)
 			}
 			if validateDatabase == nil {
 				return errors.New("external database validation is unavailable")
@@ -614,7 +623,15 @@ func adminStep(ensureAdmin func(context.Context, AdminInput) error) Step {
 			if ensureAdmin == nil {
 				return errors.New("administrator setup operation is unavailable")
 			}
-			return ensureAdmin(ctx, AdminInput{DatabaseURL: cfg.DatabaseURL(), Email: cfg.AdminEmail, Password: cfg.Secrets.AdminPassword, Pepper: cfg.Secrets.Pepper})
+			return ensureAdmin(
+				ctx,
+				AdminInput{
+					DatabaseURL: cfg.DatabaseURL(),
+					Email:       cfg.AdminEmail,
+					Password:    cfg.Secrets.AdminPassword,
+					Pepper:      cfg.Secrets.Pepper,
+				},
+			)
 		},
 	}
 }

@@ -22,9 +22,25 @@ const cloudflareTokenEncryptionPurpose = "cloudflare-api-token/v1"
 type CloudflareDNSClient interface {
 	VerifyAccountToken(context.Context, string, string) error
 	ListZones(context.Context, string, string) ([]cloudflareclient.Zone, error)
-	ListAddressRecords(context.Context, string, string, string) ([]cloudflareclient.DNSRecord, error)
-	CreateARecord(context.Context, string, string, cloudflareclient.DNSRecordInput) (cloudflareclient.DNSRecord, error)
-	UpdateARecord(context.Context, string, string, string, cloudflareclient.DNSRecordInput) (cloudflareclient.DNSRecord, error)
+	ListAddressRecords(
+		context.Context,
+		string,
+		string,
+		string,
+	) ([]cloudflareclient.DNSRecord, error)
+	CreateARecord(
+		context.Context,
+		string,
+		string,
+		cloudflareclient.DNSRecordInput,
+	) (cloudflareclient.DNSRecord, error)
+	UpdateARecord(
+		context.Context,
+		string,
+		string,
+		string,
+		cloudflareclient.DNSRecordInput,
+	) (cloudflareclient.DNSRecord, error)
 	DeleteRecord(context.Context, string, string, string) error
 }
 
@@ -35,24 +51,28 @@ type DNSConnections struct {
 }
 
 type DNSConnectionSummary struct {
-	ID           uuid.UUID    `json:"id" bun:"id"`
-	Name         string       `json:"name" bun:"name"`
-	Provider     string       `json:"provider" bun:"provider"`
-	AccountID    string       `json:"accountId" bun:"account_external_id"`
-	VerifiedAt   sql.NullTime `json:"verifiedAt" bun:"verified_at"`
+	ID           uuid.UUID    `json:"id"           bun:"id"`
+	Name         string       `json:"name"         bun:"name"`
+	Provider     string       `json:"provider"     bun:"provider"`
+	AccountID    string       `json:"accountId"    bun:"account_external_id"`
+	VerifiedAt   sql.NullTime `json:"verifiedAt"   bun:"verified_at"`
 	LastSyncedAt sql.NullTime `json:"lastSyncedAt" bun:"last_synced_at"`
-	ArchivedAt   sql.NullTime `json:"archivedAt" bun:"archived_at"`
-	ActiveZones  int          `json:"activeZones" bun:"active_zones"`
+	ArchivedAt   sql.NullTime `json:"archivedAt"   bun:"archived_at"`
+	ActiveZones  int          `json:"activeZones"  bun:"active_zones"`
 	BindingCount int          `json:"bindingCount" bun:"binding_count"`
 }
 
 type DNSZoneSummary struct {
-	ID     uuid.UUID `json:"id" bun:"id"`
-	Name   string    `json:"name" bun:"name"`
+	ID     uuid.UUID `json:"id"     bun:"id"`
+	Name   string    `json:"name"   bun:"name"`
 	Status string    `json:"status" bun:"status"`
 }
 
-func NewDNSConnections(db storage.Pool, client CloudflareDNSClient, cfg config.Config) *DNSConnections {
+func NewDNSConnections(
+	db storage.Pool,
+	client CloudflareDNSClient,
+	cfg config.Config,
+) *DNSConnections {
 	return &DNSConnections{db: db, client: client, config: cfg}
 }
 
@@ -64,11 +84,15 @@ func (service *DNSConnections) List(ctx context.Context) ([]DNSConnectionSummary
 		ColumnExpr("COUNT(DISTINCT binding.id) FILTER (WHERE binding.archived_at IS NULL) AS binding_count").
 		Join("LEFT JOIN dns_zones AS zone ON zone.dns_connection_id = connection.id").
 		Join("LEFT JOIN environment_dns_bindings AS binding ON binding.dns_zone_id = zone.id").
-		Where("connection.archived_at IS NULL").Group("connection.id").OrderExpr("lower(connection.name)").Scan(ctx, &items)
+		Where("connection.archived_at IS NULL").
+		Group("connection.id").OrderExpr("lower(connection.name)").Scan(ctx, &items)
 	return items, err
 }
 
-func (service *DNSConnections) Find(ctx context.Context, id uuid.UUID) (DNSConnectionSummary, error) {
+func (service *DNSConnections) Find(
+	ctx context.Context,
+	id uuid.UUID,
+) (DNSConnectionSummary, error) {
 	var item DNSConnectionSummary
 	err := service.db.Executor().NewSelect().TableExpr("dns_connections AS connection").
 		ColumnExpr("connection.id, connection.name, connection.provider, connection.account_external_id, connection.verified_at, connection.last_synced_at, connection.archived_at").
@@ -76,11 +100,15 @@ func (service *DNSConnections) Find(ctx context.Context, id uuid.UUID) (DNSConne
 		ColumnExpr("COUNT(DISTINCT binding.id) FILTER (WHERE binding.archived_at IS NULL) AS binding_count").
 		Join("LEFT JOIN dns_zones AS zone ON zone.dns_connection_id = connection.id").
 		Join("LEFT JOIN environment_dns_bindings AS binding ON binding.dns_zone_id = zone.id").
-		Where("connection.archived_at IS NULL").Where("connection.id = ?", id).Group("connection.id").Scan(ctx, &item)
+		Where("connection.archived_at IS NULL").
+		Where("connection.id = ?", id).Group("connection.id").Scan(ctx, &item)
 	return item, err
 }
 
-func (service *DNSConnections) Zones(ctx context.Context, connectionID uuid.UUID) ([]DNSZoneSummary, error) {
+func (service *DNSConnections) Zones(
+	ctx context.Context,
+	connectionID uuid.UUID,
+) ([]DNSZoneSummary, error) {
 	zones := make([]DNSZoneSummary, 0)
 	err := service.db.Executor().NewSelect().TableExpr("dns_zones AS zone").
 		ColumnExpr("zone.id, zone.name, zone.status").
@@ -89,35 +117,67 @@ func (service *DNSConnections) Zones(ctx context.Context, connectionID uuid.UUID
 	return zones, err
 }
 
-func (service *DNSConnections) Create(ctx context.Context, name, accountID, token string) (models.DNSConnectionEntity, error) {
+func (service *DNSConnections) Create(
+	ctx context.Context,
+	name, accountID, token string,
+) (models.DNSConnectionEntity, error) {
 	name = strings.TrimSpace(name)
 	token = strings.TrimSpace(token)
 	if name == "" {
-		return models.DNSConnectionEntity{}, domainError("name", "required", "Connection name is required")
+		return models.DNSConnectionEntity{}, domainError(
+			"name",
+			"required",
+			"Connection name is required",
+		)
 	}
 	if token == "" {
-		return models.DNSConnectionEntity{}, domainError("token", "required", "Account-owned API token is required")
+		return models.DNSConnectionEntity{}, domainError(
+			"token",
+			"required",
+			"Account-owned API token is required",
+		)
 	}
 	accountID, err := models.NormalizeCloudflareAccountID(accountID)
 	if err != nil {
 		return models.DNSConnectionEntity{}, err
 	}
 	if err := service.client.VerifyAccountToken(ctx, accountID, token); err != nil {
-		return models.DNSConnectionEntity{}, domainError("token", "unverified", "Cloudflare could not verify the account-owned API token")
+		return models.DNSConnectionEntity{}, domainError(
+			"token",
+			"unverified",
+			"Cloudflare could not verify the account-owned API token",
+		)
 	}
 	zones, err := service.client.ListZones(ctx, accountID, token)
 	if err != nil {
-		return models.DNSConnectionEntity{}, domainError("token", "unverified", "The account-owned API token could not read Cloudflare zones")
+		return models.DNSConnectionEntity{}, domainError(
+			"token",
+			"unverified",
+			"The account-owned API token could not read Cloudflare zones",
+		)
 	}
 	if len(zones) == 0 {
-		return models.DNSConnectionEntity{}, domainError("token", "unverified", "Account-owned API token does not expose any Cloudflare zones")
+		return models.DNSConnectionEntity{}, domainError(
+			"token",
+			"unverified",
+			"Account-owned API token does not expose any Cloudflare zones",
+		)
 	}
-	encrypted, err := secretcrypto.EncryptForPurpose([]byte(token), service.config.App.SessionEncryptionKey, cloudflareTokenEncryptionPurpose)
+	encrypted, err := secretcrypto.EncryptForPurpose(
+		[]byte(token),
+		service.config.App.SessionEncryptionKey,
+		cloudflareTokenEncryptionPurpose,
+	)
 	if err != nil {
-		return models.DNSConnectionEntity{}, fmt.Errorf("encrypt Cloudflare account-owned API token: %w", err)
+		return models.DNSConnectionEntity{}, fmt.Errorf(
+			"encrypt Cloudflare account-owned API token: %w",
+			err,
+		)
 	}
 	metadata, _ := json.Marshal(map[string]any{
-		"schema_version": models.CloudflareCredentialSchemaVersion, "credential_kind": "cloudflare_account_api_token", "account_id": accountID,
+		"schema_version":  models.CloudflareCredentialSchemaVersion,
+		"credential_kind": "cloudflare_account_api_token",
+		"account_id":      accountID,
 	})
 	now := time.Now().UTC()
 	tx, err := service.db.BeginTx(ctx, nil)
@@ -133,8 +193,15 @@ func (service *DNSConnections) Create(ctx context.Context, name, accountID, toke
 		return models.DNSConnectionEntity{}, err
 	}
 	connection, err := models.DNSConnection.Create(ctx, tx, models.CreateDNSConnectionData{
-		Name: name, Provider: models.DNSProviderCloudflare, AccountID: accountID, CredentialID: credential.ID,
-		VerifiedAt: sql.NullTime{Time: now, Valid: true}, LastSyncedAt: sql.NullTime{Time: now, Valid: true},
+		Name:         name,
+		Provider:     models.DNSProviderCloudflare,
+		AccountID:    accountID,
+		CredentialID: credential.ID,
+		VerifiedAt: sql.NullTime{
+			Time:  now,
+			Valid: true,
+		},
+		LastSyncedAt: sql.NullTime{Time: now, Valid: true},
 	})
 	if err != nil {
 		return models.DNSConnectionEntity{}, err
@@ -185,17 +252,29 @@ func (service *DNSConnections) RotateToken(ctx context.Context, id uuid.UUID, to
 		return errors.New("DNS connection is unavailable")
 	}
 	if err := service.client.VerifyAccountToken(ctx, connection.AccountID, token); err != nil {
-		return domainError("token", "unverified", "Cloudflare could not verify the account-owned API token")
+		return domainError(
+			"token",
+			"unverified",
+			"Cloudflare could not verify the account-owned API token",
+		)
 	}
 	zones, err := service.client.ListZones(ctx, connection.AccountID, token)
 	if err != nil {
-		return domainError("token", "unverified", "The account-owned API token could not read Cloudflare zones")
+		return domainError(
+			"token",
+			"unverified",
+			"The account-owned API token could not read Cloudflare zones",
+		)
 	}
 	credential, err := models.Credential.Find(ctx, service.db.Executor(), connection.CredentialID)
 	if err != nil {
 		return err
 	}
-	encrypted, err := secretcrypto.EncryptForPurpose([]byte(token), service.config.App.SessionEncryptionKey, cloudflareTokenEncryptionPurpose)
+	encrypted, err := secretcrypto.EncryptForPurpose(
+		[]byte(token),
+		service.config.App.SessionEncryptionKey,
+		cloudflareTokenEncryptionPurpose,
+	)
 	if err != nil {
 		return fmt.Errorf("encrypt Cloudflare account-owned API token: %w", err)
 	}
@@ -206,9 +285,14 @@ func (service *DNSConnections) RotateToken(ctx context.Context, id uuid.UUID, to
 	}
 	defer tx.Rollback()
 	if _, err := models.Credential.Update(ctx, tx, models.UpdateCredentialData{
-		ID: credential.ID, Name: credential.Name, Provider: credential.Provider, Metadata: credential.Metadata,
-		EncPayload: encrypted, VerifiedAt: sql.NullTime{Time: now, Valid: true},
-		LastUsedAt: credential.LastUsedAt, ArchivedAt: credential.ArchivedAt,
+		ID:         credential.ID,
+		Name:       credential.Name,
+		Provider:   credential.Provider,
+		Metadata:   credential.Metadata,
+		EncPayload: encrypted,
+		VerifiedAt: sql.NullTime{Time: now, Valid: true},
+		LastUsedAt: credential.LastUsedAt,
+		ArchivedAt: credential.ArchivedAt,
 	}); err != nil {
 		return err
 	}
@@ -226,14 +310,23 @@ func (service *DNSConnections) Archive(ctx context.Context, id uuid.UUID) error 
 	if err != nil || connection.ArchivedAt.Valid {
 		return errors.New("DNS connection is unavailable")
 	}
-	count, err := service.db.Executor().NewSelect().TableExpr("environment_dns_bindings AS binding").
+	count, err := service.db.Executor().
+		NewSelect().
+		TableExpr("environment_dns_bindings AS binding").
 		Join("JOIN dns_zones AS zone ON zone.id = binding.dns_zone_id").
-		Where("zone.dns_connection_id = ?", id).Where("binding.archived_at IS NULL").Count(ctx)
+		Where("zone.dns_connection_id = ?", id).
+		Where("binding.archived_at IS NULL").
+		Count(ctx)
 	if err != nil {
 		return err
 	}
 	if count > 0 {
-		return errors.Join(models.ErrDomainValidation, errors.New("move managed Environment domains to another connection or manual DNS before archiving this connection"))
+		return errors.Join(
+			models.ErrDomainValidation,
+			errors.New(
+				"move managed Environment domains to another connection or manual DNS before archiving this connection",
+			),
+		)
 	}
 	credential, err := models.Credential.Find(ctx, service.db.Executor(), connection.CredentialID)
 	if err != nil {
@@ -249,8 +342,13 @@ func (service *DNSConnections) Archive(ctx context.Context, id uuid.UUID) error 
 		return err
 	}
 	if _, err := models.Credential.Update(ctx, tx, models.UpdateCredentialData{
-		ID: credential.ID, Name: credential.Name, Provider: credential.Provider, Metadata: credential.Metadata,
-		EncPayload: credential.EncPayload, VerifiedAt: credential.VerifiedAt, LastUsedAt: credential.LastUsedAt,
+		ID:         credential.ID,
+		Name:       credential.Name,
+		Provider:   credential.Provider,
+		Metadata:   credential.Metadata,
+		EncPayload: credential.EncPayload,
+		VerifiedAt: credential.VerifiedAt,
+		LastUsedAt: credential.LastUsedAt,
 		ArchivedAt: sql.NullTime{Time: now, Valid: true},
 	}); err != nil {
 		return err
@@ -258,7 +356,13 @@ func (service *DNSConnections) Archive(ctx context.Context, id uuid.UUID) error 
 	return tx.Commit()
 }
 
-func (service *DNSConnections) persistZones(ctx context.Context, db storage.Executor, connectionID uuid.UUID, zones []cloudflareclient.Zone, now time.Time) error {
+func (service *DNSConnections) persistZones(
+	ctx context.Context,
+	db storage.Executor,
+	connectionID uuid.UUID,
+	zones []cloudflareclient.Zone,
+	now time.Time,
+) error {
 	externalIDs := make([]string, 0, len(zones))
 	for _, zone := range zones {
 		externalIDs = append(externalIDs, zone.ID)
@@ -272,18 +376,29 @@ func (service *DNSConnections) persistZones(ctx context.Context, db storage.Exec
 	return models.DNSZone.ArchiveMissing(ctx, db, connectionID, externalIDs, now)
 }
 
-func (service *DNSConnections) connectionToken(ctx context.Context, db storage.Executor, id uuid.UUID) (models.DNSConnectionEntity, string, error) {
+func (service *DNSConnections) connectionToken(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (models.DNSConnectionEntity, string, error) {
 	connection, err := models.DNSConnection.Find(ctx, db, id)
 	if err != nil || connection.ArchivedAt.Valid {
 		return models.DNSConnectionEntity{}, "", errors.New("DNS connection is unavailable")
 	}
 	credential, err := models.Credential.Find(ctx, db, connection.CredentialID)
-	if err != nil || credential.ArchivedAt.Valid || credential.Provider != models.CloudflareAccountAPITokenProvider {
+	if err != nil || credential.ArchivedAt.Valid ||
+		credential.Provider != models.CloudflareAccountAPITokenProvider {
 		return models.DNSConnectionEntity{}, "", errors.New("Cloudflare credential is unavailable")
 	}
-	plaintext, err := secretcrypto.DecryptForPurpose(credential.EncPayload, service.config.App.SessionEncryptionKey, cloudflareTokenEncryptionPurpose)
+	plaintext, err := secretcrypto.DecryptForPurpose(
+		credential.EncPayload,
+		service.config.App.SessionEncryptionKey,
+		cloudflareTokenEncryptionPurpose,
+	)
 	if err != nil {
-		return models.DNSConnectionEntity{}, "", errors.New("Cloudflare account-owned API token could not be decrypted")
+		return models.DNSConnectionEntity{}, "", errors.New(
+			"Cloudflare account-owned API token could not be decrypted",
+		)
 	}
 	return connection, string(plaintext), nil
 }

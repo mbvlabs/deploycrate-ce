@@ -59,7 +59,8 @@ func (Client) HTTP(ctx context.Context, endpoint Endpoint, options HTTPOptions) 
 		requestPath = "/"
 	}
 	reference, err := url.ParseRequestURI(requestPath)
-	if err != nil || !strings.HasPrefix(reference.Path, "/") || reference.IsAbs() || reference.Host != "" {
+	if err != nil || !strings.HasPrefix(reference.Path, "/") || reference.IsAbs() ||
+		reference.Host != "" {
 		return "", errors.New("the HTTP health check path is invalid")
 	}
 	address, err := endpointAddress(endpoint)
@@ -72,7 +73,10 @@ func (Client) HTTP(ctx context.Context, endpoint Endpoint, options HTTPOptions) 
 		return "", errors.New("the HTTP health check request is invalid")
 	}
 	if strings.TrimSpace(options.Credentials.Username) != "" {
-		request.SetBasicAuth(strings.TrimSpace(options.Credentials.Username), options.Credentials.Password)
+		request.SetBasicAuth(
+			strings.TrimSpace(options.Credentials.Username),
+			options.Credentials.Password,
+		)
 	} else if options.Credentials.Token != "" {
 		request.Header.Set("Authorization", "Bearer "+options.Credentials.Token)
 	}
@@ -86,7 +90,11 @@ func (Client) HTTP(ctx context.Context, endpoint Endpoint, options HTTPOptions) 
 	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 	if options.ExpectedStatus > 0 {
 		if response.StatusCode != options.ExpectedStatus {
-			return "", fmt.Errorf("HTTP returned status %d instead of %d", response.StatusCode, options.ExpectedStatus)
+			return "", fmt.Errorf(
+				"HTTP returned status %d instead of %d",
+				response.StatusCode,
+				options.ExpectedStatus,
+			)
 		}
 	} else if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		return "", fmt.Errorf("HTTP returned unhealthy status %d", response.StatusCode)
@@ -118,7 +126,11 @@ func (Client) MySQL(ctx context.Context, endpoint Endpoint) (string, error) {
 	return "MySQL handshake accepted", nil
 }
 
-func (Client) Redis(ctx context.Context, endpoint Endpoint, credentials Credentials) (string, error) {
+func (Client) Redis(
+	ctx context.Context,
+	endpoint Endpoint,
+	credentials Credentials,
+) (string, error) {
 	connection, err := dial(ctx, endpoint)
 	if err != nil {
 		return "", errors.New("the Redis connection failed")

@@ -52,7 +52,8 @@ func (service *BackupVerifier) Verify(ctx context.Context, backupID uuid.UUID) e
 	if err != nil {
 		return err
 	}
-	if scope.Backup.Status == models.BackupStatusVerified || scope.Backup.Status == models.BackupStatusPruned {
+	if scope.Backup.Status == models.BackupStatusVerified ||
+		scope.Backup.Status == models.BackupStatusPruned {
 		return nil
 	}
 	if scope.Backup.Status != models.BackupStatusUploaded &&
@@ -60,9 +61,16 @@ func (service *BackupVerifier) Verify(ctx context.Context, backupID uuid.UUID) e
 		return fmt.Errorf("backup %s is not ready for verification", backupID)
 	}
 	if err := validateBackupScope(scope); err != nil {
-		return service.recordVerificationFailure(ctx, scope, fmt.Errorf("validate backup scope: %w", err))
+		return service.recordVerificationFailure(
+			ctx,
+			scope,
+			fmt.Errorf("validate backup scope: %w", err),
+		)
 	}
-	plaintext, err := secretcrypto.Decrypt(scope.CredentialPayload, service.config.App.SessionEncryptionKey)
+	plaintext, err := secretcrypto.Decrypt(
+		scope.CredentialPayload,
+		service.config.App.SessionEncryptionKey,
+	)
 	if err != nil {
 		return service.recordVerificationFailure(
 			ctx,
@@ -123,7 +131,12 @@ func (service *BackupVerifier) Verify(ctx context.Context, backupID uuid.UUID) e
 	if err := models.Change.MarkCompleted(ctx, tx, scope.Backup.ChangeID, now); err != nil {
 		return fmt.Errorf("complete backup change: %w", err)
 	}
-	if err := advanceDatabaseRestoreAfterSafetyBackup(ctx, tx, service.queue, backupID); err != nil {
+	if err := advanceDatabaseRestoreAfterSafetyBackup(
+		ctx,
+		tx,
+		service.queue,
+		backupID,
+	); err != nil {
 		return fmt.Errorf("advance Database restore after safety backup: %w", err)
 	}
 	if _, err := service.queue.InsertTx(
@@ -171,7 +184,12 @@ func (service *BackupVerifier) recordVerificationFailure(
 		scope.Backup,
 		verificationErr,
 	)
-	restoreErr := failDatabaseRestoreSafetyBackup(persistCtx, service.db, scope.Backup.ID, verificationErr)
+	restoreErr := failDatabaseRestoreSafetyBackup(
+		persistCtx,
+		service.db,
+		scope.Backup.ID,
+		verificationErr,
+	)
 	slog.ErrorContext(
 		ctx,
 		"backup verification failed",
@@ -325,7 +343,9 @@ func (service *BackupVerifier) verifyServerBackup(
 	}
 	sshDigest := sha256.Sum256(sshCARecoveryBundle)
 	if hex.EncodeToString(sshDigest[:]) != manifest.SSHCARecoverySHA256 {
-		return errors.New("encrypted SSH CA recovery bundle digest does not match the server manifest")
+		return errors.New(
+			"encrypted SSH CA recovery bundle digest does not match the server manifest",
+		)
 	}
 	if manifest.ClickHouse.Path != clickHousePath || manifest.ClickHouse.Format != "JSONEachRow" ||
 		manifest.ClickHouse.SchemaVersion != clickHouseMetricRollupSchemaVersion ||
@@ -354,7 +374,8 @@ func (service *BackupVerifier) verifyServerBackup(
 	_ = json.Unmarshal(scope.PolicyVerification, &verification)
 	checkArguments := []string{"check", "--no-lock"}
 	checkRequired := verification.RepositoryCheck == "always" ||
-		verification.RepositoryCheck == "weekly" && scope.Backup.ScheduledAt.Weekday() == time.Sunday ||
+		verification.RepositoryCheck == "weekly" &&
+			scope.Backup.ScheduledAt.Weekday() == time.Sunday ||
 		scope.Backup.TriggerType == "installer"
 	if verification.DataSubsetParts > 0 {
 		day := int(scope.Backup.ScheduledAt.UTC().Unix() / int64((24*time.Hour)/time.Second))
@@ -387,7 +408,9 @@ func verifyClickHouseExport(value []byte, expected ClickHouseBackupArtifact) err
 	}
 	digest := sha256.Sum256(value)
 	if hex.EncodeToString(digest[:]) != expected.SHA256 {
-		return errors.New("ClickHouse metric rollup export digest does not match the server manifest")
+		return errors.New(
+			"ClickHouse metric rollup export digest does not match the server manifest",
+		)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(value))
 	rows := int64(0)
@@ -428,7 +451,9 @@ func verifyClickHouseExport(value []byte, expected ClickHouseBackupArtifact) err
 			return errors.New("ClickHouse metric rollup export contains an invalid server identity")
 		}
 		if _, err := uuid.Parse(observationID); err != nil {
-			return errors.New("ClickHouse metric rollup export contains an invalid observation identity")
+			return errors.New(
+				"ClickHouse metric rollup export contains an invalid observation identity",
+			)
 		}
 		rows++
 		if firstBucket == "" || bucketStart < firstBucket {
@@ -438,8 +463,11 @@ func verifyClickHouseExport(value []byte, expected ClickHouseBackupArtifact) err
 			lastBucket = bucketStart
 		}
 	}
-	if rows != expected.Rows || firstBucket != expected.FirstBucket || lastBucket != expected.LastBucket {
-		return errors.New("ClickHouse metric rollup export contents do not match the server manifest")
+	if rows != expected.Rows || firstBucket != expected.FirstBucket ||
+		lastBucket != expected.LastBucket {
+		return errors.New(
+			"ClickHouse metric rollup export contents do not match the server manifest",
+		)
 	}
 	return nil
 }

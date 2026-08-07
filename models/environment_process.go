@@ -34,19 +34,19 @@ var environmentGoTargetPattern = regexp.MustCompile(`^[A-Za-z0-9_./*-]+$`)
 
 type EnvironmentProcessEntity struct {
 	bun.BaseModel  `bun:"table:environment_processes,alias:environment_processes"`
-	ID             uuid.UUID       `json:"id" bun:"id,pk,type:uuid"`
-	CreatedAt      time.Time       `json:"createdAt" bun:"created_at"`
-	UpdatedAt      time.Time       `json:"updatedAt" bun:"updated_at"`
-	ArchivedAt     sql.NullTime    `json:"-" bun:"archived_at"`
-	Name           string          `json:"name" bun:"name"`
-	Kind           string          `json:"kind" bun:"kind"`
-	Command        sql.NullString  `json:"-" bun:"command"`
-	Arguments      json.RawMessage `json:"arguments" bun:"arguments,type:jsonb"`
-	Replicas       int32           `json:"replicas" bun:"replicas"`
-	ContainerPort  sql.NullInt32   `json:"-" bun:"container_port"`
-	HealthPath     sql.NullString  `json:"-" bun:"health_path"`
-	TimeoutSeconds sql.NullInt32   `json:"-" bun:"timeout_seconds"`
-	EnvironmentID  uuid.UUID       `json:"-" bun:"environment_id,type:uuid"`
+	ID             uuid.UUID       `bun:"id,pk,type:uuid"                                         json:"id"`
+	CreatedAt      time.Time       `bun:"created_at"                                              json:"createdAt"`
+	UpdatedAt      time.Time       `bun:"updated_at"                                              json:"updatedAt"`
+	ArchivedAt     sql.NullTime    `bun:"archived_at"                                             json:"-"`
+	Name           string          `bun:"name"                                                    json:"name"`
+	Kind           string          `bun:"kind"                                                    json:"kind"`
+	Command        sql.NullString  `bun:"command"                                                 json:"-"`
+	Arguments      json.RawMessage `bun:"arguments,type:jsonb"                                    json:"arguments"`
+	Replicas       int32           `bun:"replicas"                                                json:"replicas"`
+	ContainerPort  sql.NullInt32   `bun:"container_port"                                          json:"-"`
+	HealthPath     sql.NullString  `bun:"health_path"                                             json:"-"`
+	TimeoutSeconds sql.NullInt32   `bun:"timeout_seconds"                                         json:"-"`
+	EnvironmentID  uuid.UUID       `bun:"environment_id,type:uuid"                                json:"-"`
 }
 
 type EnvironmentProcessInput struct {
@@ -118,7 +118,10 @@ func ValidateGoProcessTargets(targets []GoProcessTarget) error {
 			builder.Add(field, "duplicate", "process targets must be unique")
 		}
 		names[target.Process] = struct{}{}
-		if !environmentGoTargetPattern.MatchString(target.Target) || strings.HasPrefix(target.Target, "/") || strings.Contains(target.Target, "..") || len(target.Target) > MaxProcessCommandBytes {
+		if !environmentGoTargetPattern.MatchString(target.Target) ||
+			strings.HasPrefix(target.Target, "/") ||
+			strings.Contains(target.Target, "..") ||
+			len(target.Target) > MaxProcessCommandBytes {
 			builder.Add(field, "invalid", "target must be a repository-relative Go package path")
 		}
 	}
@@ -134,7 +137,9 @@ func FlattenGoProcessTargets(targets []GoProcessTarget) string {
 	return strings.Join(flattened, ":")
 }
 
-func ValidateEnvironmentProcessFormation(inputs []EnvironmentProcessInput) ([]EnvironmentProcessInput, error) {
+func ValidateEnvironmentProcessFormation(
+	inputs []EnvironmentProcessInput,
+) ([]EnvironmentProcessInput, error) {
 	normalized := make([]EnvironmentProcessInput, len(inputs))
 	names := make(map[string]struct{}, len(inputs))
 	webCount := 0
@@ -151,20 +156,30 @@ func ValidateEnvironmentProcessFormation(inputs []EnvironmentProcessInput) ([]En
 			builder.Add(field+".name", "duplicate", "process names must be unique")
 		}
 		names[value.Name] = struct{}{}
-		if !slices.Contains([]string{EnvironmentProcessWeb, EnvironmentProcessWorker, EnvironmentProcessRelease}, value.Kind) {
+		if !slices.Contains(
+			[]string{EnvironmentProcessWeb, EnvironmentProcessWorker, EnvironmentProcessRelease},
+			value.Kind,
+		) {
 			builder.Add(field+".kind", "invalid", "process kind is invalid")
 		}
-		if value.Command != nil && (len(*value.Command) > MaxProcessCommandBytes || strings.ContainsRune(*value.Command, '\x00') || !utf8.ValidString(*value.Command)) {
+		if value.Command != nil &&
+			(len(*value.Command) > MaxProcessCommandBytes || strings.ContainsRune(*value.Command, '\x00') || !utf8.ValidString(*value.Command)) {
 			builder.Add(field+".command", "invalid", "process command is invalid")
 		}
-		if value.Target != nil && (!environmentGoTargetPattern.MatchString(*value.Target) || strings.HasPrefix(*value.Target, "/") || strings.Contains(*value.Target, "..") || len(*value.Target) > MaxProcessCommandBytes) {
-			builder.Add(field+".target", "invalid", "target must be a repository-relative Go package path")
+		if value.Target != nil &&
+			(!environmentGoTargetPattern.MatchString(*value.Target) || strings.HasPrefix(*value.Target, "/") || strings.Contains(*value.Target, "..") || len(*value.Target) > MaxProcessCommandBytes) {
+			builder.Add(
+				field+".target",
+				"invalid",
+				"target must be a repository-relative Go package path",
+			)
 		}
 		if len(value.Arguments) > MaxProcessArguments {
 			builder.Add(field+".arguments", "limit", "process has too many arguments")
 		}
 		for _, argument := range value.Arguments {
-			if len(argument) > MaxProcessArgumentBytes || strings.ContainsRune(argument, '\x00') || !utf8.ValidString(argument) {
+			if len(argument) > MaxProcessArgumentBytes || strings.ContainsRune(argument, '\x00') ||
+				!utf8.ValidString(argument) {
 				builder.Add(field+".arguments", "invalid", "process arguments are invalid")
 				break
 			}
@@ -172,29 +187,61 @@ func ValidateEnvironmentProcessFormation(inputs []EnvironmentProcessInput) ([]En
 		switch value.Kind {
 		case EnvironmentProcessWeb:
 			webCount++
-			if value.Name != EnvironmentProcessWeb || value.Replicas != 1 || value.ContainerPort == nil || *value.ContainerPort < 1 || *value.ContainerPort > 65535 {
-				builder.Add(field, "invalid", "web must be named web with one replica and a valid container port")
+			if value.Name != EnvironmentProcessWeb || value.Replicas != 1 ||
+				value.ContainerPort == nil ||
+				*value.ContainerPort < 1 ||
+				*value.ContainerPort > 65535 {
+				builder.Add(
+					field,
+					"invalid",
+					"web must be named web with one replica and a valid container port",
+				)
 			}
 			if value.TimeoutSeconds != nil {
 				builder.Add(field+".timeoutSeconds", "unsupported", "web does not use a timeout")
 			}
-			if value.HealthPath != "" && (!strings.HasPrefix(value.HealthPath, "/") || len(value.HealthPath) > 2048 || strings.ContainsAny(value.HealthPath, " \t\r\n\x00") || !utf8.ValidString(value.HealthPath)) {
-				builder.Add(field+".healthPath", "invalid", "web health path must be an absolute path without whitespace")
+			if value.HealthPath != "" &&
+				(!strings.HasPrefix(value.HealthPath, "/") || len(value.HealthPath) > 2048 || strings.ContainsAny(value.HealthPath, " \t\r\n\x00") || !utf8.ValidString(value.HealthPath)) {
+				builder.Add(
+					field+".healthPath",
+					"invalid",
+					"web health path must be an absolute path without whitespace",
+				)
 			}
 		case EnvironmentProcessWorker:
 			if value.Command == nil || value.Replicas < 1 || value.Replicas > 32 {
-				builder.Add(field, "invalid", "worker requires a command and between 1 and 32 replicas")
+				builder.Add(
+					field,
+					"invalid",
+					"worker requires a command and between 1 and 32 replicas",
+				)
 			}
 			if value.Name == EnvironmentProcessRelease {
-				builder.Add(field+".name", "reserved", "release is reserved for the release command")
+				builder.Add(
+					field+".name",
+					"reserved",
+					"release is reserved for the release command",
+				)
 			}
 			if value.ContainerPort != nil || value.HealthPath != "" || value.TimeoutSeconds != nil {
-				builder.Add(field, "unsupported", "worker cannot publish a port, health path, or timeout")
+				builder.Add(
+					field,
+					"unsupported",
+					"worker cannot publish a port, health path, or timeout",
+				)
 			}
 		case EnvironmentProcessRelease:
 			releaseCount++
-			if value.Name != EnvironmentProcessRelease || value.Command == nil || value.Replicas != 1 || value.TimeoutSeconds == nil || *value.TimeoutSeconds < 30 || *value.TimeoutSeconds > 3600 {
-				builder.Add(field, "invalid", "release must be named release with one execution, a command, and a timeout from 30 to 3600 seconds")
+			if value.Name != EnvironmentProcessRelease || value.Command == nil ||
+				value.Replicas != 1 ||
+				value.TimeoutSeconds == nil ||
+				*value.TimeoutSeconds < 30 ||
+				*value.TimeoutSeconds > 3600 {
+				builder.Add(
+					field,
+					"invalid",
+					"release must be named release with one execution, a command, and a timeout from 30 to 3600 seconds",
+				)
 			}
 			if value.ContainerPort != nil || value.HealthPath != "" {
 				builder.Add(field, "unsupported", "release cannot publish a port or health path")
@@ -216,9 +263,17 @@ func ValidateEnvironmentProcessFormation(inputs []EnvironmentProcessInput) ([]En
 func (entity *EnvironmentProcessEntity) Validate() error {
 	arguments := []string{}
 	if json.Unmarshal(entity.Arguments, &arguments) != nil {
-		return errors.Join(ErrDomainValidation, errors.New("process arguments must be a JSON string array"))
+		return errors.Join(
+			ErrDomainValidation,
+			errors.New("process arguments must be a JSON string array"),
+		)
 	}
-	input := EnvironmentProcessInput{Name: entity.Name, Kind: entity.Kind, Arguments: arguments, Replicas: entity.Replicas}
+	input := EnvironmentProcessInput{
+		Name:      entity.Name,
+		Kind:      entity.Kind,
+		Arguments: arguments,
+		Replicas:  entity.Replicas,
+	}
 	if entity.Command.Valid {
 		input.Command = &entity.Command.String
 	}
@@ -231,9 +286,14 @@ func (entity *EnvironmentProcessEntity) Validate() error {
 	if entity.TimeoutSeconds.Valid {
 		input.TimeoutSeconds = &entity.TimeoutSeconds.Int32
 	}
-	_, err := ValidateEnvironmentProcessFormation([]EnvironmentProcessInput{input, defaultCompanionForValidation(input.Kind)})
+	_, err := ValidateEnvironmentProcessFormation(
+		[]EnvironmentProcessInput{input, defaultCompanionForValidation(input.Kind)},
+	)
 	if entity.EnvironmentID == uuid.Nil {
-		return errors.Join(err, errors.Join(ErrDomainValidation, errors.New("Environment is required")))
+		return errors.Join(
+			err,
+			errors.Join(ErrDomainValidation, errors.New("Environment is required")),
+		)
 	}
 	return err
 }
@@ -242,18 +302,44 @@ func defaultCompanionForValidation(kind string) EnvironmentProcessInput {
 	port := int32(8080)
 	if kind == EnvironmentProcessWeb {
 		command := "/bin/worker"
-		return EnvironmentProcessInput{Name: "validation-worker", Kind: EnvironmentProcessWorker, Command: &command, Arguments: []string{}, Replicas: 1}
+		return EnvironmentProcessInput{
+			Name:      "validation-worker",
+			Kind:      EnvironmentProcessWorker,
+			Command:   &command,
+			Arguments: []string{},
+			Replicas:  1,
+		}
 	}
-	return EnvironmentProcessInput{Name: EnvironmentProcessWeb, Kind: EnvironmentProcessWeb, Arguments: []string{}, Replicas: 1, ContainerPort: &port}
+	return EnvironmentProcessInput{
+		Name:          EnvironmentProcessWeb,
+		Kind:          EnvironmentProcessWeb,
+		Arguments:     []string{},
+		Replicas:      1,
+		ContainerPort: &port,
+	}
 }
 
-func (environmentProcess) ActiveForEnvironment(ctx context.Context, db storage.Executor, environmentID uuid.UUID) ([]EnvironmentProcessEntity, error) {
+func (environmentProcess) ActiveForEnvironment(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) ([]EnvironmentProcessEntity, error) {
 	entities := make([]EnvironmentProcessEntity, 0)
-	err := db.NewSelect().Model(&entities).Where("environment_id = ?", environmentID).Where("archived_at IS NULL").OrderExpr("created_at, id").Scan(ctx)
+	err := db.NewSelect().
+		Model(&entities).
+		Where("environment_id = ?", environmentID).
+		Where("archived_at IS NULL").
+		OrderExpr("created_at, id").
+		Scan(ctx)
 	return entities, err
 }
 
-func (environmentProcess) ReplaceActive(ctx context.Context, db storage.Executor, environmentID uuid.UUID, inputs []EnvironmentProcessInput) ([]EnvironmentProcessEntity, error) {
+func (environmentProcess) ReplaceActive(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+	inputs []EnvironmentProcessInput,
+) ([]EnvironmentProcessEntity, error) {
 	switch db.(type) {
 	case bun.Tx, *bun.Tx:
 	default:
@@ -264,16 +350,35 @@ func (environmentProcess) ReplaceActive(ctx context.Context, db storage.Executor
 		return nil, err
 	}
 	now := time.Now().UTC()
-	if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "environment-processes:"+environmentID.String()); err != nil {
+	if _, err := db.ExecContext(
+		ctx,
+		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+		"environment-processes:"+environmentID.String(),
+	); err != nil {
 		return nil, err
 	}
-	if _, err := db.NewUpdate().TableExpr("environment_processes").Set("archived_at = ?", now).Set("updated_at = ?", now).Where("environment_id = ?", environmentID).Where("archived_at IS NULL").Exec(ctx); err != nil {
+	if _, err := db.NewUpdate().
+		TableExpr("environment_processes").
+		Set("archived_at = ?", now).
+		Set("updated_at = ?", now).
+		Where("environment_id = ?", environmentID).
+		Where("archived_at IS NULL").
+		Exec(ctx); err != nil {
 		return nil, err
 	}
 	entities := make([]EnvironmentProcessEntity, 0, len(inputs))
 	for _, input := range inputs {
 		arguments, _ := json.Marshal(input.Arguments)
-		entity := EnvironmentProcessEntity{ID: uuid.New(), CreatedAt: now, UpdatedAt: now, Name: input.Name, Kind: input.Kind, Arguments: arguments, Replicas: input.Replicas, EnvironmentID: environmentID}
+		entity := EnvironmentProcessEntity{
+			ID:            uuid.New(),
+			CreatedAt:     now,
+			UpdatedAt:     now,
+			Name:          input.Name,
+			Kind:          input.Kind,
+			Arguments:     arguments,
+			Replicas:      input.Replicas,
+			EnvironmentID: environmentID,
+		}
 		if input.Command != nil {
 			entity.Command = sql.NullString{String: *input.Command, Valid: true}
 		}

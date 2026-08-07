@@ -20,7 +20,12 @@ type GitHubRepositoryFactory struct {
 
 type GitHubRepositoryOption func(*GitHubRepositoryFactory)
 
-func BuildGitHubRepository(gitHubInstallationID uuid.UUID, externalID int64, nodeID string, opts ...GitHubRepositoryOption) models.GitHubRepositoryEntity {
+func BuildGitHubRepository(
+	gitHubInstallationID uuid.UUID,
+	externalID int64,
+	nodeID string,
+	opts ...GitHubRepositoryOption,
+) models.GitHubRepositoryEntity {
 	f := &GitHubRepositoryFactory{
 		GitHubRepositoryEntity: models.GitHubRepositoryEntity{
 			RemovedAt:            sql.NullTime{Time: time.Now(), Valid: true},
@@ -44,7 +49,14 @@ func BuildGitHubRepository(gitHubInstallationID uuid.UUID, externalID int64, nod
 	return f.GitHubRepositoryEntity
 }
 
-func CreateGitHubRepository(ctx context.Context, exec storage.Executor, gitHubInstallationID uuid.UUID, externalID int64, nodeID string, opts ...GitHubRepositoryOption) (models.GitHubRepositoryEntity, error) {
+func CreateGitHubRepository(
+	ctx context.Context,
+	exec storage.Executor,
+	gitHubInstallationID uuid.UUID,
+	externalID int64,
+	nodeID string,
+	opts ...GitHubRepositoryOption,
+) (models.GitHubRepositoryEntity, error) {
 	built := BuildGitHubRepository(gitHubInstallationID, externalID, nodeID, opts...)
 
 	entity := models.GitHubRepositoryEntity{
@@ -71,11 +83,25 @@ func CreateGitHubRepository(ctx context.Context, exec storage.Executor, gitHubIn
 	return entity, nil
 }
 
-func CreateGitHubRepositorys(ctx context.Context, exec storage.Executor, gitHubInstallationID uuid.UUID, externalID int64, nodeID string, count int, opts ...GitHubRepositoryOption) ([]models.GitHubRepositoryEntity, error) {
+func CreateGitHubRepositorys(
+	ctx context.Context,
+	exec storage.Executor,
+	gitHubInstallationID uuid.UUID,
+	externalID int64,
+	nodeID string,
+	count int,
+	opts ...GitHubRepositoryOption,
+) ([]models.GitHubRepositoryEntity, error) {
 	githubrepositorys := make([]models.GitHubRepositoryEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateGitHubRepository(ctx, exec, gitHubInstallationID, externalID, nodeID, opts...)
+		entity, err := CreateGitHubRepository(
+			ctx,
+			exec,
+			gitHubInstallationID,
+			externalID,
+			nodeID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create githubrepository %d: %w", i+1, err)
 		}

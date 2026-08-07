@@ -46,7 +46,8 @@ func Install(ctx context.Context, manifest Manifest) (Result, error) {
 
 	command := exec.CommandContext(ctx, "/usr/bin/env", "bash", "-s")
 	command.Stdin = strings.NewReader(installationScript)
-	command.Env = append(os.Environ(),
+	command.Env = append(
+		os.Environ(),
 		"DEPLOYCRATE_SERVER_ID="+manifest.ServerID,
 		"DEPLOYCRATE_NODE_NAME="+manifest.NodeName,
 		"DEPLOYCRATE_NODE_NAME_YAML="+string(nodeNameYAML),
@@ -60,7 +61,9 @@ func Install(ctx context.Context, manifest Manifest) (Result, error) {
 		"DEPLOYCRATE_SSH_USER_CA="+manifest.SSHUserCAPublicKey,
 		"DEPLOYCRATE_OTLP_ENDPOINT="+manifest.OTLPEndpoint,
 		"DEPLOYCRATE_TELEMETRY_ISSUER="+manifest.TelemetryIssuer,
-		"DEPLOYCRATE_TELEMETRY_JWKS="+base64.StdEncoding.EncodeToString([]byte(manifest.TelemetryJWKSet)),
+		"DEPLOYCRATE_TELEMETRY_JWKS="+base64.StdEncoding.EncodeToString(
+			[]byte(manifest.TelemetryJWKSet),
+		),
 		"DEPLOYCRATE_TELEMETRY_NODE_TOKEN="+manifest.TelemetryNodeToken,
 		fmt.Sprintf("DEPLOYCRATE_CAPABILITY_BUILD=%t", manifest.Capabilities.Build),
 		fmt.Sprintf("DEPLOYCRATE_CAPABILITY_RUNTIME=%t", manifest.Capabilities.Runtime),
@@ -95,10 +98,14 @@ func Install(ctx context.Context, manifest Manifest) (Result, error) {
 		return Result{}, fmt.Errorf("decode node installation result: %w", err)
 	}
 	result := Result{
-		ServerID: manifest.ServerID, WireGuardPublicKey: scriptResult.WireGuardPublicKey,
-		SSHHostPublicKey: scriptResult.SSHHostPublicKey, OperatingSystem: scriptResult.OperatingSystem,
-		Distribution: scriptResult.Distribution, DistributionVersion: scriptResult.DistributionVersion,
-		Architecture: scriptResult.Architecture, Capabilities: manifest.Capabilities,
+		ServerID:            manifest.ServerID,
+		WireGuardPublicKey:  scriptResult.WireGuardPublicKey,
+		SSHHostPublicKey:    scriptResult.SSHHostPublicKey,
+		OperatingSystem:     scriptResult.OperatingSystem,
+		Distribution:        scriptResult.Distribution,
+		DistributionVersion: scriptResult.DistributionVersion,
+		Architecture:        scriptResult.Architecture,
+		Capabilities:        manifest.Capabilities,
 	}
 	encoded, err := json.MarshalIndent(result, "", "  ")
 	if err != nil {

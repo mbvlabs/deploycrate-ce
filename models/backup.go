@@ -67,7 +67,8 @@ func (entity *BackupEntity) Validate() error {
 		builder.Add("id", "required", "backup ID is required")
 	}
 	if entity.TargetType == "server" {
-		if entity.ServerID == nil || *entity.ServerID == uuid.Nil || entity.ResourceID != nil || entity.ResourceInstallationID != nil {
+		if entity.ServerID == nil || *entity.ServerID == uuid.Nil || entity.ResourceID != nil ||
+			entity.ResourceInstallationID != nil {
 			builder.Add("target_type", "incoherent", "server backup scope is invalid")
 		}
 	} else if entity.TargetType == "resource" {
@@ -79,11 +80,19 @@ func (entity *BackupEntity) Validate() error {
 	}
 	if entity.TargetType == "server" &&
 		(entity.Strategy != "filesystem" || entity.Driver != "restic" || entity.Format != "restic") {
-		builder.Add("driver", "incompatible", "server backups require filesystem, restic, and restic")
+		builder.Add(
+			"driver",
+			"incompatible",
+			"server backups require filesystem, restic, and restic",
+		)
 	}
 	if entity.TargetType == "resource" &&
 		(entity.Strategy != "logical" || entity.Driver != "postgresql" || entity.Format != "tar.age") {
-		builder.Add("driver", "incompatible", "database backups require logical, postgresql, and tar.age")
+		builder.Add(
+			"driver",
+			"incompatible",
+			"database backups require logical, postgresql, and tar.age",
+		)
 	}
 	if entity.TriggerType != "installer" && entity.TriggerType != "schedule" &&
 		entity.TriggerType != "manual" && entity.TriggerType != "pre_restore" {
@@ -94,10 +103,18 @@ func (entity *BackupEntity) Validate() error {
 	}
 	if strings.TrimSpace(entity.Strategy) == "" || strings.TrimSpace(entity.Driver) == "" ||
 		strings.TrimSpace(entity.Format) == "" || strings.TrimSpace(entity.FormatVersion) == "" {
-		builder.Add("format", "required", "backup strategy, driver, format, and version are required")
+		builder.Add(
+			"format",
+			"required",
+			"backup strategy, driver, format, and version are required",
+		)
 	}
 	if !validJSONObject(entity.ProviderMetadata) {
-		builder.Add("provider_metadata", "invalid", "backup provider metadata must be a JSON object")
+		builder.Add(
+			"provider_metadata",
+			"invalid",
+			"backup provider metadata must be a JSON object",
+		)
 	}
 	if !validJSONObject(entity.Target) {
 		builder.Add("target", "invalid", "backup target must be a JSON object")
@@ -146,20 +163,45 @@ func (backup) Create(
 		data.ID = uuid.New()
 	}
 	entity := BackupEntity{
-		ID: data.ID, CreatedAt: now, UpdatedAt: now, TargetType: data.TargetType, Target: data.Target,
-		TriggerType: data.TriggerType, ScheduledAt: data.ScheduledAt, Strategy: data.Strategy,
-		Driver: data.Driver, Format: data.Format, FormatVersion: data.FormatVersion,
-		ArtifactReference: data.ArtifactReference, ProviderMetadata: data.ProviderMetadata,
-		Status: data.Status, RequestedAt: data.RequestedAt, ProducerVersion: data.ProducerVersion,
-		ChangeID: data.ChangeID, ChangeTaskID: data.ChangeTaskID,
-		BackupPolicyID: data.BackupPolicyID, ServerID: data.ServerID, ResourceID: data.ResourceID,
+		ID:                     data.ID,
+		CreatedAt:              now,
+		UpdatedAt:              now,
+		TargetType:             data.TargetType,
+		Target:                 data.Target,
+		TriggerType:            data.TriggerType,
+		ScheduledAt:            data.ScheduledAt,
+		Strategy:               data.Strategy,
+		Driver:                 data.Driver,
+		Format:                 data.Format,
+		FormatVersion:          data.FormatVersion,
+		ArtifactReference:      data.ArtifactReference,
+		ProviderMetadata:       data.ProviderMetadata,
+		Status:                 data.Status,
+		RequestedAt:            data.RequestedAt,
+		ProducerVersion:        data.ProducerVersion,
+		ChangeID:               data.ChangeID,
+		ChangeTaskID:           data.ChangeTaskID,
+		BackupPolicyID:         data.BackupPolicyID,
+		ServerID:               data.ServerID,
+		ResourceID:             data.ResourceID,
 		ResourceInstallationID: data.ResourceInstallationID,
 		BackupDestinationID:    data.BackupDestinationID,
 	}
 	if err := validation.Validate(&entity); err != nil {
 		return BackupEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if err := ensureUnique(ctx, db, "backup-scheduled-slot:"+entity.BackupPolicyID.String()+":"+entity.ScheduledAt.UTC().Format(time.RFC3339Nano), db.NewSelect().Model((*BackupEntity)(nil)).Where("backup_policy_id = ?", entity.BackupPolicyID).Where("scheduled_at = ?", entity.ScheduledAt), "scheduledAt", "the backup policy already has a backup in this scheduled slot"); err != nil {
+	if err := ensureUnique(
+		ctx,
+		db,
+		"backup-scheduled-slot:"+entity.BackupPolicyID.String()+":"+entity.ScheduledAt.UTC().
+			Format(time.RFC3339Nano),
+		db.NewSelect().
+			Model((*BackupEntity)(nil)).
+			Where("backup_policy_id = ?", entity.BackupPolicyID).
+			Where("scheduled_at = ?", entity.ScheduledAt),
+		"scheduledAt",
+		"the backup policy already has a backup in this scheduled slot",
+	); err != nil {
 		return BackupEntity{}, err
 	}
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
@@ -377,7 +419,12 @@ func (backup) Claim(ctx context.Context, db storage.Executor, id uuid.UUID) (boo
 	return rows == 1, err
 }
 
-func (backup) MarkFailed(ctx context.Context, db storage.Executor, id uuid.UUID, operationErr error) error {
+func (backup) MarkFailed(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	operationErr error,
+) error {
 	message := boundedBackupError(operationErr)
 	_, err := db.NewUpdate().Model((*BackupEntity)(nil)).
 		Set("status = ?", BackupStatusFailed).
@@ -515,17 +562,17 @@ func (backup) MarkPruned(ctx context.Context, db storage.Executor, id uuid.UUID)
 }
 
 type BackupHealthPolicy struct {
-	PolicyID         uuid.UUID  `json:"policyId" bun:"policy_id"`
-	TargetType       string     `json:"targetType" bun:"target_type"`
-	Schedule         string     `json:"schedule" bun:"schedule"`
-	Provider         string     `json:"provider" bun:"provider"`
-	Bucket           string     `json:"bucket" bun:"bucket"`
-	Prefix           string     `json:"prefix" bun:"prefix"`
-	LastStatus       string     `json:"lastStatus" bun:"last_status"`
-	LastError        string     `json:"lastError" bun:"last_error"`
+	PolicyID         uuid.UUID  `json:"policyId"         bun:"policy_id"`
+	TargetType       string     `json:"targetType"       bun:"target_type"`
+	Schedule         string     `json:"schedule"         bun:"schedule"`
+	Provider         string     `json:"provider"         bun:"provider"`
+	Bucket           string     `json:"bucket"           bun:"bucket"`
+	Prefix           string     `json:"prefix"           bun:"prefix"`
+	LastStatus       string     `json:"lastStatus"       bun:"last_status"`
+	LastError        string     `json:"lastError"        bun:"last_error"`
 	LastSuccessfulAt *time.Time `json:"lastSuccessfulAt" bun:"last_successful_at"`
-	LastVerifiedAt   *time.Time `json:"lastVerifiedAt" bun:"last_verified_at"`
-	LastSizeBytes    int64      `json:"lastSizeBytes" bun:"last_size_bytes"`
+	LastVerifiedAt   *time.Time `json:"lastVerifiedAt"   bun:"last_verified_at"`
+	LastSizeBytes    int64      `json:"lastSizeBytes"    bun:"last_size_bytes"`
 	ActiveOrRetrying bool       `json:"activeOrRetrying" bun:"active_or_retrying"`
 }
 

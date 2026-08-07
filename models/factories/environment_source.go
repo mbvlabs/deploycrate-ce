@@ -21,7 +21,11 @@ type EnvironmentSourceFactory struct {
 
 type EnvironmentSourceOption func(*EnvironmentSourceFactory)
 
-func BuildEnvironmentSource(environmentID uuid.UUID, credentialID *uuid.UUID, opts ...EnvironmentSourceOption) models.EnvironmentSourceEntity {
+func BuildEnvironmentSource(
+	environmentID uuid.UUID,
+	credentialID *uuid.UUID,
+	opts ...EnvironmentSourceOption,
+) models.EnvironmentSourceEntity {
 	f := &EnvironmentSourceFactory{
 		EnvironmentSourceEntity: models.EnvironmentSourceEntity{
 			ArchivedAt:    sql.NullTime{Time: time.Now(), Valid: true},
@@ -43,7 +47,13 @@ func BuildEnvironmentSource(environmentID uuid.UUID, credentialID *uuid.UUID, op
 	return f.EnvironmentSourceEntity
 }
 
-func CreateEnvironmentSource(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, credentialID *uuid.UUID, opts ...EnvironmentSourceOption) (models.EnvironmentSourceEntity, error) {
+func CreateEnvironmentSource(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentID uuid.UUID,
+	credentialID *uuid.UUID,
+	opts ...EnvironmentSourceOption,
+) (models.EnvironmentSourceEntity, error) {
 	built := BuildEnvironmentSource(environmentID, credentialID, opts...)
 
 	entity := models.EnvironmentSourceEntity{
@@ -68,7 +78,14 @@ func CreateEnvironmentSource(ctx context.Context, exec storage.Executor, environ
 	return entity, nil
 }
 
-func CreateEnvironmentSources(ctx context.Context, exec storage.Executor, environmentID uuid.UUID, credentialID *uuid.UUID, count int, opts ...EnvironmentSourceOption) ([]models.EnvironmentSourceEntity, error) {
+func CreateEnvironmentSources(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentID uuid.UUID,
+	credentialID *uuid.UUID,
+	count int,
+	opts ...EnvironmentSourceOption,
+) ([]models.EnvironmentSourceEntity, error) {
 	environmentsources := make([]models.EnvironmentSourceEntity, 0, count)
 
 	for i := range count {

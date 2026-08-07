@@ -24,7 +24,11 @@ type Client struct{}
 
 func New() Client { return Client{} }
 
-func (Client) WaitForReady(ctx context.Context, connection Connection, timeout time.Duration) error {
+func (Client) WaitForReady(
+	ctx context.Context,
+	connection Connection,
+	timeout time.Duration,
+) error {
 	if timeout <= 0 {
 		return errors.New("PostgreSQL readiness timeout must be positive")
 	}
@@ -57,17 +61,25 @@ func (Client) WaitForReady(ctx context.Context, connection Connection, timeout t
 	}
 }
 
-func (Client) CreateDatabase(ctx context.Context, connection Connection, database, encoding, collation string) (bool, error) {
+func (Client) CreateDatabase(
+	ctx context.Context,
+	connection Connection,
+	database, encoding, collation string,
+) (bool, error) {
 	if err := validateDatabaseName(database); err != nil {
 		return false, err
 	}
 	encoding = strings.TrimSpace(encoding)
 	collation = strings.TrimSpace(collation)
 	if len([]byte(encoding)) > 63 || strings.ContainsRune(encoding, '\x00') {
-		return false, errors.New("PostgreSQL database encoding must be at most 63 bytes and contain no null bytes")
+		return false, errors.New(
+			"PostgreSQL database encoding must be at most 63 bytes and contain no null bytes",
+		)
 	}
 	if len([]byte(collation)) > 255 || strings.ContainsRune(collation, '\x00') {
-		return false, errors.New("PostgreSQL database collation must be at most 255 bytes and contain no null bytes")
+		return false, errors.New(
+			"PostgreSQL database collation must be at most 255 bytes and contain no null bytes",
+		)
 	}
 	postgres, err := connectAdministrator(ctx, connection, "postgres")
 	if err != nil {
@@ -75,7 +87,8 @@ func (Client) CreateDatabase(ctx context.Context, connection Connection, databas
 	}
 	defer postgres.Close(context.WithoutCancel(ctx))
 	var exists bool
-	if err := postgres.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname = $1)", database).Scan(&exists); err != nil {
+	if err := postgres.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_database WHERE datname = $1)", database).
+		Scan(&exists); err != nil {
 		return false, fmt.Errorf("inspect PostgreSQL database %q: %w", database, err)
 	}
 	if exists {
@@ -90,8 +103,13 @@ func (Client) CreateDatabase(ctx context.Context, connection Connection, databas
 			continue
 		}
 		var quoted string
-		if err := postgres.QueryRow(ctx, "SELECT pg_catalog.quote_literal($1)", option.value).Scan(&quoted); err != nil {
-			return false, fmt.Errorf("quote PostgreSQL database %s: %w", strings.ToLower(option.name), err)
+		if err := postgres.QueryRow(ctx, "SELECT pg_catalog.quote_literal($1)", option.value).
+			Scan(&quoted); err != nil {
+			return false, fmt.Errorf(
+				"quote PostgreSQL database %s: %w",
+				strings.ToLower(option.name),
+				err,
+			)
 		}
 		options = append(options, option.name+" "+quoted)
 	}
@@ -117,7 +135,10 @@ func (Client) DropDatabase(ctx context.Context, connection Connection, database 
 		return err
 	}
 	defer postgres.Close(context.WithoutCancel(ctx))
-	if _, err := postgres.Exec(ctx, "DROP DATABASE IF EXISTS "+pgx.Identifier{database}.Sanitize()+" WITH (FORCE)"); err != nil {
+	if _, err := postgres.Exec(
+		ctx,
+		"DROP DATABASE IF EXISTS "+pgx.Identifier{database}.Sanitize()+" WITH (FORCE)",
+	); err != nil {
 		return fmt.Errorf("drop PostgreSQL database %q: %w", database, err)
 	}
 	return nil
@@ -126,12 +147,18 @@ func (Client) DropDatabase(ctx context.Context, connection Connection, database 
 func validateDatabaseName(database string) error {
 	database = strings.TrimSpace(database)
 	if database == "" || len([]byte(database)) > 63 || strings.ContainsRune(database, '\x00') {
-		return errors.New("PostgreSQL database name must be present, at most 63 bytes, and contain no null bytes")
+		return errors.New(
+			"PostgreSQL database name must be present, at most 63 bytes, and contain no null bytes",
+		)
 	}
 	return nil
 }
 
-func connectAdministrator(ctx context.Context, connection Connection, database string) (*pgx.Conn, error) {
+func connectAdministrator(
+	ctx context.Context,
+	connection Connection,
+	database string,
+) (*pgx.Conn, error) {
 	configuration, err := pgx.ParseConfig("sslmode=disable")
 	if err != nil {
 		return nil, fmt.Errorf("prepare PostgreSQL administrator connection: %w", err)
@@ -144,7 +171,10 @@ func connectAdministrator(ctx context.Context, connection Connection, database s
 	configuration.TLSConfig = nil
 	postgres, err := pgx.ConnectConfig(ctx, configuration)
 	if err != nil {
-		return nil, fmt.Errorf("connect to PostgreSQL with the Resource administrator credential: %w", err)
+		return nil, fmt.Errorf(
+			"connect to PostgreSQL with the Resource administrator credential: %w",
+			err,
+		)
 	}
 	return postgres, nil
 }
@@ -187,7 +217,12 @@ func (Client) Check(ctx context.Context, connection Connection, database, tlsMod
 	return nil
 }
 
-func (Client) ReconcileLoginRoleAcrossDatabases(ctx context.Context, connection Connection, databases []string, username, password, previousPassword string) error {
+func (Client) ReconcileLoginRoleAcrossDatabases(
+	ctx context.Context,
+	connection Connection,
+	databases []string,
+	username, password, previousPassword string,
+) error {
 	for index := range databases {
 		databases[index] = strings.TrimSpace(databases[index])
 		if err := validateDatabaseName(databases[index]); err != nil {
@@ -199,7 +234,9 @@ func (Client) ReconcileLoginRoleAcrossDatabases(ctx context.Context, connection 
 		return errors.New("PostgreSQL role username is required")
 	}
 	if len([]byte(username)) > 63 || strings.ContainsRune(username, '\x00') {
-		return errors.New("PostgreSQL role username must be at most 63 bytes and cannot contain null bytes")
+		return errors.New(
+			"PostgreSQL role username must be at most 63 bytes and cannot contain null bytes",
+		)
 	}
 	if password == "" {
 		return errors.New("PostgreSQL role password is required")
@@ -223,10 +260,18 @@ func (Client) ReconcileLoginRoleAcrossDatabases(ctx context.Context, connection 
 	}
 	defer postgres.Close(context.WithoutCancel(ctx))
 	lockKey := "deploycrate-role:" + username
-	if _, err := postgres.Exec(ctx, "SELECT pg_catalog.pg_advisory_lock(pg_catalog.hashtext($1))", lockKey); err != nil {
+	if _, err := postgres.Exec(
+		ctx,
+		"SELECT pg_catalog.pg_advisory_lock(pg_catalog.hashtext($1))",
+		lockKey,
+	); err != nil {
 		return fmt.Errorf("lock PostgreSQL role reconciliation: %w", err)
 	}
-	defer postgres.Exec(context.WithoutCancel(ctx), "SELECT pg_catalog.pg_advisory_unlock(pg_catalog.hashtext($1))", lockKey)
+	defer postgres.Exec(
+		context.WithoutCancel(ctx),
+		"SELECT pg_catalog.pg_advisory_unlock(pg_catalog.hashtext($1))",
+		lockKey,
+	)
 
 	tx, err := postgres.Begin(ctx)
 	if err != nil {
@@ -235,11 +280,15 @@ func (Client) ReconcileLoginRoleAcrossDatabases(ctx context.Context, connection 
 	defer tx.Rollback(context.WithoutCancel(ctx))
 
 	var exists bool
-	if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = $1)", username).Scan(&exists); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = $1)", username).
+		Scan(&exists); err != nil {
 		return fmt.Errorf("inspect PostgreSQL role: %w", err)
 	}
 	if exists && previousPassword == "" {
-		return fmt.Errorf("PostgreSQL login role %q already exists outside this credential reconciliation", username)
+		return fmt.Errorf(
+			"PostgreSQL login role %q already exists outside this credential reconciliation",
+			username,
+		)
 	}
 	identifier := pgx.Identifier{username}.Sanitize()
 	if !exists {
@@ -248,10 +297,14 @@ func (Client) ReconcileLoginRoleAcrossDatabases(ctx context.Context, connection 
 		}
 	}
 	var quotedPassword string
-	if err := tx.QueryRow(ctx, "SELECT pg_catalog.quote_literal($1)", password).Scan(&quotedPassword); err != nil {
+	if err := tx.QueryRow(ctx, "SELECT pg_catalog.quote_literal($1)", password).
+		Scan(&quotedPassword); err != nil {
 		return fmt.Errorf("quote PostgreSQL role password: %w", err)
 	}
-	if _, err := tx.Exec(ctx, "ALTER ROLE "+identifier+" WITH LOGIN PASSWORD "+quotedPassword); err != nil {
+	if _, err := tx.Exec(
+		ctx,
+		"ALTER ROLE "+identifier+" WITH LOGIN PASSWORD "+quotedPassword,
+	); err != nil {
 		return fmt.Errorf("rotate PostgreSQL login role %q password: %w", username, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -259,15 +312,39 @@ func (Client) ReconcileLoginRoleAcrossDatabases(ctx context.Context, connection 
 	}
 	appliedDatabases := make([]string, 0, len(databases))
 	for _, database := range databases {
-		if err := (Client{}).GrantLoginRoleDatabase(ctx, connection, database, username); err != nil {
+		if err := (Client{}).GrantLoginRoleDatabase(
+			ctx,
+			connection,
+			database,
+			username,
+		); err != nil {
 			compensationErrors := make([]error, 0, len(appliedDatabases)+1)
 			if exists {
-				compensationErrors = append(compensationErrors, setLoginRolePassword(context.WithoutCancel(ctx), connection, username, previousPassword))
+				compensationErrors = append(
+					compensationErrors,
+					setLoginRolePassword(
+						context.WithoutCancel(ctx),
+						connection,
+						username,
+						previousPassword,
+					),
+				)
 			} else {
 				for index := len(appliedDatabases) - 1; index >= 0; index-- {
-					compensationErrors = append(compensationErrors, (Client{}).RevokeLoginRoleDatabase(context.WithoutCancel(ctx), connection, appliedDatabases[index], username))
+					compensationErrors = append(
+						compensationErrors,
+						(Client{}).RevokeLoginRoleDatabase(
+							context.WithoutCancel(ctx),
+							connection,
+							appliedDatabases[index],
+							username,
+						),
+					)
 				}
-				compensationErrors = append(compensationErrors, dropLoginRole(context.WithoutCancel(ctx), connection, username))
+				compensationErrors = append(
+					compensationErrors,
+					dropLoginRole(context.WithoutCancel(ctx), connection, username),
+				)
 			}
 			return errors.Join(err, errors.Join(compensationErrors...))
 		}
@@ -276,13 +353,19 @@ func (Client) ReconcileLoginRoleAcrossDatabases(ctx context.Context, connection 
 	return nil
 }
 
-func (Client) RevokeLoginRoleDatabase(ctx context.Context, connection Connection, database, username string) error {
+func (Client) RevokeLoginRoleDatabase(
+	ctx context.Context,
+	connection Connection,
+	database, username string,
+) error {
 	if err := validateDatabaseName(database); err != nil {
 		return err
 	}
 	username = strings.TrimSpace(username)
 	if username == "" || len([]byte(username)) > 63 || strings.ContainsRune(username, '\x00') {
-		return errors.New("PostgreSQL role username must be present, at most 63 bytes, and contain no null bytes")
+		return errors.New(
+			"PostgreSQL role username must be present, at most 63 bytes, and contain no null bytes",
+		)
 	}
 	postgres, err := connectAdministrator(ctx, connection, database)
 	if err != nil {
@@ -309,7 +392,12 @@ func (Client) RevokeLoginRoleDatabase(ctx context.Context, connection Connection
 	}
 	for _, statement := range statements {
 		if _, err := tx.Exec(ctx, statement); err != nil {
-			return fmt.Errorf("revoke PostgreSQL database %q privileges from role %q: %w", database, username, err)
+			return fmt.Errorf(
+				"revoke PostgreSQL database %q privileges from role %q: %w",
+				database,
+				username,
+				err,
+			)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -318,10 +406,16 @@ func (Client) RevokeLoginRoleDatabase(ctx context.Context, connection Connection
 	return nil
 }
 
-func (Client) RotateAdministratorPassword(ctx context.Context, connection Connection, newPassword string) error {
+func (Client) RotateAdministratorPassword(
+	ctx context.Context,
+	connection Connection,
+	newPassword string,
+) error {
 	username := strings.TrimSpace(connection.Username)
 	if username == "" || len([]byte(username)) > 63 || strings.ContainsRune(username, '\x00') {
-		return errors.New("PostgreSQL administrator username must be present, at most 63 bytes, and contain no null bytes")
+		return errors.New(
+			"PostgreSQL administrator username must be present, at most 63 bytes, and contain no null bytes",
+		)
 	}
 	if connection.Password == "" || newPassword == "" {
 		return errors.New("PostgreSQL administrator passwords are required")
@@ -332,13 +426,19 @@ func (Client) RotateAdministratorPassword(ctx context.Context, connection Connec
 	return nil
 }
 
-func (Client) GrantLoginRoleDatabase(ctx context.Context, connection Connection, database, username string) error {
+func (Client) GrantLoginRoleDatabase(
+	ctx context.Context,
+	connection Connection,
+	database, username string,
+) error {
 	if err := validateDatabaseName(database); err != nil {
 		return err
 	}
 	username = strings.TrimSpace(username)
 	if username == "" || len([]byte(username)) > 63 || strings.ContainsRune(username, '\x00') {
-		return errors.New("PostgreSQL role username must be present, at most 63 bytes, and contain no null bytes")
+		return errors.New(
+			"PostgreSQL role username must be present, at most 63 bytes, and contain no null bytes",
+		)
 	}
 	postgres, err := connectAdministrator(ctx, connection, database)
 	if err != nil {
@@ -365,7 +465,12 @@ func (Client) GrantLoginRoleDatabase(ctx context.Context, connection Connection,
 	}
 	for _, statement := range statements {
 		if _, err := tx.Exec(ctx, statement); err != nil {
-			return fmt.Errorf("grant PostgreSQL database %q privileges to role %q: %w", database, username, err)
+			return fmt.Errorf(
+				"grant PostgreSQL database %q privileges to role %q: %w",
+				database,
+				username,
+				err,
+			)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -374,17 +479,25 @@ func (Client) GrantLoginRoleDatabase(ctx context.Context, connection Connection,
 	return nil
 }
 
-func setLoginRolePassword(ctx context.Context, connection Connection, username, password string) error {
+func setLoginRolePassword(
+	ctx context.Context,
+	connection Connection,
+	username, password string,
+) error {
 	postgres, err := connectAdministrator(ctx, connection, "postgres")
 	if err != nil {
 		return err
 	}
 	defer postgres.Close(context.WithoutCancel(ctx))
 	var quotedPassword string
-	if err := postgres.QueryRow(ctx, "SELECT pg_catalog.quote_literal($1)", password).Scan(&quotedPassword); err != nil {
+	if err := postgres.QueryRow(ctx, "SELECT pg_catalog.quote_literal($1)", password).
+		Scan(&quotedPassword); err != nil {
 		return fmt.Errorf("quote PostgreSQL role compensation password: %w", err)
 	}
-	if _, err := postgres.Exec(ctx, "ALTER ROLE "+pgx.Identifier{username}.Sanitize()+" WITH LOGIN PASSWORD "+quotedPassword); err != nil {
+	if _, err := postgres.Exec(
+		ctx,
+		"ALTER ROLE "+pgx.Identifier{username}.Sanitize()+" WITH LOGIN PASSWORD "+quotedPassword,
+	); err != nil {
 		return fmt.Errorf("restore PostgreSQL login role %q password: %w", username, err)
 	}
 	return nil
@@ -396,8 +509,15 @@ func dropLoginRole(ctx context.Context, connection Connection, username string) 
 		return err
 	}
 	defer postgres.Close(context.WithoutCancel(ctx))
-	if _, err := postgres.Exec(ctx, "DROP ROLE IF EXISTS "+pgx.Identifier{username}.Sanitize()); err != nil {
-		return fmt.Errorf("remove PostgreSQL login role %q after failed reconciliation: %w", username, err)
+	if _, err := postgres.Exec(
+		ctx,
+		"DROP ROLE IF EXISTS "+pgx.Identifier{username}.Sanitize(),
+	); err != nil {
+		return fmt.Errorf(
+			"remove PostgreSQL login role %q after failed reconciliation: %w",
+			username,
+			err,
+		)
 	}
 	return nil
 }

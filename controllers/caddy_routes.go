@@ -36,12 +36,42 @@ func (controller CaddyRoutes) RegisterRoutes(r *router.Router) error {
 		handler     echo.HandlerFunc
 		middlewares []echo.MiddlewareFunc
 	}{
-		{http.MethodGet, routes.CaddyRoutes, controller.Index, []echo.MiddlewareFunc{middleware.AuthOnly}},
-		{http.MethodGet, routes.CaddyRouteShow, controller.Show, []echo.MiddlewareFunc{middleware.AuthOnly}},
-		{http.MethodPost, routes.CaddyRouteCreate, controller.Create, []echo.MiddlewareFunc{middleware.AdminOnly}},
-		{http.MethodPatch, routes.CaddyRouteUpdate, controller.Update, []echo.MiddlewareFunc{middleware.AdminOnly}},
-		{http.MethodPatch, routes.CaddyResourceRouteUpdate, controller.UpdateResource, []echo.MiddlewareFunc{middleware.AdminOnly}},
-		{http.MethodDelete, routes.CaddyRouteDestroy, controller.Destroy, []echo.MiddlewareFunc{middleware.AdminOnly}},
+		{
+			http.MethodGet,
+			routes.CaddyRoutes,
+			controller.Index,
+			[]echo.MiddlewareFunc{middleware.AuthOnly},
+		},
+		{
+			http.MethodGet,
+			routes.CaddyRouteShow,
+			controller.Show,
+			[]echo.MiddlewareFunc{middleware.AuthOnly},
+		},
+		{
+			http.MethodPost,
+			routes.CaddyRouteCreate,
+			controller.Create,
+			[]echo.MiddlewareFunc{middleware.AdminOnly},
+		},
+		{
+			http.MethodPatch,
+			routes.CaddyRouteUpdate,
+			controller.Update,
+			[]echo.MiddlewareFunc{middleware.AdminOnly},
+		},
+		{
+			http.MethodPatch,
+			routes.CaddyResourceRouteUpdate,
+			controller.UpdateResource,
+			[]echo.MiddlewareFunc{middleware.AdminOnly},
+		},
+		{
+			http.MethodDelete,
+			routes.CaddyRouteDestroy,
+			controller.Destroy,
+			[]echo.MiddlewareFunc{middleware.AdminOnly},
+		},
 	}
 
 	errList := make([]error, 0, len(routesToRegister))
@@ -65,7 +95,11 @@ func (controller CaddyRoutes) UpdateResource(etx *echo.Context) error {
 	}
 	var externalID string
 	if err == nil {
-		externalID, err = controller.service.UpdateResourceRoute(etx.Request().Context(), endpointID, input)
+		externalID, err = controller.service.UpdateResourceRoute(
+			etx.Request().Context(),
+			endpointID,
+			input,
+		)
 	}
 	if err != nil {
 		return controller.redirectWithError(etx, err)
@@ -80,10 +114,21 @@ func (controller CaddyRoutes) Show(etx *echo.Context) error {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
 	if err != nil {
-		slog.ErrorContext(etx.Request().Context(), "failed to load Caddy route details", "route_id", etx.Param("id"), "error", err)
+		slog.ErrorContext(
+			etx.Request().Context(),
+			"failed to load Caddy route details",
+			"route_id",
+			etx.Param("id"),
+			"error",
+			err,
+		)
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
-	return inertia.Page(etx, "System/CaddyRoutes/Show", inertia.Props{"auth": authProps(etx), "route": detail})
+	return inertia.Page(
+		etx,
+		"System/CaddyRoutes/Show",
+		inertia.Props{"auth": authProps(etx), "route": detail},
+	)
 }
 
 func (controller CaddyRoutes) Index(etx *echo.Context) error {
@@ -94,11 +139,21 @@ func (controller CaddyRoutes) Index(etx *echo.Context) error {
 	}
 	resourceRoutes, err := controller.service.ResourceRouteSnapshot(etx.Request().Context())
 	if err != nil {
-		slog.ErrorContext(etx.Request().Context(), "failed to load Resource Caddy routes", "error", err)
+		slog.ErrorContext(
+			etx.Request().Context(),
+			"failed to load Resource Caddy routes",
+			"error",
+			err,
+		)
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 	return inertia.Page(etx, "System/CaddyRoutes/Index", inertia.Props{
-		"auth": authProps(etx), "routes": snapshot.Routes, "resourceRoutes": resourceRoutes, "options": snapshot.Options,
+		"auth": authProps(
+			etx,
+		),
+		"routes":         snapshot.Routes,
+		"resourceRoutes": resourceRoutes,
+		"options":        snapshot.Options,
 	})
 }
 
@@ -129,7 +184,11 @@ func (controller CaddyRoutes) Update(etx *echo.Context) error {
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Caddy route updated and reconciled")
 	if etx.QueryParam("returnTo") == "details" {
-		return inertia.Redirect(etx, routes.CaddyRouteShow.URL(input.ExternalID), http.StatusSeeOther)
+		return inertia.Redirect(
+			etx,
+			routes.CaddyRouteShow.URL(input.ExternalID),
+			http.StatusSeeOther,
+		)
 	}
 	return inertia.Redirect(etx, routes.CaddyRoutes.URL(), http.StatusSeeOther)
 }

@@ -70,14 +70,22 @@ func (ssshc serverSSHCredential) FindForServer(
 	return entity, nil
 }
 
-func (ssshc serverSSHCredential) ConfirmHostKey(ctx context.Context, db storage.Executor, serverID uuid.UUID) error {
+func (ssshc serverSSHCredential) ConfirmHostKey(
+	ctx context.Context,
+	db storage.Executor,
+	serverID uuid.UUID,
+) error {
 	_, err := db.NewUpdate().Model((*ServerSSHCredentialEntity)(nil)).
 		Set("updated_at = ?", time.Now().UTC()).Set("host_key_confirmed_at = ?", time.Now().UTC()).
 		Where("server_id = ?", serverID).Exec(ctx)
 	return err
 }
 
-func (ssshc serverSSHCredential) CompleteTrustTransition(ctx context.Context, db storage.Executor, serverID uuid.UUID) error {
+func (ssshc serverSSHCredential) CompleteTrustTransition(
+	ctx context.Context,
+	db storage.Executor,
+	serverID uuid.UUID,
+) error {
 	_, err := db.NewUpdate().Model((*ServerSSHCredentialEntity)(nil)).
 		Set("updated_at = ?", time.Now().UTC()).Set("username = 'admin'").
 		Set("enc_private_key = NULL").Set("enc_private_key_passphrase = NULL").
@@ -119,7 +127,9 @@ func (ssshc serverSSHCredential) Create(
 		ctx,
 		db,
 		"server-ssh-credential:"+entity.ServerID.String(),
-		db.NewSelect().Model((*ServerSSHCredentialEntity)(nil)).Where("server_id = ?", entity.ServerID),
+		db.NewSelect().
+			Model((*ServerSSHCredentialEntity)(nil)).
+			Where("server_id = ?", entity.ServerID),
 		"serverId",
 		"the Server already has SSH credentials",
 	); err != nil {

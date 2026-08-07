@@ -84,7 +84,11 @@ func (Client) Inspect(ctx context.Context, installationID, containerName string)
 	return state, nil
 }
 
-func (Client) Logs(ctx context.Context, installationID, containerName string, tail int) (string, error) {
+func (Client) Logs(
+	ctx context.Context,
+	installationID, containerName string,
+	tail int,
+) (string, error) {
 	return hostcommand.Run(ctx, "container-logs", installationID, containerName, strconv.Itoa(tail))
 }
 

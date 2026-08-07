@@ -42,13 +42,26 @@ func (controller RegistryResources) RegisterRoutes(r *router.Router) error {
 		{http.MethodPost, routes.RegistryResourceCreate, controller.Create, nil},
 		{http.MethodGet, routes.RegistryResourceShow, controller.Show, nil},
 		{http.MethodDelete, routes.RegistryResourceDestroy, controller.Destroy, nil},
-		{http.MethodPost, routes.RegistryResourceCredentials, controller.Credentials, []echo.MiddlewareFunc{middleware.IPRateLimiter(5, routes.RegistryResources)}},
+		{
+			http.MethodPost,
+			routes.RegistryResourceCredentials,
+			controller.Credentials,
+			[]echo.MiddlewareFunc{middleware.IPRateLimiter(5, routes.RegistryResources)},
+		},
 	}
 	errList := make([]error, 0, len(definitions))
 	for _, definition := range definitions {
 		middlewares := append([]echo.MiddlewareFunc{}, admin...)
 		middlewares = append(middlewares, definition.middlewares...)
-		_, err := r.AddRoute(echo.Route{Method: definition.method, Path: definition.route.Path(), Name: definition.route.Name(), Handler: definition.handler, Middlewares: middlewares})
+		_, err := r.AddRoute(
+			echo.Route{
+				Method:      definition.method,
+				Path:        definition.route.Path(),
+				Name:        definition.route.Name(),
+				Handler:     definition.handler,
+				Middlewares: middlewares,
+			},
+		)
 		if err != nil {
 			errList = append(errList, err)
 		}
@@ -62,13 +75,22 @@ func (controller RegistryResources) Credentials(etx *echo.Context) error {
 
 	resourceID, err := uuid.Parse(etx.Param("id"))
 	if err != nil {
-		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Managed registry not found"})
+		return etx.JSON(
+			http.StatusNotFound,
+			map[string]string{"error": "Managed registry not found"},
+		)
 	}
 	var payload struct {
 		Password string `json:"password"`
 	}
-	if err := etx.Bind(&payload); err != nil || payload.Password == "" || len(payload.Password) > 4096 {
-		return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "Current password is required"})
+	if err := etx.Bind(
+		&payload,
+	); err != nil || payload.Password == "" ||
+		len(payload.Password) > 4096 {
+		return etx.JSON(
+			http.StatusUnprocessableEntity,
+			map[string]string{"error": "Current password is required"},
+		)
 	}
 
 	credentials, err := controller.service.RevealManagedCredentials(
@@ -80,12 +102,28 @@ func (controller RegistryResources) Credentials(etx *echo.Context) error {
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrInvalidCredentials):
-			return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "Current password is incorrect"})
+			return etx.JSON(
+				http.StatusUnprocessableEntity,
+				map[string]string{"error": "Current password is incorrect"},
+			)
 		case errors.Is(err, services.ErrManagedRegistryUnavailable):
-			return etx.JSON(http.StatusNotFound, map[string]string{"error": "Managed registry not found"})
+			return etx.JSON(
+				http.StatusNotFound,
+				map[string]string{"error": "Managed registry not found"},
+			)
 		default:
-			slog.ErrorContext(etx.Request().Context(), "failed to reveal managed Registry credentials", "resource_id", resourceID, "error", err)
-			return etx.JSON(http.StatusInternalServerError, map[string]string{"error": "Registry credentials could not be loaded"})
+			slog.ErrorContext(
+				etx.Request().Context(),
+				"failed to reveal managed Registry credentials",
+				"resource_id",
+				resourceID,
+				"error",
+				err,
+			)
+			return etx.JSON(
+				http.StatusInternalServerError,
+				map[string]string{"error": "Registry credentials could not be loaded"},
+			)
 		}
 	}
 
@@ -97,7 +135,11 @@ func (controller RegistryResources) Index(etx *echo.Context) error {
 	if err != nil {
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
-	return inertia.Page(etx, "Connections/Registries", inertia.Props{"auth": authProps(etx), "registries": registries})
+	return inertia.Page(
+		etx,
+		"Connections/Registries",
+		inertia.Props{"auth": authProps(etx), "registries": registries},
+	)
 }
 
 func (controller RegistryResources) Show(etx *echo.Context) error {
@@ -110,7 +152,14 @@ func (controller RegistryResources) Show(etx *echo.Context) error {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
 	if err != nil {
-		slog.ErrorContext(etx.Request().Context(), "failed to load Registry", "resource_id", resourceID, "error", err)
+		slog.ErrorContext(
+			etx.Request().Context(),
+			"failed to load Registry",
+			"resource_id",
+			resourceID,
+			"error",
+			err,
+		)
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 	repositories := make([]services.RegistryRepositorySummary, 0)
@@ -118,7 +167,14 @@ func (controller RegistryResources) Show(etx *echo.Context) error {
 	if registry.Managed {
 		repositories, err = controller.service.Inventory(etx.Request().Context(), resourceID)
 		if err != nil {
-			slog.WarnContext(etx.Request().Context(), "failed to load managed Registry inventory", "resource_id", resourceID, "error", err)
+			slog.WarnContext(
+				etx.Request().Context(),
+				"failed to load managed Registry inventory",
+				"resource_id",
+				resourceID,
+				"error",
+				err,
+			)
 			inventoryError = "Repository inventory could not be loaded. Confirm that the managed registry is reachable and try again."
 		}
 	}
@@ -138,14 +194,25 @@ func (controller RegistryResources) Create(etx *echo.Context) error {
 	if err := etx.Bind(&payload); err != nil {
 		return inertia.Page(etx, "Errors/BadRequest", inertia.Props{})
 	}
-	_, err := controller.service.CreateExternal(etx.Request().Context(), services.ExternalRegistryResourceInput{
-		Name: payload.Name, Endpoint: payload.Endpoint, Username: payload.Username, AccessToken: payload.AccessToken,
-	})
+	_, err := controller.service.CreateExternal(
+		etx.Request().Context(),
+		services.ExternalRegistryResourceInput{
+			Name:        payload.Name,
+			Endpoint:    payload.Endpoint,
+			Username:    payload.Username,
+			AccessToken: payload.AccessToken,
+		},
+	)
 	if err != nil {
 		if validationErrors, ok := validation.As(err); ok {
 			registries, listErr := controller.service.List(etx.Request().Context())
 			if listErr == nil {
-				return inertia.Page(etx, "Connections/Registries", inertia.Props{"auth": authProps(etx), "registries": registries}, inertia.WithValidationErrors(validationErrors.ToMap()))
+				return inertia.Page(
+					etx,
+					"Connections/Registries",
+					inertia.Props{"auth": authProps(etx), "registries": registries},
+					inertia.WithValidationErrors(validationErrors.ToMap()),
+				)
 			}
 		}
 		return controller.redirectWithError(etx, err)

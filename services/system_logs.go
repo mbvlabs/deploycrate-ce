@@ -99,7 +99,10 @@ func (service *SystemLogs) Snapshot(
 	return systemLogSnapshot(page, after)
 }
 
-func systemLogSnapshot(page clickhouseclient.SystemLogPage, after string) (SystemLogSnapshot, error) {
+func systemLogSnapshot(
+	page clickhouseclient.SystemLogPage,
+	after string,
+) (SystemLogSnapshot, error) {
 	hasMore := len(page.Logs) > systemLogBatchSize
 	if hasMore {
 		page.Logs = page.Logs[:systemLogBatchSize]

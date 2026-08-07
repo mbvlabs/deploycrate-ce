@@ -16,7 +16,9 @@ import (
 	"github.com/uptrace/bun"
 )
 
-var systemServerCapabilities = json.RawMessage(`{"build":true,"runtime":true,"resource":true,"database":true,"repository":true,"telemetry":true}`)
+var systemServerCapabilities = json.RawMessage(
+	`{"build":true,"runtime":true,"resource":true,"database":true,"repository":true,"telemetry":true}`,
+)
 
 func ensureSystemApplication(ctx context.Context, exec storage.Executor, now time.Time) error {
 	if db, ok := exec.(*bun.DB); ok {
@@ -33,11 +35,20 @@ func ensureSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	return ensureSystemApplicationInTransaction(ctx, exec, now)
 }
 
-func ensureSystemApplicationInTransaction(ctx context.Context, exec storage.Executor, now time.Time) error {
+func ensureSystemApplicationInTransaction(
+	ctx context.Context,
+	exec storage.Executor,
+	now time.Time,
+) error {
 	if _, err := models.Application.FindSystem(ctx, exec); err == nil {
-		if _, err := exec.NewUpdate().TableExpr("servers").Set("capabilities = ?", systemServerCapabilities).
-			Set("updated_at = ?", now).Where("slug = ?", models.SystemApplicationSlug).
-			Where("kind = 'self_hosted'").Where("archived_at IS NULL").Exec(ctx); err != nil {
+		if _, err := exec.NewUpdate().
+			TableExpr("servers").
+			Set("capabilities = ?", systemServerCapabilities).
+			Set("updated_at = ?", now).
+			Where("slug = ?", models.SystemApplicationSlug).
+			Where("kind = 'self_hosted'").
+			Where("archived_at IS NULL").
+			Exec(ctx); err != nil {
 			return fmt.Errorf("update DeployCrate CE system server capabilities: %w", err)
 		}
 		return nil
@@ -145,11 +156,15 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		return fmt.Errorf("create DeployCrate CE target network: %w", err)
 	}
 
-	resource, err := factories.CreateResource(ctx, exec,
+	resource, err := factories.CreateResource(
+		ctx,
+		exec,
 		factories.WithResourcesName("DeployCrate CE PostgreSQL"),
 		factories.WithResourcesSlug("deploycrate-ce-postgresql"),
 		factories.WithResourcesResourceType(models.ResourceTypeDatabase),
-		factories.WithResourcesConfiguration(json.RawMessage(`{"engine":"postgresql","databases":[{"name":"deploycrate"}]}`)),
+		factories.WithResourcesConfiguration(
+			json.RawMessage(`{"engine":"postgresql","databases":[{"name":"deploycrate"}]}`),
+		),
 		factories.WithResourcesSystemManaged(true),
 		factories.WithResourcesEnvironmentAttachable(false),
 		factories.WithResourcesArchivedAt(sql.NullTime{}),
@@ -157,21 +172,34 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	if err != nil {
 		return fmt.Errorf("create DeployCrate CE Database Resource: %w", err)
 	}
-	installation, err := factories.CreateResourceInstallation(ctx, exec, resource.ID, server.ID, nil,
+	installation, err := factories.CreateResourceInstallation(
+		ctx,
+		exec,
+		resource.ID,
+		server.ID,
+		nil,
 		factories.WithResourceInstallationsImageReference("postgres:17-alpine"),
 		factories.WithResourceInstallationsImageDigest(sql.NullString{}),
 		factories.WithResourceInstallationsContainerName("deploycrate-ce-postgres"),
 		factories.WithResourceInstallationsRestartPolicy("unless-stopped"),
-		factories.WithResourceInstallationsConfiguration(json.RawMessage(`{"ports":[{"hostPort":5432,"containerPort":5432,"protocol":"tcp"}]}`)),
+		factories.WithResourceInstallationsConfiguration(
+			json.RawMessage(`{"ports":[{"hostPort":5432,"containerPort":5432,"protocol":"tcp"}]}`),
+		),
 		factories.WithResourceInstallationsArchivedAt(sql.NullTime{}),
 	)
 	if err != nil {
 		return fmt.Errorf("create DeployCrate CE PostgreSQL installation: %w", err)
 	}
-	volume, err := factories.CreateResourceVolume(ctx, exec, resource.ID, server.ID,
+	volume, err := factories.CreateResourceVolume(
+		ctx,
+		exec,
+		resource.ID,
+		server.ID,
 		factories.WithResourceVolumesName("PostgreSQL data"),
 		factories.WithResourceVolumesDriver("docker"),
-		factories.WithResourceVolumesConfiguration(json.RawMessage(`{"volume":"deploycrate-ce-postgres"}`)),
+		factories.WithResourceVolumesConfiguration(
+			json.RawMessage(`{"volume":"deploycrate-ce-postgres"}`),
+		),
 		factories.WithResourceVolumesArchivedAt(sql.NullTime{}),
 	)
 	if err != nil {
@@ -183,20 +211,46 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	); err != nil {
 		return fmt.Errorf("mount DeployCrate CE PostgreSQL volume: %w", err)
 	}
-	endpoint, err := factories.CreateResourceEndpoint(ctx, exec, resource.ID, &network.ID,
-		factories.WithResourceEndpointsName("Primary PostgreSQL"), factories.WithResourceEndpointsRole("primary"),
-		factories.WithResourceEndpointsAddress("127.0.0.1"), factories.WithResourceEndpointsPort(5432),
-		factories.WithResourceEndpointsProtocol("postgresql"), factories.WithResourceEndpointsTlsMode("disable"),
+	endpoint, err := factories.CreateResourceEndpoint(
+		ctx,
+		exec,
+		resource.ID,
+		&network.ID,
+		factories.WithResourceEndpointsName(
+			"Primary PostgreSQL",
+		),
+		factories.WithResourceEndpointsRole("primary"),
+		factories.WithResourceEndpointsAddress(
+			"127.0.0.1",
+		),
+		factories.WithResourceEndpointsPort(5432),
+		factories.WithResourceEndpointsProtocol(
+			"postgresql",
+		),
+		factories.WithResourceEndpointsTlsMode("disable"),
 		factories.WithResourceEndpointsSettings(json.RawMessage(`{"database":"deploycrate"}`)),
 		factories.WithResourceEndpointsArchivedAt(sql.NullTime{}),
 	)
 	if err != nil {
 		return fmt.Errorf("create DeployCrate CE Database Resource endpoint: %w", err)
 	}
-	_, err = factories.CreateResourceEndpoint(ctx, exec, resource.ID, &network.ID,
-		factories.WithResourceEndpointsName("WireGuard PostgreSQL"), factories.WithResourceEndpointsRole("wireguard"),
-		factories.WithResourceEndpointsAddress("10.99.0.1"), factories.WithResourceEndpointsPort(5432),
-		factories.WithResourceEndpointsProtocol("postgresql"), factories.WithResourceEndpointsTlsMode("disable"),
+	_, err = factories.CreateResourceEndpoint(
+		ctx,
+		exec,
+		resource.ID,
+		&network.ID,
+		factories.WithResourceEndpointsName(
+			"WireGuard PostgreSQL",
+		),
+		factories.WithResourceEndpointsRole("wireguard"),
+		factories.WithResourceEndpointsAddress(
+			"10.99.0.1",
+		),
+		factories.WithResourceEndpointsPort(5432),
+		factories.WithResourceEndpointsProtocol(
+			"postgresql",
+		),
+		factories.WithResourceEndpointsTlsMode("disable"),
 		factories.WithResourceEndpointsSettings(json.RawMessage(`{"database":"deploycrate"}`)),
 		factories.WithResourceEndpointsArchivedAt(sql.NullTime{}),
 	)
@@ -219,11 +273,15 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		return fmt.Errorf("bind DeployCrate CE database resource: %w", err)
 	}
 
-	clickHouse, err := factories.CreateResource(ctx, exec,
+	clickHouse, err := factories.CreateResource(
+		ctx,
+		exec,
 		factories.WithResourcesName("DeployCrate CE ClickHouse"),
 		factories.WithResourcesSlug("deploycrate-ce-clickhouse"),
 		factories.WithResourcesResourceType(models.ResourceTypeDatabase),
-		factories.WithResourcesConfiguration(json.RawMessage(`{"engine":"clickhouse","databases":[{"name":"deploycrate"}]}`)),
+		factories.WithResourcesConfiguration(
+			json.RawMessage(`{"engine":"clickhouse","databases":[{"name":"deploycrate"}]}`),
+		),
 		factories.WithResourcesSystemManaged(true),
 		factories.WithResourcesEnvironmentAttachable(false),
 		factories.WithResourcesArchivedAt(sql.NullTime{}),
@@ -291,27 +349,54 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 	}
 
 	telemetry, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
-		Name: "DeployCrate Telemetry", Slug: "deploycrate-telemetry", ResourceType: models.ResourceTypeService,
-		Configuration: json.RawMessage(`{"engine":"opentelemetry"}`), SystemManaged: true, EnvironmentAttachable: true,
+		Name:         "DeployCrate Telemetry",
+		Slug:         "deploycrate-telemetry",
+		ResourceType: models.ResourceTypeService,
+		Configuration: json.RawMessage(
+			`{"engine":"opentelemetry"}`,
+		),
+		SystemManaged:         true,
+		EnvironmentAttachable: true,
 	})
 	if err != nil {
 		return fmt.Errorf("create DeployCrate Telemetry Resource: %w", err)
 	}
-	localTelemetryEndpoint, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
-		Name: "Control-plane OTLP HTTP", Role: "local", Address: "127.0.0.1", Port: 4318,
-		Protocol: "http", TlsMode: "disable",
-		Settings:   json.RawMessage(`{"exposure":"system","transport":"http/protobuf","authentication":"none"}`),
-		ResourceID: telemetry.ID,
-	})
+	localTelemetryEndpoint, err := models.ResourceEndpoint.Create(
+		ctx,
+		exec,
+		models.CreateResourceEndpointData{
+			Name:     "Control-plane OTLP HTTP",
+			Role:     "local",
+			Address:  "127.0.0.1",
+			Port:     4318,
+			Protocol: "http",
+			TlsMode:  "disable",
+			Settings: json.RawMessage(
+				`{"exposure":"system","transport":"http/protobuf","authentication":"none"}`,
+			),
+			ResourceID: telemetry.ID,
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("create local DeployCrate Telemetry endpoint: %w", err)
 	}
-	wireGuardTelemetryEndpoint, err := models.ResourceEndpoint.Create(ctx, exec, models.CreateResourceEndpointData{
-		Name: "WireGuard OTLP HTTP", Role: "wireguard", Address: "10.99.0.1", Port: 4318,
-		Protocol: "http", TlsMode: "disable",
-		Settings:   json.RawMessage(`{"exposure":"environment","transport":"http/protobuf","authentication":"signed_identity"}`),
-		ResourceID: telemetry.ID, PrivateNetworkID: &network.ID,
-	})
+	wireGuardTelemetryEndpoint, err := models.ResourceEndpoint.Create(
+		ctx,
+		exec,
+		models.CreateResourceEndpointData{
+			Name:     "WireGuard OTLP HTTP",
+			Role:     "wireguard",
+			Address:  "10.99.0.1",
+			Port:     4318,
+			Protocol: "http",
+			TlsMode:  "disable",
+			Settings: json.RawMessage(
+				`{"exposure":"environment","transport":"http/protobuf","authentication":"signed_identity"}`,
+			),
+			ResourceID:       telemetry.ID,
+			PrivateNetworkID: &network.ID,
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("create WireGuard DeployCrate Telemetry endpoint: %w", err)
 	}
@@ -323,9 +408,13 @@ func createSystemApplication(ctx context.Context, exec storage.Executor, now tim
 		return fmt.Errorf("create DeployCrate Telemetry health check: %w", err)
 	}
 	if _, err := models.EnvironmentResource.Create(ctx, exec, models.CreateEnvironmentResourceData{
-		Alias:         "telemetry",
-		Configuration: json.RawMessage(`{"schema_version":1,"credential_source":"none","credential_projection":"individual_parts","environment_keys":{"endpoint":"OTEL_EXPORTER_OTLP_ENDPOINT","protocol":"OTEL_EXPORTER_OTLP_PROTOCOL","headers":"OTEL_EXPORTER_OTLP_HEADERS"}}`),
-		EnvironmentID: environment.ID, ResourceID: telemetry.ID, ResourceEndpointID: localTelemetryEndpoint.ID,
+		Alias: "telemetry",
+		Configuration: json.RawMessage(
+			`{"schema_version":1,"credential_source":"none","credential_projection":"individual_parts","environment_keys":{"endpoint":"OTEL_EXPORTER_OTLP_ENDPOINT","protocol":"OTEL_EXPORTER_OTLP_PROTOCOL","headers":"OTEL_EXPORTER_OTLP_HEADERS"}}`,
+		),
+		EnvironmentID:      environment.ID,
+		ResourceID:         telemetry.ID,
+		ResourceEndpointID: localTelemetryEndpoint.ID,
 	}); err != nil {
 		return fmt.Errorf("bind DeployCrate Telemetry Resource: %w", err)
 	}

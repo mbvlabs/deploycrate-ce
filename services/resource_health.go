@@ -32,7 +32,12 @@ type ResourceHealth struct {
 }
 
 func NewResourceHealth(db storage.Pool, cfg config.Config) *ResourceHealth {
-	return &ResourceHealth{db: db, config: cfg, postgres: postgresqlclient.New(), generic: resourcehealthclient.New()}
+	return &ResourceHealth{
+		db:       db,
+		config:   cfg,
+		postgres: postgresqlclient.New(),
+		generic:  resourcehealthclient.New(),
+	}
 }
 
 func (service *ResourceHealth) Sweep(ctx context.Context) error {
@@ -50,13 +55,19 @@ func (service *ResourceHealth) Sweep(ctx context.Context) error {
 	errList := make([]error, 0)
 	for _, check := range checks {
 		if err := service.observe(ctx, check); err != nil {
-			errList = append(errList, fmt.Errorf("observe Resource health check %s: %w", check.ID, err))
+			errList = append(
+				errList,
+				fmt.Errorf("observe Resource health check %s: %w", check.ID, err),
+			)
 		}
 	}
 	return errors.Join(errList...)
 }
 
-func (service *ResourceHealth) observe(ctx context.Context, check models.DueResourceHealthCheck) error {
+func (service *ResourceHealth) observe(
+	ctx context.Context,
+	check models.DueResourceHealthCheck,
+) error {
 	startedAt := time.Now().UTC()
 	timeout := time.Duration(check.TimeoutSeconds) * time.Second
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -64,12 +75,16 @@ func (service *ResourceHealth) observe(ctx context.Context, check models.DueReso
 	cancel()
 	observedAt := time.Now().UTC()
 
-	latencyMilliseconds := min(max(observedAt.Sub(startedAt).Milliseconds(), 0), int64(^uint32(0)>>1))
+	latencyMilliseconds := min(
+		max(observedAt.Sub(startedAt).Milliseconds(), 0),
+		int64(^uint32(0)>>1),
+	)
 
 	state := check.StatusState
 	consecutiveSuccesses := check.StatusConsecutiveSuccesses
 	consecutiveFailures := check.StatusConsecutiveFailures
-	if !check.StatusPresent || !check.StatusExpiresAt.Valid || !check.StatusExpiresAt.Time.After(startedAt) {
+	if !check.StatusPresent || !check.StatusExpiresAt.Valid ||
+		!check.StatusExpiresAt.Time.After(startedAt) {
 		state = "unknown"
 		consecutiveSuccesses = 0
 		consecutiveFailures = 0
@@ -143,7 +158,8 @@ func (service *ResourceHealth) probe(
 	ctx context.Context,
 	check models.DueResourceHealthCheck,
 ) (string, error) {
-	if check.ResourceEndpointID == nil || strings.TrimSpace(check.EndpointAddress) == "" || check.EndpointPort < 1 {
+	if check.ResourceEndpointID == nil || strings.TrimSpace(check.EndpointAddress) == "" ||
+		check.EndpointPort < 1 {
 		return "", errors.New("the health check endpoint is unavailable")
 	}
 	values, err := service.credentialValues(check)
@@ -181,14 +197,18 @@ func (service *ResourceHealth) probe(
 			return "", errors.New("the HTTP health check configuration is invalid")
 		}
 		return service.generic.HTTP(ctx, endpoint, resourcehealthclient.HTTPOptions{
-			Path: configuration.Path, ExpectedStatus: configuration.ExpectedStatus, Credentials: credentials,
+			Path:           configuration.Path,
+			ExpectedStatus: configuration.ExpectedStatus,
+			Credentials:    credentials,
 		})
 	case "mysql":
 		return service.generic.MySQL(ctx, endpoint)
 	case "redis":
 		return service.generic.Redis(ctx, endpoint, credentials)
 	case "postgresql":
-		if !check.CredentialUsername.Valid || strings.TrimSpace(check.CredentialUsername.String) == "" || password == "" {
+		if !check.CredentialUsername.Valid ||
+			strings.TrimSpace(check.CredentialUsername.String) == "" ||
+			password == "" {
 			return "", errors.New("the PostgreSQL health check credential is unavailable")
 		}
 		database := strings.TrimSpace(check.CredentialDatabaseName)
@@ -211,7 +231,8 @@ func (service *ResourceHealth) probe(
 			return "", errors.New("the ClickHouse health check requires an HTTP endpoint")
 		}
 		username := strings.TrimSpace(settings.User)
-		if check.CredentialUsername.Valid && strings.TrimSpace(check.CredentialUsername.String) != "" {
+		if check.CredentialUsername.Valid &&
+			strings.TrimSpace(check.CredentialUsername.String) != "" {
 			username = strings.TrimSpace(check.CredentialUsername.String)
 		}
 		if username == "" {
@@ -224,7 +245,12 @@ func (service *ResourceHealth) probe(
 				strconv.Itoa(int(check.EndpointPort)),
 			),
 		}).String()
-		client := clickhouseclient.New(baseURL, strings.TrimSpace(settings.Database), username, password)
+		client := clickhouseclient.New(
+			baseURL,
+			strings.TrimSpace(settings.Database),
+			username,
+			password,
+		)
 		response, err := client.Ping(ctx)
 		if err != nil {
 			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -238,7 +264,9 @@ func (service *ResourceHealth) probe(
 	}
 }
 
-func (service *ResourceHealth) credentialValues(check models.DueResourceHealthCheck) (map[string]string, error) {
+func (service *ResourceHealth) credentialValues(
+	check models.DueResourceHealthCheck,
+) (map[string]string, error) {
 	if check.ResourceCredentialID == nil {
 		return map[string]string{}, nil
 	}

@@ -75,7 +75,9 @@ func (entity *NodeEnrollmentEntity) Validate() error {
 		errs = append(errs, errors.New("SSH host fingerprint is required"))
 	}
 	address, err := netip.ParseAddr(strings.TrimSpace(entity.AllocatedAddress))
-	if err != nil || !netip.MustParsePrefix(internalwireguard.NodeCIDR).Contains(address) || address.String() == internalwireguard.ControlPlaneAddress || address == netip.MustParsePrefix(internalwireguard.NodeCIDR).Addr() {
+	if err != nil || !netip.MustParsePrefix(internalwireguard.NodeCIDR).Contains(address) ||
+		address.String() == internalwireguard.ControlPlaneAddress ||
+		address == netip.MustParsePrefix(internalwireguard.NodeCIDR).Addr() {
 		errs = append(errs, errors.New("allocated address must be a Node WireGuard address"))
 	}
 	if strings.TrimSpace(entity.InstallerVersion) == "" {
@@ -91,7 +93,11 @@ type CreateNodeEnrollmentData struct {
 	ServerID         uuid.UUID
 }
 
-func (nodeEnrollment) Create(ctx context.Context, db storage.Executor, data CreateNodeEnrollmentData) (NodeEnrollmentEntity, error) {
+func (nodeEnrollment) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateNodeEnrollmentData,
+) (NodeEnrollmentEntity, error) {
 	now := time.Now().UTC()
 	entity := NodeEnrollmentEntity{
 		ID: uuid.New(), CreatedAt: now, UpdatedAt: now,
@@ -118,7 +124,9 @@ func (nodeEnrollment) Create(ctx context.Context, db storage.Executor, data Crea
 		ctx,
 		db,
 		"node-enrollment-address:"+entity.AllocatedAddress,
-		db.NewSelect().Model((*NodeEnrollmentEntity)(nil)).Where("allocated_address = ?", entity.AllocatedAddress),
+		db.NewSelect().
+			Model((*NodeEnrollmentEntity)(nil)).
+			Where("allocated_address = ?", entity.AllocatedAddress),
 		"allocatedAddress",
 		"the WireGuard address is already allocated to another node enrollment",
 	); err != nil {
@@ -130,7 +138,11 @@ func (nodeEnrollment) Create(ctx context.Context, db storage.Executor, data Crea
 	return entity, nil
 }
 
-func (nodeEnrollment) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (NodeEnrollmentEntity, error) {
+func (nodeEnrollment) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (NodeEnrollmentEntity, error) {
 	var entity NodeEnrollmentEntity
 	if err := db.NewSelect().Model(&entity).Where("id = ?", id).Scan(ctx); err != nil {
 		return NodeEnrollmentEntity{}, err
@@ -138,7 +150,11 @@ func (nodeEnrollment) Find(ctx context.Context, db storage.Executor, id uuid.UUI
 	return entity, nil
 }
 
-func (nodeEnrollment) LatestForServer(ctx context.Context, db storage.Executor, serverID uuid.UUID) (NodeEnrollmentEntity, error) {
+func (nodeEnrollment) LatestForServer(
+	ctx context.Context,
+	db storage.Executor,
+	serverID uuid.UUID,
+) (NodeEnrollmentEntity, error) {
 	var entity NodeEnrollmentEntity
 	if err := db.NewSelect().Model(&entity).Where("server_id = ?", serverID).
 		OrderExpr("created_at DESC").Limit(1).Scan(ctx); err != nil {
@@ -147,7 +163,13 @@ func (nodeEnrollment) LatestForServer(ctx context.Context, db storage.Executor, 
 	return entity, nil
 }
 
-func (nodeEnrollment) Transition(ctx context.Context, db storage.Executor, id uuid.UUID, state, step string, transitionError error) error {
+func (nodeEnrollment) Transition(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	state, step string,
+	transitionError error,
+) error {
 	now := time.Now().UTC()
 	query := db.NewUpdate().Model((*NodeEnrollmentEntity)(nil)).
 		Set("updated_at = ?", now).Set("state = ?", state).Set("current_step = ?", step).
@@ -173,7 +195,12 @@ func (nodeEnrollment) Transition(ctx context.Context, db storage.Executor, id uu
 	return err
 }
 
-func (nodeEnrollment) SetJob(ctx context.Context, db storage.Executor, id uuid.UUID, jobID int64) error {
+func (nodeEnrollment) SetJob(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	jobID int64,
+) error {
 	_, err := db.NewUpdate().Model((*NodeEnrollmentEntity)(nil)).
 		Set("updated_at = ?", time.Now().UTC()).Set("job_id = ?", jobID).
 		Where("id = ?", id).Exec(ctx)

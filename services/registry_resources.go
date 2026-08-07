@@ -37,8 +37,17 @@ type RegistryResources struct {
 	identity Identity
 }
 
-func NewRegistryResources(db storage.Pool, cfg config.Config, identity Identity) *RegistryResources {
-	return &RegistryResources{db: db, config: cfg, registry: registryclient.New(), identity: identity}
+func NewRegistryResources(
+	db storage.Pool,
+	cfg config.Config,
+	identity Identity,
+) *RegistryResources {
+	return &RegistryResources{
+		db:       db,
+		config:   cfg,
+		registry: registryclient.New(),
+		identity: identity,
+	}
 }
 
 type ExternalRegistryResourceInput struct {
@@ -49,15 +58,15 @@ type ExternalRegistryResourceInput struct {
 }
 
 type RegistryResourceSummary struct {
-	ID             uuid.UUID `json:"id" bun:"id"`
-	Name           string    `json:"name" bun:"name"`
-	Slug           string    `json:"slug" bun:"slug"`
-	Provider       string    `json:"provider" bun:"provider"`
-	Endpoint       string    `json:"endpoint" bun:"endpoint"`
-	Username       string    `json:"username" bun:"username"`
+	ID             uuid.UUID `json:"id"             bun:"id"`
+	Name           string    `json:"name"           bun:"name"`
+	Slug           string    `json:"slug"           bun:"slug"`
+	Provider       string    `json:"provider"       bun:"provider"`
+	Endpoint       string    `json:"endpoint"       bun:"endpoint"`
+	Username       string    `json:"username"       bun:"username"`
 	CredentialName string    `json:"credentialName" bun:"credential_name"`
-	Managed        bool      `json:"managed" bun:"managed"`
-	CreatedAt      time.Time `json:"createdAt" bun:"created_at"`
+	Managed        bool      `json:"managed"        bun:"managed"`
+	CreatedAt      time.Time `json:"createdAt"      bun:"created_at"`
 }
 
 type ManagedRegistryCredentials struct {
@@ -85,7 +94,10 @@ func (service *RegistryResources) List(ctx context.Context) ([]RegistryResourceS
 	return registries, err
 }
 
-func (service *RegistryResources) Find(ctx context.Context, resourceID uuid.UUID) (RegistryResourceSummary, error) {
+func (service *RegistryResources) Find(
+	ctx context.Context,
+	resourceID uuid.UUID,
+) (RegistryResourceSummary, error) {
 	var registry RegistryResourceSummary
 	err := service.db.Executor().NewSelect().TableExpr("registry_resources AS registry").
 		ColumnExpr("resource.id, resource.name, resource.slug, registry.provider, resource.created_at").
@@ -115,7 +127,10 @@ func (service *RegistryResources) RevealManagedCredentials(
 	return service.managedCredentials(ctx, resourceID)
 }
 
-func (service *RegistryResources) Inventory(ctx context.Context, resourceID uuid.UUID) ([]RegistryRepositorySummary, error) {
+func (service *RegistryResources) Inventory(
+	ctx context.Context,
+	resourceID uuid.UUID,
+) ([]RegistryRepositorySummary, error) {
 	credentials, err := service.managedCredentials(ctx, resourceID)
 	if err != nil {
 		return nil, err
@@ -130,12 +145,18 @@ func (service *RegistryResources) Inventory(ctx context.Context, resourceID uuid
 	}
 	summaries := make([]RegistryRepositorySummary, 0, len(repositories))
 	for _, repository := range repositories {
-		summaries = append(summaries, RegistryRepositorySummary{Name: repository.Name, Tags: repository.Tags})
+		summaries = append(
+			summaries,
+			RegistryRepositorySummary{Name: repository.Name, Tags: repository.Tags},
+		)
 	}
 	return summaries, nil
 }
 
-func (service *RegistryResources) managedCredentials(ctx context.Context, resourceID uuid.UUID) (ManagedRegistryCredentials, error) {
+func (service *RegistryResources) managedCredentials(
+	ctx context.Context,
+	resourceID uuid.UUID,
+) (ManagedRegistryCredentials, error) {
 	var row struct {
 		Endpoint   string         `bun:"endpoint"`
 		Username   sql.NullString `bun:"username"`
@@ -156,7 +177,8 @@ func (service *RegistryResources) managedCredentials(ctx context.Context, resour
 		}
 		return ManagedRegistryCredentials{}, fmt.Errorf("load managed Registry credential: %w", err)
 	}
-	if strings.TrimSpace(row.Endpoint) == "" || !row.Username.Valid || strings.TrimSpace(row.Username.String) == "" {
+	if strings.TrimSpace(row.Endpoint) == "" || !row.Username.Valid ||
+		strings.TrimSpace(row.Username.String) == "" {
 		return ManagedRegistryCredentials{}, ErrManagedRegistryUnavailable
 	}
 
@@ -166,14 +188,19 @@ func (service *RegistryResources) managedCredentials(ctx context.Context, resour
 		registryCredentialPurpose,
 	)
 	if err != nil {
-		return ManagedRegistryCredentials{}, errors.New("managed Registry credential cannot be decrypted")
+		return ManagedRegistryCredentials{}, errors.New(
+			"managed Registry credential cannot be decrypted",
+		)
 	}
 	var payload struct {
 		SchemaVersion int               `json:"schema_version"`
 		Values        map[string]string `json:"values"`
 	}
-	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 || payload.Values["password"] == "" {
-		return ManagedRegistryCredentials{}, errors.New("managed Registry credential payload is invalid")
+	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 ||
+		payload.Values["password"] == "" {
+		return ManagedRegistryCredentials{}, errors.New(
+			"managed Registry credential payload is invalid",
+		)
 	}
 
 	return ManagedRegistryCredentials{
@@ -183,19 +210,37 @@ func (service *RegistryResources) managedCredentials(ctx context.Context, resour
 	}, nil
 }
 
-func (service *RegistryResources) CreateExternal(ctx context.Context, input ExternalRegistryResourceInput) (models.RegistryResourceEntity, error) {
+func (service *RegistryResources) CreateExternal(
+	ctx context.Context,
+	input ExternalRegistryResourceInput,
+) (models.RegistryResourceEntity, error) {
 	input.Name = strings.TrimSpace(input.Name)
 	input.Endpoint = normalizeRegistryEndpoint(input.Endpoint)
 	input.Username = strings.TrimSpace(input.Username)
 	if err := validateExternalRegistryInput(input); err != nil {
 		return models.RegistryResourceEntity{}, err
 	}
-	authentication, err := service.registry.Authenticate(ctx, registryclient.Credentials{Endpoint: input.Endpoint, Username: input.Username, Password: input.AccessToken})
+	authentication, err := service.registry.Authenticate(
+		ctx,
+		registryclient.Credentials{
+			Endpoint: input.Endpoint,
+			Username: input.Username,
+			Password: input.AccessToken,
+		},
+	)
 	if err != nil {
-		return models.RegistryResourceEntity{}, domainError("accessToken", "unverified", "Registry credentials could not be verified")
+		return models.RegistryResourceEntity{}, domainError(
+			"accessToken",
+			"unverified",
+			"Registry credentials could not be verified",
+		)
 	}
 	if err := authentication.Close(); err != nil {
-		return models.RegistryResourceEntity{}, domainError("accessToken", "unverified", "Registry credentials could not be verified")
+		return models.RegistryResourceEntity{}, domainError(
+			"accessToken",
+			"unverified",
+			"Registry credentials could not be verified",
+		)
 	}
 
 	host, port, protocol, tlsMode, err := registryEndpointParts(input.Endpoint)
@@ -209,13 +254,22 @@ func (service *RegistryResources) CreateExternal(ctx context.Context, input Exte
 	if err != nil {
 		return models.RegistryResourceEntity{}, err
 	}
-	encrypted, err := secretcrypto.EncryptForPurpose(payload, service.config.App.SessionEncryptionKey, registryCredentialPurpose)
+	encrypted, err := secretcrypto.EncryptForPurpose(
+		payload,
+		service.config.App.SessionEncryptionKey,
+		registryCredentialPurpose,
+	)
 	if err != nil {
-		return models.RegistryResourceEntity{}, fmt.Errorf("encrypt external Registry credential: %w", err)
+		return models.RegistryResourceEntity{}, fmt.Errorf(
+			"encrypt external Registry credential: %w",
+			err,
+		)
 	}
 	key, err := hex.DecodeString(service.config.App.SessionEncryptionKey)
 	if err != nil || len(key) != 32 {
-		return models.RegistryResourceEntity{}, errors.New("Registry credential digest key is invalid")
+		return models.RegistryResourceEntity{}, errors.New(
+			"Registry credential digest key is invalid",
+		)
 	}
 	digest := hmac.New(sha256.New, key)
 	_, _ = digest.Write(payload)
@@ -226,28 +280,89 @@ func (service *RegistryResources) CreateExternal(ctx context.Context, input Exte
 		return models.RegistryResourceEntity{}, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "registry-endpoint:"+input.Endpoint); err != nil {
+	if _, err := tx.ExecContext(
+		ctx,
+		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+		"registry-endpoint:"+input.Endpoint,
+	); err != nil {
 		return models.RegistryResourceEntity{}, err
 	}
-	count, err := tx.NewSelect().TableExpr("resource_endpoints AS endpoint").Join("JOIN resources AS resource ON resource.id = endpoint.resource_id AND resource.configuration ->> 'engine' = 'registry' AND resource.archived_at IS NULL").Where("lower(endpoint.address) = lower(?)", host).Where("endpoint.port = ?", port).Where("endpoint.archived_at IS NULL").Count(ctx)
+	count, err := tx.NewSelect().
+		TableExpr("resource_endpoints AS endpoint").
+		Join("JOIN resources AS resource ON resource.id = endpoint.resource_id AND resource.configuration ->> 'engine' = 'registry' AND resource.archived_at IS NULL").
+		Where("lower(endpoint.address) = lower(?)", host).
+		Where("endpoint.port = ?", port).
+		Where("endpoint.archived_at IS NULL").
+		Count(ctx)
 	if err != nil {
 		return models.RegistryResourceEntity{}, err
 	}
 	if count > 0 {
-		return models.RegistryResourceEntity{}, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: "endpoint", Code: "taken", Message: "Registry endpoint is already connected"}})
+		return models.RegistryResourceEntity{}, errors.Join(
+			models.ErrDomainValidation,
+			validation.ValidationErrors{
+				{
+					Field:   "endpoint",
+					Code:    "taken",
+					Message: "Registry endpoint is already connected",
+				},
+			},
+		)
 	}
-	resource, err := models.Resource.Create(ctx, tx, models.CreateResourceData{Name: input.Name, Slug: slug.Make(input.Name), ResourceType: models.ResourceTypeService, Configuration: json.RawMessage(`{"engine":"registry"}`), EnvironmentAttachable: false})
+	resource, err := models.Resource.Create(
+		ctx,
+		tx,
+		models.CreateResourceData{
+			Name:                  input.Name,
+			Slug:                  slug.Make(input.Name),
+			ResourceType:          models.ResourceTypeService,
+			Configuration:         json.RawMessage(`{"engine":"registry"}`),
+			EnvironmentAttachable: false,
+		},
+	)
 	if err != nil {
 		return models.RegistryResourceEntity{}, err
 	}
-	registry, err := models.RegistryResource.Create(ctx, tx, models.CreateRegistryResourceData{ResourceID: resource.ID, Provider: "distribution", Configuration: json.RawMessage(`{"schema_version":1}`)})
+	registry, err := models.RegistryResource.Create(
+		ctx,
+		tx,
+		models.CreateRegistryResourceData{
+			ResourceID:    resource.ID,
+			Provider:      "distribution",
+			Configuration: json.RawMessage(`{"schema_version":1}`),
+		},
+	)
 	if err != nil {
 		return models.RegistryResourceEntity{}, err
 	}
-	if _, err := models.ResourceEndpoint.Create(ctx, tx, models.CreateResourceEndpointData{Name: "Registry API", Role: "primary", Address: host, Port: port, Protocol: protocol, TlsMode: tlsMode, Settings: json.RawMessage(`{"health_path":"/v2/"}`), ResourceID: resource.ID}); err != nil {
+	if _, err := models.ResourceEndpoint.Create(
+		ctx,
+		tx,
+		models.CreateResourceEndpointData{
+			Name:       "Registry API",
+			Role:       "primary",
+			Address:    host,
+			Port:       port,
+			Protocol:   protocol,
+			TlsMode:    tlsMode,
+			Settings:   json.RawMessage(`{"health_path":"/v2/"}`),
+			ResourceID: resource.ID,
+		},
+	); err != nil {
 		return models.RegistryResourceEntity{}, err
 	}
-	if _, err := models.ResourceCredential.Create(ctx, tx, models.CreateResourceCredentialData{Name: "Registry publisher", Username: sql.NullString{String: input.Username, Valid: true}, Metadata: metadata, EncPayload: encrypted, Digest: digest.Sum(nil), ResourceID: resource.ID}); err != nil {
+	if _, err := models.ResourceCredential.Create(
+		ctx,
+		tx,
+		models.CreateResourceCredentialData{
+			Name:       "Registry publisher",
+			Username:   sql.NullString{String: input.Username, Valid: true},
+			Metadata:   metadata,
+			EncPayload: encrypted,
+			Digest:     digest.Sum(nil),
+			ResourceID: resource.ID,
+		},
+	); err != nil {
 		return models.RegistryResourceEntity{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -267,7 +382,9 @@ func (service *RegistryResources) ArchiveExternal(ctx context.Context, resourceI
 	references, err := service.db.Executor().NewSelect().TableExpr("environment_sources AS source").
 		Join("LEFT JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = source.id").
 		Join("LEFT JOIN image_configurations AS image ON image.environment_source_id = source.id").
-		Where("source.archived_at IS NULL").Where("COALESCE(buildpack.registry_resource_id, image.registry_resource_id) = ?", resource.ID).Count(ctx)
+		Where("source.archived_at IS NULL").
+		Where("COALESCE(buildpack.registry_resource_id, image.registry_resource_id) = ?", resource.ID).
+		Count(ctx)
 	if err != nil {
 		return err
 	}
@@ -280,14 +397,39 @@ func (service *RegistryResources) ArchiveExternal(ctx context.Context, resourceI
 	}
 	defer tx.Rollback()
 	now := time.Now().UTC()
-	if _, err := tx.NewUpdate().TableExpr("resource_credentials").Set("archived_at = ?", now).Set("updated_at = ?", now).Where("resource_id = ?", resource.ID).Where("archived_at IS NULL").Exec(ctx); err != nil {
+	if _, err := tx.NewUpdate().
+		TableExpr("resource_credentials").
+		Set("archived_at = ?", now).
+		Set("updated_at = ?", now).
+		Where("resource_id = ?", resource.ID).
+		Where("archived_at IS NULL").
+		Exec(ctx); err != nil {
 		return err
 	}
-	if _, err := tx.NewUpdate().TableExpr("resource_endpoints").Set("archived_at = ?", now).Set("updated_at = ?", now).Where("resource_id = ?", resource.ID).Where("archived_at IS NULL").Exec(ctx); err != nil {
+	if _, err := tx.NewUpdate().
+		TableExpr("resource_endpoints").
+		Set("archived_at = ?", now).
+		Set("updated_at = ?", now).
+		Where("resource_id = ?", resource.ID).
+		Where("archived_at IS NULL").
+		Exec(ctx); err != nil {
 		return err
 	}
 	resource.ArchivedAt = sql.NullTime{Time: now, Valid: true}
-	if _, err := models.Resource.Update(ctx, tx, models.UpdateResourceData{ID: resource.ID, Name: resource.Name, Slug: resource.Slug, ResourceType: resource.ResourceType, Configuration: resource.Configuration, SystemManaged: resource.SystemManaged, EnvironmentAttachable: resource.EnvironmentAttachable, ArchivedAt: resource.ArchivedAt}); err != nil {
+	if _, err := models.Resource.Update(
+		ctx,
+		tx,
+		models.UpdateResourceData{
+			ID:                    resource.ID,
+			Name:                  resource.Name,
+			Slug:                  resource.Slug,
+			ResourceType:          resource.ResourceType,
+			Configuration:         resource.Configuration,
+			SystemManaged:         resource.SystemManaged,
+			EnvironmentAttachable: resource.EnvironmentAttachable,
+			ArchivedAt:            resource.ArchivedAt,
+		},
+	); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -341,8 +483,13 @@ func validateExternalRegistryInput(input ExternalRegistryResourceInput) error {
 		builder.Add("accessToken", "too_long", "Registry access token is too large")
 	}
 	parsed, err := url.Parse("https://" + input.Endpoint)
-	if err != nil || parsed.Host != input.Endpoint || parsed.Path != "" || parsed.User != nil || strings.ContainsAny(input.Endpoint, " \t\r\n") {
-		builder.Add("endpoint", "invalid", "Registry endpoint must be a hostname with an optional port")
+	if err != nil || parsed.Host != input.Endpoint || parsed.Path != "" || parsed.User != nil ||
+		strings.ContainsAny(input.Endpoint, " \t\r\n") {
+		builder.Add(
+			"endpoint",
+			"invalid",
+			"Registry endpoint must be a hostname with an optional port",
+		)
 	}
 	return builder.Err()
 }

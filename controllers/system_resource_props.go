@@ -159,8 +159,13 @@ type systemResourceDetailProp struct {
 
 func systemResourceDetailProps(detail models.SystemResourceDetail) systemResourceDetailProp {
 	prop := systemResourceDetailProp{
-		ID: detail.ID, CreatedAt: detail.CreatedAt, UpdatedAt: detail.UpdatedAt,
-		Name: detail.Name, ResourceType: detail.ResourceType, Engine: detail.Engine, ServerID: detail.ServerID,
+		ID:               detail.ID,
+		CreatedAt:        detail.CreatedAt,
+		UpdatedAt:        detail.UpdatedAt,
+		Name:             detail.Name,
+		ResourceType:     detail.ResourceType,
+		Engine:           detail.Engine,
+		ServerID:         detail.ServerID,
 		Bindings:         make([]systemResourceBindingProp, 0, len(detail.Bindings)),
 		Endpoints:        make([]systemResourceEndpointProp, 0, len(detail.Endpoints)),
 		Credentials:      make([]systemResourceCredentialProp, 0, len(detail.Credentials)),
@@ -172,35 +177,149 @@ func systemResourceDetailProps(detail models.SystemResourceDetail) systemResourc
 		AvailableDevices: make([]systemWireGuardDeviceOptionProp, 0, len(detail.AvailableDevices)),
 	}
 	for _, item := range detail.Bindings {
-		prop.Bindings = append(prop.Bindings, systemResourceBindingProp{ID: item.ID, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, Alias: item.Alias, Configuration: item.Configuration, EnvironmentID: item.EnvironmentID, EnvironmentName: item.EnvironmentName, EnvironmentKind: item.EnvironmentKind, EndpointID: item.EndpointID, CredentialID: item.CredentialID})
+		prop.Bindings = append(
+			prop.Bindings,
+			systemResourceBindingProp{
+				ID:              item.ID,
+				CreatedAt:       item.CreatedAt,
+				UpdatedAt:       item.UpdatedAt,
+				Alias:           item.Alias,
+				Configuration:   item.Configuration,
+				EnvironmentID:   item.EnvironmentID,
+				EnvironmentName: item.EnvironmentName,
+				EnvironmentKind: item.EnvironmentKind,
+				EndpointID:      item.EndpointID,
+				CredentialID:    item.CredentialID,
+			},
+		)
 	}
 	for _, item := range detail.Endpoints {
-		prop.Endpoints = append(prop.Endpoints, systemResourceEndpointProp{ID: item.ID, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, Name: item.Name, Role: item.Role, Address: item.Address, Port: item.Port, Protocol: item.Protocol, TLSMode: item.TLSMode, Settings: item.Settings, PrivateNetworkID: item.PrivateNetworkID})
+		prop.Endpoints = append(
+			prop.Endpoints,
+			systemResourceEndpointProp{
+				ID:               item.ID,
+				CreatedAt:        item.CreatedAt,
+				UpdatedAt:        item.UpdatedAt,
+				Name:             item.Name,
+				Role:             item.Role,
+				Address:          item.Address,
+				Port:             item.Port,
+				Protocol:         item.Protocol,
+				TLSMode:          item.TLSMode,
+				Settings:         item.Settings,
+				PrivateNetworkID: item.PrivateNetworkID,
+			},
+		)
 	}
 	for _, item := range detail.Credentials {
-		prop.Credentials = append(prop.Credentials, systemResourceCredentialProp{ID: item.ID, Name: item.Name, Username: item.Username, Metadata: item.Metadata, HasEncryptedPayload: item.HasEncryptedPayload})
+		prop.Credentials = append(
+			prop.Credentials,
+			systemResourceCredentialProp{
+				ID:                  item.ID,
+				Name:                item.Name,
+				Username:            item.Username,
+				Metadata:            item.Metadata,
+				HasEncryptedPayload: item.HasEncryptedPayload,
+			},
+		)
 	}
 	for _, item := range detail.Installations {
-		prop.Installations = append(prop.Installations, systemResourceInstallationProp{ID: item.ID, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, ImageReference: item.ImageReference, ImageDigest: item.ImageDigest, ContainerName: item.ContainerName, RestartPolicy: item.RestartPolicy, Configuration: item.Configuration, ServerID: item.ServerID, ServerName: item.ServerName, ServerAddress: item.ServerAddress, State: item.State, ServiceState: item.ServiceState, Health: item.Health, HealthReason: item.HealthReason, ObservedAt: item.ObservedAt})
+		prop.Installations = append(
+			prop.Installations,
+			systemResourceInstallationProp{
+				ID:             item.ID,
+				CreatedAt:      item.CreatedAt,
+				UpdatedAt:      item.UpdatedAt,
+				ImageReference: item.ImageReference,
+				ImageDigest:    item.ImageDigest,
+				ContainerName:  item.ContainerName,
+				RestartPolicy:  item.RestartPolicy,
+				Configuration:  item.Configuration,
+				ServerID:       item.ServerID,
+				ServerName:     item.ServerName,
+				ServerAddress:  item.ServerAddress,
+				State:          item.State,
+				ServiceState:   item.ServiceState,
+				Health:         item.Health,
+				HealthReason:   item.HealthReason,
+				ObservedAt:     item.ObservedAt,
+			},
+		)
 	}
 	for _, item := range detail.Volumes {
-		volume := systemResourceVolumeProp{ID: item.ID, Name: item.Name, Driver: item.Driver, Configuration: item.Configuration, ServerID: item.ServerID, ServerName: item.ServerName, Mounts: make([]systemResourceVolumeMountProp, 0, len(item.Mounts))}
+		volume := systemResourceVolumeProp{
+			ID:            item.ID,
+			Name:          item.Name,
+			Driver:        item.Driver,
+			Configuration: item.Configuration,
+			ServerID:      item.ServerID,
+			ServerName:    item.ServerName,
+			Mounts:        make([]systemResourceVolumeMountProp, 0, len(item.Mounts)),
+		}
 		for _, mount := range item.Mounts {
-			volume.Mounts = append(volume.Mounts, systemResourceVolumeMountProp{ID: mount.ID, MountPath: mount.MountPath, ReadOnly: mount.ReadOnly, InstallationID: mount.InstallationID})
+			volume.Mounts = append(
+				volume.Mounts,
+				systemResourceVolumeMountProp{
+					ID:             mount.ID,
+					MountPath:      mount.MountPath,
+					ReadOnly:       mount.ReadOnly,
+					InstallationID: mount.InstallationID,
+				},
+			)
 		}
 		prop.Volumes = append(prop.Volumes, volume)
 	}
 	for _, item := range detail.HealthChecks {
-		prop.HealthChecks = append(prop.HealthChecks, systemResourceHealthCheckProp{ID: item.ID, Name: item.Name, Kind: item.Kind, Configuration: item.Configuration, IntervalSeconds: item.IntervalSeconds, TimeoutSeconds: item.TimeoutSeconds, FailureThreshold: item.FailureThreshold, SuccessThreshold: item.SuccessThreshold, Enabled: item.Enabled, State: item.State, Message: item.Message, ObservedAt: item.ObservedAt})
+		prop.HealthChecks = append(
+			prop.HealthChecks,
+			systemResourceHealthCheckProp{
+				ID:               item.ID,
+				Name:             item.Name,
+				Kind:             item.Kind,
+				Configuration:    item.Configuration,
+				IntervalSeconds:  item.IntervalSeconds,
+				TimeoutSeconds:   item.TimeoutSeconds,
+				FailureThreshold: item.FailureThreshold,
+				SuccessThreshold: item.SuccessThreshold,
+				Enabled:          item.Enabled,
+				State:            item.State,
+				Message:          item.Message,
+				ObservedAt:       item.ObservedAt,
+			},
+		)
 	}
 	for _, item := range detail.DeviceGrants {
-		prop.DeviceGrants = append(prop.DeviceGrants, systemWireGuardDeviceGrantProp{DeviceID: item.DeviceID, DeviceName: item.DeviceName, OwnerEmail: item.OwnerEmail, PrivateAddress: item.PrivateAddress, GrantID: item.GrantID, GrantedAt: item.GrantedAt, ApplicationState: item.ApplicationState, ApplicationError: item.ApplicationError, LatestHandshakeAt: item.LatestHandshakeAt, ObservedAt: item.ObservedAt})
+		prop.DeviceGrants = append(
+			prop.DeviceGrants,
+			systemWireGuardDeviceGrantProp{
+				DeviceID:          item.DeviceID,
+				DeviceName:        item.DeviceName,
+				OwnerEmail:        item.OwnerEmail,
+				PrivateAddress:    item.PrivateAddress,
+				GrantID:           item.GrantID,
+				GrantedAt:         item.GrantedAt,
+				ApplicationState:  item.ApplicationState,
+				ApplicationError:  item.ApplicationError,
+				LatestHandshakeAt: item.LatestHandshakeAt,
+				ObservedAt:        item.ObservedAt,
+			},
+		)
 	}
 	for _, item := range detail.PrivateNetworks {
-		prop.PrivateNetworks = append(prop.PrivateNetworks, systemPrivateNetworkProp{ID: item.ID, Name: item.Name})
+		prop.PrivateNetworks = append(
+			prop.PrivateNetworks,
+			systemPrivateNetworkProp{ID: item.ID, Name: item.Name},
+		)
 	}
 	for _, item := range detail.AvailableDevices {
-		prop.AvailableDevices = append(prop.AvailableDevices, systemWireGuardDeviceOptionProp{ID: item.ID, Name: item.Name, PrivateAddress: item.PrivateAddress})
+		prop.AvailableDevices = append(
+			prop.AvailableDevices,
+			systemWireGuardDeviceOptionProp{
+				ID:             item.ID,
+				Name:           item.Name,
+				PrivateAddress: item.PrivateAddress,
+			},
+		)
 	}
 	return prop
 }
@@ -217,14 +336,21 @@ type systemWireGuardDeviceProp struct {
 	ObservedAt        *time.Time `json:"observedAt"`
 }
 
-func systemWireGuardDeviceProps(devices []models.SystemWireGuardDevice) []systemWireGuardDeviceProp {
+func systemWireGuardDeviceProps(
+	devices []models.SystemWireGuardDevice,
+) []systemWireGuardDeviceProp {
 	props := make([]systemWireGuardDeviceProp, 0, len(devices))
 	for _, device := range devices {
 		props = append(props, systemWireGuardDeviceProp{
-			ID: device.ID, Name: device.Name, OwnerEmail: device.OwnerEmail, PrivateAddress: device.PrivateAddress,
-			ActivatedAt: device.ActivatedAt, GrantCount: device.GrantCount,
-			State: device.State, LatestHandshakeAt: device.LatestHandshakeAt,
-			ObservedAt: device.ObservedAt,
+			ID:                device.ID,
+			Name:              device.Name,
+			OwnerEmail:        device.OwnerEmail,
+			PrivateAddress:    device.PrivateAddress,
+			ActivatedAt:       device.ActivatedAt,
+			GrantCount:        device.GrantCount,
+			State:             device.State,
+			LatestHandshakeAt: device.LatestHandshakeAt,
+			ObservedAt:        device.ObservedAt,
 		})
 	}
 	return props

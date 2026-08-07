@@ -49,7 +49,8 @@ func (c *Client) DownloadArchive(
 ) error {
 	repository = strings.Trim(strings.TrimSpace(repository), "/")
 	revision = strings.ToLower(strings.TrimSpace(revision))
-	if installationID <= 0 || strings.Count(repository, "/") != 1 || len(revision) != 40 || destination == nil {
+	if installationID <= 0 || strings.Count(repository, "/") != 1 || len(revision) != 40 ||
+		destination == nil {
 		return errors.New("GitHub repository, exact revision, and archive destination are required")
 	}
 	for _, character := range revision {
@@ -94,7 +95,8 @@ func (c *Client) DownloadArchive(
 		if response.StatusCode == http.StatusNotFound {
 			return ErrNotFound
 		}
-		if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		if response.StatusCode == http.StatusUnauthorized ||
+			response.StatusCode == http.StatusForbidden {
 			return ErrUnauthorized
 		}
 		return fmt.Errorf("GitHub archive returned status %d", response.StatusCode)
@@ -189,7 +191,11 @@ func (c *Client) LookupAccount(ctx context.Context, login string) (Account, erro
 	return account, nil
 }
 
-func (c *Client) GetInstallation(ctx context.Context, auth AppAuthentication, installationID int64) (Installation, error) {
+func (c *Client) GetInstallation(
+	ctx context.Context,
+	auth AppAuthentication,
+	installationID int64,
+) (Installation, error) {
 	var installation Installation
 	jwt, err := appJWT(auth)
 	if err != nil {
@@ -202,7 +208,11 @@ func (c *Client) GetInstallation(ctx context.Context, auth AppAuthentication, in
 	return installation, nil
 }
 
-func (c *Client) ListInstallationRepositories(ctx context.Context, auth AppAuthentication, installationID int64) ([]Repository, error) {
+func (c *Client) ListInstallationRepositories(
+	ctx context.Context,
+	auth AppAuthentication,
+	installationID int64,
+) ([]Repository, error) {
 	token, err := c.createInstallationToken(ctx, auth, installationID)
 	if err != nil {
 		return nil, err
@@ -214,7 +224,14 @@ func (c *Client) ListInstallationRepositories(ctx context.Context, auth AppAuthe
 			Repositories []Repository `json:"repositories"`
 		}
 		path := "/installation/repositories?per_page=100&page=" + strconv.Itoa(page)
-		if err := c.request(ctx, http.MethodGet, path, "Bearer "+token, nil, &response); err != nil {
+		if err := c.request(
+			ctx,
+			http.MethodGet,
+			path,
+			"Bearer "+token,
+			nil,
+			&response,
+		); err != nil {
 			return nil, fmt.Errorf("list GitHub installation repositories page %d: %w", page, err)
 		}
 		repositories = append(repositories, response.Repositories...)
@@ -253,7 +270,11 @@ func (c *Client) ResolveRevision(
 	return strings.ToLower(commit.SHA), nil
 }
 
-func (c *Client) createInstallationToken(ctx context.Context, auth AppAuthentication, installationID int64) (string, error) {
+func (c *Client) createInstallationToken(
+	ctx context.Context,
+	auth AppAuthentication,
+	installationID int64,
+) (string, error) {
 	jwt, err := appJWT(auth)
 	if err != nil {
 		return "", err
@@ -271,7 +292,12 @@ func (c *Client) createInstallationToken(ctx context.Context, auth AppAuthentica
 	return response.Token, nil
 }
 
-func (c *Client) request(ctx context.Context, method, path, authorization string, body io.Reader, destination any) error {
+func (c *Client) request(
+	ctx context.Context,
+	method, path, authorization string,
+	body io.Reader,
+	destination any,
+) error {
 	request, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if err != nil {
 		return err
@@ -299,7 +325,8 @@ func (c *Client) request(ctx context.Context, method, path, authorization string
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		switch response.StatusCode {
 		case http.StatusUnauthorized, http.StatusForbidden:
-			if response.StatusCode == http.StatusForbidden && response.Header.Get("X-RateLimit-Remaining") == "0" {
+			if response.StatusCode == http.StatusForbidden &&
+				response.Header.Get("X-RateLimit-Remaining") == "0" {
 				return ErrRateLimited
 			}
 			return ErrUnauthorized
@@ -328,8 +355,18 @@ func appJWT(auth AppAuthentication) (string, error) {
 	}
 	now := time.Now().UTC()
 	header, _ := json.Marshal(map[string]string{"alg": "RS256", "typ": "JWT"})
-	claims, _ := json.Marshal(map[string]any{"iat": now.Add(-60 * time.Second).Unix(), "exp": now.Add(9 * time.Minute).Unix(), "iss": strconv.FormatInt(auth.AppID, 10)})
-	unsigned := base64.RawURLEncoding.EncodeToString(header) + "." + base64.RawURLEncoding.EncodeToString(claims)
+	claims, _ := json.Marshal(
+		map[string]any{
+			"iat": now.Add(-60 * time.Second).Unix(),
+			"exp": now.Add(9 * time.Minute).Unix(),
+			"iss": strconv.FormatInt(auth.AppID, 10),
+		},
+	)
+	unsigned := base64.RawURLEncoding.EncodeToString(
+		header,
+	) + "." + base64.RawURLEncoding.EncodeToString(
+		claims,
+	)
 	digest := sha256.Sum256([]byte(unsigned))
 	signature, err := rsa.SignPKCS1v15(rand.Reader, privateKey, crypto.SHA256, digest[:])
 	if err != nil {

@@ -78,7 +78,13 @@ type ServerBackupRunner interface {
 }
 
 type DatabaseBackupRunner interface {
-	Run(context.Context, BackupScope, PostgreSQLBackupTarget, BackupCredentialPayload, objectstorage.Store) (BackupArtifact, error)
+	Run(
+		context.Context,
+		BackupScope,
+		PostgreSQLBackupTarget,
+		BackupCredentialPayload,
+		objectstorage.Store,
+	) (BackupArtifact, error)
 }
 
 type BackupExecutor struct {
@@ -113,7 +119,11 @@ func (service *BackupExecutor) Execute(ctx context.Context, backupID uuid.UUID) 
 		return nil
 	}
 	if err := validateBackupScope(scope); err != nil {
-		return service.recordPreflightFailure(ctx, scope.Backup, fmt.Errorf("validate backup scope: %w", err))
+		return service.recordPreflightFailure(
+			ctx,
+			scope.Backup,
+			fmt.Errorf("validate backup scope: %w", err),
+		)
 	}
 	plaintext, err := secretcrypto.Decrypt(
 		scope.CredentialPayload,
@@ -129,7 +139,11 @@ func (service *BackupExecutor) Execute(ctx context.Context, backupID uuid.UUID) 
 	defer clear(plaintext)
 	var credential BackupCredentialPayload
 	if err := json.Unmarshal(plaintext, &credential); err != nil {
-		return service.recordPreflightFailure(ctx, scope.Backup, errors.New("decode backup credential"))
+		return service.recordPreflightFailure(
+			ctx,
+			scope.Backup,
+			errors.New("decode backup credential"),
+		)
 	}
 	if credential.AccessKeyID == "" || credential.SecretAccessKey == "" ||
 		credential.ResticPassword == "" || credential.AgeIdentity == "" {
@@ -151,7 +165,12 @@ func (service *BackupExecutor) Execute(ctx context.Context, backupID uuid.UUID) 
 			persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 			defer cancel()
 			_ = models.Backup.MarkFailed(persistCtx, service.db.Executor(), backupID, returnErr)
-			_ = markBackupLifecycleFailed(persistCtx, service.db.Executor(), scope.Backup, returnErr)
+			_ = markBackupLifecycleFailed(
+				persistCtx,
+				service.db.Executor(),
+				scope.Backup,
+				returnErr,
+			)
 			_ = failDatabaseRestoreSafetyBackup(persistCtx, service.db, backupID, returnErr)
 		}
 	}()
@@ -289,7 +308,8 @@ func validateBackupScope(scope BackupScope) error {
 		scope.ResourceInstallationID == nil || *scope.ResourceInstallationID != *scope.Backup.ResourceInstallationID ||
 		scope.InstallationArchived || scope.ResourceArchived || scope.ResourceEngine != "postgresql" ||
 		strings.TrimSpace(scope.DatabaseName) == "" || strings.TrimSpace(scope.InstallationContainer) == "" ||
-		scope.AdministratorCount != 1 || strings.TrimSpace(scope.AdministratorUsername) == "" ||
+		scope.AdministratorCount != 1 ||
+		strings.TrimSpace(scope.AdministratorUsername) == "" ||
 		len(scope.AdministratorPayload) < 2 {
 		return errors.New("database backup target is not the local PostgreSQL resource")
 	}
@@ -310,7 +330,9 @@ func (service *BackupExecutor) postgreSQLTarget(scope BackupScope) (PostgreSQLBa
 		resourceCredentialPurpose,
 	)
 	if err != nil {
-		return PostgreSQLBackupTarget{}, errors.New("decrypt Database Cluster administrator credential")
+		return PostgreSQLBackupTarget{}, errors.New(
+			"decrypt Database Cluster administrator credential",
+		)
 	}
 	defer clear(plaintext)
 	var payload struct {
@@ -319,7 +341,9 @@ func (service *BackupExecutor) postgreSQLTarget(scope BackupScope) (PostgreSQLBa
 	}
 	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 ||
 		strings.TrimSpace(payload.Values["password"]) == "" {
-		return PostgreSQLBackupTarget{}, errors.New("Resource administrator credential is incomplete")
+		return PostgreSQLBackupTarget{}, errors.New(
+			"Resource administrator credential is incomplete",
+		)
 	}
 	return PostgreSQLBackupTarget{
 		ResourceID: *scope.Backup.ResourceID, InstallationID: *scope.Backup.ResourceInstallationID,
@@ -330,7 +354,11 @@ func (service *BackupExecutor) postgreSQLTarget(scope BackupScope) (PostgreSQLBa
 	}, nil
 }
 
-func (service *BackupExecutor) postgreSQLTargetForDatabase(ctx context.Context, resourceID uuid.UUID, databaseName string) (PostgreSQLBackupTarget, error) {
+func (service *BackupExecutor) postgreSQLTargetForDatabase(
+	ctx context.Context,
+	resourceID uuid.UUID,
+	databaseName string,
+) (PostgreSQLBackupTarget, error) {
 	var target struct {
 		ResourceID           uuid.UUID `bun:"resource_id"`
 		InstallationID       uuid.UUID `bun:"installation_id"`
@@ -346,12 +374,17 @@ func (service *BackupExecutor) postgreSQLTargetForDatabase(ctx context.Context, 
 		ColumnExpr("administrator.username, administrator.enc_payload AS administrator_payload").
 		Join("JOIN resource_installations AS installation ON installation.resource_id = resource.id AND installation.archived_at IS NULL").
 		Join("JOIN resource_credentials AS administrator ON administrator.resource_id = resource.id AND administrator.metadata ->> 'purpose' = 'administrator' AND administrator.archived_at IS NULL").
-		Where("resource.id = ?", resourceID).Where("resource.configuration ->> 'engine' = 'postgresql'").
+		Where("resource.id = ?", resourceID).
+		Where("resource.configuration ->> 'engine' = 'postgresql'").
 		Where("resource.archived_at IS NULL").Scan(ctx, &target)
 	if err != nil {
 		return PostgreSQLBackupTarget{}, err
 	}
-	plaintext, err := secretcrypto.DecryptForPurpose(target.AdministratorPayload, service.config.App.SessionEncryptionKey, resourceCredentialPurpose)
+	plaintext, err := secretcrypto.DecryptForPurpose(
+		target.AdministratorPayload,
+		service.config.App.SessionEncryptionKey,
+		resourceCredentialPurpose,
+	)
 	if err != nil {
 		return PostgreSQLBackupTarget{}, errors.New("decrypt Resource administrator credential")
 	}
@@ -360,10 +393,22 @@ func (service *BackupExecutor) postgreSQLTargetForDatabase(ctx context.Context, 
 		SchemaVersion int               `json:"schema_version"`
 		Values        map[string]string `json:"values"`
 	}
-	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 || strings.TrimSpace(payload.Values["password"]) == "" {
-		return PostgreSQLBackupTarget{}, errors.New("Resource administrator credential is incomplete")
+	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 ||
+		strings.TrimSpace(payload.Values["password"]) == "" {
+		return PostgreSQLBackupTarget{}, errors.New(
+			"Resource administrator credential is incomplete",
+		)
 	}
-	return PostgreSQLBackupTarget{ResourceID: target.ResourceID, InstallationID: target.InstallationID, ServerID: target.ServerID, ContainerName: target.ContainerName, DatabaseName: databaseName, Username: target.Username, Password: payload.Values["password"], ExcludeRiverTableData: target.SystemManaged}, nil
+	return PostgreSQLBackupTarget{
+		ResourceID:            target.ResourceID,
+		InstallationID:        target.InstallationID,
+		ServerID:              target.ServerID,
+		ContainerName:         target.ContainerName,
+		DatabaseName:          databaseName,
+		Username:              target.Username,
+		Password:              payload.Values["password"],
+		ExcludeRiverTableData: target.SystemManaged,
+	}, nil
 }
 
 func markBackupExecutionStarted(
@@ -402,27 +447,43 @@ func markBackupChangeFailed(
 	)
 }
 
-func (service *BackupExecutor) loadScope(ctx context.Context, backupID uuid.UUID) (BackupScope, error) {
+func (service *BackupExecutor) loadScope(
+	ctx context.Context,
+	backupID uuid.UUID,
+) (BackupScope, error) {
 	row, err := models.Backup.FindExecutionScope(ctx, service.db.Executor(), backupID)
 	if err != nil {
 		return BackupScope{}, fmt.Errorf("load backup scope: %w", err)
 	}
 	return BackupScope{
-		Backup: row.Backup, PolicyRetention: row.PolicyRetention,
-		PolicyVerification: row.PolicyVerification, PolicySettings: row.PolicySettings,
-		DestinationProvider: row.DestinationProvider, DestinationEndpoint: row.DestinationEndpoint,
-		DestinationRegion: row.DestinationRegion, DestinationBucket: row.DestinationBucket,
-		DestinationPrefix: row.DestinationPrefix, DestinationPathStyle: row.DestinationPathStyle,
-		DestinationArchived: row.DestinationArchived,
-		CredentialProvider:  row.CredentialProvider, CredentialPayload: row.CredentialPayload,
+		Backup:                  row.Backup,
+		PolicyRetention:         row.PolicyRetention,
+		PolicyVerification:      row.PolicyVerification,
+		PolicySettings:          row.PolicySettings,
+		DestinationProvider:     row.DestinationProvider,
+		DestinationEndpoint:     row.DestinationEndpoint,
+		DestinationRegion:       row.DestinationRegion,
+		DestinationBucket:       row.DestinationBucket,
+		DestinationPrefix:       row.DestinationPrefix,
+		DestinationPathStyle:    row.DestinationPathStyle,
+		DestinationArchived:     row.DestinationArchived,
+		CredentialProvider:      row.CredentialProvider,
+		CredentialPayload:       row.CredentialPayload,
 		DestinationCredentialID: row.DestinationCredentialID,
-		CredentialArchived:      row.CredentialArchived, CredentialVerified: row.CredentialVerified,
-		ResourceInstallationID: row.ResourceInstallationID,
-		InstallationContainer:  row.InstallationContainer, InstallationServerID: row.InstallationServerID,
-		InstallationServerIPv4: row.InstallationServerIPv4, InstallationArchived: row.InstallationArchived,
-		ResourceEngine: row.ResourceEngine, ResourceSystemManaged: row.ResourceSystemManaged,
-		ResourceArchived: row.ResourceArchived, ResourceID: row.ResourceID, DatabaseName: row.DatabaseName,
-		AdministratorUsername: row.AdministratorUsername, AdministratorPayload: row.AdministratorPayload,
-		AdministratorCount: row.AdministratorCount,
+		CredentialArchived:      row.CredentialArchived,
+		CredentialVerified:      row.CredentialVerified,
+		ResourceInstallationID:  row.ResourceInstallationID,
+		InstallationContainer:   row.InstallationContainer,
+		InstallationServerID:    row.InstallationServerID,
+		InstallationServerIPv4:  row.InstallationServerIPv4,
+		InstallationArchived:    row.InstallationArchived,
+		ResourceEngine:          row.ResourceEngine,
+		ResourceSystemManaged:   row.ResourceSystemManaged,
+		ResourceArchived:        row.ResourceArchived,
+		ResourceID:              row.ResourceID,
+		DatabaseName:            row.DatabaseName,
+		AdministratorUsername:   row.AdministratorUsername,
+		AdministratorPayload:    row.AdministratorPayload,
+		AdministratorCount:      row.AdministratorCount,
 	}, nil
 }

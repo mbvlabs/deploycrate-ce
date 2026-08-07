@@ -45,10 +45,34 @@ func (j Jobs) RegisterRoutes(r *router.Router) error {
 			Handler:     j.Index,
 			Middlewares: []echo.MiddlewareFunc{middleware.AuthOnly},
 		},
-		{Method: http.MethodPost, Path: routes.SystemTaskRun.Path(), Name: routes.SystemTaskRun.Name(), Handler: j.Run, Middlewares: []echo.MiddlewareFunc{middleware.AdminOnly}},
-		{Method: http.MethodPost, Path: routes.SystemTaskRetry.Path(), Name: routes.SystemTaskRetry.Name(), Handler: j.Retry, Middlewares: []echo.MiddlewareFunc{middleware.AdminOnly}},
-		{Method: http.MethodPost, Path: routes.SystemTaskCancel.Path(), Name: routes.SystemTaskCancel.Name(), Handler: j.Cancel, Middlewares: []echo.MiddlewareFunc{middleware.AdminOnly}},
-		{Method: http.MethodDelete, Path: routes.SystemTaskDestroy.Path(), Name: routes.SystemTaskDestroy.Name(), Handler: j.Destroy, Middlewares: []echo.MiddlewareFunc{middleware.AdminOnly}},
+		{
+			Method:      http.MethodPost,
+			Path:        routes.SystemTaskRun.Path(),
+			Name:        routes.SystemTaskRun.Name(),
+			Handler:     j.Run,
+			Middlewares: []echo.MiddlewareFunc{middleware.AdminOnly},
+		},
+		{
+			Method:      http.MethodPost,
+			Path:        routes.SystemTaskRetry.Path(),
+			Name:        routes.SystemTaskRetry.Name(),
+			Handler:     j.Retry,
+			Middlewares: []echo.MiddlewareFunc{middleware.AdminOnly},
+		},
+		{
+			Method:      http.MethodPost,
+			Path:        routes.SystemTaskCancel.Path(),
+			Name:        routes.SystemTaskCancel.Name(),
+			Handler:     j.Cancel,
+			Middlewares: []echo.MiddlewareFunc{middleware.AdminOnly},
+		},
+		{
+			Method:      http.MethodDelete,
+			Path:        routes.SystemTaskDestroy.Path(),
+			Name:        routes.SystemTaskDestroy.Name(),
+			Handler:     j.Destroy,
+			Middlewares: []echo.MiddlewareFunc{middleware.AdminOnly},
+		},
 		{
 			Method:      http.MethodGet,
 			Path:        routes.SystemTask.Path(),
@@ -187,7 +211,11 @@ func newJobProps(job *rivertype.JobRow) jobProps {
 	case rivertype.JobStateAvailable, rivertype.JobStateRunning:
 	}
 	switch job.State {
-	case rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRetryable, rivertype.JobStateRunning, rivertype.JobStateScheduled:
+	case rivertype.JobStateAvailable,
+		rivertype.JobStatePending,
+		rivertype.JobStateRetryable,
+		rivertype.JobStateRunning,
+		rivertype.JobStateScheduled:
 		data.CanCancel = true
 	case rivertype.JobStateCancelled, rivertype.JobStateCompleted, rivertype.JobStateDiscarded:
 	}
@@ -275,7 +303,11 @@ func jobIDParam(etx *echo.Context) (int64, error) {
 }
 
 func jobActionError(etx *echo.Context, jobID int64, action string, err error) error {
-	if flashErr := cookies.AddFlash(etx, cookies.FlashError, fmt.Sprintf("Could not %s System Task: %v", action, err)); flashErr != nil {
+	if flashErr := cookies.AddFlash(
+		etx,
+		cookies.FlashError,
+		fmt.Sprintf("Could not %s System Task: %v", action, err),
+	); flashErr != nil {
 		return flashErr
 	}
 	return inertia.Redirect(etx, routes.SystemTask.URL(jobID), http.StatusSeeOther)
@@ -341,7 +373,11 @@ func (j Jobs) Destroy(etx *echo.Context) error {
 	if _, err := j.processor.DeleteJob(etx.Request().Context(), jobID); err != nil {
 		return jobActionError(etx, jobID, "delete", err)
 	}
-	if err := cookies.AddFlash(etx, cookies.FlashSuccess, "System Task permanently deleted"); err != nil {
+	if err := cookies.AddFlash(
+		etx,
+		cookies.FlashSuccess,
+		"System Task permanently deleted",
+	); err != nil {
 		return err
 	}
 	return inertia.Redirect(etx, routes.SystemTasks.URL(), http.StatusSeeOther)

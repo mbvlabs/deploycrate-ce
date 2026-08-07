@@ -48,7 +48,11 @@ type UpsertDNSZoneData struct {
 	DNSConnectionID uuid.UUID
 }
 
-func (dnsZone) Upsert(ctx context.Context, db storage.Executor, data UpsertDNSZoneData) (DNSZoneEntity, error) {
+func (dnsZone) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data UpsertDNSZoneData,
+) (DNSZoneEntity, error) {
 	now := time.Now().UTC()
 	entity := DNSZoneEntity{
 		ID: uuid.New(), CreatedAt: now, UpdatedAt: now, ExternalID: data.ExternalID,
@@ -58,7 +62,11 @@ func (dnsZone) Upsert(ctx context.Context, db storage.Executor, data UpsertDNSZo
 	if err := validation.Validate(&entity); err != nil {
 		return DNSZoneEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if err := lockUnique(ctx, db, "dns-zone-external:"+entity.DNSConnectionID.String()+":"+entity.ExternalID); err != nil {
+	if err := lockUnique(
+		ctx,
+		db,
+		"dns-zone-external:"+entity.DNSConnectionID.String()+":"+entity.ExternalID,
+	); err != nil {
 		return DNSZoneEntity{}, err
 	}
 
@@ -111,13 +119,28 @@ func (dnsZone) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (DNS
 
 func (dnsZone) Active(ctx context.Context, db storage.Executor) ([]DNSZoneEntity, error) {
 	entities := make([]DNSZoneEntity, 0)
-	err := db.NewSelect().Model(&entities).Where("archived_at IS NULL").Where("status = 'active'").OrderExpr("name").Scan(ctx)
+	err := db.NewSelect().
+		Model(&entities).
+		Where("archived_at IS NULL").
+		Where("status = 'active'").
+		OrderExpr("name").
+		Scan(ctx)
 	return entities, err
 }
 
-func (dnsZone) ArchiveMissing(ctx context.Context, db storage.Executor, connectionID uuid.UUID, externalIDs []string, at time.Time) error {
-	query := db.NewUpdate().Model((*DNSZoneEntity)(nil)).Set("updated_at = ?", at).Set("archived_at = ?", at).
-		Where("dns_connection_id = ?", connectionID).Where("archived_at IS NULL")
+func (dnsZone) ArchiveMissing(
+	ctx context.Context,
+	db storage.Executor,
+	connectionID uuid.UUID,
+	externalIDs []string,
+	at time.Time,
+) error {
+	query := db.NewUpdate().
+		Model((*DNSZoneEntity)(nil)).
+		Set("updated_at = ?", at).
+		Set("archived_at = ?", at).
+		Where("dns_connection_id = ?", connectionID).
+		Where("archived_at IS NULL")
 	if len(externalIDs) > 0 {
 		query = query.Where("external_id NOT IN (?)", bun.In(externalIDs))
 	}

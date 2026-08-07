@@ -77,7 +77,11 @@ func (service *DatabaseArtifact) Load(
 		return fail(err)
 	}
 	digest := sha256.New()
-	remote, getErr := store.Get(ctx, scope.Backup.ArtifactReference, io.MultiWriter(encrypted, digest))
+	remote, getErr := store.Get(
+		ctx,
+		scope.Backup.ArtifactReference,
+		io.MultiWriter(encrypted, digest),
+	)
 	closeErr := encrypted.Close()
 	if getErr != nil || closeErr != nil {
 		return fail(errors.Join(getErr, closeErr))
@@ -86,21 +90,34 @@ func (service *DatabaseArtifact) Load(
 		return fail(errors.New("database backup object size does not match the backup record"))
 	}
 	if !equalBytes(digest.Sum(nil), scope.Backup.Digest) {
-		return fail(errors.New("database backup ciphertext digest does not match the backup record"))
+		return fail(
+			errors.New("database backup ciphertext digest does not match the backup record"),
+		)
 	}
 	if scope.Backup.ResourceID == nil || scope.Backup.ResourceInstallationID == nil {
 		return fail(errors.New("database backup record is missing topology identity"))
 	}
 	expectedMetadata := map[string]string{
-		"backup-id": scope.Backup.ID.String(), "policy-id": scope.Backup.BackupPolicyID.String(),
+		"backup-id":                scope.Backup.ID.String(),
+		"policy-id":                scope.Backup.BackupPolicyID.String(),
 		"resource-id":              scope.Backup.ResourceID.String(),
 		"resource-installation-id": scope.Backup.ResourceInstallationID.String(),
-		"database-name":            target.DatabaseName, "instance-id": service.config.App.InstanceID,
-		"sha256": fmt.Sprintf("%x", scope.Backup.Digest), "format-version": scope.Backup.FormatVersion,
+		"database-name":            target.DatabaseName,
+		"instance-id":              service.config.App.InstanceID,
+		"sha256": fmt.Sprintf(
+			"%x",
+			scope.Backup.Digest,
+		),
+		"format-version": scope.Backup.FormatVersion,
 	}
 	for key, expected := range expectedMetadata {
 		if remote.Metadata[key] != expected {
-			return fail(fmt.Errorf("database backup object metadata %q does not match the backup record", key))
+			return fail(
+				fmt.Errorf(
+					"database backup object metadata %q does not match the backup record",
+					key,
+				),
+			)
 		}
 	}
 
@@ -119,7 +136,11 @@ func (service *DatabaseArtifact) Load(
 	}
 
 	dumpPath := filepath.Join(workDirectory, "database.dump")
-	required := map[string]bool{"database.dump": false, "globals.sql": false, "manifest.json": false}
+	required := map[string]bool{
+		"database.dump": false,
+		"globals.sql":   false,
+		"manifest.json": false,
+	}
 	var manifestBytes []byte
 	archive := tar.NewReader(decrypted)
 	for {

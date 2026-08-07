@@ -37,12 +37,19 @@ func (e *ReleaseEntity) Validate() error {
 	if e.ID == uuid.Nil || e.EnvironmentID == uuid.Nil || e.CreatedByChangeID == uuid.Nil {
 		builder.Add("id", "required", "Release ownership identifiers are required")
 	}
-	if strings.TrimSpace(e.ArtifactReference) == "" || (len(e.ArtifactDigest) != 0 && len(e.ArtifactDigest) != sha256.Size) {
+	if strings.TrimSpace(e.ArtifactReference) == "" ||
+		(len(e.ArtifactDigest) != 0 && len(e.ArtifactDigest) != sha256.Size) {
 		builder.Add("artifact", "invalid", "Release artifact reference or digest is invalid")
 	}
-	hasRegistrySnapshot := e.RegistryResourceID != nil || e.RegistryCredentialID != nil || e.RegistryEndpoint.Valid
-	if hasRegistrySnapshot && (e.RegistryResourceID == nil || e.RegistryCredentialID == nil || !e.RegistryEndpoint.Valid || strings.TrimSpace(e.RegistryEndpoint.String) == "" || !strings.Contains(e.ArtifactReference, "@sha256:") || len(e.ArtifactDigest) != sha256.Size) {
-		builder.Add("registry", "invalid", "workload Releases require a complete immutable registry snapshot")
+	hasRegistrySnapshot := e.RegistryResourceID != nil || e.RegistryCredentialID != nil ||
+		e.RegistryEndpoint.Valid
+	if hasRegistrySnapshot &&
+		(e.RegistryResourceID == nil || e.RegistryCredentialID == nil || !e.RegistryEndpoint.Valid || strings.TrimSpace(e.RegistryEndpoint.String) == "" || !strings.Contains(e.ArtifactReference, "@sha256:") || len(e.ArtifactDigest) != sha256.Size) {
+		builder.Add(
+			"registry",
+			"invalid",
+			"workload Releases require a complete immutable registry snapshot",
+		)
 	}
 	return builder.Err()
 }

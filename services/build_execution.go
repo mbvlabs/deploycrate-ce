@@ -77,7 +77,13 @@ func newBuildLogger(ctx context.Context, db storage.Pool, buildID uuid.UUID) (*b
 	if err != nil {
 		return nil, err
 	}
-	return &buildLogger{ctx: ctx, db: db, buildID: buildID, nextSequence: sequence, persistedPackBytes: packBytes}, nil
+	return &buildLogger{
+		ctx:                ctx,
+		db:                 db,
+		buildID:            buildID,
+		nextSequence:       sequence,
+		persistedPackBytes: packBytes,
+	}, nil
 }
 
 func (logger *buildLogger) Write(value []byte) (int, error) {
@@ -102,7 +108,14 @@ func (logger *buildLogger) Write(value []byte) (int, error) {
 		if strings.TrimSpace(chunk) != "" {
 			if err := logger.appendLocked(logger.ctx, "pack", chunk); err != nil {
 				logger.persistenceErr = err
-				slog.WarnContext(logger.ctx, "Build output could not be persisted", "build_id", logger.buildID, "error", err)
+				slog.WarnContext(
+					logger.ctx,
+					"Build output could not be persisted",
+					"build_id",
+					logger.buildID,
+					"error",
+					err,
+				)
 				return original, nil
 			}
 			logger.persistedPackBytes += int64(len(chunk))
@@ -132,7 +145,11 @@ func (logger *buildLogger) recordTruncationLocked() {
 		return
 	}
 	logger.truncated = false
-	if err := logger.appendLocked(logger.ctx, "system", "Pack output reached the 2 MiB persistence limit. Later output is omitted, but the terminal error will still be retained."); err != nil {
+	if err := logger.appendLocked(
+		logger.ctx,
+		"system",
+		"Pack output reached the 2 MiB persistence limit. Later output is omitted, but the terminal error will still be retained.",
+	); err != nil {
 		logger.persistenceErr = err
 	}
 }
@@ -142,7 +159,11 @@ func (logger *buildLogger) appendLocked(ctx context.Context, stream, message str
 		return nil
 	}
 	_, err := models.BuildLog.Create(ctx, logger.db.Executor(), models.CreateBuildLogData{
-		Sequence: logger.nextSequence, Stream: stream, Message: message, OccurredAt: time.Now().UTC(), BuildID: logger.buildID,
+		Sequence:   logger.nextSequence,
+		Stream:     stream,
+		Message:    message,
+		OccurredAt: time.Now().UTC(),
+		BuildID:    logger.buildID,
 	})
 	if err == nil {
 		logger.nextSequence++
@@ -169,8 +190,22 @@ func truncateBuildLogMessage(message string, preserveTail bool) string {
 	return message
 }
 
-func NewBuildExecution(db storage.Pool, cfg config.Config, github *GitHubConnection, servers *ServerExecution, releases *ReleaseDeployment) *BuildExecution {
-	return &BuildExecution{db: db, config: cfg, github: github, pack: buildpacksclient.New(), registry: registryclient.New(), servers: servers, releases: releases}
+func NewBuildExecution(
+	db storage.Pool,
+	cfg config.Config,
+	github *GitHubConnection,
+	servers *ServerExecution,
+	releases *ReleaseDeployment,
+) *BuildExecution {
+	return &BuildExecution{
+		db:       db,
+		config:   cfg,
+		github:   github,
+		pack:     buildpacksclient.New(),
+		registry: registryclient.New(),
+		servers:  servers,
+		releases: releases,
+	}
 }
 
 func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) error {
@@ -187,17 +222,49 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	}
 	recordTiming := func(phase string, started time.Time) {
 		duration := max(time.Since(started), 0)
-		message := fmt.Sprintf("Timing: %s completed in %s", phase, duration.Round(time.Millisecond))
+		message := fmt.Sprintf(
+			"Timing: %s completed in %s",
+			phase,
+			duration.Round(time.Millisecond),
+		)
 		if logErr := logger.System(ctx, message); logErr != nil {
-			slog.WarnContext(ctx, "Build timing could not be persisted", "build_id", build.ID, "phase", phase, "error", logErr)
+			slog.WarnContext(
+				ctx,
+				"Build timing could not be persisted",
+				"build_id",
+				build.ID,
+				"phase",
+				phase,
+				"error",
+				logErr,
+			)
 		}
-		slog.InfoContext(ctx, "Build phase completed", "build_id", build.ID, "phase", phase, "duration", duration)
+		slog.InfoContext(
+			ctx,
+			"Build phase completed",
+			"build_id",
+			build.ID,
+			"phase",
+			phase,
+			"duration",
+			duration,
+		)
 	}
 	if build.StartedAt.Valid {
 		queueWait := max(build.StartedAt.Time.Sub(build.CreatedAt), 0)
-		message := fmt.Sprintf("Timing: queue wait completed in %s", queueWait.Round(time.Millisecond))
+		message := fmt.Sprintf(
+			"Timing: queue wait completed in %s",
+			queueWait.Round(time.Millisecond),
+		)
 		if err := logger.System(ctx, message); err != nil {
-			slog.WarnContext(ctx, "Build queue timing could not be persisted", "build_id", build.ID, "error", err)
+			slog.WarnContext(
+				ctx,
+				"Build queue timing could not be persisted",
+				"build_id",
+				build.ID,
+				"error",
+				err,
+			)
 		}
 	}
 	fail := func(operationErr error) error {
@@ -207,26 +274,66 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 		if currentErr == nil && current.Status == "cancelled" {
 			return &PermanentBuildError{Err: errors.New("Build cancelled by user")}
 		}
-		if logErr := logger.System(persistCtx, "Build failed: "+operationErr.Error()); logErr != nil {
-			slog.ErrorContext(persistCtx, "Build failure log could not be persisted", "build_id", build.ID, "error", logErr)
+		if logErr := logger.System(
+			persistCtx,
+			"Build failed: "+operationErr.Error(),
+		); logErr != nil {
+			slog.ErrorContext(
+				persistCtx,
+				"Build failure log could not be persisted",
+				"build_id",
+				build.ID,
+				"error",
+				logErr,
+			)
 		}
-		_ = models.Build.MarkFailed(persistCtx, service.db.Executor(), build.ID, operationErr, time.Now().UTC())
-		_ = models.Change.MarkFailed(persistCtx, service.db.Executor(), build.ChangeID, operationErr, time.Now().UTC())
+		_ = models.Build.MarkFailed(
+			persistCtx,
+			service.db.Executor(),
+			build.ID,
+			operationErr,
+			time.Now().UTC(),
+		)
+		_ = models.Change.MarkFailed(
+			persistCtx,
+			service.db.Executor(),
+			build.ChangeID,
+			operationErr,
+			time.Now().UTC(),
+		)
 		slog.ErrorContext(persistCtx, "Build failed", "build_id", build.ID, "error", operationErr)
 		return &PermanentBuildError{Err: operationErr}
 	}
 	progress := func(step, message string) error {
 		now := time.Now().UTC()
-		if err := models.Build.MarkProgress(ctx, service.db.Executor(), build.ID, step, now); err != nil {
+		if err := models.Build.MarkProgress(
+			ctx,
+			service.db.Executor(),
+			build.ID,
+			step,
+			now,
+		); err != nil {
 			return err
 		}
 		if err := logger.System(ctx, message); err != nil {
 			return err
 		}
-		slog.InfoContext(ctx, "Build progress", "build_id", build.ID, "step", step, "message", message)
+		slog.InfoContext(
+			ctx,
+			"Build progress",
+			"build_id",
+			build.ID,
+			"step",
+			step,
+			"message",
+			message,
+		)
 		return nil
 	}
-	if err := progress("validating_configuration", "Validating the Build configuration"); err != nil {
+	if err := progress(
+		"validating_configuration",
+		"Validating the Build configuration",
+	); err != nil {
 		return err
 	}
 	snapshot, err := parseBuildSnapshot(build)
@@ -264,7 +371,14 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 		return err
 	}
 	downloadStarted := time.Now()
-	archiveCommand := sudo.CommandContext(ctx, "/usr/bin/install", "-m", "0600", "/dev/stdin", archivePath)
+	archiveCommand := sudo.CommandContext(
+		ctx,
+		"/usr/bin/install",
+		"-m",
+		"0600",
+		"/dev/stdin",
+		archivePath,
+	)
 	archiveInput, err := archiveCommand.StdinPipe()
 	if err != nil {
 		return fmt.Errorf("open privileged Build archive input: %w", err)
@@ -274,14 +388,22 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	if err := archiveCommand.Start(); err != nil {
 		return fmt.Errorf("create privileged Build archive: %w", err)
 	}
-	downloadErr := service.github.DownloadArchive(ctx, installation, repository, build.SourceRevision, archiveInput)
+	downloadErr := service.github.DownloadArchive(
+		ctx,
+		installation,
+		repository,
+		build.SourceRevision,
+		archiveInput,
+	)
 	closeErr := archiveInput.Close()
 	archiveWriteErr := archiveCommand.Wait()
 	if downloadErr != nil {
-		if errors.Is(downloadErr, context.Canceled) || errors.Is(downloadErr, context.DeadlineExceeded) {
+		if errors.Is(downloadErr, context.Canceled) ||
+			errors.Is(downloadErr, context.DeadlineExceeded) {
 			return downloadErr
 		}
-		if errors.Is(downloadErr, githubclient.ErrUnauthorized) || errors.Is(downloadErr, githubclient.ErrNotFound) {
+		if errors.Is(downloadErr, githubclient.ErrUnauthorized) ||
+			errors.Is(downloadErr, githubclient.ErrNotFound) {
 			return fail(downloadErr)
 		}
 		if archiveWriteErr == nil {
@@ -289,14 +411,21 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 		}
 	}
 	if archiveWriteErr != nil {
-		return fmt.Errorf("write privileged Build archive: %w: %s", archiveWriteErr, strings.TrimSpace(archiveError.String()))
+		return fmt.Errorf(
+			"write privileged Build archive: %w: %s",
+			archiveWriteErr,
+			strings.TrimSpace(archiveError.String()),
+		)
 	}
 	if closeErr != nil {
 		return fmt.Errorf("close Build archive: %w", closeErr)
 	}
 	recordTiming("source download", downloadStarted)
 	sourceRoot := filepath.Join(workspace, "source")
-	if err := progress("extracting_source", "Validating and extracting the GitHub archive"); err != nil {
+	if err := progress(
+		"extracting_source",
+		"Validating and extracting the GitHub archive",
+	); err != nil {
 		return err
 	}
 	extractionStarted := time.Now()
@@ -304,7 +433,10 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 		return fail(err)
 	}
 	recordTiming("source extraction", extractionStarted)
-	if err := progress("validating_context", "Validating the configured Go Buildpacks context"); err != nil {
+	if err := progress(
+		"validating_context",
+		"Validating the configured Go Buildpacks context",
+	); err != nil {
 		return err
 	}
 	contextPath, err := secureBuildContext(ctx, sourceRoot, snapshot.ContextPath)
@@ -314,7 +446,8 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 		}
 		return fail(err)
 	}
-	if err := sudo.CommandContext(ctx, "/usr/bin/test", "-f", filepath.Join(contextPath, "go.mod")).Run(); err != nil {
+	if err := sudo.CommandContext(ctx, "/usr/bin/test", "-f", filepath.Join(contextPath, "go.mod")).
+		Run(); err != nil {
 		return fail(errors.New("Go Buildpacks context must contain go.mod"))
 	}
 	buildCtx, cancel := context.WithTimeout(ctx, buildTimeout)
@@ -349,24 +482,48 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	if closeAuthentication != nil {
 		defer func() {
 			if closeErr := closeAuthentication(); closeErr != nil {
-				slog.WarnContext(context.WithoutCancel(ctx), "Build registry authentication cleanup failed", "build_id", build.ID, "error", closeErr)
+				slog.WarnContext(
+					context.WithoutCancel(ctx),
+					"Build registry authentication cleanup failed",
+					"build_id",
+					build.ID,
+					"error",
+					closeErr,
+				)
 			}
 		}()
 	}
-	imageTag := strings.TrimSuffix(snapshot.RegistryEndpoint, "/") + "/" + strings.Trim(snapshot.ImageRepository, "/") + ":build-" + build.ID.String()
+	imageTag := strings.TrimSuffix(
+		snapshot.RegistryEndpoint,
+		"/",
+	) + "/" + strings.Trim(
+		snapshot.ImageRepository,
+		"/",
+	) + ":build-" + build.ID.String()
 	caches, err := buildpacksclient.EnvironmentCacheNames(build.EnvironmentID)
 	if err != nil {
 		return fail(err)
 	}
 	previousImage := ""
-	previousRelease, err := models.Release.LatestBuildForEnvironment(ctx, service.db.Executor(), build.EnvironmentID)
+	previousRelease, err := models.Release.LatestBuildForEnvironment(
+		ctx,
+		service.db.Executor(),
+		build.EnvironmentID,
+	)
 	if err == nil {
 		previousImage = previousRelease.ArtifactReference
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	if previousImage == "" {
-		if err := logger.System(ctx, fmt.Sprintf("Using Pack caches %s and %s without a previous Release image", caches.Build, caches.Launch)); err != nil {
+		if err := logger.System(
+			ctx,
+			fmt.Sprintf(
+				"Using Pack caches %s and %s without a previous Release image",
+				caches.Build,
+				caches.Launch,
+			),
+		); err != nil {
 			return err
 		}
 	} else if err := logger.System(ctx, fmt.Sprintf("Using Pack caches %s and %s with previous Release image %s", caches.Build, caches.Launch, previousImage)); err != nil {
@@ -380,7 +537,10 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	if err := createBuildDirectory(ctx, temporaryDirectory); err != nil {
 		return fmt.Errorf("create Pack temporary directory: %w", err)
 	}
-	if err := progress("building_image", "Running Cloud Native Buildpacks and publishing the application image"); err != nil {
+	if err := progress(
+		"building_image",
+		"Running Cloud Native Buildpacks and publishing the application image",
+	); err != nil {
 		return err
 	}
 	frontendScript := ""
@@ -389,19 +549,43 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	}
 	packStarted := time.Now()
 	buildSpec := buildpacksclient.BuildSpec{
-		Image: imageTag, Path: contextPath, ReportDirectory: reportDirectory, TemporaryDirectory: temporaryDirectory,
-		BuildCache: caches.Build, LaunchCache: caches.Launch, PreviousImage: previousImage, PullPolicy: buildpacksclient.PullPolicyIfNotPresent,
-		DockerEnvironment: dockerEnvironment, BPGOTargets: snapshot.BPGOTargets, FrontendScript: frontendScript,
-		Output: logger,
+		Image:              imageTag,
+		Path:               contextPath,
+		ReportDirectory:    reportDirectory,
+		TemporaryDirectory: temporaryDirectory,
+		BuildCache:         caches.Build,
+		LaunchCache:        caches.Launch,
+		PreviousImage:      previousImage,
+		PullPolicy:         buildpacksclient.PullPolicyIfNotPresent,
+		DockerEnvironment:  dockerEnvironment,
+		BPGOTargets:        snapshot.BPGOTargets,
+		FrontendScript:     frontendScript,
+		Output:             logger,
 	}
 	if buildTarget.Remote {
-		err = service.buildRemote(buildCtx, buildTarget, build, snapshot, archivePath, buildSpec, credentials, logger)
+		err = service.buildRemote(
+			buildCtx,
+			buildTarget,
+			build,
+			snapshot,
+			archivePath,
+			buildSpec,
+			credentials,
+			logger,
+		)
 	} else {
 		_, err = service.pack.Build(buildCtx, buildSpec)
 	}
 	recordTiming("Pack execution", packStarted)
 	if persistenceErr := logger.PersistenceError(); persistenceErr != nil {
-		slog.WarnContext(ctx, "Build output logging became unavailable", "build_id", build.ID, "error", persistenceErr)
+		slog.WarnContext(
+			ctx,
+			"Build output logging became unavailable",
+			"build_id",
+			build.ID,
+			"error",
+			persistenceErr,
+		)
 	}
 	if err != nil {
 		return fail(err)
@@ -414,12 +598,20 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	if err != nil {
 		return err
 	}
-	digest, err := hex.DecodeString(strings.TrimPrefix(immutableReference[strings.LastIndex(immutableReference, "@")+1:], "sha256:"))
+	digest, err := hex.DecodeString(
+		strings.TrimPrefix(
+			immutableReference[strings.LastIndex(immutableReference, "@")+1:],
+			"sha256:",
+		),
+	)
 	if err != nil || len(digest) != 32 {
 		return errors.New("published registry digest is invalid")
 	}
 	recordTiming("artifact digest resolution", digestStarted)
-	if err := progress("finalizing", "Creating the Release and queueing its Deployment"); err != nil {
+	if err := progress(
+		"finalizing",
+		"Creating the Release and queueing its Deployment",
+	); err != nil {
 		return err
 	}
 	finalizationStarted := time.Now()
@@ -428,7 +620,14 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	}
 	recordTiming("Build finalization", finalizationStarted)
 	if err := logger.System(ctx, "Build completed successfully"); err != nil {
-		slog.WarnContext(ctx, "Build completion log could not be persisted", "build_id", build.ID, "error", err)
+		slog.WarnContext(
+			ctx,
+			"Build completion log could not be persisted",
+			"build_id",
+			build.ID,
+			"error",
+			err,
+		)
 	}
 	slog.InfoContext(ctx, "Build completed", "build_id", build.ID, "artifact", immutableReference)
 	return nil
@@ -449,47 +648,122 @@ func (service *BuildExecution) buildRemote(
 	reportDirectory := filepath.Join(workspace, "report")
 	temporaryDirectory := filepath.Join(workspace, "tmp")
 	contextPath := filepath.Join(sourceRoot, filepath.FromSlash(snapshot.ContextPath))
-	if contextPath != sourceRoot && !strings.HasPrefix(contextPath, sourceRoot+string(filepath.Separator)) {
+	if contextPath != sourceRoot &&
+		!strings.HasPrefix(contextPath, sourceRoot+string(filepath.Separator)) {
 		return errors.New("remote Buildpacks context escaped the Build workspace")
 	}
 	setup := []byte("set -euo pipefail\n" +
 		shellJoin("/usr/bin/rm", "-rf", "--", workspace) + "\n" +
-		shellJoin("/usr/bin/install", "-d", "-m", "0700", workspace, sourceRoot, reportDirectory, temporaryDirectory) + "\n")
+		shellJoin(
+			"/usr/bin/install",
+			"-d",
+			"-m",
+			"0700",
+			workspace,
+			sourceRoot,
+			reportDirectory,
+			temporaryDirectory,
+		) + "\n")
 	if _, err := service.servers.RunRootScript(ctx, target, setup); err != nil {
 		return fmt.Errorf("prepare remote Build workspace: %w", err)
 	}
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
 		defer cancel()
-		_, _ = service.servers.RunRootCommand(cleanupCtx, target, nil, "/usr/bin/rm", "-rf", "--", workspace)
+		_, _ = service.servers.RunRootCommand(
+			cleanupCtx,
+			target,
+			nil,
+			"/usr/bin/rm",
+			"-rf",
+			"--",
+			workspace,
+		)
 	}()
-	if err := service.streamCommandToRemote(ctx, target, sudo.CommandContext(ctx, "/usr/bin/cat", "--", archivePath),
-		"/usr/bin/tar", "--extract", "--gzip", "--file", "-", "--directory", sourceRoot,
-		"--strip-components", "1", "--no-same-owner", "--no-same-permissions"); err != nil {
+	if err := service.streamCommandToRemote(
+		ctx,
+		target,
+		sudo.CommandContext(ctx, "/usr/bin/cat", "--", archivePath),
+		"/usr/bin/tar",
+		"--extract",
+		"--gzip",
+		"--file",
+		"-",
+		"--directory",
+		sourceRoot,
+		"--strip-components",
+		"1",
+		"--no-same-owner",
+		"--no-same-permissions",
+	); err != nil {
 		return fmt.Errorf("stage source on selected Build Server: %w", err)
 	}
-	if _, err := service.servers.RunRootCommand(ctx, target, nil, "/usr/bin/test", "-f", filepath.Join(contextPath, "go.mod")); err != nil {
+	if _, err := service.servers.RunRootCommand(
+		ctx,
+		target,
+		nil,
+		"/usr/bin/test",
+		"-f",
+		filepath.Join(contextPath, "go.mod"),
+	); err != nil {
 		return errors.New("Go Buildpacks context must contain go.mod on the selected Build Server")
 	}
 
 	assetsBuildpack := ""
 	if spec.FrontendScript != "" {
-		localAssets, err := nodeassets.Materialize(filepath.Join(spec.TemporaryDirectory, "buildpacks"))
+		localAssets, err := nodeassets.Materialize(
+			filepath.Join(spec.TemporaryDirectory, "buildpacks"),
+		)
 		if err != nil {
 			return err
 		}
 		remoteAssetsParent := filepath.Join(temporaryDirectory, "buildpacks")
 		assetsBuildpack = filepath.Join(remoteAssetsParent, "node-assets")
-		if _, err := service.servers.RunRootCommand(ctx, target, nil, "/usr/bin/install", "-d", "-m", "0755", assetsBuildpack); err != nil {
+		if _, err := service.servers.RunRootCommand(
+			ctx,
+			target,
+			nil,
+			"/usr/bin/install",
+			"-d",
+			"-m",
+			"0755",
+			assetsBuildpack,
+		); err != nil {
 			return err
 		}
-		if err := service.streamCommandToRemote(ctx, target, exec.CommandContext(ctx, "/usr/bin/tar", "--create", "--gzip", "--file", "-", "--directory", localAssets, "."),
-			"/usr/bin/tar", "--extract", "--gzip", "--file", "-", "--directory", assetsBuildpack); err != nil {
+		if err := service.streamCommandToRemote(
+			ctx,
+			target,
+			exec.CommandContext(
+				ctx,
+				"/usr/bin/tar",
+				"--create",
+				"--gzip",
+				"--file",
+				"-",
+				"--directory",
+				localAssets,
+				".",
+			),
+			"/usr/bin/tar",
+			"--extract",
+			"--gzip",
+			"--file",
+			"-",
+			"--directory",
+			assetsBuildpack,
+		); err != nil {
 			return fmt.Errorf("stage frontend Buildpack on selected Build Server: %w", err)
 		}
 	}
 
-	arguments, err := remotePackArguments(target.Server.Architecture.String, spec, contextPath, reportDirectory, assetsBuildpack)
+	arguments, err := remotePackArguments(
+		target.Server.Architecture.String,
+		spec,
+		contextPath,
+		reportDirectory,
+		assetsBuildpack,
+	)
 	if err != nil {
 		return err
 	}
@@ -506,7 +780,16 @@ func (service *BuildExecution) buildRemote(
 	script.WriteString("\n/usr/bin/printf '%s' ")
 	script.WriteString(shellQuote(base64.StdEncoding.EncodeToString([]byte(credentials.Password))))
 	script.WriteString(" | /usr/bin/base64 --decode | ")
-	script.WriteString(shellJoin(remoteDockerExecutable, "login", credentials.Endpoint, "--username", credentials.Username, "--password-stdin"))
+	script.WriteString(
+		shellJoin(
+			remoteDockerExecutable,
+			"login",
+			credentials.Endpoint,
+			"--username",
+			credentials.Username,
+			"--password-stdin",
+		),
+	)
 	script.WriteString(" >/dev/null\n")
 	script.WriteString(shellJoin("/usr/local/bin/pack", arguments...))
 	script.WriteString("\n")
@@ -525,7 +808,13 @@ func (service *BuildExecution) buildRemote(
 	return nil
 }
 
-func (service *BuildExecution) streamCommandToRemote(ctx context.Context, target ServerExecutionTarget, command *exec.Cmd, remoteExecutable string, remoteArguments ...string) error {
+func (service *BuildExecution) streamCommandToRemote(
+	ctx context.Context,
+	target ServerExecutionTarget,
+	command *exec.Cmd,
+	remoteExecutable string,
+	remoteArguments ...string,
+) error {
 	stdout, err := command.StdoutPipe()
 	if err != nil {
 		return err
@@ -535,19 +824,32 @@ func (service *BuildExecution) streamCommandToRemote(ctx context.Context, target
 	if err := command.Start(); err != nil {
 		return err
 	}
-	_, remoteErr := service.servers.RunRootCommand(ctx, target, stdout, remoteExecutable, remoteArguments...)
+	_, remoteErr := service.servers.RunRootCommand(
+		ctx,
+		target,
+		stdout,
+		remoteExecutable,
+		remoteArguments...)
 	_ = stdout.Close()
 	waitErr := command.Wait()
 	if remoteErr != nil {
 		return remoteErr
 	}
 	if waitErr != nil {
-		return fmt.Errorf("read staged Build content: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
+		return fmt.Errorf(
+			"read staged Build content: %w: %s",
+			waitErr,
+			strings.TrimSpace(stderr.String()),
+		)
 	}
 	return nil
 }
 
-func remotePackArguments(architecture string, spec buildpacksclient.BuildSpec, contextPath, reportDirectory, assetsBuildpack string) ([]string, error) {
+func remotePackArguments(
+	architecture string,
+	spec buildpacksclient.BuildSpec,
+	contextPath, reportDirectory, assetsBuildpack string,
+) ([]string, error) {
 	builder, err := buildpacksclient.PinnedBuilderForArchitecture(architecture)
 	if err != nil {
 		return nil, err
@@ -562,13 +864,33 @@ func remotePackArguments(architecture string, spec buildpacksclient.BuildSpec, c
 	}
 	arguments := []string{"build", spec.Image, "--path", contextPath, "--builder", builder}
 	if assetsBuildpack != "" {
-		arguments = append(arguments, "--buildpack", buildpacksclient.NodeEngineBuildpack, "--buildpack", assetsBuildpack, "--env", "BP_DEPLOYCRATE_FRONTEND_SCRIPT="+spec.FrontendScript)
+		arguments = append(
+			arguments,
+			"--buildpack",
+			buildpacksclient.NodeEngineBuildpack,
+			"--buildpack",
+			assetsBuildpack,
+			"--env",
+			"BP_DEPLOYCRATE_FRONTEND_SCRIPT="+spec.FrontendScript,
+		)
 	}
-	arguments = append(arguments,
-		"--buildpack", goBuildpack, "--trust-extra-buildpacks", "--run-image", runImage, "--publish",
-		"--cache", "type=build;format=volume;name="+spec.BuildCache,
-		"--cache", "type=launch;format=volume;name="+spec.LaunchCache,
-		"--pull-policy", spec.PullPolicy, "--timestamps", "--report-output-dir", reportDirectory,
+	arguments = append(
+		arguments,
+		"--buildpack",
+		goBuildpack,
+		"--trust-extra-buildpacks",
+		"--run-image",
+		runImage,
+		"--publish",
+		"--cache",
+		"type=build;format=volume;name="+spec.BuildCache,
+		"--cache",
+		"type=launch;format=volume;name="+spec.LaunchCache,
+		"--pull-policy",
+		spec.PullPolicy,
+		"--timestamps",
+		"--report-output-dir",
+		reportDirectory,
 	)
 	if spec.PreviousImage != "" {
 		arguments = append(arguments, "--previous-image", spec.PreviousImage)
@@ -579,23 +901,58 @@ func remotePackArguments(architecture string, spec buildpacksclient.BuildSpec, c
 	return arguments, nil
 }
 
-func (service *BuildExecution) Fail(ctx context.Context, buildID uuid.UUID, operationErr error) error {
+func (service *BuildExecution) Fail(
+	ctx context.Context,
+	buildID uuid.UUID,
+	operationErr error,
+) error {
 	build, err := models.Build.Find(ctx, service.db.Executor(), buildID)
-	if err != nil || build.Status == "succeeded" || build.Status == "failed" || build.Status == "cancelled" {
+	if err != nil || build.Status == "succeeded" || build.Status == "failed" ||
+		build.Status == "cancelled" {
 		return err
 	}
 	if logger, logErr := newBuildLogger(ctx, service.db, build.ID); logErr == nil {
-		if logErr := logger.System(ctx, "Build failed after exhausting background job attempts: "+operationErr.Error()); logErr != nil {
-			slog.ErrorContext(ctx, "Build failure log could not be persisted", "build_id", build.ID, "error", logErr)
+		if logErr := logger.System(
+			ctx,
+			"Build failed after exhausting background job attempts: "+operationErr.Error(),
+		); logErr != nil {
+			slog.ErrorContext(
+				ctx,
+				"Build failure log could not be persisted",
+				"build_id",
+				build.ID,
+				"error",
+				logErr,
+			)
 		}
 	} else {
-		slog.ErrorContext(ctx, "Build logging could not be initialized for terminal failure", "build_id", build.ID, "error", logErr)
+		slog.ErrorContext(
+			ctx,
+			"Build logging could not be initialized for terminal failure",
+			"build_id",
+			build.ID,
+			"error",
+			logErr,
+		)
 	}
 	now := time.Now().UTC()
-	if err := models.Build.MarkFailed(ctx, service.db.Executor(), build.ID, operationErr, now); err != nil {
+	if err := models.Build.MarkFailed(
+		ctx,
+		service.db.Executor(),
+		build.ID,
+		operationErr,
+		now,
+	); err != nil {
 		return err
 	}
-	slog.ErrorContext(ctx, "Build failed after exhausting background job attempts", "build_id", build.ID, "error", operationErr)
+	slog.ErrorContext(
+		ctx,
+		"Build failed after exhausting background job attempts",
+		"build_id",
+		build.ID,
+		"error",
+		operationErr,
+	)
 	return models.Change.MarkFailed(ctx, service.db.Executor(), build.ChangeID, operationErr, now)
 }
 
@@ -607,7 +964,8 @@ func (service *BuildExecution) RecordRetry(
 	operationErr error,
 ) error {
 	build, err := models.Build.Find(ctx, service.db.Executor(), buildID)
-	if err != nil || build.Status == "succeeded" || build.Status == "failed" || build.Status == "cancelled" {
+	if err != nil || build.Status == "succeeded" || build.Status == "failed" ||
+		build.Status == "cancelled" {
 		return err
 	}
 	logger, err := newBuildLogger(ctx, service.db, build.ID)
@@ -635,7 +993,10 @@ func isRetryableBuildFailure(err error) bool {
 	return false
 }
 
-func (service *BuildExecution) claim(ctx context.Context, id uuid.UUID) (models.BuildEntity, error) {
+func (service *BuildExecution) claim(
+	ctx context.Context,
+	id uuid.UUID,
+) (models.BuildEntity, error) {
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return models.BuildEntity{}, err
@@ -697,7 +1058,10 @@ func parseBuildSnapshot(build models.BuildEntity) (buildSnapshot, error) {
 		missingField = "server_id"
 	}
 	if missingField != "" {
-		return snapshot, fmt.Errorf("Build configuration snapshot is incomplete: %s is missing or invalid", missingField)
+		return snapshot, fmt.Errorf(
+			"Build configuration snapshot is incomplete: %s is missing or invalid",
+			missingField,
+		)
 	}
 	if snapshot.BuilderReference != nil && strings.TrimSpace(*snapshot.BuilderReference) != "" {
 		builder, err := buildpacksclient.PinnedBuilder()
@@ -705,7 +1069,8 @@ func parseBuildSnapshot(build models.BuildEntity) (buildSnapshot, error) {
 			return snapshot, errors.New("custom Buildpacks builders are not supported")
 		}
 	}
-	if snapshot.BPGOTargets != "" && (!goTargetsPattern.MatchString(snapshot.BPGOTargets) || strings.Contains(snapshot.BPGOTargets, "..")) {
+	if snapshot.BPGOTargets != "" &&
+		(!goTargetsPattern.MatchString(snapshot.BPGOTargets) || strings.Contains(snapshot.BPGOTargets, "..")) {
 		return snapshot, errors.New("BP_GO_TARGETS is invalid")
 	}
 	settings, err := models.ParseBuildpackSettings(snapshot.Settings)
@@ -716,23 +1081,43 @@ func parseBuildSnapshot(build models.BuildEntity) (buildSnapshot, error) {
 	return snapshot, nil
 }
 
-func (service *BuildExecution) loadGitHubSource(ctx context.Context, build models.BuildEntity) (models.GitHubRepositoryEntity, models.GitHubInstallationEntity, error) {
+func (service *BuildExecution) loadGitHubSource(
+	ctx context.Context,
+	build models.BuildEntity,
+) (models.GitHubRepositoryEntity, models.GitHubInstallationEntity, error) {
 	var repository models.GitHubRepositoryEntity
 	err := service.db.Executor().NewSelect().Model(&repository).
 		Join("JOIN github_environment_sources AS binding ON binding.github_repository_id = github_repositories.id").
-		Where("binding.environment_source_id = ?", build.EnvironmentSourceID).Where("github_repositories.removed_at IS NULL").Scan(ctx)
+		Where("binding.environment_source_id = ?", build.EnvironmentSourceID).
+		Where("github_repositories.removed_at IS NULL").Scan(ctx)
 	if err != nil {
 		return repository, models.GitHubInstallationEntity{}, err
 	}
-	installation, err := models.GitHubInstallation.Find(ctx, service.db.Executor(), repository.GitHubInstallationID)
+	installation, err := models.GitHubInstallation.Find(
+		ctx,
+		service.db.Executor(),
+		repository.GitHubInstallationID,
+	)
 	return repository, installation, err
 }
 
-func (service *BuildExecution) registryCredentials(ctx context.Context, snapshot buildSnapshot) (registryclient.Credentials, error) {
-	return service.RegistryCredentials(ctx, snapshot.RegistryResourceID, snapshot.RegistryCredentialID, snapshot.RegistryEndpoint)
+func (service *BuildExecution) registryCredentials(
+	ctx context.Context,
+	snapshot buildSnapshot,
+) (registryclient.Credentials, error) {
+	return service.RegistryCredentials(
+		ctx,
+		snapshot.RegistryResourceID,
+		snapshot.RegistryCredentialID,
+		snapshot.RegistryEndpoint,
+	)
 }
 
-func (service *BuildExecution) RegistryCredentials(ctx context.Context, registryID, credentialID uuid.UUID, expectedEndpoint string) (registryclient.Credentials, error) {
+func (service *BuildExecution) RegistryCredentials(
+	ctx context.Context,
+	registryID, credentialID uuid.UUID,
+	expectedEndpoint string,
+) (registryclient.Credentials, error) {
 	var registry struct {
 		Provider, Endpoint             string
 		EndpointCount, CredentialCount int
@@ -745,14 +1130,25 @@ func (service *BuildExecution) RegistryCredentials(ctx context.Context, registry
 		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.archived_at IS NULL").
 		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = registry.resource_id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL").
 		Where("registry.resource_id = ?", registryID).Scan(ctx, &registry)
-	if err != nil || registry.Provider != "distribution" || registry.Endpoint != expectedEndpoint || registry.EndpointCount != 1 || registry.CredentialCount != 1 {
-		return registryclient.Credentials{}, errors.New("Build Registry snapshot no longer matches an active Registry Resource")
+	if err != nil || registry.Provider != "distribution" || registry.Endpoint != expectedEndpoint ||
+		registry.EndpointCount != 1 ||
+		registry.CredentialCount != 1 {
+		return registryclient.Credentials{}, errors.New(
+			"Build Registry snapshot no longer matches an active Registry Resource",
+		)
 	}
 	credential, err := models.ResourceCredential.Find(ctx, service.db.Executor(), credentialID)
-	if err != nil || credential.ArchivedAt.Valid || credential.ResourceID != registryID || !credential.Username.Valid {
-		return registryclient.Credentials{}, errors.New("Registry Resource credential is unavailable")
+	if err != nil || credential.ArchivedAt.Valid || credential.ResourceID != registryID ||
+		!credential.Username.Valid {
+		return registryclient.Credentials{}, errors.New(
+			"Registry Resource credential is unavailable",
+		)
 	}
-	plaintext, err := secretcrypto.DecryptForPurpose(credential.EncPayload, service.config.App.SessionEncryptionKey, registryCredentialPurpose)
+	plaintext, err := secretcrypto.DecryptForPurpose(
+		credential.EncPayload,
+		service.config.App.SessionEncryptionKey,
+		registryCredentialPurpose,
+	)
 	if err != nil {
 		return registryclient.Credentials{}, errors.New("registry credential cannot be decrypted")
 	}
@@ -760,10 +1156,17 @@ func (service *BuildExecution) RegistryCredentials(ctx context.Context, registry
 		SchemaVersion int               `json:"schema_version"`
 		Values        map[string]string `json:"values"`
 	}
-	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 || payload.Values["password"] == "" {
-		return registryclient.Credentials{}, errors.New("Registry Resource credential payload is invalid")
+	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 ||
+		payload.Values["password"] == "" {
+		return registryclient.Credentials{}, errors.New(
+			"Registry Resource credential payload is invalid",
+		)
 	}
-	return registryclient.Credentials{Endpoint: registry.Endpoint, Username: credential.Username.String, Password: payload.Values["password"]}, nil
+	return registryclient.Credentials{
+		Endpoint: registry.Endpoint,
+		Username: credential.Username.String,
+		Password: payload.Values["password"],
+	}, nil
 }
 
 func extractGitHubArchive(ctx context.Context, archivePath, destination string) error {
@@ -802,7 +1205,8 @@ func extractGitHubArchive(ctx context.Context, archivePath, destination string) 
 			continue
 		}
 		cleaned := path.Clean(header.Name)
-		if cleaned == "." || strings.HasPrefix(cleaned, "/") || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		if cleaned == "." || strings.HasPrefix(cleaned, "/") || cleaned == ".." ||
+			strings.HasPrefix(cleaned, "../") {
 			_ = compressed.Close()
 			_ = archive.Close()
 			_ = archiveCommand.Wait()
@@ -823,7 +1227,8 @@ func extractGitHubArchive(ctx context.Context, archivePath, destination string) 
 		}
 		relative := path.Join(parts[1:]...)
 		target := filepath.Join(destination, filepath.FromSlash(relative))
-		if !filepath.IsLocal(relative) || !strings.HasPrefix(target, destination+string(filepath.Separator)) {
+		if !filepath.IsLocal(relative) ||
+			!strings.HasPrefix(target, destination+string(filepath.Separator)) {
 			_ = compressed.Close()
 			_ = archive.Close()
 			_ = archiveCommand.Wait()
@@ -869,7 +1274,11 @@ func extractGitHubArchive(ctx context.Context, archivePath, destination string) 
 		return errors.New("GitHub archive could not be closed")
 	}
 	if err := archiveCommand.Wait(); err != nil {
-		return fmt.Errorf("read privileged GitHub archive: %w: %s", err, strings.TrimSpace(archiveError.String()))
+		return fmt.Errorf(
+			"read privileged GitHub archive: %w: %s",
+			err,
+			strings.TrimSpace(archiveError.String()),
+		)
 	}
 	if root == "" {
 		return errors.New("GitHub archive is empty")
@@ -882,7 +1291,14 @@ func extractGitHubArchive(ctx context.Context, archivePath, destination string) 
 		"--strip-components", "1", "--no-same-owner", "--no-same-permissions"); err != nil {
 		return err
 	}
-	if err := runPrivilegedBuildCommand(ctx, "protect extracted GitHub archive", "/usr/bin/chmod", "-R", "u+rwX,go-rwx", destination); err != nil {
+	if err := runPrivilegedBuildCommand(
+		ctx,
+		"protect extracted GitHub archive",
+		"/usr/bin/chmod",
+		"-R",
+		"u+rwX,go-rwx",
+		destination,
+	); err != nil {
 		return err
 	}
 	return runPrivilegedBuildCommand(ctx, "assign extracted GitHub archive", "/usr/bin/chown", "-R",
@@ -898,7 +1314,8 @@ func secureBuildContext(ctx context.Context, sourceRoot, configured string) (str
 		return "", errors.New("Buildpacks context must stay beneath the repository root")
 	}
 	contextPath := filepath.Clean(filepath.Join(sourceRoot, configured))
-	if contextPath != sourceRoot && !strings.HasPrefix(contextPath, sourceRoot+string(filepath.Separator)) {
+	if contextPath != sourceRoot &&
+		!strings.HasPrefix(contextPath, sourceRoot+string(filepath.Separator)) {
 		return "", errors.New("Buildpacks context escaped the repository root")
 	}
 	if err := sudo.CommandContext(ctx, "/usr/bin/test", "-d", contextPath).Run(); err != nil {
@@ -908,18 +1325,40 @@ func secureBuildContext(ctx context.Context, sourceRoot, configured string) (str
 }
 
 func createBuildDirectory(ctx context.Context, directory string) error {
-	return runPrivilegedBuildCommand(ctx, "create Build directory", "/usr/bin/install", "-d", "-m", "0700",
-		"-o", buildWorkspaceOwner, "-g", buildWorkspaceOwner, directory)
+	return runPrivilegedBuildCommand(
+		ctx,
+		"create Build directory",
+		"/usr/bin/install",
+		"-d",
+		"-m",
+		"0700",
+		"-o",
+		buildWorkspaceOwner,
+		"-g",
+		buildWorkspaceOwner,
+		directory,
+	)
 }
 
 func removeBuildWorkspace(ctx context.Context, workspace string) error {
 	if filepath.Dir(workspace) != buildWorkspaceRoot {
 		return errors.New("Build workspace cleanup path is invalid")
 	}
-	return runPrivilegedBuildCommand(ctx, "remove Build workspace", "/usr/bin/rm", "-rf", "--", workspace)
+	return runPrivilegedBuildCommand(
+		ctx,
+		"remove Build workspace",
+		"/usr/bin/rm",
+		"-rf",
+		"--",
+		workspace,
+	)
 }
 
-func runPrivilegedBuildCommand(ctx context.Context, operation, command string, arguments ...string) error {
+func runPrivilegedBuildCommand(
+	ctx context.Context,
+	operation, command string,
+	arguments ...string,
+) error {
 	output, err := sudo.CommandContext(ctx, command, arguments...).CombinedOutput()
 	if err != nil {
 		message := strings.TrimSpace(string(output))
@@ -931,7 +1370,13 @@ func runPrivilegedBuildCommand(ctx context.Context, operation, command string, a
 	return nil
 }
 
-func (service *BuildExecution) complete(ctx context.Context, buildID uuid.UUID, snapshot buildSnapshot, reference string, digest []byte) error {
+func (service *BuildExecution) complete(
+	ctx context.Context,
+	buildID uuid.UUID,
+	snapshot buildSnapshot,
+	reference string,
+	digest []byte,
+) error {
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -947,7 +1392,11 @@ func (service *BuildExecution) complete(ctx context.Context, buildID uuid.UUID, 
 	if build.Status != "running" {
 		return errors.New("Build is no longer running")
 	}
-	stateRevision, err := models.EnvironmentStateRevision.Find(ctx, tx, snapshot.EnvironmentStateRevisionID)
+	stateRevision, err := models.EnvironmentStateRevision.Find(
+		ctx,
+		tx,
+		snapshot.EnvironmentStateRevisionID,
+	)
 	if err != nil || stateRevision.EnvironmentID != build.EnvironmentID {
 		return errors.New("Build state revision does not belong to its Environment")
 	}
@@ -959,11 +1408,19 @@ func (service *BuildExecution) complete(ctx context.Context, buildID uuid.UUID, 
 		return err
 	}
 	release, err := models.Release.Create(ctx, tx, models.CreateReleaseData{
-		SourceRevision: sql.NullString{String: build.SourceRevision, Valid: true}, ArtifactReference: reference,
-		ArtifactDigest: digest, EnvironmentID: build.EnvironmentID, EnvironmentSourceID: &build.EnvironmentSourceID,
-		BuildID: &build.ID, CreatedByChangeID: build.ChangeID,
-		RegistryResourceID: &snapshot.RegistryResourceID, RegistryCredentialID: &snapshot.RegistryCredentialID,
-		RegistryEndpoint: sql.NullString{String: snapshot.RegistryEndpoint, Valid: true},
+		SourceRevision: sql.NullString{
+			String: build.SourceRevision,
+			Valid:  true,
+		},
+		ArtifactReference:    reference,
+		ArtifactDigest:       digest,
+		EnvironmentID:        build.EnvironmentID,
+		EnvironmentSourceID:  &build.EnvironmentSourceID,
+		BuildID:              &build.ID,
+		CreatedByChangeID:    build.ChangeID,
+		RegistryResourceID:   &snapshot.RegistryResourceID,
+		RegistryCredentialID: &snapshot.RegistryCredentialID,
+		RegistryEndpoint:     sql.NullString{String: snapshot.RegistryEndpoint, Valid: true},
 	})
 	if err != nil {
 		return err
@@ -973,21 +1430,51 @@ func (service *BuildExecution) complete(ctx context.Context, buildID uuid.UUID, 
 		return err
 	}
 	deployChange, err := models.Change.Create(ctx, tx, models.CreateChangeData{
-		Sequence: sequence, Kind: "deploy", TriggerType: "system", ActorType: "system",
-		CauseSystem: sql.NullString{String: "build", Valid: true}, CauseReference: sql.NullString{String: build.ID.String(), Valid: true},
-		CorrelationID: uuid.New(), CorrectionContext: json.RawMessage(`{}`), Summary: "Deploy successful Build",
-		Status: "committed", RequestedAt: now, CommittedAt: sql.NullTime{Time: now, Valid: true}, EnvironmentID: build.EnvironmentID,
+		Sequence:    sequence,
+		Kind:        "deploy",
+		TriggerType: "system",
+		ActorType:   "system",
+		CauseSystem: sql.NullString{
+			String: "build",
+			Valid:  true,
+		},
+		CauseReference:    sql.NullString{String: build.ID.String(), Valid: true},
+		CorrelationID:     uuid.New(),
+		CorrectionContext: json.RawMessage(`{}`),
+		Summary:           "Deploy successful Build",
+		Status:            "committed",
+		RequestedAt:       now,
+		CommittedAt:       sql.NullTime{Time: now, Valid: true},
+		EnvironmentID:     build.EnvironmentID,
 	})
 	if err != nil {
 		return err
 	}
-	if _, err := models.ChangeRelease.Create(ctx, tx, models.CreateChangeReleaseData{ChangeID: deployChange.ID, ReleaseID: release.ID}); err != nil {
+	if _, err := models.ChangeRelease.Create(
+		ctx,
+		tx,
+		models.CreateChangeReleaseData{ChangeID: deployChange.ID, ReleaseID: release.ID},
+	); err != nil {
 		return err
 	}
-	if _, err := models.ChangeStateRevision.Create(ctx, tx, models.CreateChangeStateRevisionData{Role: "result", ChangeID: deployChange.ID, EnvironmentStateRevisionID: stateRevision.ID}); err != nil {
+	if _, err := models.ChangeStateRevision.Create(
+		ctx,
+		tx,
+		models.CreateChangeStateRevisionData{
+			Role:                       "result",
+			ChangeID:                   deployChange.ID,
+			EnvironmentStateRevisionID: stateRevision.ID,
+		},
+	); err != nil {
 		return err
 	}
-	if _, err := service.releases.OrchestrateTx(ctx, tx, release, deployChange, stateRevision); err != nil {
+	if _, err := service.releases.OrchestrateTx(
+		ctx,
+		tx,
+		release,
+		deployChange,
+		stateRevision,
+	); err != nil {
 		return err
 	}
 	return tx.Commit()

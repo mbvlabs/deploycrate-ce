@@ -90,7 +90,13 @@ func (e *ResourceHealthCheckEntity) ValidateForKind(resourceKind string) error {
 	}
 	definition, ok := FindResourceEngine(resourceKind)
 	if !ok || !definition.SupportsHealthCheck(e.Kind) {
-		return validation.ValidationErrors{{Field: "kind", Code: "unsupported", Message: "health check kind is not supported by this resource kind"}}
+		return validation.ValidationErrors{
+			{
+				Field:   "kind",
+				Code:    "unsupported",
+				Message: "health check kind is not supported by this resource kind",
+			},
+		}
 	}
 	return nil
 }
@@ -194,7 +200,18 @@ func (rhc resourceHealthCheck) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceHealthCheckEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if err := ensureActiveUnique(ctx, db, "resource-health-check:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceHealthCheckEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active health check already uses this name on the Resource"); err != nil {
+	if err := ensureActiveUnique(
+		ctx,
+		db,
+		"resource-health-check:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name),
+		entity.ID,
+		db.NewSelect().
+			Model((*ResourceHealthCheckEntity)(nil)).
+			Where("resource_id = ?", entity.ResourceID).
+			Where("lower(name) = ?", strings.ToLower(entity.Name)),
+		"name",
+		"an active health check already uses this name on the Resource",
+	); err != nil {
 		return ResourceHealthCheckEntity{}, err
 	}
 
@@ -247,7 +264,18 @@ func (rhc resourceHealthCheck) Update(
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceHealthCheckEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if err := ensureActiveUnique(ctx, db, "resource-health-check:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceHealthCheckEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active health check already uses this name on the Resource"); err != nil {
+	if err := ensureActiveUnique(
+		ctx,
+		db,
+		"resource-health-check:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name),
+		entity.ID,
+		db.NewSelect().
+			Model((*ResourceHealthCheckEntity)(nil)).
+			Where("resource_id = ?", entity.ResourceID).
+			Where("lower(name) = ?", strings.ToLower(entity.Name)),
+		"name",
+		"an active health check already uses this name on the Resource",
+	); err != nil {
 		return ResourceHealthCheckEntity{}, err
 	}
 
@@ -379,7 +407,18 @@ func (rhc resourceHealthCheck) Upsert(
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceHealthCheckEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if err := ensureActiveUnique(ctx, db, "resource-health-check:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name), entity.ID, db.NewSelect().Model((*ResourceHealthCheckEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("lower(name) = ?", strings.ToLower(entity.Name)), "name", "an active health check already uses this name on the Resource"); err != nil {
+	if err := ensureActiveUnique(
+		ctx,
+		db,
+		"resource-health-check:"+entity.ResourceID.String()+":"+strings.ToLower(entity.Name),
+		entity.ID,
+		db.NewSelect().
+			Model((*ResourceHealthCheckEntity)(nil)).
+			Where("resource_id = ?", entity.ResourceID).
+			Where("lower(name) = ?", strings.ToLower(entity.Name)),
+		"name",
+		"an active health check already uses this name on the Resource",
+	); err != nil {
 		return ResourceHealthCheckEntity{}, err
 	}
 

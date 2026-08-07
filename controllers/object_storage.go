@@ -40,11 +40,18 @@ func (controller ObjectStorage) RegisterRoutes(r *router.Router) error {
 		{http.MethodGet, routes.ObjectStorage, controller.Index, nil},
 		{http.MethodPost, routes.ObjectStorageCreate, controller.Create, nil},
 		{http.MethodGet, routes.ObjectStorageShow, controller.Show, nil},
-		{http.MethodPost, routes.ObjectStorageRecovery, controller.Recovery, []echo.MiddlewareFunc{middleware.IPRateLimiter(5, routes.ObjectStorage)}},
+		{
+			http.MethodPost,
+			routes.ObjectStorageRecovery,
+			controller.Recovery,
+			[]echo.MiddlewareFunc{middleware.IPRateLimiter(5, routes.ObjectStorage)},
+		},
 	}
 	errList := make([]error, 0, len(definitions))
 	for _, definition := range definitions {
-		middlewares := append([]echo.MiddlewareFunc{middleware.AdminOnly}, definition.middlewares...)
+		middlewares := append(
+			[]echo.MiddlewareFunc{middleware.AdminOnly},
+			definition.middlewares...)
 		_, err := r.AddRoute(echo.Route{
 			Method: definition.method, Path: definition.route.Path(), Name: definition.route.Name(),
 			Handler: definition.handler, Middlewares: middlewares,
@@ -62,26 +69,55 @@ func (controller ObjectStorage) Recovery(etx *echo.Context) error {
 
 	destinationID, err := uuid.Parse(etx.Param("id"))
 	if err != nil {
-		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Object Storage destination not found"})
+		return etx.JSON(
+			http.StatusNotFound,
+			map[string]string{"error": "Object Storage destination not found"},
+		)
 	}
 	var payload struct {
 		Password string `json:"password"`
 	}
-	if err := etx.Bind(&payload); err != nil || payload.Password == "" || len(payload.Password) > 4096 {
-		return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "Current password is required"})
+	if err := etx.Bind(
+		&payload,
+	); err != nil || payload.Password == "" ||
+		len(payload.Password) > 4096 {
+		return etx.JSON(
+			http.StatusUnprocessableEntity,
+			map[string]string{"error": "Current password is required"},
+		)
 	}
 	recovery, err := controller.backups.RecoveryMaterial(
-		etx.Request().Context(), destinationID, cookies.ExtractFromCookieApp(etx).UserID, payload.Password,
+		etx.Request().
+			Context(),
+		destinationID,
+		cookies.ExtractFromCookieApp(etx).UserID,
+		payload.Password,
 	)
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrInvalidCredentials):
-			return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "Current password is incorrect"})
+			return etx.JSON(
+				http.StatusUnprocessableEntity,
+				map[string]string{"error": "Current password is incorrect"},
+			)
 		case errors.Is(err, models.ErrNotFound):
-			return etx.JSON(http.StatusNotFound, map[string]string{"error": "Object Storage destination not found"})
+			return etx.JSON(
+				http.StatusNotFound,
+				map[string]string{"error": "Object Storage destination not found"},
+			)
 		default:
-			slog.ErrorContext(etx.Request().Context(), "failed to reveal Object Storage recovery material", "destination_id", destinationID, "error", err)
-			return etx.JSON(http.StatusInternalServerError, map[string]string{"error": "Recovery material could not be loaded"})
+			slog.ErrorContext(
+				etx.Request().Context(),
+				"failed to reveal Object Storage recovery material",
+				"destination_id",
+				destinationID,
+				"error",
+				err,
+			)
+			return etx.JSON(
+				http.StatusInternalServerError,
+				map[string]string{"error": "Recovery material could not be loaded"},
+			)
 		}
 	}
 	return etx.JSON(http.StatusOK, recovery)
@@ -96,7 +132,11 @@ func (controller ObjectStorage) Index(etx *echo.Context) error {
 	for _, destination := range destinations {
 		items = append(items, objectStorageDestinationProps(destination))
 	}
-	return inertia.Page(etx, "Connections/ObjectStorage", inertia.Props{"auth": authProps(etx), "destinations": items})
+	return inertia.Page(
+		etx,
+		"Connections/ObjectStorage",
+		inertia.Props{"auth": authProps(etx), "destinations": items},
+	)
 }
 
 func (controller ObjectStorage) Show(etx *echo.Context) error {
@@ -109,7 +149,14 @@ func (controller ObjectStorage) Show(etx *echo.Context) error {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
 	if err != nil {
-		slog.ErrorContext(etx.Request().Context(), "failed to load Object Storage destination", "destination_id", id, "error", err)
+		slog.ErrorContext(
+			etx.Request().Context(),
+			"failed to load Object Storage destination",
+			"destination_id",
+			id,
+			"error",
+			err,
+		)
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 	return inertia.Page(etx, "Connections/ObjectStorage/Show", inertia.Props{
@@ -132,12 +179,15 @@ func (controller ObjectStorage) Create(etx *echo.Context) error {
 	if err := etx.Bind(&payload); err != nil {
 		return inertia.Page(etx, "Errors/BadRequest", inertia.Props{})
 	}
-	_, err := controller.backups.CreateDestination(etx.Request().Context(), services.ObjectStorageDestinationInput{
-		Name: payload.Name, Provider: payload.Provider, Endpoint: payload.Endpoint,
-		Region: payload.Region, Bucket: payload.Bucket, Prefix: payload.Prefix,
-		ForcePathStyle: payload.ForcePathStyle, AccessKeyID: payload.AccessKeyID,
-		SecretAccessKey: payload.SecretAccessKey,
-	})
+	_, err := controller.backups.CreateDestination(
+		etx.Request().Context(),
+		services.ObjectStorageDestinationInput{
+			Name: payload.Name, Provider: payload.Provider, Endpoint: payload.Endpoint,
+			Region: payload.Region, Bucket: payload.Bucket, Prefix: payload.Prefix,
+			ForcePathStyle: payload.ForcePathStyle, AccessKeyID: payload.AccessKeyID,
+			SecretAccessKey: payload.SecretAccessKey,
+		},
+	)
 	if err != nil {
 		if validationErrors, ok := validation.As(err); ok {
 			destinations, listErr := controller.backups.Destinations(etx.Request().Context())
@@ -164,9 +214,15 @@ func (controller ObjectStorage) Create(etx *echo.Context) error {
 
 func objectStorageDestinationProps(destination models.BackupDestinationSummary) inertia.Props {
 	return inertia.Props{
-		"id": destination.ID, "name": destination.Name, "provider": destination.Provider,
-		"endpoint": destination.Endpoint, "region": destination.Region, "bucket": destination.Bucket,
-		"prefix": destination.Prefix, "forcePathStyle": destination.ForcePathStyle,
-		"verifiedAt": destination.VerifiedAt, "lastUsedAt": destination.LastUsedAt,
+		"id":             destination.ID,
+		"name":           destination.Name,
+		"provider":       destination.Provider,
+		"endpoint":       destination.Endpoint,
+		"region":         destination.Region,
+		"bucket":         destination.Bucket,
+		"prefix":         destination.Prefix,
+		"forcePathStyle": destination.ForcePathStyle,
+		"verifiedAt":     destination.VerifiedAt,
+		"lastUsedAt":     destination.LastUsedAt,
 	}
 }

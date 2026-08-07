@@ -31,7 +31,11 @@ func Materialize(parent string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("read embedded node assets buildpack file %s: %w", file.name, err)
 		}
-		if err := os.WriteFile(filepath.Join(root, filepath.FromSlash(file.name)), value, file.mode); err != nil {
+		if err := os.WriteFile(
+			filepath.Join(root, filepath.FromSlash(file.name)),
+			value,
+			file.mode,
+		); err != nil {
 			return "", fmt.Errorf("materialize node assets buildpack file %s: %w", file.name, err)
 		}
 	}

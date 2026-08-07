@@ -94,7 +94,12 @@ var (
 	warnStyle  = lipgloss.NewStyle().Foreground(colorAmber)
 )
 
-func NewModel(cfg setup.Config, host setup.HostInfo, dryRun bool, operations setup.Operations) Model {
+func NewModel(
+	cfg setup.Config,
+	host setup.HostInfo,
+	dryRun bool,
+	operations setup.Operations,
+) Model {
 	activity := spinner.New(
 		spinner.WithSpinner(spinner.MiniDot),
 		spinner.WithStyle(lipgloss.NewStyle().Foreground(colorPink)),
@@ -495,7 +500,10 @@ func (m *Model) commitForm() error {
 		if err != nil {
 			return err
 		}
-		m.config.S3.ServerPolicy = setup.BackupPolicyConfig{Schedule: value(0), Retention: retention}
+		m.config.S3.ServerPolicy = setup.BackupPolicyConfig{
+			Schedule:  value(0),
+			Retention: retention,
+		}
 	case screenDatabaseBackupPolicy:
 		keepLast, err := strconv.Atoi(value(1))
 		if err != nil || keepLast < 1 {
@@ -505,7 +513,10 @@ func (m *Model) commitForm() error {
 		if err != nil {
 			return err
 		}
-		m.config.S3.DatabasePolicy = setup.BackupPolicyConfig{Schedule: value(0), Retention: retention}
+		m.config.S3.DatabasePolicy = setup.BackupPolicyConfig{
+			Schedule:  value(0),
+			Retention: retention,
+		}
 	}
 	m.err = nil
 	return nil
@@ -550,10 +561,16 @@ func (m Model) advanceAfterForm() (tea.Model, tea.Cmd) {
 			return m, textinput.Blink
 		}
 		m.screen = screenValidating
-		return m, tea.Batch(validateRemoteServices(m.config, m.dryRun, m.operations.ValidateRemoteServices), m.activity.Tick)
+		return m, tea.Batch(
+			validateRemoteServices(m.config, m.dryRun, m.operations.ValidateRemoteServices),
+			m.activity.Tick,
+		)
 	case screenDatabaseBackupPolicy:
 		m.screen = screenValidating
-		return m, tea.Batch(validateRemoteServices(m.config, m.dryRun, m.operations.ValidateRemoteServices), m.activity.Tick)
+		return m, tea.Batch(
+			validateRemoteServices(m.config, m.dryRun, m.operations.ValidateRemoteServices),
+			m.activity.Tick,
+		)
 	}
 	return m, textinput.Blink
 }
@@ -602,7 +619,10 @@ func (m Model) updateChoice(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.screen = screenValidating
-	return m, tea.Batch(validateRemoteServices(m.config, m.dryRun, m.operations.ValidateRemoteServices), m.activity.Tick)
+	return m, tea.Batch(
+		validateRemoteServices(m.config, m.dryRun, m.operations.ValidateRemoteServices),
+		m.activity.Tick,
+	)
 }
 
 func validateRemoteServices(
@@ -747,7 +767,11 @@ func (m Model) renderScreen(width int) string {
 			mutedStyle.Render("Use DNS-only mode if your provider offers HTTP proxying.")
 	case screenAccess:
 		content = m.renderForm(
-			[]string{"Server administrator password", "Confirm password", "Ordinary owner SSH public key"},
+			[]string{
+				"Server administrator password",
+				"Confirm password",
+				"Ordinary owner SSH public key",
+			},
 		) + "\n" + mutedStyle.Render(
 			"At least 12 characters is recommended, not required. A unique Ed25519 admin key is always generated.",
 		)
@@ -868,7 +892,10 @@ func (m Model) renderReview() string {
 	storage := "Not configured"
 	if m.config.S3.Enabled {
 		hostname := "AWS S3"
-		if endpoint, err := url.Parse(m.config.S3.Endpoint); err == nil && endpoint.Hostname() != "" {
+		if endpoint, err := url.Parse(
+			m.config.S3.Endpoint,
+		); err == nil &&
+			endpoint.Hostname() != "" {
 			hostname = endpoint.Hostname()
 		}
 		storage = fmt.Sprintf(
@@ -884,8 +911,14 @@ func (m Model) renderReview() string {
 	}
 	rows := []string{
 		labelStyle.Render("Server") + "       https://" + m.config.Domain,
-		labelStyle.Render("App DNS A") + "    " + m.config.Domain + " -> " + m.config.PublicIPv4 + " (DNS only)",
-		labelStyle.Render("Registry DNS A") + " " + registryDomain(m.config.Domain) + " -> " + m.config.PublicIPv4 + " (DNS only)",
+		labelStyle.Render(
+			"App DNS A",
+		) + "    " + m.config.Domain + " -> " + m.config.PublicIPv4 + " (DNS only)",
+		labelStyle.Render(
+			"Registry DNS A",
+		) + " " + registryDomain(
+			m.config.Domain,
+		) + " -> " + m.config.PublicIPv4 + " (DNS only)",
 		labelStyle.Render(
 			"SSH",
 		) + fmt.Sprintf(
@@ -1004,8 +1037,18 @@ func (m Model) renderHandoff() string {
 	b.WriteString(okStyle.Bold(true).Render("Setup complete. Final confirmation required."))
 	b.WriteString("\n\n")
 	b.WriteString(labelStyle.Render("Application URL") + "  https://" + m.config.Domain + "\n")
-	b.WriteString(labelStyle.Render("App DNS A") + "        " + m.config.Domain + " -> " + m.config.PublicIPv4 + " (DNS only)\n")
-	b.WriteString(labelStyle.Render("Registry DNS A") + "   " + registryDomain(m.config.Domain) + " -> " + m.config.PublicIPv4 + " (DNS only)\n")
+	b.WriteString(
+		labelStyle.Render(
+			"App DNS A",
+		) + "        " + m.config.Domain + " -> " + m.config.PublicIPv4 + " (DNS only)\n",
+	)
+	b.WriteString(
+		labelStyle.Render(
+			"Registry DNS A",
+		) + "   " + registryDomain(
+			m.config.Domain,
+		) + " -> " + m.config.PublicIPv4 + " (DNS only)\n",
+	)
 	b.WriteString(labelStyle.Render("Server admin") + "     " + m.config.AdminUser + "\n")
 	b.WriteString(
 		labelStyle.Render("Admin password") + "   " + m.config.Secrets.ServerAdminPassword + "\n",
@@ -1034,15 +1077,25 @@ func (m Model) renderHandoff() string {
 	recoveryChecksum, checksumErr := setup.SSHCARecoveryBundleChecksum()
 	if checksumErr == nil && !m.credentialsVerified {
 		b.WriteString("\n" + warnStyle.Render("SSH CA recovery material, shown once") + "\n")
-		b.WriteString(labelStyle.Render("Bundle") + "            " + setup.SSHCARecoveryBundlePath + "\n")
+		b.WriteString(
+			labelStyle.Render("Bundle") + "            " + setup.SSHCARecoveryBundlePath + "\n",
+		)
 		b.WriteString(labelStyle.Render("SHA-256") + "           " + recoveryChecksum + "\n")
-		b.WriteString(labelStyle.Render("Age passphrase") + "    " + m.config.Secrets.SSHCARecoveryPassphrase + "\n")
+		b.WriteString(
+			labelStyle.Render(
+				"Age passphrase",
+			) + "    " + m.config.Secrets.SSHCARecoveryPassphrase + "\n",
+		)
 		b.WriteString("Copy the bundle off this server and store the passphrase separately.\n")
 	}
 	if m.config.S3.Enabled && !m.credentialsVerified {
 		b.WriteString("\n" + warnStyle.Render("Backup recovery material, shown once") + "\n")
-		b.WriteString(labelStyle.Render("Restic password") + "    " + m.config.Secrets.ResticPassword + "\n")
-		b.WriteString(labelStyle.Render("Age identity") + "       " + m.config.Secrets.AgeIdentity + "\n")
+		b.WriteString(
+			labelStyle.Render("Restic password") + "    " + m.config.Secrets.ResticPassword + "\n",
+		)
+		b.WriteString(
+			labelStyle.Render("Age identity") + "       " + m.config.Secrets.AgeIdentity + "\n",
+		)
 		b.WriteString(
 			"Store both values off-server. Losing them makes the corresponding backups unusable.\n",
 		)
@@ -1084,8 +1137,14 @@ func (m Model) handoffDetails() string {
 	var b strings.Builder
 	b.WriteString("DeployCrate CE setup details\n\n")
 	b.WriteString("Application URL: https://" + m.config.Domain + "\n")
-	b.WriteString("Application DNS A record: " + m.config.Domain + " -> " + m.config.PublicIPv4 + " (DNS only)\n")
-	b.WriteString("Registry DNS A record: " + registryDomain(m.config.Domain) + " -> " + m.config.PublicIPv4 + " (DNS only)\n")
+	b.WriteString(
+		"Application DNS A record: " + m.config.Domain + " -> " + m.config.PublicIPv4 + " (DNS only)\n",
+	)
+	b.WriteString(
+		"Registry DNS A record: " + registryDomain(
+			m.config.Domain,
+		) + " -> " + m.config.PublicIPv4 + " (DNS only)\n",
+	)
 	b.WriteString("Server administrator: " + m.config.AdminUser + "\n")
 	b.WriteString("Server administrator password: " + m.config.Secrets.ServerAdminPassword + "\n")
 	b.WriteString(
@@ -1101,10 +1160,13 @@ func (m Model) handoffDetails() string {
 		b.WriteString("\nGenerated SSH private key:\n")
 		b.WriteString(m.config.Secrets.SSHPrivateKey + "\n")
 	}
-	if recoveryChecksum, err := setup.SSHCARecoveryBundleChecksum(); err == nil && !m.credentialsVerified {
+	if recoveryChecksum, err := setup.SSHCARecoveryBundleChecksum(); err == nil &&
+		!m.credentialsVerified {
 		b.WriteString("\nSSH CA recovery bundle: " + setup.SSHCARecoveryBundlePath + "\n")
 		b.WriteString("SSH CA recovery SHA-256: " + recoveryChecksum + "\n")
-		b.WriteString("SSH CA recovery age passphrase: " + m.config.Secrets.SSHCARecoveryPassphrase + "\n")
+		b.WriteString(
+			"SSH CA recovery age passphrase: " + m.config.Secrets.SSHCARecoveryPassphrase + "\n",
+		)
 		b.WriteString("Store the bundle off-server and keep this passphrase separately.\n")
 	}
 	if m.config.S3.Enabled && !m.credentialsVerified {

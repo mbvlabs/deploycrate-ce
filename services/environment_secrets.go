@@ -34,7 +34,11 @@ type EnvironmentSecrets struct {
 	releases *ReleaseDeployment
 }
 
-func NewEnvironmentSecrets(db storage.Pool, cfg config.Config, releases *ReleaseDeployment) *EnvironmentSecrets {
+func NewEnvironmentSecrets(
+	db storage.Pool,
+	cfg config.Config,
+	releases *ReleaseDeployment,
+) *EnvironmentSecrets {
 	return &EnvironmentSecrets{db: db, config: cfg, releases: releases}
 }
 
@@ -68,18 +72,55 @@ func (service *EnvironmentSecrets) Prepare(
 		return PreparedEnvironmentSecret{}, errors.Join(models.ErrDomainValidation, err)
 	}
 	if value == "" {
-		return PreparedEnvironmentSecret{}, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: "value", Code: "required", Message: "secret value is required"}})
+		return PreparedEnvironmentSecret{}, errors.Join(
+			models.ErrDomainValidation,
+			validation.ValidationErrors{
+				{Field: "value", Code: "required", Message: "secret value is required"},
+			},
+		)
 	}
 	if len(value) > models.EnvironmentSecretValueMaxBytes {
-		return PreparedEnvironmentSecret{}, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: "value", Code: "max_length", Message: "secret value must not exceed 65536 bytes"}})
+		return PreparedEnvironmentSecret{}, errors.Join(
+			models.ErrDomainValidation,
+			validation.ValidationErrors{
+				{
+					Field:   "value",
+					Code:    "max_length",
+					Message: "secret value must not exceed 65536 bytes",
+				},
+			},
+		)
 	}
 	if environmentID == uuid.Nil || sourceID == uuid.Nil {
-		return PreparedEnvironmentSecret{}, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: "sourceId", Code: "required", Message: "Environment and secret owner are required"}})
+		return PreparedEnvironmentSecret{}, errors.Join(
+			models.ErrDomainValidation,
+			validation.ValidationErrors{
+				{
+					Field:   "sourceId",
+					Code:    "required",
+					Message: "Environment and secret owner are required",
+				},
+			},
+		)
 	}
-	if sourceType != models.EnvironmentSecretSourceUser && sourceType != models.EnvironmentSecretSourceResource {
-		return PreparedEnvironmentSecret{}, errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{Field: "sourceType", Code: "unsupported", Message: "secret source type is unsupported"}})
+	if sourceType != models.EnvironmentSecretSourceUser &&
+		sourceType != models.EnvironmentSecretSourceResource {
+		return PreparedEnvironmentSecret{}, errors.Join(
+			models.ErrDomainValidation,
+			validation.ValidationErrors{
+				{
+					Field:   "sourceType",
+					Code:    "unsupported",
+					Message: "secret source type is unsupported",
+				},
+			},
+		)
 	}
-	encrypted, err := secretcrypto.EncryptForPurpose([]byte(value), service.config.App.SessionEncryptionKey, environmentSecretEncryptionPurpose)
+	encrypted, err := secretcrypto.EncryptForPurpose(
+		[]byte(value),
+		service.config.App.SessionEncryptionKey,
+		environmentSecretEncryptionPurpose,
+	)
 	if err != nil {
 		return PreparedEnvironmentSecret{}, fmt.Errorf("encrypt Environment secret: %w", err)
 	}
@@ -99,8 +140,12 @@ func (service *EnvironmentSecrets) CreatePrepared(
 	prepared PreparedEnvironmentSecret,
 ) (models.EnvironmentSecretEntity, error) {
 	return models.EnvironmentSecret.Create(ctx, db, models.CreateEnvironmentSecretData{
-		Key: prepared.Key, EncValue: prepared.EncValue, Digest: prepared.Digest,
-		SourceType: prepared.SourceType, SourceID: prepared.SourceID, EnvironmentID: prepared.EnvironmentID,
+		Key:           prepared.Key,
+		EncValue:      prepared.EncValue,
+		Digest:        prepared.Digest,
+		SourceType:    prepared.SourceType,
+		SourceID:      prepared.SourceID,
+		EnvironmentID: prepared.EnvironmentID,
 	})
 }
 
@@ -109,7 +154,13 @@ func (service *EnvironmentSecrets) CreateUser(
 	applicationID, environmentID, userID uuid.UUID,
 	key, value string,
 ) (EnvironmentSecretMutation, error) {
-	prepared, err := service.Prepare(environmentID, key, value, models.EnvironmentSecretSourceUser, userID)
+	prepared, err := service.Prepare(
+		environmentID,
+		key,
+		value,
+		models.EnvironmentSecretSourceUser,
+		userID,
+	)
 	if err != nil {
 		return EnvironmentSecretMutation{}, err
 	}
@@ -126,14 +177,26 @@ func (service *EnvironmentSecrets) CreateUser(
 	if err != nil {
 		return EnvironmentSecretMutation{}, err
 	}
-	if environment.ApplicationID != applicationID || !setupComplete || environment.ArchivedAt.Valid {
-		return EnvironmentSecretMutation{}, errors.Join(models.ErrDomainValidation, errors.New("Environment setup must be complete"))
+	if environment.ApplicationID != applicationID || !setupComplete ||
+		environment.ArchivedAt.Valid {
+		return EnvironmentSecretMutation{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("Environment setup must be complete"),
+		)
 	}
 	secret, err := service.CreatePrepared(ctx, tx, prepared)
 	if err != nil {
 		return EnvironmentSecretMutation{}, err
 	}
-	revision, err := service.commitSecretRevision(ctx, tx, environment, userID, "secret_create", nil, &secret)
+	revision, err := service.commitSecretRevision(
+		ctx,
+		tx,
+		environment,
+		userID,
+		"secret_create",
+		nil,
+		&secret,
+	)
 	if err != nil {
 		return EnvironmentSecretMutation{}, err
 	}
@@ -161,17 +224,30 @@ func (service *EnvironmentSecrets) RotateUser(
 	if err != nil {
 		return EnvironmentSecretMutation{}, err
 	}
-	if environment.ApplicationID != applicationID || !setupComplete || environment.ArchivedAt.Valid {
-		return EnvironmentSecretMutation{}, errors.Join(models.ErrDomainValidation, errors.New("Environment setup must be complete"))
+	if environment.ApplicationID != applicationID || !setupComplete ||
+		environment.ArchivedAt.Valid {
+		return EnvironmentSecretMutation{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("Environment setup must be complete"),
+		)
 	}
 	current, err := models.EnvironmentSecret.FindForEnvironment(ctx, tx, environmentID, secretID)
 	if err != nil {
 		return EnvironmentSecretMutation{}, err
 	}
 	if current.ArchivedAt.Valid || current.SourceType != models.EnvironmentSecretSourceUser {
-		return EnvironmentSecretMutation{}, errors.Join(models.ErrDomainValidation, errors.New("only an active user-owned secret can be rotated"))
+		return EnvironmentSecretMutation{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("only an active user-owned secret can be rotated"),
+		)
 	}
-	prepared, err := service.Prepare(environmentID, current.Key, value, models.EnvironmentSecretSourceUser, userID)
+	prepared, err := service.Prepare(
+		environmentID,
+		current.Key,
+		value,
+		models.EnvironmentSecretSourceUser,
+		userID,
+	)
 	if err != nil {
 		return EnvironmentSecretMutation{}, err
 	}
@@ -185,7 +261,15 @@ func (service *EnvironmentSecrets) RotateUser(
 	if err != nil {
 		return EnvironmentSecretMutation{}, err
 	}
-	revision, err := service.commitSecretRevision(ctx, tx, environment, userID, "secret_rotate", &current, &next)
+	revision, err := service.commitSecretRevision(
+		ctx,
+		tx,
+		environment,
+		userID,
+		"secret_rotate",
+		&current,
+		&next,
+	)
 	if err != nil {
 		return EnvironmentSecretMutation{}, err
 	}
@@ -212,20 +296,35 @@ func (service *EnvironmentSecrets) ArchiveUser(
 	if err != nil {
 		return EnvironmentSecretMutation{}, err
 	}
-	if environment.ApplicationID != applicationID || !setupComplete || environment.ArchivedAt.Valid {
-		return EnvironmentSecretMutation{}, errors.Join(models.ErrDomainValidation, errors.New("Environment setup must be complete"))
+	if environment.ApplicationID != applicationID || !setupComplete ||
+		environment.ArchivedAt.Valid {
+		return EnvironmentSecretMutation{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("Environment setup must be complete"),
+		)
 	}
 	current, err := models.EnvironmentSecret.FindForEnvironment(ctx, tx, environmentID, secretID)
 	if err != nil {
 		return EnvironmentSecretMutation{}, err
 	}
 	if current.ArchivedAt.Valid || current.SourceType != models.EnvironmentSecretSourceUser {
-		return EnvironmentSecretMutation{}, errors.Join(models.ErrDomainValidation, errors.New("only an active user-owned secret can be archived"))
+		return EnvironmentSecretMutation{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("only an active user-owned secret can be archived"),
+		)
 	}
 	if err := models.EnvironmentSecret.Archive(ctx, tx, environmentID, current.ID); err != nil {
 		return EnvironmentSecretMutation{}, err
 	}
-	revision, err := service.commitSecretRevision(ctx, tx, environment, userID, "secret_archive", &current, nil)
+	revision, err := service.commitSecretRevision(
+		ctx,
+		tx,
+		environment,
+		userID,
+		"secret_archive",
+		&current,
+		nil,
+	)
 	if err != nil {
 		return EnvironmentSecretMutation{}, err
 	}
@@ -239,17 +338,28 @@ func (service *EnvironmentSecrets) ResolveRevision(
 	ctx context.Context,
 	revision models.EnvironmentStateRevisionEntity,
 ) ([]ResolvedEnvironmentSecret, error) {
-	secrets, err := models.EnvironmentStateRevision.ResolveSecrets(ctx, service.db.Executor(), revision)
+	secrets, err := models.EnvironmentStateRevision.ResolveSecrets(
+		ctx,
+		service.db.Executor(),
+		revision,
+	)
 	if err != nil {
 		return nil, err
 	}
 	resolved := make([]ResolvedEnvironmentSecret, 0, len(secrets))
 	for _, secret := range secrets {
-		plaintext, err := secretcrypto.DecryptForPurpose(secret.EncValue, service.config.App.SessionEncryptionKey, environmentSecretEncryptionPurpose)
+		plaintext, err := secretcrypto.DecryptForPurpose(
+			secret.EncValue,
+			service.config.App.SessionEncryptionKey,
+			environmentSecretEncryptionPurpose,
+		)
 		if err != nil {
 			return nil, fmt.Errorf("decrypt Environment secret %s: %w", secret.Key, err)
 		}
-		resolved = append(resolved, ResolvedEnvironmentSecret{Key: secret.Key, Value: string(plaintext)})
+		resolved = append(
+			resolved,
+			ResolvedEnvironmentSecret{Key: secret.Key, Value: string(plaintext)},
+		)
 	}
 	return resolved, nil
 }
@@ -299,10 +409,16 @@ func (service *EnvironmentSecrets) ReconcileManagedResource(
 	currentDescriptors := make(map[string]models.EnvironmentSecretDescriptor)
 	currentEntities := make(map[string]models.EnvironmentSecretEntity)
 	for _, descriptor := range state.Secrets {
-		if descriptor.SourceType != models.EnvironmentSecretSourceResource || descriptor.SourceID != connection.ID {
+		if descriptor.SourceType != models.EnvironmentSecretSourceResource ||
+			descriptor.SourceID != connection.ID {
 			continue
 		}
-		current, findErr := models.EnvironmentSecret.FindForEnvironment(ctx, db, environment.ID, descriptor.ID)
+		current, findErr := models.EnvironmentSecret.FindForEnvironment(
+			ctx,
+			db,
+			environment.ID,
+			descriptor.ID,
+		)
 		if findErr != nil {
 			return errors.New("active Resource-managed secret value is unavailable")
 		}
@@ -319,18 +435,24 @@ func (service *EnvironmentSecrets) ReconcileManagedResource(
 		}
 		for key := range resourceState.Variables {
 			if _, conflicts := desiredKeys[models.NormalizeEnvironmentSecretKey(key)]; conflicts {
-				return errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{
-					Field: "configuration.environment_keys", Code: "duplicate",
-					Message: "Resource key " + key + " conflicts with a legacy value in Environment " + environment.Name,
-				}})
+				return errors.Join(models.ErrDomainValidation, validation.ValidationErrors{
+					{
+						Field:   "configuration.environment_keys",
+						Code:    "duplicate",
+						Message: "Resource key " + key + " conflicts with a legacy value in Environment " + environment.Name,
+					},
+				})
 			}
 		}
 		for _, key := range resourceState.EnvironmentKeys {
 			if _, conflicts := desiredKeys[models.NormalizeEnvironmentSecretKey(key)]; conflicts {
-				return errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{
-					Field: "configuration.environment_keys", Code: "duplicate",
-					Message: "Resource key " + key + " is already managed in Environment " + environment.Name,
-				}})
+				return errors.Join(models.ErrDomainValidation, validation.ValidationErrors{
+					{
+						Field:   "configuration.environment_keys",
+						Code:    "duplicate",
+						Message: "Resource key " + key + " is already managed in Environment " + environment.Name,
+					},
+				})
 			}
 		}
 	}
@@ -339,30 +461,45 @@ func (service *EnvironmentSecrets) ReconcileManagedResource(
 		return err
 	}
 	for _, active := range activeSecrets {
-		if active.SourceType == models.EnvironmentSecretSourceResource && active.SourceID == connection.ID {
+		if active.SourceType == models.EnvironmentSecretSourceResource &&
+			active.SourceID == connection.ID {
 			continue
 		}
 		if _, conflicts := desiredKeys[models.NormalizeEnvironmentSecretKey(active.Key)]; conflicts {
-			return errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{
-				Field: "configuration.environment_keys", Code: "duplicate",
-				Message: "Resource key " + active.Key + " conflicts in Environment " + environment.Name,
-			}})
+			return errors.Join(models.ErrDomainValidation, validation.ValidationErrors{
+				{
+					Field:   "configuration.environment_keys",
+					Code:    "duplicate",
+					Message: "Resource key " + active.Key + " conflicts in Environment " + environment.Name,
+				},
+			})
 		}
 	}
 	preparedByKey := make(map[string]PreparedEnvironmentSecret, len(values))
 	unchanged := make(map[string]models.EnvironmentSecretDescriptor, len(values))
 	previousResourceState := state.Resources[resourceStateIndex]
-	resourceStateChanged := !maps.Equal(previousResourceState.EnvironmentKeys, environmentKeys) || previousResourceState.Database != database
-	connectionConfigurationChanged := !maps.Equal(connectionConfiguration.EnvironmentKeys, environmentKeys) ||
+	resourceStateChanged := !maps.Equal(previousResourceState.EnvironmentKeys, environmentKeys) ||
+		previousResourceState.Database != database
+	connectionConfigurationChanged := !maps.Equal(
+		connectionConfiguration.EnvironmentKeys,
+		environmentKeys,
+	) ||
 		!maps.Equal(connectionConfiguration.EnvironmentKeyOverrides, environmentKeyOverrides)
 	changed := resourceStateChanged || len(currentDescriptors) != len(values)
 	for key, value := range values {
-		prepared, prepareErr := service.Prepare(environment.ID, key, value, models.EnvironmentSecretSourceResource, connection.ID)
+		prepared, prepareErr := service.Prepare(
+			environment.ID,
+			key,
+			value,
+			models.EnvironmentSecretSourceResource,
+			connection.ID,
+		)
 		if prepareErr != nil {
 			return prepareErr
 		}
 		preparedByKey[key] = prepared
-		if current, exists := currentEntities[key]; exists && !current.ArchivedAt.Valid && hmac.Equal(current.Digest, prepared.Digest) {
+		if current, exists := currentEntities[key]; exists && !current.ArchivedAt.Valid &&
+			hmac.Equal(current.Digest, prepared.Digest) {
 			unchanged[key] = currentDescriptors[key]
 		} else {
 			changed = true
@@ -386,35 +523,50 @@ func (service *EnvironmentSecrets) ReconcileManagedResource(
 		})
 		return err
 	}
-	activeBuilds, err := db.NewSelect().TableExpr("builds").Where("environment_id = ?", environment.ID).
-		Where("status IN ('pending', 'running')").Count(ctx)
+	activeBuilds, err := db.NewSelect().
+		TableExpr("builds").
+		Where("environment_id = ?", environment.ID).
+		Where("status IN ('pending', 'running')").
+		Count(ctx)
 	if err != nil {
 		return err
 	}
 	if activeBuilds > 0 {
-		return errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{
-			Field: "resource", Code: "build_active",
-			Message: "wait for active Builds in Environment " + environment.Name + " before changing this Resource",
-		}})
+		return errors.Join(models.ErrDomainValidation, validation.ValidationErrors{
+			{
+				Field:   "resource",
+				Code:    "build_active",
+				Message: "wait for active Builds in Environment " + environment.Name + " before changing this Resource",
+			},
+		})
 	}
 	activeDeployments, err := db.NewSelect().TableExpr("deployments AS deployment").
 		Join("JOIN environment_targets AS target ON target.id = deployment.environment_target_id").
-		Where("target.environment_id = ?", environment.ID).Where("deployment.status IN ('queued', 'running')").Count(ctx)
+		Where("target.environment_id = ?", environment.ID).
+		Where("deployment.status IN ('queued', 'running')").Count(ctx)
 	if err != nil {
 		return err
 	}
 	if activeDeployments > 0 {
-		return errors.Join(models.ErrDomainValidation, validation.ValidationErrors{{
-			Field: "resource", Code: "deployment_active",
-			Message: "wait for active deployments in Environment " + environment.Name + " before changing this Resource",
-		}})
+		return errors.Join(models.ErrDomainValidation, validation.ValidationErrors{
+			{
+				Field:   "resource",
+				Code:    "deployment_active",
+				Message: "wait for active deployments in Environment " + environment.Name + " before changing this Resource",
+			},
+		})
 	}
 	for key, current := range currentEntities {
 		if _, keep := unchanged[key]; keep {
 			continue
 		}
 		if !current.ArchivedAt.Valid {
-			if err := models.EnvironmentSecret.Archive(ctx, db, environment.ID, current.ID); err != nil {
+			if err := models.EnvironmentSecret.Archive(
+				ctx,
+				db,
+				environment.ID,
+				current.ID,
+			); err != nil {
 				return err
 			}
 		}
@@ -433,9 +585,14 @@ func (service *EnvironmentSecrets) ReconcileManagedResource(
 		created[key] = next
 		descriptors[key] = models.EnvironmentSecretDescriptorFromEntity(next)
 	}
-	nextSecrets := make([]models.EnvironmentSecretDescriptor, 0, len(state.Secrets)-len(currentDescriptors)+len(descriptors))
+	nextSecrets := make(
+		[]models.EnvironmentSecretDescriptor,
+		0,
+		len(state.Secrets)-len(currentDescriptors)+len(descriptors),
+	)
 	for _, descriptor := range state.Secrets {
-		if descriptor.SourceType == models.EnvironmentSecretSourceResource && descriptor.SourceID == connection.ID {
+		if descriptor.SourceType == models.EnvironmentSecretSourceResource &&
+			descriptor.SourceID == connection.ID {
 			continue
 		}
 		nextSecrets = append(nextSecrets, descriptor)
@@ -457,10 +614,21 @@ func (service *EnvironmentSecrets) ReconcileManagedResource(
 		return err
 	}
 	change, err := models.Change.Create(ctx, db, models.CreateChangeData{
-		Sequence: sequence, Kind: "resource_projection", TriggerType: "system", ActorType: "system",
-		CauseSystem: sql.NullString{String: "resource", Valid: true}, CauseReference: sql.NullString{String: connection.ResourceID.String(), Valid: true},
-		CorrelationID: uuid.New(), Summary: "Update Resource-managed Environment secrets", Status: "committed",
-		RequestedAt: now, CommittedAt: sql.NullTime{Time: now, Valid: true}, EnvironmentID: environment.ID,
+		Sequence:    sequence,
+		Kind:        "resource_projection",
+		TriggerType: "system",
+		ActorType:   "system",
+		CauseSystem: sql.NullString{
+			String: "resource",
+			Valid:  true,
+		},
+		CauseReference: sql.NullString{String: connection.ResourceID.String(), Valid: true},
+		CorrelationID:  uuid.New(),
+		Summary:        "Update Resource-managed Environment secrets",
+		Status:         "committed",
+		RequestedAt:    now,
+		CommittedAt:    sql.NullTime{Time: now, Valid: true},
+		EnvironmentID:  environment.ID,
 	})
 	if err != nil {
 		return err
@@ -512,24 +680,57 @@ func (service *EnvironmentSecrets) ReconcileManagedResource(
 		}
 	} else if connectionConfigurationChanged {
 		if _, err := models.ChangeItem.Create(ctx, db, models.CreateChangeItemData{
-			Action: "update", SubjectType: "environment_resource", SubjectID: connection.ID,
-			PreviousValue: connection.Configuration, RequestedValue: encodedConfiguration, ChangeID: change.ID,
+			Action:         "update",
+			SubjectType:    "environment_resource",
+			SubjectID:      connection.ID,
+			PreviousValue:  connection.Configuration,
+			RequestedValue: encodedConfiguration,
+			ChangeID:       change.ID,
 		}); err != nil {
 			return err
 		}
 	}
-	revision, err := models.EnvironmentStateRevision.Create(ctx, db, models.CreateEnvironmentStateRevisionData{State: canonical, EnvironmentID: environment.ID, ChangeID: change.ID})
+	revision, err := models.EnvironmentStateRevision.Create(
+		ctx,
+		db,
+		models.CreateEnvironmentStateRevisionData{
+			State:         canonical,
+			EnvironmentID: environment.ID,
+			ChangeID:      change.ID,
+		},
+	)
 	if err != nil {
 		return err
 	}
-	if _, err := models.ChangeStateRevision.Create(ctx, db, models.CreateChangeStateRevisionData{Role: "base", ChangeID: change.ID, EnvironmentStateRevisionID: base.ID}); err != nil {
+	if _, err := models.ChangeStateRevision.Create(
+		ctx,
+		db,
+		models.CreateChangeStateRevisionData{
+			Role:                       "base",
+			ChangeID:                   change.ID,
+			EnvironmentStateRevisionID: base.ID,
+		},
+	); err != nil {
 		return err
 	}
-	if _, err := models.ChangeStateRevision.Create(ctx, db, models.CreateChangeStateRevisionData{Role: "result", ChangeID: change.ID, EnvironmentStateRevisionID: revision.ID}); err != nil {
+	if _, err := models.ChangeStateRevision.Create(
+		ctx,
+		db,
+		models.CreateChangeStateRevisionData{
+			Role:                       "result",
+			ChangeID:                   change.ID,
+			EnvironmentStateRevisionID: revision.ID,
+		},
+	); err != nil {
 		return err
 	}
-	if _, err := db.NewUpdate().TableExpr("environment_target_states AS state").Set("desired_revision_id = ?", revision.ID).Set("state = 'pending'").Set("updated_at = ?", now).
-		Where("EXISTS (SELECT 1 FROM environment_targets target WHERE target.id = state.environment_target_id AND target.environment_id = ? AND target.detached_at IS NULL)", environment.ID).Exec(ctx); err != nil {
+	if _, err := db.NewUpdate().
+		TableExpr("environment_target_states AS state").
+		Set("desired_revision_id = ?", revision.ID).
+		Set("state = 'pending'").
+		Set("updated_at = ?", now).
+		Where("EXISTS (SELECT 1 FROM environment_targets target WHERE target.id = state.environment_target_id AND target.environment_id = ? AND target.detached_at IS NULL)", environment.ID).
+		Exec(ctx); err != nil {
 		return err
 	}
 	if _, err := models.EnvironmentResource.Update(ctx, db, models.UpdateEnvironmentResourceData{
@@ -543,7 +744,10 @@ func (service *EnvironmentSecrets) ReconcileManagedResource(
 	return service.queueRevisionDeployment(ctx, db, change, revision)
 }
 
-func (service *EnvironmentSecrets) digest(environmentID uuid.UUID, key, value string) ([]byte, error) {
+func (service *EnvironmentSecrets) digest(
+	environmentID uuid.UUID,
+	key, value string,
+) ([]byte, error) {
 	masterKey, err := hex.DecodeString(service.config.App.SessionEncryptionKey)
 	if err != nil || len(masterKey) != 32 {
 		return nil, errors.New("Environment secret digest key is invalid")
@@ -601,9 +805,17 @@ func (service *EnvironmentSecrets) commitSecretRevision(
 		return models.EnvironmentStateRevisionEntity{}, err
 	}
 	change, err := models.Change.Create(ctx, db, models.CreateChangeData{
-		Sequence: sequence, Kind: kind, TriggerType: "user", ActorType: "user", ActorID: &actorID,
-		CorrelationID: uuid.New(), Summary: strings.ReplaceAll(kind, "_", " "), Status: "committed",
-		RequestedAt: now, CommittedAt: sql.NullTime{Time: now, Valid: true}, EnvironmentID: environment.ID,
+		Sequence:      sequence,
+		Kind:          kind,
+		TriggerType:   "user",
+		ActorType:     "user",
+		ActorID:       &actorID,
+		CorrelationID: uuid.New(),
+		Summary:       strings.ReplaceAll(kind, "_", " "),
+		Status:        "committed",
+		RequestedAt:   now,
+		CommittedAt:   sql.NullTime{Time: now, Valid: true},
+		EnvironmentID: environment.ID,
 	})
 	if err != nil {
 		return models.EnvironmentStateRevisionEntity{}, err
@@ -622,25 +834,52 @@ func (service *EnvironmentSecrets) commitSecretRevision(
 		subjectID = previous.ID
 	}
 	if _, err := models.ChangeItem.Create(ctx, db, models.CreateChangeItemData{
-		Action: kind, SubjectType: "environment_secret", SubjectID: subjectID,
-		PreviousValue: changeValue(previous), RequestedValue: changeValue(requested), ChangeID: change.ID,
+		Action:      kind,
+		SubjectType: "environment_secret",
+		SubjectID:   subjectID,
+		PreviousValue: changeValue(
+			previous,
+		),
+		RequestedValue: changeValue(requested),
+		ChangeID:       change.ID,
 	}); err != nil {
 		return models.EnvironmentStateRevisionEntity{}, err
 	}
-	revision, err := models.EnvironmentStateRevision.Create(ctx, db, models.CreateEnvironmentStateRevisionData{
-		State: canonical, EnvironmentID: environment.ID, ChangeID: change.ID,
-	})
+	revision, err := models.EnvironmentStateRevision.Create(
+		ctx,
+		db,
+		models.CreateEnvironmentStateRevisionData{
+			State: canonical, EnvironmentID: environment.ID, ChangeID: change.ID,
+		},
+	)
 	if err != nil {
 		return models.EnvironmentStateRevisionEntity{}, err
 	}
-	if _, err := models.ChangeStateRevision.Create(ctx, db, models.CreateChangeStateRevisionData{Role: "base", ChangeID: change.ID, EnvironmentStateRevisionID: base.ID}); err != nil {
+	if _, err := models.ChangeStateRevision.Create(
+		ctx,
+		db,
+		models.CreateChangeStateRevisionData{
+			Role:                       "base",
+			ChangeID:                   change.ID,
+			EnvironmentStateRevisionID: base.ID,
+		},
+	); err != nil {
 		return models.EnvironmentStateRevisionEntity{}, err
 	}
-	if _, err := models.ChangeStateRevision.Create(ctx, db, models.CreateChangeStateRevisionData{Role: "result", ChangeID: change.ID, EnvironmentStateRevisionID: revision.ID}); err != nil {
+	if _, err := models.ChangeStateRevision.Create(
+		ctx,
+		db,
+		models.CreateChangeStateRevisionData{
+			Role:                       "result",
+			ChangeID:                   change.ID,
+			EnvironmentStateRevisionID: revision.ID,
+		},
+	); err != nil {
 		return models.EnvironmentStateRevisionEntity{}, err
 	}
 	if _, err := db.NewUpdate().TableExpr("environment_target_states AS state").
-		Set("desired_revision_id = ?", revision.ID).Set("state = 'pending'").Set("updated_at = ?", now).
+		Set("desired_revision_id = ?", revision.ID).
+		Set("state = 'pending'").Set("updated_at = ?", now).
 		Where("EXISTS (SELECT 1 FROM environment_targets target WHERE target.id = state.environment_target_id AND target.environment_id = ? AND target.detached_at IS NULL)", environment.ID).
 		Exec(ctx); err != nil {
 		return models.EnvironmentStateRevisionEntity{}, err
@@ -663,7 +902,11 @@ func (service *EnvironmentSecrets) queueRevisionDeployment(
 	if err != nil {
 		return err
 	}
-	if _, err := models.ChangeRelease.Create(ctx, db, models.CreateChangeReleaseData{ChangeID: change.ID, ReleaseID: release.ID}); err != nil {
+	if _, err := models.ChangeRelease.Create(
+		ctx,
+		db,
+		models.CreateChangeReleaseData{ChangeID: change.ID, ReleaseID: release.ID},
+	); err != nil {
 		return err
 	}
 	tx, ok := db.(bun.Tx)

@@ -13,8 +13,23 @@ type Client struct{}
 
 func New() Client { return Client{} }
 
-func (Client) ApplyListener(ctx context.Context, resourceID uuid.UUID, wireGuardAddress string, wireGuardPort int32, originAddress string, originPort int32) error {
-	_, err := hostcommand.Run(ctx, "listener-apply", resourceID.String(), wireGuardAddress, fmt.Sprint(wireGuardPort), originAddress, fmt.Sprint(originPort))
+func (Client) ApplyListener(
+	ctx context.Context,
+	resourceID uuid.UUID,
+	wireGuardAddress string,
+	wireGuardPort int32,
+	originAddress string,
+	originPort int32,
+) error {
+	_, err := hostcommand.Run(
+		ctx,
+		"listener-apply",
+		resourceID.String(),
+		wireGuardAddress,
+		fmt.Sprint(wireGuardPort),
+		originAddress,
+		fmt.Sprint(originPort),
+	)
 	return err
 }
 

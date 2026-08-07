@@ -17,7 +17,7 @@ type SystemOverview struct {
 	ServerName          string          `json:"serverName"          bun:"server_name"`
 	ServerAddress       string          `json:"serverAddress"       bun:"server_address"`
 	ServerStatus        string          `json:"serverStatus"        bun:"server_status"`
-	ServerCapabilities  json.RawMessage `json:"serverCapabilities" bun:"server_capabilities"`
+	ServerCapabilities  json.RawMessage `json:"serverCapabilities"  bun:"server_capabilities"`
 	OperatingSystem     string          `json:"operatingSystem"     bun:"operating_system"`
 	Distribution        string          `json:"distribution"        bun:"distribution"`
 	DistributionVersion string          `json:"distributionVersion" bun:"distribution_version"`
@@ -97,26 +97,26 @@ func (a application) FindSystemOverview(
 }
 
 type SystemResourceOverview struct {
-	ID               string `json:"id" bun:"id"`
-	Name             string `json:"name" bun:"name"`
-	ResourceType     string `json:"resourceType" bun:"resource_type"`
-	Engine           string `json:"engine" bun:"engine"`
-	BindingAlias     string `json:"bindingAlias" bun:"binding_alias"`
+	ID               string `json:"id"               bun:"id"`
+	Name             string `json:"name"             bun:"name"`
+	ResourceType     string `json:"resourceType"     bun:"resource_type"`
+	Engine           string `json:"engine"           bun:"engine"`
+	BindingAlias     string `json:"bindingAlias"     bun:"binding_alias"`
 	CredentialSource string `json:"credentialSource" bun:"credential_source"`
-	HasCredential    bool   `json:"hasCredential" bun:"has_credential"`
-	EndpointName     string `json:"endpointName" bun:"endpoint_name"`
-	EndpointRole     string `json:"endpointRole" bun:"endpoint_role"`
-	Address          string `json:"address" bun:"address"`
-	Port             int32  `json:"port" bun:"port"`
-	Protocol         string `json:"protocol" bun:"protocol"`
-	TLSMode          string `json:"tlsMode" bun:"tls_mode"`
-	External         bool   `json:"external" bun:"external"`
-	HasInstallation  bool   `json:"hasInstallation" bun:"has_installation"`
-	ImageReference   string `json:"imageReference" bun:"image_reference"`
-	ContainerName    string `json:"containerName" bun:"container_name"`
-	RestartPolicy    string `json:"restartPolicy" bun:"restart_policy"`
-	Volume           string `json:"volume" bun:"volume"`
-	Bind             string `json:"bind" bun:"bind"`
+	HasCredential    bool   `json:"hasCredential"    bun:"has_credential"`
+	EndpointName     string `json:"endpointName"     bun:"endpoint_name"`
+	EndpointRole     string `json:"endpointRole"     bun:"endpoint_role"`
+	Address          string `json:"address"          bun:"address"`
+	Port             int32  `json:"port"             bun:"port"`
+	Protocol         string `json:"protocol"         bun:"protocol"`
+	TLSMode          string `json:"tlsMode"          bun:"tls_mode"`
+	External         bool   `json:"external"         bun:"external"`
+	HasInstallation  bool   `json:"hasInstallation"  bun:"has_installation"`
+	ImageReference   string `json:"imageReference"   bun:"image_reference"`
+	ContainerName    string `json:"containerName"    bun:"container_name"`
+	RestartPolicy    string `json:"restartPolicy"    bun:"restart_policy"`
+	Volume           string `json:"volume"           bun:"volume"`
+	Bind             string `json:"bind"             bun:"bind"`
 }
 
 func (a application) FindSystemResources(
@@ -160,50 +160,50 @@ func (a application) FindSystemResources(
 }
 
 type SystemDeploymentEvent struct {
-	ID         string          `json:"id" bun:"id"`
-	Sequence   int64           `json:"sequence" bun:"sequence"`
-	EventType  string          `json:"eventType" bun:"event_type"`
-	Status     string          `json:"status" bun:"status"`
-	Step       string          `json:"step" bun:"step"`
-	Message    string          `json:"message" bun:"message"`
-	Metadata   json.RawMessage `json:"metadata" bun:"metadata"`
-	Error      string          `json:"error" bun:"error"`
+	ID         string          `json:"id"         bun:"id"`
+	Sequence   int64           `json:"sequence"   bun:"sequence"`
+	EventType  string          `json:"eventType"  bun:"event_type"`
+	Status     string          `json:"status"     bun:"status"`
+	Step       string          `json:"step"       bun:"step"`
+	Message    string          `json:"message"    bun:"message"`
+	Metadata   json.RawMessage `json:"metadata"   bun:"metadata"`
+	Error      string          `json:"error"      bun:"error"`
 	OccurredAt time.Time       `json:"occurredAt" bun:"occurred_at"`
-	Deployment string          `json:"-" bun:"deployment_id"`
+	Deployment string          `json:"-"          bun:"deployment_id"`
 }
 
 type SystemDeployment struct {
-	ID                   string                  `json:"id" bun:"id"`
-	CreatedAt            time.Time               `json:"createdAt" bun:"created_at"`
-	UpdatedAt            time.Time               `json:"updatedAt" bun:"updated_at"`
-	Attempt              int32                   `json:"attempt" bun:"attempt"`
-	Strategy             json.RawMessage         `json:"strategy" bun:"strategy"`
+	ID                   string                  `json:"id"                   bun:"id"`
+	CreatedAt            time.Time               `json:"createdAt"            bun:"created_at"`
+	UpdatedAt            time.Time               `json:"updatedAt"            bun:"updated_at"`
+	Attempt              int32                   `json:"attempt"              bun:"attempt"`
+	Strategy             json.RawMessage         `json:"strategy"             bun:"strategy"`
 	RuntimeConfiguration json.RawMessage         `json:"runtimeConfiguration" bun:"runtime_configuration"`
-	Status               string                  `json:"status" bun:"status"`
-	CurrentStep          string                  `json:"currentStep" bun:"current_step"`
-	StartedAt            *time.Time              `json:"startedAt" bun:"started_at"`
-	FinishedAt           *time.Time              `json:"finishedAt" bun:"finished_at"`
-	Error                string                  `json:"error" bun:"error"`
-	ReleaseID            string                  `json:"releaseId" bun:"release_id"`
-	ReleaseVersion       string                  `json:"releaseVersion" bun:"release_version"`
-	SourceRevision       string                  `json:"sourceRevision" bun:"source_revision"`
-	ArtifactReference    string                  `json:"artifactReference" bun:"artifact_reference"`
-	ArtifactDigest       string                  `json:"artifactDigest" bun:"artifact_digest"`
-	ChangeID             string                  `json:"changeId" bun:"change_id"`
-	ChangeSequence       int64                   `json:"changeSequence" bun:"change_sequence"`
-	ChangeKind           string                  `json:"changeKind" bun:"change_kind"`
-	ChangeSummary        string                  `json:"changeSummary" bun:"change_summary"`
-	ChangeStatus         string                  `json:"changeStatus" bun:"change_status"`
-	TriggerType          string                  `json:"triggerType" bun:"trigger_type"`
-	RequestedAt          time.Time               `json:"requestedAt" bun:"requested_at"`
-	InstanceID           string                  `json:"instanceId" bun:"instance_id"`
-	InstanceService      string                  `json:"instanceService" bun:"instance_service"`
-	InstanceSlot         string                  `json:"instanceSlot" bun:"instance_slot"`
-	InstanceState        string                  `json:"instanceState" bun:"instance_state"`
-	InstancePort         int32                   `json:"instancePort" bun:"instance_port"`
-	InstanceObservedAt   *time.Time              `json:"instanceObservedAt" bun:"instance_observed_at"`
-	Active               bool                    `json:"active" bun:"active"`
-	Events               []SystemDeploymentEvent `json:"events" bun:"-"`
+	Status               string                  `json:"status"               bun:"status"`
+	CurrentStep          string                  `json:"currentStep"          bun:"current_step"`
+	StartedAt            *time.Time              `json:"startedAt"            bun:"started_at"`
+	FinishedAt           *time.Time              `json:"finishedAt"           bun:"finished_at"`
+	Error                string                  `json:"error"                bun:"error"`
+	ReleaseID            string                  `json:"releaseId"            bun:"release_id"`
+	ReleaseVersion       string                  `json:"releaseVersion"       bun:"release_version"`
+	SourceRevision       string                  `json:"sourceRevision"       bun:"source_revision"`
+	ArtifactReference    string                  `json:"artifactReference"    bun:"artifact_reference"`
+	ArtifactDigest       string                  `json:"artifactDigest"       bun:"artifact_digest"`
+	ChangeID             string                  `json:"changeId"             bun:"change_id"`
+	ChangeSequence       int64                   `json:"changeSequence"       bun:"change_sequence"`
+	ChangeKind           string                  `json:"changeKind"           bun:"change_kind"`
+	ChangeSummary        string                  `json:"changeSummary"        bun:"change_summary"`
+	ChangeStatus         string                  `json:"changeStatus"         bun:"change_status"`
+	TriggerType          string                  `json:"triggerType"          bun:"trigger_type"`
+	RequestedAt          time.Time               `json:"requestedAt"          bun:"requested_at"`
+	InstanceID           string                  `json:"instanceId"           bun:"instance_id"`
+	InstanceService      string                  `json:"instanceService"      bun:"instance_service"`
+	InstanceSlot         string                  `json:"instanceSlot"         bun:"instance_slot"`
+	InstanceState        string                  `json:"instanceState"        bun:"instance_state"`
+	InstancePort         int32                   `json:"instancePort"         bun:"instance_port"`
+	InstanceObservedAt   *time.Time              `json:"instanceObservedAt"   bun:"instance_observed_at"`
+	Active               bool                    `json:"active"               bun:"active"`
+	Events               []SystemDeploymentEvent `json:"events"               bun:"-"`
 }
 
 func (a application) FindSystemDeployments(
@@ -309,56 +309,56 @@ func (a application) FindSystemDeployments(
 }
 
 type SystemNetwork struct {
-	NetworkID                 string          `json:"networkId" bun:"network_id"`
-	NetworkCreatedAt          time.Time       `json:"networkCreatedAt" bun:"network_created_at"`
-	NetworkUpdatedAt          time.Time       `json:"networkUpdatedAt" bun:"network_updated_at"`
-	NetworkName               string          `json:"networkName" bun:"network_name"`
-	OwnerEnvironmentID        string          `json:"ownerEnvironmentId" bun:"owner_environment_id"`
-	EnvironmentID             string          `json:"environmentId" bun:"environment_id"`
-	EnvironmentName           string          `json:"environmentName" bun:"environment_name"`
-	EnvironmentBindingID      int32           `json:"environmentBindingId" bun:"environment_binding_id"`
-	EnvironmentBindingRole    string          `json:"environmentBindingRole" bun:"environment_binding_role"`
+	NetworkID                 string          `json:"networkId"                 bun:"network_id"`
+	NetworkCreatedAt          time.Time       `json:"networkCreatedAt"          bun:"network_created_at"`
+	NetworkUpdatedAt          time.Time       `json:"networkUpdatedAt"          bun:"network_updated_at"`
+	NetworkName               string          `json:"networkName"               bun:"network_name"`
+	OwnerEnvironmentID        string          `json:"ownerEnvironmentId"        bun:"owner_environment_id"`
+	EnvironmentID             string          `json:"environmentId"             bun:"environment_id"`
+	EnvironmentName           string          `json:"environmentName"           bun:"environment_name"`
+	EnvironmentBindingID      int32           `json:"environmentBindingId"      bun:"environment_binding_id"`
+	EnvironmentBindingRole    string          `json:"environmentBindingRole"    bun:"environment_binding_role"`
 	EnvironmentBindingCreated time.Time       `json:"environmentBindingCreated" bun:"environment_binding_created"`
-	TargetID                  string          `json:"targetId" bun:"target_id"`
-	TargetAttachedAt          time.Time       `json:"targetAttachedAt" bun:"target_attached_at"`
-	ServerID                  string          `json:"serverId" bun:"server_id"`
-	ServerName                string          `json:"serverName" bun:"server_name"`
-	ServerAddress             string          `json:"serverAddress" bun:"server_address"`
-	ServerNetworkID           int32           `json:"serverNetworkId" bun:"server_network_id"`
-	ServerDriver              string          `json:"serverDriver" bun:"server_driver"`
-	ServerExternalID          string          `json:"serverExternalId" bun:"server_external_id"`
-	ServerConfiguration       json.RawMessage `json:"serverConfiguration" bun:"server_configuration"`
-	ServerState               string          `json:"serverState" bun:"server_state"`
-	ServerAppliedAt           *time.Time      `json:"serverAppliedAt" bun:"server_applied_at"`
-	ServerObservedAt          *time.Time      `json:"serverObservedAt" bun:"server_observed_at"`
-	ServerError               string          `json:"serverError" bun:"server_error"`
-	TargetNetworkID           int32           `json:"targetNetworkId" bun:"target_network_id"`
-	TargetDriver              string          `json:"targetDriver" bun:"target_driver"`
-	TargetExternalID          string          `json:"targetExternalId" bun:"target_external_id"`
-	TargetConfiguration       json.RawMessage `json:"targetConfiguration" bun:"target_configuration"`
-	TargetState               string          `json:"targetState" bun:"target_state"`
-	TargetAppliedAt           *time.Time      `json:"targetAppliedAt" bun:"target_applied_at"`
-	TargetObservedAt          *time.Time      `json:"targetObservedAt" bun:"target_observed_at"`
-	TargetError               string          `json:"targetError" bun:"target_error"`
-	PeerID                    string          `json:"peerId" bun:"peer_id"`
-	PeerPublicKey             string          `json:"peerPublicKey" bun:"peer_public_key"`
-	PeerPrivateAddress        string          `json:"peerPrivateAddress" bun:"peer_private_address"`
-	PeerEndpoint              string          `json:"peerEndpoint" bun:"peer_endpoint"`
-	PeerListenPort            int32           `json:"peerListenPort" bun:"peer_listen_port"`
-	PeerActivatedAt           *time.Time      `json:"peerActivatedAt" bun:"peer_activated_at"`
-	PeerState                 string          `json:"peerState" bun:"peer_state"`
-	PeerLatestHandshakeAt     *time.Time      `json:"peerLatestHandshakeAt" bun:"peer_latest_handshake_at"`
-	PeerObservedAt            *time.Time      `json:"peerObservedAt" bun:"peer_observed_at"`
-	PeerError                 string          `json:"peerError" bun:"peer_error"`
-	Domain                    string          `json:"domain" bun:"domain"`
-	RouteID                   string          `json:"routeId" bun:"route_id"`
-	RouteExternalID           string          `json:"routeExternalId" bun:"route_external_id"`
-	RouteState                string          `json:"routeState" bun:"route_state"`
-	RouteCreatedAt            *time.Time      `json:"routeCreatedAt" bun:"route_created_at"`
-	BackendWeight             int32           `json:"backendWeight" bun:"backend_weight"`
-	BackendService            string          `json:"backendService" bun:"backend_service"`
-	BackendState              string          `json:"backendState" bun:"backend_state"`
-	BackendPort               int32           `json:"backendPort" bun:"backend_port"`
+	TargetID                  string          `json:"targetId"                  bun:"target_id"`
+	TargetAttachedAt          time.Time       `json:"targetAttachedAt"          bun:"target_attached_at"`
+	ServerID                  string          `json:"serverId"                  bun:"server_id"`
+	ServerName                string          `json:"serverName"                bun:"server_name"`
+	ServerAddress             string          `json:"serverAddress"             bun:"server_address"`
+	ServerNetworkID           int32           `json:"serverNetworkId"           bun:"server_network_id"`
+	ServerDriver              string          `json:"serverDriver"              bun:"server_driver"`
+	ServerExternalID          string          `json:"serverExternalId"          bun:"server_external_id"`
+	ServerConfiguration       json.RawMessage `json:"serverConfiguration"       bun:"server_configuration"`
+	ServerState               string          `json:"serverState"               bun:"server_state"`
+	ServerAppliedAt           *time.Time      `json:"serverAppliedAt"           bun:"server_applied_at"`
+	ServerObservedAt          *time.Time      `json:"serverObservedAt"          bun:"server_observed_at"`
+	ServerError               string          `json:"serverError"               bun:"server_error"`
+	TargetNetworkID           int32           `json:"targetNetworkId"           bun:"target_network_id"`
+	TargetDriver              string          `json:"targetDriver"              bun:"target_driver"`
+	TargetExternalID          string          `json:"targetExternalId"          bun:"target_external_id"`
+	TargetConfiguration       json.RawMessage `json:"targetConfiguration"       bun:"target_configuration"`
+	TargetState               string          `json:"targetState"               bun:"target_state"`
+	TargetAppliedAt           *time.Time      `json:"targetAppliedAt"           bun:"target_applied_at"`
+	TargetObservedAt          *time.Time      `json:"targetObservedAt"          bun:"target_observed_at"`
+	TargetError               string          `json:"targetError"               bun:"target_error"`
+	PeerID                    string          `json:"peerId"                    bun:"peer_id"`
+	PeerPublicKey             string          `json:"peerPublicKey"             bun:"peer_public_key"`
+	PeerPrivateAddress        string          `json:"peerPrivateAddress"        bun:"peer_private_address"`
+	PeerEndpoint              string          `json:"peerEndpoint"              bun:"peer_endpoint"`
+	PeerListenPort            int32           `json:"peerListenPort"            bun:"peer_listen_port"`
+	PeerActivatedAt           *time.Time      `json:"peerActivatedAt"           bun:"peer_activated_at"`
+	PeerState                 string          `json:"peerState"                 bun:"peer_state"`
+	PeerLatestHandshakeAt     *time.Time      `json:"peerLatestHandshakeAt"     bun:"peer_latest_handshake_at"`
+	PeerObservedAt            *time.Time      `json:"peerObservedAt"            bun:"peer_observed_at"`
+	PeerError                 string          `json:"peerError"                 bun:"peer_error"`
+	Domain                    string          `json:"domain"                    bun:"domain"`
+	RouteID                   string          `json:"routeId"                   bun:"route_id"`
+	RouteExternalID           string          `json:"routeExternalId"           bun:"route_external_id"`
+	RouteState                string          `json:"routeState"                bun:"route_state"`
+	RouteCreatedAt            *time.Time      `json:"routeCreatedAt"            bun:"route_created_at"`
+	BackendWeight             int32           `json:"backendWeight"             bun:"backend_weight"`
+	BackendService            string          `json:"backendService"            bun:"backend_service"`
+	BackendState              string          `json:"backendState"              bun:"backend_state"`
+	BackendPort               int32           `json:"backendPort"               bun:"backend_port"`
 }
 
 func (a application) FindSystemNetwork(

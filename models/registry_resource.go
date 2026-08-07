@@ -37,9 +37,16 @@ func (entity *RegistryResourceEntity) Validate() error {
 	return builder.Err()
 }
 
-func (registryResource) Find(ctx context.Context, db storage.Executor, resourceID uuid.UUID) (RegistryResourceEntity, error) {
+func (registryResource) Find(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+) (RegistryResourceEntity, error) {
 	var entity RegistryResourceEntity
-	if err := db.NewSelect().Model(&entity).Where("registry_resource.resource_id = ?", resourceID).Scan(ctx); err != nil {
+	if err := db.NewSelect().
+		Model(&entity).
+		Where("registry_resource.resource_id = ?", resourceID).
+		Scan(ctx); err != nil {
 		return RegistryResourceEntity{}, err
 	}
 	return entity, nil
@@ -51,7 +58,11 @@ type CreateRegistryResourceData struct {
 	Configuration json.RawMessage
 }
 
-func (registryResource) Create(ctx context.Context, db storage.Executor, data CreateRegistryResourceData) (RegistryResourceEntity, error) {
+func (registryResource) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateRegistryResourceData,
+) (RegistryResourceEntity, error) {
 	now := time.Now().UTC()
 	entity := RegistryResourceEntity{
 		ResourceID: data.ResourceID, CreatedAt: now, UpdatedAt: now,
@@ -61,11 +72,25 @@ func (registryResource) Create(ctx context.Context, db storage.Executor, data Cr
 		return RegistryResourceEntity{}, errors.Join(ErrDomainValidation, err)
 	}
 	var engine string
-	if err := db.NewSelect().TableExpr("resources").ColumnExpr("configuration ->> 'engine'").Where("id = ?", entity.ResourceID).Where("archived_at IS NULL").Scan(ctx, &engine); err != nil {
+	if err := db.NewSelect().
+		TableExpr("resources").
+		ColumnExpr("configuration ->> 'engine'").
+		Where("id = ?", entity.ResourceID).
+		Where("archived_at IS NULL").
+		Scan(ctx, &engine); err != nil {
 		return RegistryResourceEntity{}, err
 	}
 	if engine != "registry" {
-		return RegistryResourceEntity{}, errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "resourceId", Code: "kind", Message: "Registry backing requires a Registry Resource"}})
+		return RegistryResourceEntity{}, errors.Join(
+			ErrDomainValidation,
+			validation.ValidationErrors{
+				{
+					Field:   "resourceId",
+					Code:    "kind",
+					Message: "Registry backing requires a Registry Resource",
+				},
+			},
+		)
 	}
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
 		return RegistryResourceEntity{}, err
@@ -73,18 +98,39 @@ func (registryResource) Create(ctx context.Context, db storage.Executor, data Cr
 	return entity, nil
 }
 
-func (registryResource) Update(ctx context.Context, db storage.Executor, data CreateRegistryResourceData) (RegistryResourceEntity, error) {
-	entity := RegistryResourceEntity{ResourceID: data.ResourceID, UpdatedAt: time.Now().UTC(), Provider: data.Provider, Configuration: data.Configuration}
+func (registryResource) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateRegistryResourceData,
+) (RegistryResourceEntity, error) {
+	entity := RegistryResourceEntity{
+		ResourceID:    data.ResourceID,
+		UpdatedAt:     time.Now().UTC(),
+		Provider:      data.Provider,
+		Configuration: data.Configuration,
+	}
 	if err := validation.Validate(&entity); err != nil {
 		return RegistryResourceEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if err := db.NewUpdate().Model(&entity).Column("updated_at", "provider", "configuration").WherePK().Returning("*").Scan(ctx); err != nil {
+	if err := db.NewUpdate().
+		Model(&entity).
+		Column("updated_at", "provider", "configuration").
+		WherePK().
+		Returning("*").
+		Scan(ctx); err != nil {
 		return RegistryResourceEntity{}, err
 	}
 	return entity, nil
 }
 
-func (registryResource) Destroy(ctx context.Context, db storage.Executor, resourceID uuid.UUID) error {
-	_, err := db.NewDelete().Model((*RegistryResourceEntity)(nil)).Where("resource_id = ?", resourceID).Exec(ctx)
+func (registryResource) Destroy(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+) error {
+	_, err := db.NewDelete().
+		Model((*RegistryResourceEntity)(nil)).
+		Where("resource_id = ?", resourceID).
+		Exec(ctx)
 	return err
 }

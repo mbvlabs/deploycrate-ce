@@ -79,13 +79,21 @@ func (e environment) Lock(
 	id uuid.UUID,
 ) (EnvironmentEntity, error) {
 	var entity EnvironmentEntity
-	if err := db.NewSelect().Model(&entity).Where("id = ?", id).For("UPDATE").Scan(ctx); err != nil {
+	if err := db.NewSelect().
+		Model(&entity).
+		Where("id = ?", id).
+		For("UPDATE").
+		Scan(ctx); err != nil {
 		return EnvironmentEntity{}, err
 	}
 	return entity, nil
 }
 
-func (e environment) SetupComplete(ctx context.Context, db storage.Executor, id uuid.UUID) (bool, error) {
+func (e environment) SetupComplete(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (bool, error) {
 	var complete bool
 	err := db.NewSelect().TableExpr("environments AS environment").
 		ColumnExpr(`EXISTS (
@@ -222,7 +230,10 @@ func (e environment) Deployability(
 	if checks.RevisionReady {
 		revision, err := EnvironmentStateRevision.LatestCommitted(ctx, db, id)
 		if err != nil {
-			return EnvironmentDeployability{}, fmt.Errorf("load latest Environment revision: %w", err)
+			return EnvironmentDeployability{}, fmt.Errorf(
+				"load latest Environment revision: %w",
+				err,
+			)
 		}
 		if _, err := EnvironmentStateRevision.ResolveSecrets(ctx, db, revision); err != nil {
 			missing = append(missing, "revision_secrets")

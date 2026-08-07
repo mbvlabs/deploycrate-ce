@@ -706,14 +706,21 @@ func (WorkloadClient) Start(
 	return (WorkloadClient{}).Find(ctx, deploymentID, instanceID)
 }
 
-func (WorkloadClient) Restart(ctx context.Context, deploymentID, instanceID uuid.UUID) (WorkloadState, error) {
+func (WorkloadClient) Restart(
+	ctx context.Context,
+	deploymentID, instanceID uuid.UUID,
+) (WorkloadState, error) {
 	state, err := (WorkloadClient{}).Find(ctx, deploymentID, instanceID)
 	if err != nil || !state.Exists {
 		return state, err
 	}
 	command := sudo.CommandContext(ctx, workloadDockerExecutable, "restart", state.ID)
 	if output, err := command.CombinedOutput(); err != nil {
-		return WorkloadState{}, fmt.Errorf("restart workload container: %w: %s", err, boundedDockerMessage(output))
+		return WorkloadState{}, fmt.Errorf(
+			"restart workload container: %w: %s",
+			err,
+			boundedDockerMessage(output),
+		)
 	}
 	return (WorkloadClient{}).Find(ctx, deploymentID, instanceID)
 }

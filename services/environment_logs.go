@@ -102,11 +102,17 @@ func (service *EnvironmentLogs) Snapshot(
 		}
 		nextCursor = encodedCursor
 		logs = append(logs, EnvironmentLog{
-			ID: encodedCursor, Message: ansi.Strip(row.Message), Stream: row.Stream,
-			Container: row.Container, Deployment: row.Deployment,
-			Instance: row.Instance, Release: row.Release,
-			ProcessName: row.ProcessName, ProcessKind: row.ProcessKind, ProcessReplica: row.ProcessReplica,
-			OccurredAt: row.Cursor.Timestamp,
+			ID:             encodedCursor,
+			Message:        ansi.Strip(row.Message),
+			Stream:         row.Stream,
+			Container:      row.Container,
+			Deployment:     row.Deployment,
+			Instance:       row.Instance,
+			Release:        row.Release,
+			ProcessName:    row.ProcessName,
+			ProcessKind:    row.ProcessKind,
+			ProcessReplica: row.ProcessReplica,
+			OccurredAt:     row.Cursor.Timestamp,
 		})
 	}
 	return EnvironmentLogSnapshot{Logs: logs, NextCursor: nextCursor, HasMore: hasMore}, nil

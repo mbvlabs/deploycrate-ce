@@ -130,7 +130,11 @@ func (e *BackupDestinationEntity) Validate() error {
 		endpoint, err := url.Parse(strings.TrimSpace(e.Endpoint.String))
 		if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" ||
 			endpoint.User != nil || endpoint.RawQuery != "" || endpoint.Fragment != "" {
-			builder.Add("endpoint", "invalid", "backup destination endpoint must be an absolute HTTPS URL")
+			builder.Add(
+				"endpoint",
+				"invalid",
+				"backup destination endpoint must be an absolute HTTPS URL",
+			)
 		}
 	}
 	if e.Prefix.Valid {
@@ -235,7 +239,12 @@ func (bd backupDestination) Update(
 			return BackupDestinationEntity{}, err
 		}
 		if referenced {
-			return BackupDestinationEntity{}, errors.Join(ErrDomainValidation, errors.New("active backup policies must be paused or archived before archiving this destination"))
+			return BackupDestinationEntity{}, errors.Join(
+				ErrDomainValidation,
+				errors.New(
+					"active backup policies must be paused or archived before archiving this destination",
+				),
+			)
 		}
 	}
 	entity := BackupDestinationEntity{

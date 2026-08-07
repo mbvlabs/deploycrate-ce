@@ -51,21 +51,33 @@ func (e *BackupPolicyEntity) Validate() error {
 	}
 	parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 	if _, err := parser.Parse(e.Schedule); err != nil {
-		builder.Add("schedule", "invalid", "backup policy schedule must be a five-field cron expression")
+		builder.Add(
+			"schedule",
+			"invalid",
+			"backup policy schedule must be a five-field cron expression",
+		)
 	}
 	if e.TargetType == "server" {
 		if e.ServerID == nil || *e.ServerID == uuid.Nil || e.ResourceID != nil {
 			builder.Add("target_type", "incoherent", "server policies must target only one server")
 		}
 		if e.Strategy != "filesystem" || e.Driver != "restic" || e.Format != "restic" {
-			builder.Add("driver", "incompatible", "server policies require filesystem, restic, and restic")
+			builder.Add(
+				"driver",
+				"incompatible",
+				"server policies require filesystem, restic, and restic",
+			)
 		}
 	} else if e.TargetType == "resource" {
 		if e.ServerID != nil || e.ResourceID == nil || *e.ResourceID == uuid.Nil {
 			builder.Add("target_type", "incoherent", "Resource policies must target one Resource")
 		}
 		if e.Strategy != "logical" || e.Driver != "postgresql" || e.Format != "tar.age" {
-			builder.Add("driver", "incompatible", "PostgreSQL Resource policies require logical, postgresql, and tar.age")
+			builder.Add(
+				"driver",
+				"incompatible",
+				"PostgreSQL Resource policies require logical, postgresql, and tar.age",
+			)
 		}
 	} else {
 		builder.Add("target_type", "unsupported", "backup policy target must be server or Resource")
@@ -76,7 +88,11 @@ func (e *BackupPolicyEntity) Validate() error {
 	if !validJSONObject(e.Retention) {
 		builder.Add("retention", "invalid", "backup retention must be a JSON object")
 	} else if !validRetentionDocument(e.Retention) {
-		builder.Add("retention", "invalid", "backup retention must preserve at least one recovery point")
+		builder.Add(
+			"retention",
+			"invalid",
+			"backup retention must preserve at least one recovery point",
+		)
 	}
 	if !validJSONObject(e.Verification) {
 		builder.Add("verification", "invalid", "backup verification settings must be a JSON object")
@@ -92,11 +108,19 @@ func (e *BackupPolicyEntity) Validate() error {
 	}
 	if e.ActivatedAt.Valid && !e.NextRunAt.IsZero() &&
 		!e.NextRunAt.After(e.ActivatedAt.Time) {
-		builder.Add("next_run_at", "invalid", "active backup policy next run must follow activation")
+		builder.Add(
+			"next_run_at",
+			"invalid",
+			"active backup policy next run must follow activation",
+		)
 	}
 	if e.LastScheduledAt.Valid && !e.NextRunAt.IsZero() &&
 		!e.NextRunAt.After(e.LastScheduledAt.Time) {
-		builder.Add("next_run_at", "invalid", "backup policy next run must follow its last scheduled run")
+		builder.Add(
+			"next_run_at",
+			"invalid",
+			"backup policy next run must follow its last scheduled run",
+		)
 	}
 	if e.BackupDestinationID == uuid.Nil {
 		builder.Add("backup_destination_id", "required", "backup destination is required")
@@ -375,7 +399,19 @@ func (bp backupPolicy) Create(
 		return BackupPolicyEntity{}, errors.Join(ErrDomainValidation, err)
 	}
 	if entity.TargetType == "resource" && entity.ResourceID != nil {
-		if err := ensureActiveUnique(ctx, db, "resource-backup-policy:"+entity.ResourceID.String()+":"+string(entity.Target), entity.ID, db.NewSelect().Model((*BackupPolicyEntity)(nil)).Where("target_type = 'resource'").Where("resource_id = ?", *entity.ResourceID).Where("target = ?", entity.Target), "target", "the Resource target already has an active backup policy"); err != nil {
+		if err := ensureActiveUnique(
+			ctx,
+			db,
+			"resource-backup-policy:"+entity.ResourceID.String()+":"+string(entity.Target),
+			entity.ID,
+			db.NewSelect().
+				Model((*BackupPolicyEntity)(nil)).
+				Where("target_type = 'resource'").
+				Where("resource_id = ?", *entity.ResourceID).
+				Where("target = ?", entity.Target),
+			"target",
+			"the Resource target already has an active backup policy",
+		); err != nil {
 			return BackupPolicyEntity{}, err
 		}
 	}
@@ -440,7 +476,19 @@ func (bp backupPolicy) Update(
 		return BackupPolicyEntity{}, errors.Join(ErrDomainValidation, err)
 	}
 	if entity.TargetType == "resource" && entity.ResourceID != nil {
-		if err := ensureActiveUnique(ctx, db, "resource-backup-policy:"+entity.ResourceID.String()+":"+string(entity.Target), entity.ID, db.NewSelect().Model((*BackupPolicyEntity)(nil)).Where("target_type = 'resource'").Where("resource_id = ?", *entity.ResourceID).Where("target = ?", entity.Target), "target", "the Resource target already has an active backup policy"); err != nil {
+		if err := ensureActiveUnique(
+			ctx,
+			db,
+			"resource-backup-policy:"+entity.ResourceID.String()+":"+string(entity.Target),
+			entity.ID,
+			db.NewSelect().
+				Model((*BackupPolicyEntity)(nil)).
+				Where("target_type = 'resource'").
+				Where("resource_id = ?", *entity.ResourceID).
+				Where("target = ?", entity.Target),
+			"target",
+			"the Resource target already has an active backup policy",
+		); err != nil {
 			return BackupPolicyEntity{}, err
 		}
 	}

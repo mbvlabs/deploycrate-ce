@@ -91,8 +91,12 @@ func (controller Nodes) Create(etx *echo.Context) error {
 	var result services.NodeEnrollmentDetail
 	if err == nil {
 		result, err = controller.service.Create(etx.Request().Context(), services.CreateNodeInput{
-			Name: payload.Name, Address: payload.Address, Port: payload.Port, Username: payload.Username,
-			PrivateKey: payload.PrivateKey, Passphrase: payload.Passphrase,
+			Name:         payload.Name,
+			Address:      payload.Address,
+			Port:         payload.Port,
+			Username:     payload.Username,
+			PrivateKey:   payload.PrivateKey,
+			Passphrase:   payload.Passphrase,
 			Capabilities: payload.Capabilities,
 		})
 	}
@@ -115,7 +119,11 @@ func (controller Nodes) Show(etx *echo.Context) error {
 	if err != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
-	return inertia.Page(etx, "Nodes/Show", inertia.Props{"auth": authProps(etx), "node": nodeProps(detail)})
+	return inertia.Page(
+		etx,
+		"Nodes/Show",
+		inertia.Props{"auth": authProps(etx), "node": nodeProps(detail)},
+	)
 }
 
 type confirmNodePayload struct {
@@ -173,14 +181,23 @@ func nodeProps(detail services.NodeEnrollmentDetail) inertia.Props {
 	}
 	capabilities, _ := models.ParseServerCapabilities(detail.Server.Capabilities)
 	return inertia.Props{
-		"id": detail.Enrollment.ID, "serverId": detail.Server.ID, "name": detail.Server.Name,
-		"address": detail.Server.Address, "sshPort": detail.Credential.Port,
-		"state": detail.Enrollment.State, "currentStep": detail.Enrollment.CurrentStep,
-		"error": errorMessage, "fingerprint": detail.Enrollment.HostFingerprint,
-		"hostKeyConfirmedAt": confirmedAt, "wireGuardAddress": detail.Enrollment.AllocatedAddress,
-		"installerVersion": detail.Enrollment.InstallerVersion, "jobId": jobID,
-		"createdAt": detail.Enrollment.CreatedAt, "startedAt": startedAt, "completedAt": completedAt,
-		"configured":   detail.Server.IsConfigured,
-		"capabilities": capabilities,
+		"id":                 detail.Enrollment.ID,
+		"serverId":           detail.Server.ID,
+		"name":               detail.Server.Name,
+		"address":            detail.Server.Address,
+		"sshPort":            detail.Credential.Port,
+		"state":              detail.Enrollment.State,
+		"currentStep":        detail.Enrollment.CurrentStep,
+		"error":              errorMessage,
+		"fingerprint":        detail.Enrollment.HostFingerprint,
+		"hostKeyConfirmedAt": confirmedAt,
+		"wireGuardAddress":   detail.Enrollment.AllocatedAddress,
+		"installerVersion":   detail.Enrollment.InstallerVersion,
+		"jobId":              jobID,
+		"createdAt":          detail.Enrollment.CreatedAt,
+		"startedAt":          startedAt,
+		"completedAt":        completedAt,
+		"configured":         detail.Server.IsConfigured,
+		"capabilities":       capabilities,
 	}
 }

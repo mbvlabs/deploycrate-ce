@@ -11,7 +11,7 @@ const BackupQueue = "backups"
 
 type BackupScheduleArgs struct {
 	BackupPolicyID uuid.UUID `json:"backup_policy_id" river:"unique"`
-	ScheduledAt    time.Time `json:"scheduled_at" river:"unique"`
+	ScheduledAt    time.Time `json:"scheduled_at"     river:"unique"`
 }
 
 func (BackupScheduleArgs) Kind() string { return "backup_schedule" }

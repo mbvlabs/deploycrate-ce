@@ -185,22 +185,41 @@ func (service *BackupScheduler) enqueue(
 		return uuid.Nil, errors.New("backup policy target is missing")
 	}
 	task, err := models.ChangeTask.Create(ctx, tx, models.CreateChangeTaskData{
-		Kind: "backup_execute", SubjectType: policy.TargetType, SubjectID: *targetID,
-		IdempotencyKey: "backup:" + triggerType + ":" + policy.ID.String() + ":" + slot.Format(time.RFC3339Nano),
-		Input:          json.RawMessage(`{}`), Status: "pending", AvailableAt: now,
-		ChangeID: change.ID, ServerID: taskServerID,
+		Kind:        "backup_execute",
+		SubjectType: policy.TargetType,
+		SubjectID:   *targetID,
+		IdempotencyKey: "backup:" + triggerType + ":" + policy.ID.String() + ":" + slot.Format(
+			time.RFC3339Nano,
+		),
+		Input:       json.RawMessage(`{}`),
+		Status:      "pending",
+		AvailableAt: now,
+		ChangeID:    change.ID,
+		ServerID:    taskServerID,
 	})
 	if err != nil {
 		return uuid.Nil, fmt.Errorf("create backup change task: %w", err)
 	}
 	backupID := uuid.New()
 	if _, err := models.Backup.Create(ctx, tx, models.CreateBackupData{
-		ID: backupID, TargetType: policy.TargetType, Target: policy.Target, TriggerType: triggerType, ScheduledAt: slot,
-		Strategy: policy.Strategy, Driver: policy.Driver, Format: policy.Format,
-		FormatVersion: "1", ProviderMetadata: json.RawMessage(`{}`),
-		Status: models.BackupStatusPending, RequestedAt: now,
-		ProducerVersion: string(service.version), ChangeID: change.ID, ChangeTaskID: task.ID,
-		BackupPolicyID: policy.ID, ServerID: policy.ServerID, ResourceID: policy.ResourceID,
+		ID:                     backupID,
+		TargetType:             policy.TargetType,
+		Target:                 policy.Target,
+		TriggerType:            triggerType,
+		ScheduledAt:            slot,
+		Strategy:               policy.Strategy,
+		Driver:                 policy.Driver,
+		Format:                 policy.Format,
+		FormatVersion:          "1",
+		ProviderMetadata:       json.RawMessage(`{}`),
+		Status:                 models.BackupStatusPending,
+		RequestedAt:            now,
+		ProducerVersion:        string(service.version),
+		ChangeID:               change.ID,
+		ChangeTaskID:           task.ID,
+		BackupPolicyID:         policy.ID,
+		ServerID:               policy.ServerID,
+		ResourceID:             policy.ResourceID,
 		ResourceInstallationID: policy.ResourceInstallationID,
 		BackupDestinationID:    policy.BackupDestinationID,
 	}); err != nil {

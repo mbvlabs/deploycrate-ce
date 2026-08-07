@@ -20,7 +20,11 @@ type ChangeItemFactory struct {
 
 type ChangeItemOption func(*ChangeItemFactory)
 
-func BuildChangeItem(subjectID uuid.UUID, changeID uuid.UUID, opts ...ChangeItemOption) models.ChangeItemEntity {
+func BuildChangeItem(
+	subjectID uuid.UUID,
+	changeID uuid.UUID,
+	opts ...ChangeItemOption,
+) models.ChangeItemEntity {
 	f := &ChangeItemFactory{
 		ChangeItemEntity: models.ChangeItemEntity{
 			Action:         faker.Word(),
@@ -39,7 +43,13 @@ func BuildChangeItem(subjectID uuid.UUID, changeID uuid.UUID, opts ...ChangeItem
 	return f.ChangeItemEntity
 }
 
-func CreateChangeItem(ctx context.Context, exec storage.Executor, subjectID uuid.UUID, changeID uuid.UUID, opts ...ChangeItemOption) (models.ChangeItemEntity, error) {
+func CreateChangeItem(
+	ctx context.Context,
+	exec storage.Executor,
+	subjectID uuid.UUID,
+	changeID uuid.UUID,
+	opts ...ChangeItemOption,
+) (models.ChangeItemEntity, error) {
 	built := BuildChangeItem(subjectID, changeID, opts...)
 
 	entity := models.ChangeItemEntity{
@@ -61,7 +71,14 @@ func CreateChangeItem(ctx context.Context, exec storage.Executor, subjectID uuid
 	return entity, nil
 }
 
-func CreateChangeItems(ctx context.Context, exec storage.Executor, subjectID uuid.UUID, changeID uuid.UUID, count int, opts ...ChangeItemOption) ([]models.ChangeItemEntity, error) {
+func CreateChangeItems(
+	ctx context.Context,
+	exec storage.Executor,
+	subjectID uuid.UUID,
+	changeID uuid.UUID,
+	count int,
+	opts ...ChangeItemOption,
+) ([]models.ChangeItemEntity, error) {
 	changeitems := make([]models.ChangeItemEntity, 0, count)
 
 	for i := range count {

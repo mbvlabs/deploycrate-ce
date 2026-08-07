@@ -34,7 +34,11 @@ func (e *ImageConfigurationEntity) Validate() error {
 	return builder.Err()
 }
 
-func (ic imageConfiguration) FindForSource(ctx context.Context, db storage.Executor, sourceID uuid.UUID) (ImageConfigurationEntity, error) {
+func (ic imageConfiguration) FindForSource(
+	ctx context.Context,
+	db storage.Executor,
+	sourceID uuid.UUID,
+) (ImageConfigurationEntity, error) {
 	var entity ImageConfigurationEntity
 	err := db.NewSelect().Model(&entity).Where("environment_source_id = ?", sourceID).Scan(ctx)
 	return entity, err
@@ -45,7 +49,11 @@ type CreateImageConfigurationData struct {
 	RegistryResourceID  uuid.UUID
 }
 
-func (ic imageConfiguration) Create(ctx context.Context, db storage.Executor, data CreateImageConfigurationData) (ImageConfigurationEntity, error) {
+func (ic imageConfiguration) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateImageConfigurationData,
+) (ImageConfigurationEntity, error) {
 	entity := ImageConfigurationEntity{
 		ID: uuid.New(), CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		EnvironmentSourceID: data.EnvironmentSourceID, RegistryResourceID: data.RegistryResourceID,
@@ -57,7 +65,9 @@ func (ic imageConfiguration) Create(ctx context.Context, db storage.Executor, da
 		ctx,
 		db,
 		"image-configuration-source:"+entity.EnvironmentSourceID.String(),
-		db.NewSelect().Model((*ImageConfigurationEntity)(nil)).Where("environment_source_id = ?", entity.EnvironmentSourceID),
+		db.NewSelect().
+			Model((*ImageConfigurationEntity)(nil)).
+			Where("environment_source_id = ?", entity.EnvironmentSourceID),
 		"environmentSourceId",
 		"the Environment source already has an image configuration",
 	); err != nil {

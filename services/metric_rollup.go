@@ -50,34 +50,126 @@ type rollupDefinition struct {
 const containerIdentityLabels = "application,environment,target,release,deployment,instance,resource_installation,component,id"
 
 var metricRollupDefinitions = []rollupDefinition{
-	{scope: "host", name: "cpu_cores_used", expression: `sum(rate(node_cpu_seconds_total{mode!="idle"}[1m]))`},
-	{scope: "host", name: "cpu_cores_total", expression: `count(node_cpu_seconds_total{mode="idle"})`},
+	{
+		scope:      "host",
+		name:       "cpu_cores_used",
+		expression: `sum(rate(node_cpu_seconds_total{mode!="idle"}[1m]))`,
+	},
+	{
+		scope:      "host",
+		name:       "cpu_cores_total",
+		expression: `count(node_cpu_seconds_total{mode="idle"})`,
+	},
 	{scope: "host", name: "memory_available_bytes", expression: `node_memory_MemAvailable_bytes`},
 	{scope: "host", name: "memory_total_bytes", expression: `node_memory_MemTotal_bytes`},
-	{scope: "host", name: "root_filesystem_available_bytes", expression: `node_filesystem_avail_bytes{mountpoint="/",fstype!=""}`},
-	{scope: "host", name: "root_filesystem_size_bytes", expression: `node_filesystem_size_bytes{mountpoint="/",fstype!=""}`},
-	{scope: "host", name: "disk_read_bytes_per_second", expression: `sum(rate(node_disk_read_bytes_total{device!~"loop.*|ram.*"}[1m]))`},
-	{scope: "host", name: "disk_write_bytes_per_second", expression: `sum(rate(node_disk_written_bytes_total{device!~"loop.*|ram.*"}[1m]))`},
-	{scope: "host", name: "network_receive_bytes_per_second", expression: `sum(rate(node_network_receive_bytes_total{device!="lo"}[1m]))`},
-	{scope: "host", name: "network_transmit_bytes_per_second", expression: `sum(rate(node_network_transmit_bytes_total{device!="lo"}[1m]))`},
-	{scope: "host", name: "oom_events", expression: `clamp_min(increase(node_vmstat_oom_kill[1m]), 0)`},
+	{
+		scope:      "host",
+		name:       "root_filesystem_available_bytes",
+		expression: `node_filesystem_avail_bytes{mountpoint="/",fstype!=""}`,
+	},
+	{
+		scope:      "host",
+		name:       "root_filesystem_size_bytes",
+		expression: `node_filesystem_size_bytes{mountpoint="/",fstype!=""}`,
+	},
+	{
+		scope:      "host",
+		name:       "disk_read_bytes_per_second",
+		expression: `sum(rate(node_disk_read_bytes_total{device!~"loop.*|ram.*"}[1m]))`,
+	},
+	{
+		scope:      "host",
+		name:       "disk_write_bytes_per_second",
+		expression: `sum(rate(node_disk_written_bytes_total{device!~"loop.*|ram.*"}[1m]))`,
+	},
+	{
+		scope:      "host",
+		name:       "network_receive_bytes_per_second",
+		expression: `sum(rate(node_network_receive_bytes_total{device!="lo"}[1m]))`,
+	},
+	{
+		scope:      "host",
+		name:       "network_transmit_bytes_per_second",
+		expression: `sum(rate(node_network_transmit_bytes_total{device!="lo"}[1m]))`,
+	},
+	{
+		scope:      "host",
+		name:       "oom_events",
+		expression: `clamp_min(increase(node_vmstat_oom_kill[1m]), 0)`,
+	},
 	{scope: "host", name: "tasks", expression: `node_procs_running`},
 
-	{scope: "container", name: "cpu_cores_used", expression: `sum by (` + containerIdentityLabels + `) (rate(container_cpu_usage_seconds_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m]))`},
-	{scope: "container", name: "memory_working_set_bytes", expression: `sum by (` + containerIdentityLabels + `) (container_memory_working_set_bytes{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"})`},
-	{scope: "container", name: "disk_read_bytes_per_second", expression: `sum by (` + containerIdentityLabels + `) (rate(container_fs_reads_bytes_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m]))`},
-	{scope: "container", name: "disk_write_bytes_per_second", expression: `sum by (` + containerIdentityLabels + `) (rate(container_fs_writes_bytes_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m]))`},
-	{scope: "container", name: "network_receive_bytes_per_second", expression: `sum by (` + containerIdentityLabels + `) (rate(container_network_receive_bytes_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m]))`},
-	{scope: "container", name: "network_transmit_bytes_per_second", expression: `sum by (` + containerIdentityLabels + `) (rate(container_network_transmit_bytes_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m]))`},
-	{scope: "container", name: "oom_events", expression: `sum by (` + containerIdentityLabels + `) (clamp_min(increase(container_oom_events_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m]), 0))`},
-	{scope: "container", name: "cpu_throttling_ratio", expression: `sum by (` + containerIdentityLabels + `) (rate(container_cpu_cfs_throttled_periods_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m])) / clamp_min(sum by (` + containerIdentityLabels + `) (rate(container_cpu_cfs_periods_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m])), 1)`},
-	{scope: "container", name: "tasks", expression: `sum by (` + containerIdentityLabels + `) (container_processes{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"})`},
+	{
+		scope:      "container",
+		name:       "cpu_cores_used",
+		expression: `sum by (` + containerIdentityLabels + `) (rate(container_cpu_usage_seconds_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m]))`,
+	},
+	{
+		scope:      "container",
+		name:       "memory_working_set_bytes",
+		expression: `sum by (` + containerIdentityLabels + `) (container_memory_working_set_bytes{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"})`,
+	},
+	{
+		scope:      "container",
+		name:       "disk_read_bytes_per_second",
+		expression: `sum by (` + containerIdentityLabels + `) (rate(container_fs_reads_bytes_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m]))`,
+	},
+	{
+		scope:      "container",
+		name:       "disk_write_bytes_per_second",
+		expression: `sum by (` + containerIdentityLabels + `) (rate(container_fs_writes_bytes_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m]))`,
+	},
+	{
+		scope:      "container",
+		name:       "network_receive_bytes_per_second",
+		expression: `sum by (` + containerIdentityLabels + `) (rate(container_network_receive_bytes_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m]))`,
+	},
+	{
+		scope:      "container",
+		name:       "network_transmit_bytes_per_second",
+		expression: `sum by (` + containerIdentityLabels + `) (rate(container_network_transmit_bytes_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m]))`,
+	},
+	{
+		scope:      "container",
+		name:       "oom_events",
+		expression: `sum by (` + containerIdentityLabels + `) (clamp_min(increase(container_oom_events_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m]), 0))`,
+	},
+	{
+		scope:      "container",
+		name:       "cpu_throttling_ratio",
+		expression: `sum by (` + containerIdentityLabels + `) (rate(container_cpu_cfs_throttled_periods_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m])) / clamp_min(sum by (` + containerIdentityLabels + `) (rate(container_cpu_cfs_periods_total{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"}[1m])), 1)`,
+	},
+	{
+		scope:      "container",
+		name:       "tasks",
+		expression: `sum by (` + containerIdentityLabels + `) (container_processes{id!="/",component!~"prometheus|node-exporter|cadvisor|docker|caddy|otel-collector|deploycrate-ce"})`,
+	},
 
-	{scope: "native", name: "cpu_cores_used", expression: `sum by (component) (rate(container_cpu_usage_seconds_total{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|otelcol-contrib|deploycrate-ce@(blue|green))\\.service"}[1m]))`},
-	{scope: "native", name: "memory_working_set_bytes", expression: `sum by (component) (container_memory_working_set_bytes{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|otelcol-contrib|deploycrate-ce@(blue|green))\\.service"})`},
-	{scope: "native", name: "disk_read_bytes_per_second", expression: `sum by (component) (rate(container_fs_reads_bytes_total{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|otelcol-contrib|deploycrate-ce@(blue|green))\\.service"}[1m]))`},
-	{scope: "native", name: "disk_write_bytes_per_second", expression: `sum by (component) (rate(container_fs_writes_bytes_total{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|otelcol-contrib|deploycrate-ce@(blue|green))\\.service"}[1m]))`},
-	{scope: "native", name: "tasks", expression: `sum by (component) (container_processes{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|otelcol-contrib|deploycrate-ce@(blue|green))\\.service"})`},
+	{
+		scope:      "native",
+		name:       "cpu_cores_used",
+		expression: `sum by (component) (rate(container_cpu_usage_seconds_total{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|otelcol-contrib|deploycrate-ce@(blue|green))\\.service"}[1m]))`,
+	},
+	{
+		scope:      "native",
+		name:       "memory_working_set_bytes",
+		expression: `sum by (component) (container_memory_working_set_bytes{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|otelcol-contrib|deploycrate-ce@(blue|green))\\.service"})`,
+	},
+	{
+		scope:      "native",
+		name:       "disk_read_bytes_per_second",
+		expression: `sum by (component) (rate(container_fs_reads_bytes_total{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|otelcol-contrib|deploycrate-ce@(blue|green))\\.service"}[1m]))`,
+	},
+	{
+		scope:      "native",
+		name:       "disk_write_bytes_per_second",
+		expression: `sum by (component) (rate(container_fs_writes_bytes_total{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|otelcol-contrib|deploycrate-ce@(blue|green))\\.service"}[1m]))`,
+	},
+	{
+		scope:      "native",
+		name:       "tasks",
+		expression: `sum by (component) (container_processes{id=~"/system.slice/(prometheus|node-exporter|cadvisor|docker|caddy|otelcol-contrib|deploycrate-ce@(blue|green))\\.service"})`,
+	},
 }
 
 type SystemResourceUsage struct {
@@ -205,12 +297,21 @@ func (service MetricRollupService) Collect(ctx context.Context) (resultErr error
 	insertedRows := 0
 	rejectedSamples := 0
 	defer func() {
-		telemetry.RecordMetricRollup(ctx, resultErr == nil, insertedRows, rejectedSamples, time.Since(startedAt))
+		telemetry.RecordMetricRollup(
+			ctx,
+			resultErr == nil,
+			insertedRows,
+			rejectedSamples,
+			time.Since(startedAt),
+		)
 	}()
 
 	observedAt := service.now().UTC().Truncate(time.Minute)
 	bucketStart := observedAt.Add(-time.Minute)
-	systemIdentities, err := models.Application.FindMetricRollupIdentities(ctx, service.db.Executor())
+	systemIdentities, err := models.Application.FindMetricRollupIdentities(
+		ctx,
+		service.db.Executor(),
+	)
 	if err != nil {
 		return fmt.Errorf("load system metric rollup identities: %w", err)
 	}
@@ -234,32 +335,49 @@ func (service MetricRollupService) Collect(ctx context.Context) (resultErr error
 			expression := fmt.Sprintf("%s((%s)[1m:15s])", statistic.function, definition.expression)
 			samples, queryErr := service.prometheus.Query(ctx, expression, observedAt)
 			if queryErr != nil {
-				queryErrors = append(queryErrors, fmt.Errorf("collect %s %s: %w", definition.name, statistic.name, queryErr))
+				queryErrors = append(
+					queryErrors,
+					fmt.Errorf("collect %s %s: %w", definition.name, statistic.name, queryErr),
+				)
 				definitionFailed = true
 				break
 			}
 			for _, sample := range samples {
 				identities, resolveErr := resolver.resolve(definition.scope, sample.Labels)
-				if errors.Is(resolveErr, errRejectedMetricIdentity) || errors.Is(resolveErr, sql.ErrNoRows) {
+				if errors.Is(resolveErr, errRejectedMetricIdentity) ||
+					errors.Is(resolveErr, sql.ErrNoRows) {
 					rejectedSamples++
 					continue
 				}
 				if resolveErr != nil {
-					queryErrors = append(queryErrors, fmt.Errorf("resolve %s metric identity: %w", definition.scope, resolveErr))
+					queryErrors = append(
+						queryErrors,
+						fmt.Errorf("resolve %s metric identity: %w", definition.scope, resolveErr),
+					)
 					continue
 				}
 				key := rollupIdentity(definition.scope, identities, sample.Labels)
 				rollup := values[key]
 				if rollup == nil {
 					rollup = &clickhouseclient.MetricRollup{
-						BucketStart: bucketStart, ObservedAt: observedAt,
-						Scope: definition.scope, Component: sample.Labels["component"], Metric: definition.name,
-						Server: identities.Server, Application: identities.Application,
-						Environment: identities.Environment, Release: identities.Release,
-						Deployment: identities.Deployment, Target: identities.Target,
-						Instance: identities.Instance, Resource: identities.Resource,
+						BucketStart:  bucketStart,
+						ObservedAt:   observedAt,
+						Scope:        definition.scope,
+						Component:    sample.Labels["component"],
+						Metric:       definition.name,
+						Server:       identities.Server,
+						Application:  identities.Application,
+						Environment:  identities.Environment,
+						Release:      identities.Release,
+						Deployment:   identities.Deployment,
+						Target:       identities.Target,
+						Instance:     identities.Instance,
+						Resource:     identities.Resource,
 						Installation: identities.Installation,
-						RuntimeID:    runtimeIDFromCgroup(sample.Labels["id"]), ObservationID: uuid.NewString(),
+						RuntimeID: runtimeIDFromCgroup(
+							sample.Labels["id"],
+						),
+						ObservationID: uuid.NewString(),
 					}
 					values[key] = rollup
 				}
@@ -289,17 +407,38 @@ func (service MetricRollupService) Collect(ctx context.Context) (resultErr error
 	}
 	insertedRows = len(rollups)
 	if len(queryErrors) > 0 {
-		slog.WarnContext(ctx, "metric rollup completed with partial query failures", "inserted_rows", insertedRows, "rejected_samples", rejectedSamples, "failed_queries", len(queryErrors), "error", errors.Join(queryErrors...))
+		slog.WarnContext(
+			ctx,
+			"metric rollup completed with partial query failures",
+			"inserted_rows",
+			insertedRows,
+			"rejected_samples",
+			rejectedSamples,
+			"failed_queries",
+			len(queryErrors),
+			"error",
+			errors.Join(queryErrors...),
+		)
 		if insertedRows == 0 {
 			return errors.Join(queryErrors...)
 		}
 	} else {
-		slog.InfoContext(ctx, "metric rollup completed", "inserted_rows", insertedRows, "rejected_samples", rejectedSamples)
+		slog.InfoContext(
+			ctx,
+			"metric rollup completed",
+			"inserted_rows",
+			insertedRows,
+			"rejected_samples",
+			rejectedSamples,
+		)
 	}
 	return nil
 }
 
-func (resolver *metricIdentityResolver) resolve(scope string, labels map[string]string) (models.MetricRollupIdentities, error) {
+func (resolver *metricIdentityResolver) resolve(
+	scope string,
+	labels map[string]string,
+) (models.MetricRollupIdentities, error) {
 	key := scope + "\x00" + labels["application"] + "\x00" + labels["environment"] + "\x00" + labels["target"] + "\x00" +
 		labels["release"] + "\x00" + labels["deployment"] + "\x00" + labels["instance"] + "\x00" +
 		labels["resource_installation"] + "\x00" + labels["component"]
@@ -312,7 +451,18 @@ func (resolver *metricIdentityResolver) resolve(scope string, labels map[string]
 	case "host":
 		identity = models.MetricRollupIdentities{Server: resolver.system.Server}
 	case "native":
-		if !slices.Contains([]string{"prometheus", "node-exporter", "cadvisor", "docker", "caddy", "otel-collector", "deploycrate-ce"}, labels["component"]) {
+		if !slices.Contains(
+			[]string{
+				"prometheus",
+				"node-exporter",
+				"cadvisor",
+				"docker",
+				"caddy",
+				"otel-collector",
+				"deploycrate-ce",
+			},
+			labels["component"],
+		) {
 			return models.MetricRollupIdentities{}, errRejectedMetricIdentity
 		}
 		identity = models.MetricRollupIdentities{Server: resolver.system.Server}
@@ -331,7 +481,11 @@ func (resolver *metricIdentityResolver) resolve(scope string, labels map[string]
 			if parseErr != nil {
 				return models.MetricRollupIdentities{}, errRejectedMetricIdentity
 			}
-			identity, err = models.Application.FindMetricWorkloadIdentities(resolver.ctx, resolver.db, instanceID)
+			identity, err = models.Application.FindMetricWorkloadIdentities(
+				resolver.ctx,
+				resolver.db,
+				instanceID,
+			)
 			if err == nil && !labelsMatchIdentity(labels, identity) {
 				return models.MetricRollupIdentities{}, errRejectedMetricIdentity
 			}
@@ -340,9 +494,17 @@ func (resolver *metricIdentityResolver) resolve(scope string, labels map[string]
 			if parseErr != nil {
 				return models.MetricRollupIdentities{}, errRejectedMetricIdentity
 			}
-			identity, err = models.Application.FindMetricResourceIdentities(resolver.ctx, resolver.db, installationID)
+			identity, err = models.Application.FindMetricResourceIdentities(
+				resolver.ctx,
+				resolver.db,
+				installationID,
+			)
 			if errors.Is(err, sql.ErrNoRows) {
-				identity, err = models.Application.FindMetricDatabaseInstallationIdentities(resolver.ctx, resolver.db, installationID)
+				identity, err = models.Application.FindMetricDatabaseInstallationIdentities(
+					resolver.ctx,
+					resolver.db,
+					installationID,
+				)
 			}
 			if err == nil && identity.Installation != installationID.String() {
 				return models.MetricRollupIdentities{}, errRejectedMetricIdentity
@@ -385,7 +547,11 @@ func runtimeIDFromCgroup(value string) string {
 	return part
 }
 
-func rollupIdentity(scope string, identity models.MetricRollupIdentities, labels map[string]string) string {
+func rollupIdentity(
+	scope string,
+	identity models.MetricRollupIdentities,
+	labels map[string]string,
+) string {
 	return strings.Join([]string{
 		scope, labels["component"], identity.Server, identity.Application, identity.Environment,
 		identity.Release, identity.Deployment, identity.Target, identity.Instance,
@@ -393,8 +559,16 @@ func rollupIdentity(scope string, identity models.MetricRollupIdentities, labels
 	}, "\x00")
 }
 
-func (service MetricRollupService) HostTelemetry(ctx context.Context, server string) (SystemTelemetry, error) {
-	return service.hostTelemetry(ctx, server, service.now().UTC().Add(-systemTelemetryHistoryWindow), 15*time.Minute)
+func (service MetricRollupService) HostTelemetry(
+	ctx context.Context,
+	server string,
+) (SystemTelemetry, error) {
+	return service.hostTelemetry(
+		ctx,
+		server,
+		service.now().UTC().Add(-systemTelemetryHistoryWindow),
+		15*time.Minute,
+	)
 }
 
 func (service MetricRollupService) hostTelemetry(
@@ -414,8 +588,16 @@ func (service MetricRollupService) hostTelemetry(
 	values, latestErr := client.LatestSystemMetricValues(ctx, server)
 	history, historyErr := client.SystemMetricHistory(ctx, server, since, bucket)
 	if historyErr == nil {
-		result.MemoryHistory = systemResourceHistory(history, "memory_available_bytes", "memory_total_bytes")
-		result.StorageHistory = systemResourceHistory(history, "root_filesystem_available_bytes", "root_filesystem_size_bytes")
+		result.MemoryHistory = systemResourceHistory(
+			history,
+			"memory_available_bytes",
+			"memory_total_bytes",
+		)
+		result.StorageHistory = systemResourceHistory(
+			history,
+			"root_filesystem_available_bytes",
+			"root_filesystem_size_bytes",
+		)
 		result.HostHistory = systemThroughputHistory(history)
 	}
 	if latestErr != nil {
@@ -449,10 +631,26 @@ func (service MetricRollupService) hostTelemetry(
 	cpuUsed := cpuCores / cpuTotal * 100
 	memoryFree := clamp(metrics["memory_available_bytes"].Value, 0, memoryTotal)
 	storageFree := clamp(metrics["root_filesystem_available_bytes"].Value, 0, storageTotal)
-	diskRead, diskReadAvailable := freshSystemMetric(metrics, "disk_read_bytes_per_second", service.now().UTC())
-	diskWrite, diskWriteAvailable := freshSystemMetric(metrics, "disk_write_bytes_per_second", service.now().UTC())
-	networkReceive, networkReceiveAvailable := freshSystemMetric(metrics, "network_receive_bytes_per_second", service.now().UTC())
-	networkTransmit, networkTransmitAvailable := freshSystemMetric(metrics, "network_transmit_bytes_per_second", service.now().UTC())
+	diskRead, diskReadAvailable := freshSystemMetric(
+		metrics,
+		"disk_read_bytes_per_second",
+		service.now().UTC(),
+	)
+	diskWrite, diskWriteAvailable := freshSystemMetric(
+		metrics,
+		"disk_write_bytes_per_second",
+		service.now().UTC(),
+	)
+	networkReceive, networkReceiveAvailable := freshSystemMetric(
+		metrics,
+		"network_receive_bytes_per_second",
+		service.now().UTC(),
+	)
+	networkTransmit, networkTransmitAvailable := freshSystemMetric(
+		metrics,
+		"network_transmit_bytes_per_second",
+		service.now().UTC(),
+	)
 	oomEvents, oomAvailable := freshSystemMetric(metrics, "oom_events", service.now().UTC())
 	tasks, tasksAvailable := freshSystemMetric(metrics, "tasks", service.now().UTC())
 	result.Available = true
@@ -496,7 +694,11 @@ func (service MetricRollupService) SystemTelemetry(
 	if err != nil {
 		return result, errors.Join(hostErr, fmt.Errorf("parse system telemetry server: %w", err))
 	}
-	inventory, inventoryErr := models.Application.FindSystemTelemetryContainers(ctx, service.db.Executor(), serverID)
+	inventory, inventoryErr := models.Application.FindSystemTelemetryContainers(
+		ctx,
+		service.db.Executor(),
+		serverID,
+	)
 	result.SystemContainers = mergeSystemContainerInventory(result.SystemContainers, inventory)
 	if !service.enabled {
 		return result, errors.Join(hostErr, inventoryErr)
@@ -510,7 +712,14 @@ func (service MetricRollupService) SystemTelemetry(
 	if err != nil {
 		queryErrors = append(queryErrors, err)
 	} else {
-		platformHistory, historyErr := client.AttributedMetricHistory(ctx, "native", server, "", since, bucket)
+		platformHistory, historyErr := client.AttributedMetricHistory(
+			ctx,
+			"native",
+			server,
+			"",
+			since,
+			bucket,
+		)
 		if historyErr != nil {
 			queryErrors = append(queryErrors, historyErr)
 		}
@@ -523,7 +732,14 @@ func (service MetricRollupService) SystemTelemetry(
 		queryErrors = append(queryErrors, err)
 	} else {
 		containers = systemContainerMetricValues(containers)
-		containerHistory, historyErr := client.AttributedMetricHistory(ctx, "container", server, "", since, bucket)
+		containerHistory, historyErr := client.AttributedMetricHistory(
+			ctx,
+			"container",
+			server,
+			"",
+			since,
+			bucket,
+		)
 		if historyErr != nil {
 			queryErrors = append(queryErrors, historyErr)
 		}
@@ -588,12 +804,17 @@ func mergeSystemContainerInventory(
 		result = append(result, row)
 	}
 	slices.SortFunc(result, func(a, b AttributedTelemetryRow) int {
-		return strings.Compare(a.ResourceName+a.Component+a.ContainerName, b.ResourceName+b.Component+b.ContainerName)
+		return strings.Compare(
+			a.ResourceName+a.Component+a.ContainerName,
+			b.ResourceName+b.Component+b.ContainerName,
+		)
 	})
 	return result
 }
 
-func systemContainerMetricValues(values []clickhouseclient.AttributedMetricValue) []clickhouseclient.AttributedMetricValue {
+func systemContainerMetricValues(
+	values []clickhouseclient.AttributedMetricValue,
+) []clickhouseclient.AttributedMetricValue {
 	result := make([]clickhouseclient.AttributedMetricValue, 0, len(values))
 	for _, value := range values {
 		if value.Instance == "" {
@@ -626,12 +847,20 @@ type EnvironmentTelemetryResult struct {
 	HostUsage EnvironmentHostUsage     `json:"hostUsage"`
 }
 
-func (service MetricRollupService) EnvironmentTelemetry(ctx context.Context, environmentID uuid.UUID, telemetryRange TelemetryRange) (EnvironmentTelemetryResult, error) {
+func (service MetricRollupService) EnvironmentTelemetry(
+	ctx context.Context,
+	environmentID uuid.UUID,
+	telemetryRange TelemetryRange,
+) (EnvironmentTelemetryResult, error) {
 	result := EnvironmentTelemetryResult{Rows: []AttributedTelemetryRow{}}
 	if !service.enabled || environmentID == uuid.Nil {
 		return result, nil
 	}
-	target, err := models.EnvironmentTarget.ActiveForEnvironment(ctx, service.db.Executor(), environmentID)
+	target, err := models.EnvironmentTarget.ActiveForEnvironment(
+		ctx,
+		service.db.Executor(),
+		environmentID,
+	)
 	if err != nil {
 		return result, err
 	}
@@ -639,11 +868,23 @@ func (service MetricRollupService) EnvironmentTelemetry(ctx context.Context, env
 	if err != nil {
 		return result, err
 	}
-	current, err := client.LatestAttributedMetricValues(ctx, "container", target.ServerID.String(), environmentID.String())
+	current, err := client.LatestAttributedMetricValues(
+		ctx,
+		"container",
+		target.ServerID.String(),
+		environmentID.String(),
+	)
 	if err != nil {
 		return result, err
 	}
-	history, err := client.AttributedMetricHistory(ctx, "container", target.ServerID.String(), environmentID.String(), service.now().UTC().Add(-telemetryRange.Duration()), telemetryRange.Bucket())
+	history, err := client.AttributedMetricHistory(
+		ctx,
+		"container",
+		target.ServerID.String(),
+		environmentID.String(),
+		service.now().UTC().Add(-telemetryRange.Duration()),
+		telemetryRange.Bucket(),
+	)
 	if err != nil {
 		return result, err
 	}
@@ -684,17 +925,27 @@ func (service MetricRollupService) environmentHostUsage(
 	return usage
 }
 
-func attributedTelemetryRows(current, history []clickhouseclient.AttributedMetricValue, now time.Time) []AttributedTelemetryRow {
+func attributedTelemetryRows(
+	current, history []clickhouseclient.AttributedMetricValue,
+	now time.Time,
+) []AttributedTelemetryRow {
 	rows := make(map[string]*AttributedTelemetryRow)
 	for _, value := range current {
 		key := attributedIdentity(value)
 		row := rows[key]
 		if row == nil {
 			row = &AttributedTelemetryRow{
-				Scope: value.Scope, Component: value.Component, Application: value.Application,
-				Environment: value.Environment, Release: value.Release, Deployment: value.Deployment,
-				Target: value.Target, Instance: value.Instance, Resource: value.Resource,
-				Installation: value.Installation, History: []AttributedTelemetryPoint{},
+				Scope:        value.Scope,
+				Component:    value.Component,
+				Application:  value.Application,
+				Environment:  value.Environment,
+				Release:      value.Release,
+				Deployment:   value.Deployment,
+				Target:       value.Target,
+				Instance:     value.Instance,
+				Resource:     value.Resource,
+				Installation: value.Installation,
+				History:      []AttributedTelemetryPoint{},
 			}
 			rows[key] = row
 		}
@@ -713,7 +964,10 @@ func attributedTelemetryRows(current, history []clickhouseclient.AttributedMetri
 		pointKey := key + "\x00" + value.BucketStart.Format(time.RFC3339)
 		index, exists := historyIndexes[pointKey]
 		if !exists {
-			row.History = append(row.History, AttributedTelemetryPoint{ObservedAt: value.BucketStart})
+			row.History = append(
+				row.History,
+				AttributedTelemetryPoint{ObservedAt: value.BucketStart},
+			)
 			index = len(row.History) - 1
 			historyIndexes[pointKey] = index
 		}
@@ -721,18 +975,39 @@ func attributedTelemetryRows(current, history []clickhouseclient.AttributedMetri
 	}
 	result := make([]AttributedTelemetryRow, 0, len(rows))
 	for _, row := range rows {
-		row.Available = !row.ObservedAt.IsZero() && now.Sub(row.ObservedAt) <= systemTelemetryFreshness
-		slices.SortFunc(row.History, func(a, b AttributedTelemetryPoint) int { return a.ObservedAt.Compare(b.ObservedAt) })
+		row.Available = !row.ObservedAt.IsZero() &&
+			now.Sub(row.ObservedAt) <= systemTelemetryFreshness
+		slices.SortFunc(
+			row.History,
+			func(a, b AttributedTelemetryPoint) int { return a.ObservedAt.Compare(b.ObservedAt) },
+		)
 		result = append(result, *row)
 	}
 	slices.SortFunc(result, func(a, b AttributedTelemetryRow) int {
-		return strings.Compare(a.Component+a.Application+a.Instance+a.Installation, b.Component+b.Application+b.Instance+b.Installation)
+		return strings.Compare(
+			a.Component+a.Application+a.Instance+a.Installation,
+			b.Component+b.Application+b.Instance+b.Installation,
+		)
 	})
 	return result
 }
 
 func attributedIdentity(value clickhouseclient.AttributedMetricValue) string {
-	return strings.Join([]string{value.Scope, value.Component, value.Application, value.Environment, value.Release, value.Deployment, value.Target, value.Instance, value.Resource, value.Installation}, "\x00")
+	return strings.Join(
+		[]string{
+			value.Scope,
+			value.Component,
+			value.Application,
+			value.Environment,
+			value.Release,
+			value.Deployment,
+			value.Target,
+			value.Instance,
+			value.Resource,
+			value.Installation,
+		},
+		"\x00",
+	)
 }
 
 func applyAttributedMetric(row *AttributedTelemetryRow, metric string, value float64) {
@@ -790,7 +1065,10 @@ func applyAttributedPointMetric(point *AttributedTelemetryPoint, metric string, 
 	}
 }
 
-func systemResourceHistory(values []clickhouseclient.MetricHistoryValue, availableMetric, totalMetric string) []SystemTelemetryHistoryPoint {
+func systemResourceHistory(
+	values []clickhouseclient.MetricHistoryValue,
+	availableMetric, totalMetric string,
+) []SystemTelemetryHistoryPoint {
 	type bucket struct {
 		observedAt time.Time
 		available  float64
@@ -827,12 +1105,21 @@ func systemResourceHistory(values []clickhouseclient.MetricHistoryValue, availab
 			continue
 		}
 		free := clamp(current.available, 0, current.total)
-		points = append(points, SystemTelemetryHistoryPoint{ObservedAt: current.observedAt, Used: current.total - free, Free: free})
+		points = append(
+			points,
+			SystemTelemetryHistoryPoint{
+				ObservedAt: current.observedAt,
+				Used:       current.total - free,
+				Free:       free,
+			},
+		)
 	}
 	return points
 }
 
-func systemThroughputHistory(values []clickhouseclient.MetricHistoryValue) []SystemThroughputHistoryPoint {
+func systemThroughputHistory(
+	values []clickhouseclient.MetricHistoryValue,
+) []SystemThroughputHistoryPoint {
 	pointsByBucket := make(map[int64]*SystemThroughputHistoryPoint)
 	for _, value := range values {
 		key := value.BucketStart.UnixMilli()

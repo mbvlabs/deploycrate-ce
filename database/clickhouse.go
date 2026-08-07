@@ -41,7 +41,10 @@ func NewClickHouse(ctx context.Context, cfg config.Config) (*ClickHouse, error) 
 	case "clickhouse", "native", "tcp":
 		options.Protocol = clickhousedriver.Native
 	default:
-		return nil, fmt.Errorf("database: unsupported ClickHouse protocol %q", cfg.ClickHouse.Protocol)
+		return nil, fmt.Errorf(
+			"database: unsupported ClickHouse protocol %q",
+			cfg.ClickHouse.Protocol,
+		)
 	}
 
 	db := clickhousedriver.OpenDB(options)

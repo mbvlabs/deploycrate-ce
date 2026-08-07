@@ -21,7 +21,12 @@ type GitHubWebhookDeliveryFactory struct {
 
 type GitHubWebhookDeliveryOption func(*GitHubWebhookDeliveryFactory)
 
-func BuildGitHubWebhookDelivery(deliveryID string, installationExternalID sql.NullInt64, repositoryExternalID sql.NullInt64, opts ...GitHubWebhookDeliveryOption) models.GitHubWebhookDeliveryEntity {
+func BuildGitHubWebhookDelivery(
+	deliveryID string,
+	installationExternalID sql.NullInt64,
+	repositoryExternalID sql.NullInt64,
+	opts ...GitHubWebhookDeliveryOption,
+) models.GitHubWebhookDeliveryEntity {
 	f := &GitHubWebhookDeliveryFactory{
 		GitHubWebhookDeliveryEntity: models.GitHubWebhookDeliveryEntity{
 			DeliveryID:             deliveryID,
@@ -45,8 +50,19 @@ func BuildGitHubWebhookDelivery(deliveryID string, installationExternalID sql.Nu
 	return f.GitHubWebhookDeliveryEntity
 }
 
-func CreateGitHubWebhookDelivery(ctx context.Context, exec storage.Executor, deliveryID string, installationExternalID sql.NullInt64, repositoryExternalID sql.NullInt64, opts ...GitHubWebhookDeliveryOption) (models.GitHubWebhookDeliveryEntity, error) {
-	built := BuildGitHubWebhookDelivery(deliveryID, installationExternalID, repositoryExternalID, opts...)
+func CreateGitHubWebhookDelivery(
+	ctx context.Context,
+	exec storage.Executor,
+	deliveryID string,
+	installationExternalID sql.NullInt64,
+	repositoryExternalID sql.NullInt64,
+	opts ...GitHubWebhookDeliveryOption,
+) (models.GitHubWebhookDeliveryEntity, error) {
+	built := BuildGitHubWebhookDelivery(
+		deliveryID,
+		installationExternalID,
+		repositoryExternalID,
+		opts...)
 
 	entity := models.GitHubWebhookDeliveryEntity{
 		ID:                     uuid.New(),
@@ -72,11 +88,25 @@ func CreateGitHubWebhookDelivery(ctx context.Context, exec storage.Executor, del
 	return entity, nil
 }
 
-func CreateGitHubWebhookDeliverys(ctx context.Context, exec storage.Executor, deliveryID string, installationExternalID sql.NullInt64, repositoryExternalID sql.NullInt64, count int, opts ...GitHubWebhookDeliveryOption) ([]models.GitHubWebhookDeliveryEntity, error) {
+func CreateGitHubWebhookDeliverys(
+	ctx context.Context,
+	exec storage.Executor,
+	deliveryID string,
+	installationExternalID sql.NullInt64,
+	repositoryExternalID sql.NullInt64,
+	count int,
+	opts ...GitHubWebhookDeliveryOption,
+) ([]models.GitHubWebhookDeliveryEntity, error) {
 	githubwebhookdeliverys := make([]models.GitHubWebhookDeliveryEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateGitHubWebhookDelivery(ctx, exec, deliveryID, installationExternalID, repositoryExternalID, opts...)
+		entity, err := CreateGitHubWebhookDelivery(
+			ctx,
+			exec,
+			deliveryID,
+			installationExternalID,
+			repositoryExternalID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create githubwebhookdelivery %d: %w", i+1, err)
 		}
@@ -104,13 +134,17 @@ func WithGithubWebhookDeliveriesAction(value sql.NullString) GitHubWebhookDelive
 	}
 }
 
-func WithGithubWebhookDeliveriesInstallationExternalID(value sql.NullInt64) GitHubWebhookDeliveryOption {
+func WithGithubWebhookDeliveriesInstallationExternalID(
+	value sql.NullInt64,
+) GitHubWebhookDeliveryOption {
 	return func(f *GitHubWebhookDeliveryFactory) {
 		f.GitHubWebhookDeliveryEntity.InstallationExternalID = value
 	}
 }
 
-func WithGithubWebhookDeliveriesRepositoryExternalID(value sql.NullInt64) GitHubWebhookDeliveryOption {
+func WithGithubWebhookDeliveriesRepositoryExternalID(
+	value sql.NullInt64,
+) GitHubWebhookDeliveryOption {
 	return func(f *GitHubWebhookDeliveryFactory) {
 		f.GitHubWebhookDeliveryEntity.RepositoryExternalID = value
 	}

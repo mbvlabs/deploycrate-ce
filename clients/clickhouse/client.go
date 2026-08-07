@@ -527,11 +527,17 @@ func (client Client) EnvironmentLogs(
 		}
 		timestampNanoseconds, err := strconv.ParseInt(row.TimestampNanoseconds, 10, 64)
 		if err != nil {
-			return EnvironmentLogPage{}, fmt.Errorf("decode ClickHouse Environment log timestamp: %w", err)
+			return EnvironmentLogPage{}, fmt.Errorf(
+				"decode ClickHouse Environment log timestamp: %w",
+				err,
+			)
 		}
 		ordinal, err := strconv.ParseUint(row.Ordinal, 10, 64)
 		if err != nil {
-			return EnvironmentLogPage{}, fmt.Errorf("decode ClickHouse Environment log ordinal: %w", err)
+			return EnvironmentLogPage{}, fmt.Errorf(
+				"decode ClickHouse Environment log ordinal: %w",
+				err,
+			)
 		}
 		logs = append(logs, EnvironmentLog{
 			Cursor: LogCursor{
@@ -539,9 +545,15 @@ func (client Client) EnvironmentLogs(
 				Epoch:     row.Epoch,
 				Ordinal:   ordinal,
 			},
-			Message: row.Message, Stream: row.Stream, Container: row.Container,
-			Deployment: row.Deployment, Instance: row.Instance, Release: row.Release,
-			ProcessName: row.ProcessName, ProcessKind: row.ProcessKind, ProcessReplica: row.ProcessReplica,
+			Message:        row.Message,
+			Stream:         row.Stream,
+			Container:      row.Container,
+			Deployment:     row.Deployment,
+			Instance:       row.Instance,
+			Release:        row.Release,
+			ProcessName:    row.ProcessName,
+			ProcessKind:    row.ProcessKind,
+			ProcessReplica: row.ProcessReplica,
 		})
 	}
 	if after == nil {
@@ -682,7 +694,10 @@ func (client Client) telemetryLogs(
 		}
 		fingerprint, err := strconv.ParseUint(row.Fingerprint, 10, 64)
 		if err != nil {
-			return SystemLogPage{}, fmt.Errorf("decode ClickHouse telemetry log fingerprint: %w", err)
+			return SystemLogPage{}, fmt.Errorf(
+				"decode ClickHouse telemetry log fingerprint: %w",
+				err,
+			)
 		}
 		logs = append(logs, SystemLog{
 			Cursor: SystemLogCursor{
@@ -746,10 +761,15 @@ func (client Client) ExportMetricRollups(
 		if err := decoder.Decode(&row); errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
-			return MetricRollupExport{}, fmt.Errorf("decode ClickHouse metric rollup export: %w", err)
+			return MetricRollupExport{}, fmt.Errorf(
+				"decode ClickHouse metric rollup export: %w",
+				err,
+			)
 		}
 		if row.BucketStart == "" {
-			return MetricRollupExport{}, errors.New("ClickHouse metric rollup export is missing bucket_start")
+			return MetricRollupExport{}, errors.New(
+				"ClickHouse metric rollup export is missing bucket_start",
+			)
 		}
 		result.Rows++
 		if result.FirstBucket == "" || row.BucketStart < result.FirstBucket {

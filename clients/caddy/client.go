@@ -84,9 +84,12 @@ func (client *Client) ApplyRoute(ctx context.Context, route Route) error {
 		handles = append(handles, routeHandle{
 			Handler: "authentication",
 			Providers: map[string]authenticationProvider{
-				"http_basic": {Accounts: []authenticationAccount{{
-					Username: route.Authentication.Username, Password: route.Authentication.PasswordHash,
-				}}},
+				"http_basic": {Accounts: []authenticationAccount{
+					{
+						Username: route.Authentication.Username,
+						Password: route.Authentication.PasswordHash,
+					},
+				}},
 			},
 		})
 	}
@@ -157,7 +160,14 @@ func (client *Client) applyRoute(ctx context.Context, entry routeEntry) error {
 		method = http.MethodPatch
 		path = "/id/" + url.PathEscape(entry.ID)
 	}
-	if err := client.request(ctx, method, path, payload, http.StatusOK, http.StatusCreated); err != nil {
+	if err := client.request(
+		ctx,
+		method,
+		path,
+		payload,
+		http.StatusOK,
+		http.StatusCreated,
+	); err != nil {
 		return fmt.Errorf("caddy: apply route %s: %w", entry.ID, err)
 	}
 	return nil
@@ -179,7 +189,12 @@ func (client *Client) RouteConfig(ctx context.Context, id string) (json.RawMessa
 	if id == "" {
 		return nil, errors.New("caddy: route identifier is required")
 	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, client.baseURL+"/id/"+url.PathEscape(id), nil)
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		client.baseURL+"/id/"+url.PathEscape(id),
+		nil,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +208,12 @@ func (client *Client) RouteConfig(ctx context.Context, id string) (json.RawMessa
 		return nil, fmt.Errorf("caddy: read route %s response: %w", id, readErr)
 	}
 	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("caddy: read route %s: unexpected status %d: %s", id, response.StatusCode, strings.TrimSpace(string(body)))
+		return nil, fmt.Errorf(
+			"caddy: read route %s: unexpected status %d: %s",
+			id,
+			response.StatusCode,
+			strings.TrimSpace(string(body)),
+		)
 	}
 	if !json.Valid(body) {
 		return nil, fmt.Errorf("caddy: route %s returned invalid JSON", id)
@@ -210,7 +230,13 @@ func (client *Client) DeleteRoute(ctx context.Context, id string) error {
 	if err != nil || !exists {
 		return err
 	}
-	if err := client.request(ctx, http.MethodDelete, "/id/"+url.PathEscape(id), nil, http.StatusOK); err != nil {
+	if err := client.request(
+		ctx,
+		http.MethodDelete,
+		"/id/"+url.PathEscape(id),
+		nil,
+		http.StatusOK,
+	); err != nil {
 		return fmt.Errorf("caddy: delete route %s: %w", id, err)
 	}
 	return nil
@@ -233,7 +259,12 @@ func (client *Client) VerifyPublic(ctx context.Context, domain, healthPath strin
 	httpClient := telemetry.NewHTTPClient(publicVerifyRequestLimit)
 	var lastErr error
 	for {
-		request, err := http.NewRequestWithContext(verificationCtx, http.MethodGet, "https://"+domain+healthPath, nil)
+		request, err := http.NewRequestWithContext(
+			verificationCtx,
+			http.MethodGet,
+			"https://"+domain+healthPath,
+			nil,
+		)
 		if err != nil {
 			return err
 		}
@@ -246,7 +277,10 @@ func (client *Client) VerifyPublic(ctx context.Context, domain, healthPath strin
 			if response.StatusCode >= 200 && response.StatusCode < 400 {
 				return nil
 			}
-			lastErr = fmt.Errorf("caddy: public Environment route returned status %d", response.StatusCode)
+			lastErr = fmt.Errorf(
+				"caddy: public Environment route returned status %d",
+				response.StatusCode,
+			)
 			if response.StatusCode < 500 {
 				return lastErr
 			}
@@ -274,7 +308,11 @@ func (client *Client) serverExists(ctx context.Context) (bool, error) {
 		return true, nil
 	}
 	if status != http.StatusNotFound && !isInvalidTraversal(status, body) {
-		return false, fmt.Errorf("caddy: inspect HTTP server: unexpected status %d: %s", status, strings.TrimSpace(string(body)))
+		return false, fmt.Errorf(
+			"caddy: inspect HTTP server: unexpected status %d: %s",
+			status,
+			strings.TrimSpace(string(body)),
+		)
 	}
 	return false, nil
 }
@@ -299,7 +337,13 @@ func (client *Client) createServerWithRoute(ctx context.Context, route routeEntr
 	if err != nil {
 		return fmt.Errorf("caddy: encode HTTP server with route %s: %w", route.ID, err)
 	}
-	if err := client.request(ctx, http.MethodPatch, "/config/", payload, http.StatusOK); err != nil {
+	if err := client.request(
+		ctx,
+		http.MethodPatch,
+		"/config/",
+		payload,
+		http.StatusOK,
+	); err != nil {
 		return fmt.Errorf("caddy: create HTTP server with route %s: %w", route.ID, err)
 	}
 	return nil
@@ -354,7 +398,12 @@ func (client *Client) routeExists(ctx context.Context, id string) (bool, error) 
 	case http.StatusNotFound:
 		return false, nil
 	default:
-		return false, fmt.Errorf("caddy: inspect route %s: unexpected status %d: %s", id, status, strings.TrimSpace(string(body)))
+		return false, fmt.Errorf(
+			"caddy: inspect route %s: unexpected status %d: %s",
+			id,
+			status,
+			strings.TrimSpace(string(body)),
+		)
 	}
 }
 
@@ -382,11 +431,22 @@ func isInvalidTraversal(status int, body []byte) bool {
 	var response struct {
 		Error string `json:"error"`
 	}
-	return json.Unmarshal(body, &response) == nil && strings.HasPrefix(response.Error, "invalid traversal path at:")
+	return json.Unmarshal(body, &response) == nil &&
+		strings.HasPrefix(response.Error, "invalid traversal path at:")
 }
 
-func (client *Client) request(ctx context.Context, method, path string, payload []byte, allowed ...int) error {
-	request, err := http.NewRequestWithContext(ctx, method, client.baseURL+path, bytes.NewReader(payload))
+func (client *Client) request(
+	ctx context.Context,
+	method, path string,
+	payload []byte,
+	allowed ...int,
+) error {
+	request, err := http.NewRequestWithContext(
+		ctx,
+		method,
+		client.baseURL+path,
+		bytes.NewReader(payload),
+	)
 	if err != nil {
 		return err
 	}
@@ -402,7 +462,11 @@ func (client *Client) request(ctx context.Context, method, path string, payload 
 	}
 	body, readErr := io.ReadAll(io.LimitReader(response.Body, 32*1024))
 	return errors.Join(
-		fmt.Errorf("unexpected status %d: %s", response.StatusCode, strings.TrimSpace(string(body))),
+		fmt.Errorf(
+			"unexpected status %d: %s",
+			response.StatusCode,
+			strings.TrimSpace(string(body)),
+		),
 		readErr,
 	)
 }
@@ -425,7 +489,8 @@ func validateRoute(route Route) error {
 	if route.HealthPath != "" && !strings.HasPrefix(route.HealthPath, "/") {
 		return errors.New("caddy: health path must be absolute")
 	}
-	if route.Authentication != nil && (strings.TrimSpace(route.Authentication.Username) == "" || strings.TrimSpace(route.Authentication.PasswordHash) == "") {
+	if route.Authentication != nil &&
+		(strings.TrimSpace(route.Authentication.Username) == "" || strings.TrimSpace(route.Authentication.PasswordHash) == "") {
 		return errors.New("caddy: basic authentication username and password hash are required")
 	}
 	return nil

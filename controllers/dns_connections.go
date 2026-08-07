@@ -44,7 +44,15 @@ func (controller DNSConnections) RegisterRoutes(r *router.Router) error {
 	}
 	errList := make([]error, 0, len(definitions))
 	for _, definition := range definitions {
-		_, err := r.AddRoute(echo.Route{Method: definition.method, Path: definition.route.Path(), Name: definition.route.Name(), Handler: definition.handler, Middlewares: admin})
+		_, err := r.AddRoute(
+			echo.Route{
+				Method:      definition.method,
+				Path:        definition.route.Path(),
+				Name:        definition.route.Name(),
+				Handler:     definition.handler,
+				Middlewares: admin,
+			},
+		)
 		if err != nil {
 			errList = append(errList, err)
 		}
@@ -76,7 +84,12 @@ func (controller DNSConnections) Show(etx *echo.Context) error {
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 	return inertia.Page(etx, "Connections/DNS/Show", inertia.Props{
-		"auth": authProps(etx), "connection": connection, "zones": zones, "flash": environmentFlashProps(etx),
+		"auth": authProps(
+			etx,
+		),
+		"connection": connection,
+		"zones":      zones,
+		"flash":      environmentFlashProps(etx),
 	})
 }
 
@@ -89,7 +102,12 @@ func (controller DNSConnections) Create(etx *echo.Context) error {
 	if err := etx.Bind(&payload); err != nil {
 		return inertia.Page(etx, "Errors/BadRequest", inertia.Props{})
 	}
-	if _, err := controller.service.Create(etx.Request().Context(), payload.Name, payload.AccountID, payload.Token); err != nil {
+	if _, err := controller.service.Create(
+		etx.Request().Context(),
+		payload.Name,
+		payload.AccountID,
+		payload.Token,
+	); err != nil {
 		if handled, response := controller.validationResponse(etx, err); handled {
 			return response
 		}
@@ -144,7 +162,10 @@ func (controller DNSConnections) Destroy(etx *echo.Context) error {
 	return inertia.Redirect(etx, routes.DnsConnections.URL(), http.StatusSeeOther)
 }
 
-func (controller DNSConnections) validationResponse(etx *echo.Context, operationErr error) (bool, error) {
+func (controller DNSConnections) validationResponse(
+	etx *echo.Context,
+	operationErr error,
+) (bool, error) {
 	validationErrors, ok := validation.As(operationErr)
 	if !ok {
 		return false, nil
@@ -158,7 +179,11 @@ func (controller DNSConnections) validationResponse(etx *echo.Context, operation
 	}, inertia.WithValidationErrors(validationErrors.ToMap()))
 }
 
-func (controller DNSConnections) showValidationResponse(etx *echo.Context, id uuid.UUID, operationErr error) (bool, error) {
+func (controller DNSConnections) showValidationResponse(
+	etx *echo.Context,
+	id uuid.UUID,
+	operationErr error,
+) (bool, error) {
 	validationErrors, ok := validation.As(operationErr)
 	if !ok {
 		return false, nil
@@ -172,7 +197,12 @@ func (controller DNSConnections) showValidationResponse(etx *echo.Context, id uu
 		return true, inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 	return true, inertia.Page(etx, "Connections/DNS/Show", inertia.Props{
-		"auth": authProps(etx), "connection": connection, "zones": zones, "flash": environmentFlashProps(etx),
+		"auth": authProps(
+			etx,
+		),
+		"connection": connection,
+		"zones":      zones,
+		"flash":      environmentFlashProps(etx),
 	}, inertia.WithValidationErrors(validationErrors.ToMap()))
 }
 

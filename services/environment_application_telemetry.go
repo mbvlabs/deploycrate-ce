@@ -16,7 +16,9 @@ import (
 
 const openTelemetryResourceEngine = "opentelemetry"
 
-var ErrEnvironmentOpenTelemetryUnavailable = errors.New("OpenTelemetry is not attached to this Environment")
+var ErrEnvironmentOpenTelemetryUnavailable = errors.New(
+	"OpenTelemetry is not attached to this Environment",
+)
 
 type EnvironmentApplicationTelemetry struct {
 	resource *ClickHouseResource

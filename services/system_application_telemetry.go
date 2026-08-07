@@ -66,8 +66,15 @@ type SystemApplicationTelemetry struct {
 	namespace   string
 }
 
-func NewSystemApplicationTelemetry(resource *ClickHouseResource, cfg config.Config) *SystemApplicationTelemetry {
-	return &SystemApplicationTelemetry{resource: resource, serviceName: cfg.Telemetry.ServiceName, namespace: cfg.Telemetry.ServiceNamespace}
+func NewSystemApplicationTelemetry(
+	resource *ClickHouseResource,
+	cfg config.Config,
+) *SystemApplicationTelemetry {
+	return &SystemApplicationTelemetry{
+		resource:    resource,
+		serviceName: cfg.Telemetry.ServiceName,
+		namespace:   cfg.Telemetry.ServiceNamespace,
+	}
 }
 
 func (service *SystemApplicationTelemetry) Snapshot(
@@ -87,7 +94,10 @@ func (service *SystemApplicationTelemetry) Snapshot(
 	)
 }
 
-func (service *SystemApplicationTelemetry) Trace(ctx context.Context, traceID string) ([]clickhouseclient.TraceSpan, error) {
+func (service *SystemApplicationTelemetry) Trace(
+	ctx context.Context,
+	traceID string,
+) ([]clickhouseclient.TraceSpan, error) {
 	traceID = strings.ToLower(strings.TrimSpace(traceID))
 	if len(traceID) != 32 || strings.Trim(traceID, "0123456789abcdef") != "" {
 		return nil, ErrInvalidTraceID

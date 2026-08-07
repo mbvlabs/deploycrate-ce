@@ -26,7 +26,10 @@ func (worker *ReleaseCommandWorker) Timeout(*river.Job[jobs.ReleaseCommandArgs])
 	return 65 * time.Minute
 }
 
-func (worker *ReleaseCommandWorker) Work(ctx context.Context, job *river.Job[jobs.ReleaseCommandArgs]) error {
+func (worker *ReleaseCommandWorker) Work(
+	ctx context.Context,
+	job *river.Job[jobs.ReleaseCommandArgs],
+) error {
 	if err := worker.service.Execute(ctx, job.Args.ReleaseCommandExecutionID); err != nil {
 		return river.JobCancel(err)
 	}

@@ -41,7 +41,15 @@ func RunHostCommand(arguments []string) error {
 		if err := validateManagedPeerAddress(arguments[2]); err != nil {
 			return err
 		}
-		if err := run("/usr/bin/wg", "set", interfaceName, "peer", arguments[1], "allowed-ips", arguments[2]+"/32"); err != nil {
+		if err := run(
+			"/usr/bin/wg",
+			"set",
+			interfaceName,
+			"peer",
+			arguments[1],
+			"allowed-ips",
+			arguments[2]+"/32",
+		); err != nil {
 			return err
 		}
 		return run("/usr/bin/wg-quick", "save", interfaceName)
@@ -52,7 +60,14 @@ func RunHostCommand(arguments []string) error {
 		if err := validatePublicKey(arguments[1]); err != nil {
 			return err
 		}
-		if err := run("/usr/bin/wg", "set", interfaceName, "peer", arguments[1], "remove"); err != nil {
+		if err := run(
+			"/usr/bin/wg",
+			"set",
+			interfaceName,
+			"peer",
+			arguments[1],
+			"remove",
+		); err != nil {
 			return err
 		}
 		return run("/usr/bin/wg-quick", "save", interfaceName)
@@ -63,7 +78,8 @@ func RunHostCommand(arguments []string) error {
 		if err := validatePublicKey(arguments[1]); err != nil {
 			return err
 		}
-		output, err := exec.Command("/usr/bin/wg", "show", interfaceName, "latest-handshakes").Output()
+		output, err := exec.Command("/usr/bin/wg", "show", interfaceName, "latest-handshakes").
+			Output()
 		if err != nil {
 			return fmt.Errorf("read WireGuard handshakes: %w", err)
 		}
@@ -78,7 +94,9 @@ func RunHostCommand(arguments []string) error {
 		return nil
 	case "firewall-apply", "firewall-remove":
 		if len(arguments) != 5 {
-			return errors.New("usage: host-resource-access firewall-(apply|remove) GRANT_ID SOURCE_ADDRESS DESTINATION_PORT tcp")
+			return errors.New(
+				"usage: host-resource-access firewall-(apply|remove) GRANT_ID SOURCE_ADDRESS DESTINATION_PORT tcp",
+			)
 		}
 		if _, err := uuid.Parse(arguments[1]); err != nil {
 			return errors.New("grant ID must be a UUID")
@@ -93,7 +111,22 @@ func RunHostCommand(arguments []string) error {
 		if arguments[4] != "tcp" {
 			return errors.New("only TCP firewall rules are supported")
 		}
-		ufwArguments := []string{"allow", "in", "on", interfaceName, "from", arguments[2], "to", wireGuardServer, "port", strconv.Itoa(port), "proto", "tcp", "comment", "deploycrate-grant-" + arguments[1]}
+		ufwArguments := []string{
+			"allow",
+			"in",
+			"on",
+			interfaceName,
+			"from",
+			arguments[2],
+			"to",
+			wireGuardServer,
+			"port",
+			strconv.Itoa(port),
+			"proto",
+			"tcp",
+			"comment",
+			"deploycrate-grant-" + arguments[1],
+		}
 		if arguments[0] == "firewall-remove" {
 			ufwArguments = append([]string{"--force", "delete"}, ufwArguments...)
 			return runAllowMissingFirewallRule("/usr/sbin/ufw", ufwArguments...)
@@ -101,7 +134,9 @@ func RunHostCommand(arguments []string) error {
 		return run("/usr/sbin/ufw", ufwArguments...)
 	case "firewall-route-apply", "firewall-route-remove":
 		if len(arguments) != 6 {
-			return errors.New("usage: host-resource-access firewall-route-(apply|remove) GRANT_ID SOURCE_ADDRESS DESTINATION_ADDRESS DESTINATION_PORT tcp")
+			return errors.New(
+				"usage: host-resource-access firewall-route-(apply|remove) GRANT_ID SOURCE_ADDRESS DESTINATION_ADDRESS DESTINATION_PORT tcp",
+			)
 		}
 		if _, err := uuid.Parse(arguments[1]); err != nil {
 			return errors.New("grant ID must be a UUID")
@@ -119,7 +154,26 @@ func RunHostCommand(arguments []string) error {
 		if arguments[5] != "tcp" {
 			return errors.New("only TCP firewall routes are supported")
 		}
-		ufwArguments := []string{"route", "allow", "in", "on", interfaceName, "out", "on", interfaceName, "from", arguments[2], "to", arguments[3], "port", strconv.Itoa(port), "proto", "tcp", "comment", "deploycrate-grant-" + arguments[1]}
+		ufwArguments := []string{
+			"route",
+			"allow",
+			"in",
+			"on",
+			interfaceName,
+			"out",
+			"on",
+			interfaceName,
+			"from",
+			arguments[2],
+			"to",
+			arguments[3],
+			"port",
+			strconv.Itoa(port),
+			"proto",
+			"tcp",
+			"comment",
+			"deploycrate-grant-" + arguments[1],
+		}
 		if arguments[0] == "firewall-route-remove" {
 			ufwArguments = append([]string{"--force", "route", "delete"}, ufwArguments[1:]...)
 			return runAllowMissingFirewallRule("/usr/sbin/ufw", ufwArguments...)
@@ -127,7 +181,9 @@ func RunHostCommand(arguments []string) error {
 		return run("/usr/sbin/ufw", ufwArguments...)
 	case "listener-apply":
 		if len(arguments) != 6 {
-			return errors.New("usage: host-resource-access listener-apply RESOURCE_ID WIREGUARD_ADDRESS PORT ORIGIN_ADDRESS ORIGIN_PORT")
+			return errors.New(
+				"usage: host-resource-access listener-apply RESOURCE_ID WIREGUARD_ADDRESS PORT ORIGIN_ADDRESS ORIGIN_PORT",
+			)
 		}
 		resourceID, err := uuid.Parse(arguments[1])
 		if err != nil {
@@ -169,12 +225,16 @@ func RunHostCommand(arguments []string) error {
 		return runContainer(os.Stdin)
 	case "container-inspect":
 		if len(arguments) != 3 {
-			return errors.New("usage: host-resource-access container-inspect INSTALLATION_ID CONTAINER_NAME")
+			return errors.New(
+				"usage: host-resource-access container-inspect INSTALLATION_ID CONTAINER_NAME",
+			)
 		}
 		return printContainerInspection(arguments[1], arguments[2])
 	case "container-logs":
 		if len(arguments) != 4 {
-			return errors.New("usage: host-resource-access container-logs INSTALLATION_ID CONTAINER_NAME TAIL")
+			return errors.New(
+				"usage: host-resource-access container-logs INSTALLATION_ID CONTAINER_NAME TAIL",
+			)
 		}
 		tail, err := strconv.Atoi(arguments[3])
 		if err != nil {
@@ -188,9 +248,15 @@ func RunHostCommand(arguments []string) error {
 		return execContainer(os.Stdin, os.Stdout)
 	case "container-start", "container-stop", "container-restart", "container-remove":
 		if len(arguments) != 3 {
-			return errors.New("usage: host-resource-access container-(start|stop|restart|remove) INSTALLATION_ID CONTAINER_NAME")
+			return errors.New(
+				"usage: host-resource-access container-(start|stop|restart|remove) INSTALLATION_ID CONTAINER_NAME",
+			)
 		}
-		return controlContainer(strings.TrimPrefix(arguments[0], "container-"), arguments[1], arguments[2])
+		return controlContainer(
+			strings.TrimPrefix(arguments[0], "container-"),
+			arguments[1],
+			arguments[2],
+		)
 	case "container-volume-remove":
 		if len(arguments) != 2 {
 			return errors.New("usage: host-resource-access container-volume-remove VOLUME_NAME")
@@ -198,7 +264,9 @@ func RunHostCommand(arguments []string) error {
 		return removeContainerVolume(arguments[1])
 	case "node-telemetry-target":
 		if len(arguments) != 3 {
-			return errors.New("usage: host-resource-access node-telemetry-target SERVER_ID PRIVATE_ADDRESS")
+			return errors.New(
+				"usage: host-resource-access node-telemetry-target SERVER_ID PRIVATE_ADDRESS",
+			)
 		}
 		serverID, err := uuid.Parse(arguments[1])
 		if err != nil {
@@ -226,7 +294,19 @@ func configureNodeTelemetryTarget(serverID uuid.UUID, address string) error {
 	if err := os.WriteFile(collectorPath, []byte(updatedCollector), 0o640); err != nil {
 		return fmt.Errorf("write OpenTelemetry Collector configuration: %w", err)
 	}
-	if err := run("/usr/sbin/ufw", "allow", "in", "on", interfaceName, "to", wireGuardServer, "port", "4318", "proto", "tcp"); err != nil {
+	if err := run(
+		"/usr/sbin/ufw",
+		"allow",
+		"in",
+		"on",
+		interfaceName,
+		"to",
+		wireGuardServer,
+		"port",
+		"4318",
+		"proto",
+		"tcp",
+	); err != nil {
 		return err
 	}
 
@@ -238,14 +318,32 @@ func configureNodeTelemetryTarget(serverID uuid.UUID, address string) error {
 		return fmt.Errorf("set Prometheus node target directory permissions: %w", err)
 	}
 	targets := []map[string]any{
-		{"targets": []string{net.JoinHostPort(address, "9100")}, "labels": map[string]string{"server_id": serverID.String(), "server": serverID.String(), "component": "node-exporter"}},
-		{"targets": []string{net.JoinHostPort(address, "9101")}, "labels": map[string]string{"server_id": serverID.String(), "server": serverID.String(), "component": "cadvisor"}},
+		{
+			"targets": []string{net.JoinHostPort(address, "9100")},
+			"labels": map[string]string{
+				"server_id": serverID.String(),
+				"server":    serverID.String(),
+				"component": "node-exporter",
+			},
+		},
+		{
+			"targets": []string{net.JoinHostPort(address, "9101")},
+			"labels": map[string]string{
+				"server_id": serverID.String(),
+				"server":    serverID.String(),
+				"component": "cadvisor",
+			},
+		},
 	}
 	encodedTargets, err := json.MarshalIndent(targets, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(targetDirectory, serverID.String()+".json"), encodedTargets, 0o644); err != nil {
+	if err := os.WriteFile(
+		filepath.Join(targetDirectory, serverID.String()+".json"),
+		encodedTargets,
+		0o644,
+	); err != nil {
 		return fmt.Errorf("write Prometheus node targets: %w", err)
 	}
 	prometheusPath := "/etc/prometheus/prometheus.yml"
@@ -254,12 +352,20 @@ func configureNodeTelemetryTarget(serverID uuid.UUID, address string) error {
 		return fmt.Errorf("read Prometheus configuration: %w", err)
 	}
 	if !strings.Contains(string(prometheusConfig), "job_name: deploycrate-nodes") {
-		prometheusConfig = append(prometheusConfig, []byte("\n  - job_name: deploycrate-nodes\n    file_sd_configs:\n      - files: ['/etc/prometheus/deploycrate-nodes/*.json']\n")...)
+		prometheusConfig = append(
+			prometheusConfig,
+			[]byte(
+				"\n  - job_name: deploycrate-nodes\n    file_sd_configs:\n      - files: ['/etc/prometheus/deploycrate-nodes/*.json']\n",
+			)...)
 		if err := os.WriteFile(prometheusPath, prometheusConfig, 0o640); err != nil {
 			return fmt.Errorf("write Prometheus configuration: %w", err)
 		}
 	}
-	if err := run("/usr/local/bin/otelcol-contrib", "validate", "--config="+collectorPath); err != nil {
+	if err := run(
+		"/usr/local/bin/otelcol-contrib",
+		"validate",
+		"--config="+collectorPath,
+	); err != nil {
 		return err
 	}
 	if err := run("/usr/local/bin/promtool", "check", "config", prometheusPath); err != nil {
@@ -285,8 +391,16 @@ func addNodeOTLPReceiver(configuration string) (string, error) {
 	if updated == configuration {
 		return "", errors.New("OpenTelemetry Collector OTLP receiver was not found")
 	}
-	updated = strings.ReplaceAll(updated, "receivers: [journald, otlp]", "receivers: [journald, otlp/local, otlp/nodes]")
-	updated = strings.ReplaceAll(updated, "receivers: [otlp]", "receivers: [otlp/local, otlp/nodes]")
+	updated = strings.ReplaceAll(
+		updated,
+		"receivers: [journald, otlp]",
+		"receivers: [journald, otlp/local, otlp/nodes]",
+	)
+	updated = strings.ReplaceAll(
+		updated,
+		"receivers: [otlp]",
+		"receivers: [otlp/local, otlp/nodes]",
+	)
 	return updated, nil
 }
 
@@ -301,7 +415,9 @@ func validatePublicKey(value string) error {
 func validateManagedPeerAddress(value string) error {
 	address, err := netip.ParseAddr(strings.TrimSpace(value))
 	network := netip.MustParsePrefix(internalwireguard.MeshCIDR)
-	if err != nil || !address.Is4() || !network.Contains(address) || address.String() == wireGuardServer || address == network.Addr() {
+	if err != nil || !address.Is4() || !network.Contains(address) ||
+		address.String() == wireGuardServer ||
+		address == network.Addr() {
 		return errors.New("peer address must be an allocatable host in the WireGuard overlay")
 	}
 	return nil
@@ -310,7 +426,8 @@ func validateManagedPeerAddress(value string) error {
 func validateNodeAddress(value string, allowControlPlane bool) error {
 	address, err := netip.ParseAddr(strings.TrimSpace(value))
 	network := netip.MustParsePrefix(internalwireguard.NodeCIDR)
-	if err != nil || !address.Is4() || !network.Contains(address) || address == network.Addr() || (!allowControlPlane && address.String() == wireGuardServer) {
+	if err != nil || !address.Is4() || !network.Contains(address) || address == network.Addr() ||
+		(!allowControlPlane && address.String() == wireGuardServer) {
 		return errors.New("address must identify a Node in the WireGuard Node pool")
 	}
 	return nil
@@ -333,7 +450,13 @@ func validatePort(value string) (int, error) {
 	return port, nil
 }
 
-func applyListener(resourceID uuid.UUID, address string, port int, origin string, originPort int) error {
+func applyListener(
+	resourceID uuid.UUID,
+	address string,
+	port int,
+	origin string,
+	originPort int,
+) error {
 	proxy, err := socketProxyPath()
 	if err != nil {
 		return err
@@ -341,8 +464,20 @@ func applyListener(resourceID uuid.UUID, address string, port int, origin string
 	unit := "deploycrate-resource-" + resourceID.String()
 	socketPath := filepath.Join("/etc/systemd/system", unit+".socket")
 	servicePath := filepath.Join("/etc/systemd/system", unit+".service")
-	socket := fmt.Sprintf("[Unit]\nDescription=DeployCrate private resource listener %s\nAfter=wg-quick@wg0.service\nRequires=wg-quick@wg0.service\n\n[Socket]\nListenStream=%s:%d\nBindToDevice=%s\nFreeBind=true\nNoDelay=true\n\n[Install]\nWantedBy=sockets.target\n", resourceID, address, port, interfaceName)
-	service := fmt.Sprintf("[Unit]\nDescription=DeployCrate private resource proxy %s\n\n[Service]\nExecStart=%s %s:%d\nPrivateTmp=true\nProtectSystem=strict\nProtectHome=true\nNoNewPrivileges=true\n", resourceID, proxy, origin, originPort)
+	socket := fmt.Sprintf(
+		"[Unit]\nDescription=DeployCrate private resource listener %s\nAfter=wg-quick@wg0.service\nRequires=wg-quick@wg0.service\n\n[Socket]\nListenStream=%s:%d\nBindToDevice=%s\nFreeBind=true\nNoDelay=true\n\n[Install]\nWantedBy=sockets.target\n",
+		resourceID,
+		address,
+		port,
+		interfaceName,
+	)
+	service := fmt.Sprintf(
+		"[Unit]\nDescription=DeployCrate private resource proxy %s\n\n[Service]\nExecStart=%s %s:%d\nPrivateTmp=true\nProtectSystem=strict\nProtectHome=true\nNoNewPrivileges=true\n",
+		resourceID,
+		proxy,
+		origin,
+		originPort,
+	)
 	if err := os.WriteFile(socketPath, []byte(socket), 0o644); err != nil {
 		return fmt.Errorf("write resource socket unit: %w", err)
 	}
@@ -357,7 +492,13 @@ func applyListener(resourceID uuid.UUID, address string, port int, origin string
 
 func removeListener(resourceID uuid.UUID) error {
 	unit := "deploycrate-resource-" + resourceID.String()
-	if err := runAllowInactive("/usr/bin/systemctl", "disable", "--now", unit+".socket", unit+".service"); err != nil {
+	if err := runAllowInactive(
+		"/usr/bin/systemctl",
+		"disable",
+		"--now",
+		unit+".socket",
+		unit+".service",
+	); err != nil {
 		return err
 	}
 	for _, suffix := range []string{".socket", ".service"} {
@@ -388,7 +529,8 @@ func run(name string, arguments ...string) error {
 
 func runAllowInactive(name string, arguments ...string) error {
 	output, err := exec.Command(name, arguments...).CombinedOutput()
-	if err != nil && !strings.Contains(string(output), "not loaded") && !strings.Contains(string(output), "does not exist") {
+	if err != nil && !strings.Contains(string(output), "not loaded") &&
+		!strings.Contains(string(output), "does not exist") {
 		return fmt.Errorf("run %s: %w: %s", name, err, strings.TrimSpace(string(output)))
 	}
 	return nil
@@ -397,7 +539,8 @@ func runAllowInactive(name string, arguments ...string) error {
 func runAllowMissingFirewallRule(name string, arguments ...string) error {
 	output, err := exec.Command(name, arguments...).CombinedOutput()
 	message := string(output)
-	if err != nil && !strings.Contains(message, "Could not delete non-existent rule") && !strings.Contains(message, "Skipping") {
+	if err != nil && !strings.Contains(message, "Could not delete non-existent rule") &&
+		!strings.Contains(message, "Skipping") {
 		return fmt.Errorf("run %s: %w: %s", name, err, strings.TrimSpace(message))
 	}
 	return nil

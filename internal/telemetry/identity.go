@@ -35,8 +35,13 @@ func New(signingKey, issuer string) (Identity, error) {
 		return Identity{}, errors.New("telemetry identity signing key is required")
 	}
 	parsed, err := url.Parse(issuer)
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-		return Identity{}, errors.New("telemetry identity issuer must be an absolute HTTP URL without credentials, query, or fragment")
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") ||
+		parsed.User != nil ||
+		parsed.RawQuery != "" ||
+		parsed.Fragment != "" {
+		return Identity{}, errors.New(
+			"telemetry identity issuer must be an absolute HTTP URL without credentials, query, or fragment",
+		)
 	}
 
 	derivation := hmac.New(sha256.New, []byte(signingKey))

@@ -64,9 +64,16 @@ func (a API) DeployEnvironment(etx *echo.Context) error {
 	}
 	authorization := strings.Fields(etx.Request().Header.Get("Authorization"))
 	if len(authorization) != 2 || !strings.EqualFold(authorization[0], "Bearer") {
-		return etx.JSON(http.StatusUnauthorized, map[string]string{"error": "Bearer token is required"})
+		return etx.JSON(
+			http.StatusUnauthorized,
+			map[string]string{"error": "Bearer token is required"},
+		)
 	}
-	environment, err := a.environments.AuthenticateAPIToken(etx.Request().Context(), environmentID, authorization[1])
+	environment, err := a.environments.AuthenticateAPIToken(
+		etx.Request().Context(),
+		environmentID,
+		authorization[1],
+	)
 	if err != nil {
 		return etx.JSON(http.StatusUnauthorized, map[string]string{"error": "Invalid bearer token"})
 	}
@@ -74,9 +81,19 @@ func (a API) DeployEnvironment(etx *echo.Context) error {
 		Reference string `json:"reference"`
 	}
 	if err := etx.Bind(&payload); err != nil {
-		return etx.JSON(http.StatusBadRequest, map[string]string{"error": "Request body is invalid"})
+		return etx.JSON(
+			http.StatusBadRequest,
+			map[string]string{"error": "Request body is invalid"},
+		)
 	}
-	result, err := a.environments.RequestSourceDeployment(etx.Request().Context(), environment.ApplicationID, environment.ID, nil, "api", payload.Reference)
+	result, err := a.environments.RequestSourceDeployment(
+		etx.Request().Context(),
+		environment.ApplicationID,
+		environment.ID,
+		nil,
+		"api",
+		payload.Reference,
+	)
 	if err != nil {
 		return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
 	}

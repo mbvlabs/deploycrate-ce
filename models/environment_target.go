@@ -27,7 +27,11 @@ func (e *EnvironmentTargetEntity) Validate() error {
 	return nil
 }
 
-func ensureEnvironmentTargetUnique(ctx context.Context, db storage.Executor, entity EnvironmentTargetEntity) error {
+func ensureEnvironmentTargetUnique(
+	ctx context.Context,
+	db storage.Executor,
+	entity EnvironmentTargetEntity,
+) error {
 	if entity.DetachedAt.Valid {
 		return nil
 	}
@@ -37,7 +41,11 @@ func ensureEnvironmentTargetUnique(ctx context.Context, db storage.Executor, ent
 		return errors.New("active Environment target uniqueness checks require a transaction")
 	}
 	lockKey := "environment-target:" + entity.EnvironmentID.String() + ":" + entity.ServerID.String()
-	if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", lockKey); err != nil {
+	if _, err := db.ExecContext(
+		ctx,
+		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+		lockKey,
+	); err != nil {
 		return err
 	}
 	count, err := db.NewSelect().Model((*EnvironmentTargetEntity)(nil)).
@@ -47,22 +55,50 @@ func ensureEnvironmentTargetUnique(ctx context.Context, db storage.Executor, ent
 		return err
 	}
 	if count != 0 {
-		return errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "serverId", Code: "taken", Message: "the Environment already has an active target on this Server"}})
+		return errors.Join(
+			ErrDomainValidation,
+			validation.ValidationErrors{
+				{
+					Field:   "serverId",
+					Code:    "taken",
+					Message: "the Environment already has an active target on this Server",
+				},
+			},
+		)
 	}
 	return nil
 }
 
-func ensureEnvironmentTargetRuntime(ctx context.Context, db storage.Executor, entity EnvironmentTargetEntity) error {
+func ensureEnvironmentTargetRuntime(
+	ctx context.Context,
+	db storage.Executor,
+	entity EnvironmentTargetEntity,
+) error {
 	if entity.DetachedAt.Valid {
 		return nil
 	}
 	server, err := Server.Find(ctx, db, entity.ServerID)
-	if err != nil || server.ArchivedAt.Valid || !server.IsConfigured || (server.Kind != "self_hosted" && server.Kind != "worker") {
-		return errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "serverId", Code: "unavailable", Message: "runtime Server is unavailable"}})
+	if err != nil || server.ArchivedAt.Valid || !server.IsConfigured ||
+		(server.Kind != "self_hosted" && server.Kind != "worker") {
+		return errors.Join(
+			ErrDomainValidation,
+			validation.ValidationErrors{
+				{Field: "serverId", Code: "unavailable", Message: "runtime Server is unavailable"},
+			},
+		)
 	}
 	capabilities, err := ParseServerCapabilities(server.Capabilities)
 	if err != nil || !capabilities.Runtime {
-		return errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "serverId", Code: "capability", Message: "runtime Server does not support application workloads"}})
+		return errors.Join(
+			ErrDomainValidation,
+			validation.ValidationErrors{
+				{
+					Field:   "serverId",
+					Code:    "capability",
+					Message: "runtime Server does not support application workloads",
+				},
+			},
+		)
 	}
 	return nil
 }
@@ -83,14 +119,22 @@ func (et environmentTarget) Find(
 	return entity, nil
 }
 
-func (et environmentTarget) ActiveForEnvironment(ctx context.Context, db storage.Executor, environmentID uuid.UUID) (EnvironmentTargetEntity, error) {
+func (et environmentTarget) ActiveForEnvironment(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) (EnvironmentTargetEntity, error) {
 	var entity EnvironmentTargetEntity
 	err := db.NewSelect().Model(&entity).Where("environment_id = ?", environmentID).
 		Where("detached_at IS NULL").OrderExpr("attached_at DESC").Limit(1).Scan(ctx)
 	return entity, err
 }
 
-func (et environmentTarget) ActiveForEnvironmentAll(ctx context.Context, db storage.Executor, environmentID uuid.UUID) ([]EnvironmentTargetEntity, error) {
+func (et environmentTarget) ActiveForEnvironmentAll(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) ([]EnvironmentTargetEntity, error) {
 	entities := make([]EnvironmentTargetEntity, 0)
 	err := db.NewSelect().Model(&entities).Where("environment_id = ?", environmentID).
 		Where("detached_at IS NULL").OrderExpr("attached_at, id").Scan(ctx)

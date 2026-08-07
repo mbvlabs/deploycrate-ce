@@ -27,7 +27,10 @@ func (worker *NodeEnrollmentWorker) Timeout(*river.Job[jobs.NodeEnrollmentArgs])
 	return 30 * time.Minute
 }
 
-func (worker *NodeEnrollmentWorker) Work(ctx context.Context, job *river.Job[jobs.NodeEnrollmentArgs]) error {
+func (worker *NodeEnrollmentWorker) Work(
+	ctx context.Context,
+	job *river.Job[jobs.NodeEnrollmentArgs],
+) error {
 	if err := worker.service.Execute(ctx, job.Args.EnrollmentID); err != nil {
 		return river.JobCancel(err)
 	}

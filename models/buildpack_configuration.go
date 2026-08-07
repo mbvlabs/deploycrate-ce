@@ -40,8 +40,13 @@ func (e *BuildpackConfigurationEntity) Validate() error {
 	if strings.TrimSpace(e.ImageRepository) == "" {
 		builder.Add("image_repository", "required", "image repository is required")
 	}
-	if e.EnvironmentSourceID == uuid.Nil || e.RegistryResourceID == uuid.Nil || e.ServerID == uuid.Nil {
-		builder.Add("environment_source_id", "required", "source and Registry Resource are required")
+	if e.EnvironmentSourceID == uuid.Nil || e.RegistryResourceID == uuid.Nil ||
+		e.ServerID == uuid.Nil {
+		builder.Add(
+			"environment_source_id",
+			"required",
+			"source and Registry Resource are required",
+		)
 	}
 	if len(e.Settings) == 0 || !json.Valid(e.Settings) {
 		builder.Add("settings", "invalid", "Buildpacks settings must be valid JSON")
@@ -117,7 +122,12 @@ func (bc buildpackConfiguration) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return BuildpackConfigurationEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if _, err := RequireServerCapability(ctx, db, entity.ServerID, ServerCapabilityBuild); err != nil {
+	if _, err := RequireServerCapability(
+		ctx,
+		db,
+		entity.ServerID,
+		ServerCapabilityBuild,
+	); err != nil {
 		return BuildpackConfigurationEntity{}, err
 	}
 
@@ -160,7 +170,12 @@ func (bc buildpackConfiguration) Update(
 	if err := validation.Validate(&entity); err != nil {
 		return BuildpackConfigurationEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if _, err := RequireServerCapability(ctx, db, entity.ServerID, ServerCapabilityBuild); err != nil {
+	if _, err := RequireServerCapability(
+		ctx,
+		db,
+		entity.ServerID,
+		ServerCapabilityBuild,
+	); err != nil {
 		return BuildpackConfigurationEntity{}, err
 	}
 

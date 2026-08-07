@@ -33,11 +33,21 @@ func BuildWireGuardDesiredState(peers []WireGuardDesiredPeer) (WireGuardDesiredS
 	desired := make([]internalwireguard.Peer, 0, len(peers))
 	for _, peer := range peers {
 		address, err := netip.ParseAddr(strings.TrimSpace(peer.PrivateAddress))
-		if err != nil || !address.Is4() || !netip.MustParsePrefix(WireGuardMeshCIDR).Contains(address) || address == netip.MustParsePrefix(WireGuardMeshCIDR).Addr() || address.String() == WireGuardPrivateAddress {
-			return WireGuardDesiredState{}, fmt.Errorf("invalid managed peer address %q", peer.PrivateAddress)
+		if err != nil || !address.Is4() ||
+			!netip.MustParsePrefix(WireGuardMeshCIDR).Contains(address) ||
+			address == netip.MustParsePrefix(WireGuardMeshCIDR).Addr() ||
+			address.String() == WireGuardPrivateAddress {
+			return WireGuardDesiredState{}, fmt.Errorf(
+				"invalid managed peer address %q",
+				peer.PrivateAddress,
+			)
 		}
 		desired = append(desired, internalwireguard.Peer{
-			PublicKey: strings.TrimSpace(peer.PublicKey), AllowedIPs: []string{address.String() + "/32"}, Endpoint: peer.Endpoint,
+			PublicKey: strings.TrimSpace(
+				peer.PublicKey,
+			),
+			AllowedIPs:          []string{address.String() + "/32"},
+			Endpoint:            peer.Endpoint,
 			PersistentKeepalive: peer.PersistentKeepalive,
 		})
 	}
@@ -73,8 +83,16 @@ func NextWireGuardDeviceAddress(existing []string) (string, error) {
 	return nextWireGuardPrivateAddress(WireGuardDeviceCIDR, existing)
 }
 
-func allocateWireGuardPrivateAddress(ctx context.Context, db storage.Executor, pool string) (string, error) {
-	if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtext(?))", wireGuardAddressAllocationLock); err != nil {
+func allocateWireGuardPrivateAddress(
+	ctx context.Context,
+	db storage.Executor,
+	pool string,
+) (string, error) {
+	if _, err := db.ExecContext(
+		ctx,
+		"SELECT pg_advisory_xact_lock(hashtext(?))",
+		wireGuardAddressAllocationLock,
+	); err != nil {
 		return "", fmt.Errorf("lock WireGuard address allocation: %w", err)
 	}
 	allocated := make([]string, 0)

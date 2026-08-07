@@ -18,7 +18,11 @@ type GitHubEnvironmentSourceFactory struct {
 
 type GitHubEnvironmentSourceOption func(*GitHubEnvironmentSourceFactory)
 
-func BuildGitHubEnvironmentSource(environmentSourceID uuid.UUID, gitHubRepositoryID uuid.UUID, opts ...GitHubEnvironmentSourceOption) models.GitHubEnvironmentSourceEntity {
+func BuildGitHubEnvironmentSource(
+	environmentSourceID uuid.UUID,
+	gitHubRepositoryID uuid.UUID,
+	opts ...GitHubEnvironmentSourceOption,
+) models.GitHubEnvironmentSourceEntity {
 	f := &GitHubEnvironmentSourceFactory{
 		GitHubEnvironmentSourceEntity: models.GitHubEnvironmentSourceEntity{
 			EnvironmentSourceID: environmentSourceID,
@@ -33,7 +37,13 @@ func BuildGitHubEnvironmentSource(environmentSourceID uuid.UUID, gitHubRepositor
 	return f.GitHubEnvironmentSourceEntity
 }
 
-func CreateGitHubEnvironmentSource(ctx context.Context, exec storage.Executor, environmentSourceID uuid.UUID, gitHubRepositoryID uuid.UUID, opts ...GitHubEnvironmentSourceOption) (models.GitHubEnvironmentSourceEntity, error) {
+func CreateGitHubEnvironmentSource(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentSourceID uuid.UUID,
+	gitHubRepositoryID uuid.UUID,
+	opts ...GitHubEnvironmentSourceOption,
+) (models.GitHubEnvironmentSourceEntity, error) {
 	built := BuildGitHubEnvironmentSource(environmentSourceID, gitHubRepositoryID, opts...)
 
 	entity := models.GitHubEnvironmentSourceEntity{
@@ -50,11 +60,23 @@ func CreateGitHubEnvironmentSource(ctx context.Context, exec storage.Executor, e
 	return entity, nil
 }
 
-func CreateGitHubEnvironmentSources(ctx context.Context, exec storage.Executor, environmentSourceID uuid.UUID, gitHubRepositoryID uuid.UUID, count int, opts ...GitHubEnvironmentSourceOption) ([]models.GitHubEnvironmentSourceEntity, error) {
+func CreateGitHubEnvironmentSources(
+	ctx context.Context,
+	exec storage.Executor,
+	environmentSourceID uuid.UUID,
+	gitHubRepositoryID uuid.UUID,
+	count int,
+	opts ...GitHubEnvironmentSourceOption,
+) ([]models.GitHubEnvironmentSourceEntity, error) {
 	githubenvironmentsources := make([]models.GitHubEnvironmentSourceEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateGitHubEnvironmentSource(ctx, exec, environmentSourceID, gitHubRepositoryID, opts...)
+		entity, err := CreateGitHubEnvironmentSource(
+			ctx,
+			exec,
+			environmentSourceID,
+			gitHubRepositoryID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create githubenvironmentsource %d: %w", i+1, err)
 		}
@@ -64,7 +86,9 @@ func CreateGitHubEnvironmentSources(ctx context.Context, exec storage.Executor, 
 	return githubenvironmentsources, nil
 }
 
-func WithGithubEnvironmentSourcesEnvironmentSourceID(value uuid.UUID) GitHubEnvironmentSourceOption {
+func WithGithubEnvironmentSourcesEnvironmentSourceID(
+	value uuid.UUID,
+) GitHubEnvironmentSourceOption {
 	return func(f *GitHubEnvironmentSourceFactory) {
 		f.GitHubEnvironmentSourceEntity.EnvironmentSourceID = value
 	}

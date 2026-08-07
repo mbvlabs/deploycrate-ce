@@ -201,7 +201,22 @@ func (t *Telemetry) initMetrics(ctx context.Context) error {
 		sdkmetric.WithView(sdkmetric.NewView(
 			sdkmetric.Instrument{Name: "db.client.operation.duration", Unit: "s"},
 			sdkmetric.Stream{Aggregation: sdkmetric.AggregationExplicitBucketHistogram{
-				Boundaries: []float64{0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+				Boundaries: []float64{
+					0.001,
+					0.0025,
+					0.005,
+					0.01,
+					0.025,
+					0.05,
+					0.075,
+					0.1,
+					0.25,
+					0.5,
+					1,
+					2.5,
+					5,
+					10,
+				},
 			}},
 		)),
 	}

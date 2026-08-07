@@ -21,7 +21,10 @@ type ResourceHealthCheckStatusFactory struct {
 
 type ResourceHealthCheckStatusOption func(*ResourceHealthCheckStatusFactory)
 
-func BuildResourceHealthCheckStatus(healthCheckID uuid.UUID, opts ...ResourceHealthCheckStatusOption) models.ResourceHealthCheckStatusEntity {
+func BuildResourceHealthCheckStatus(
+	healthCheckID uuid.UUID,
+	opts ...ResourceHealthCheckStatusOption,
+) models.ResourceHealthCheckStatusEntity {
 	f := &ResourceHealthCheckStatusFactory{
 		ResourceHealthCheckStatusEntity: models.ResourceHealthCheckStatusEntity{
 			State:                faker.Word(),
@@ -44,7 +47,12 @@ func BuildResourceHealthCheckStatus(healthCheckID uuid.UUID, opts ...ResourceHea
 	return f.ResourceHealthCheckStatusEntity
 }
 
-func CreateResourceHealthCheckStatus(ctx context.Context, exec storage.Executor, healthCheckID uuid.UUID, opts ...ResourceHealthCheckStatusOption) (models.ResourceHealthCheckStatusEntity, error) {
+func CreateResourceHealthCheckStatus(
+	ctx context.Context,
+	exec storage.Executor,
+	healthCheckID uuid.UUID,
+	opts ...ResourceHealthCheckStatusOption,
+) (models.ResourceHealthCheckStatusEntity, error) {
 	built := BuildResourceHealthCheckStatus(healthCheckID, opts...)
 
 	entity := models.ResourceHealthCheckStatusEntity{
@@ -69,7 +77,13 @@ func CreateResourceHealthCheckStatus(ctx context.Context, exec storage.Executor,
 	return entity, nil
 }
 
-func CreateResourceHealthCheckStatuss(ctx context.Context, exec storage.Executor, healthCheckID uuid.UUID, count int, opts ...ResourceHealthCheckStatusOption) ([]models.ResourceHealthCheckStatusEntity, error) {
+func CreateResourceHealthCheckStatuss(
+	ctx context.Context,
+	exec storage.Executor,
+	healthCheckID uuid.UUID,
+	count int,
+	opts ...ResourceHealthCheckStatusOption,
+) ([]models.ResourceHealthCheckStatusEntity, error) {
 	resourcehealthcheckstatuss := make([]models.ResourceHealthCheckStatusEntity, 0, count)
 
 	for i := range count {
@@ -89,7 +103,9 @@ func WithResourceHealthCheckStatusesState(value string) ResourceHealthCheckStatu
 	}
 }
 
-func WithResourceHealthCheckStatusesStatusCode(value sql.NullInt32) ResourceHealthCheckStatusOption {
+func WithResourceHealthCheckStatusesStatusCode(
+	value sql.NullInt32,
+) ResourceHealthCheckStatusOption {
 	return func(f *ResourceHealthCheckStatusFactory) {
 		f.ResourceHealthCheckStatusEntity.StatusCode = value
 	}
@@ -107,13 +123,17 @@ func WithResourceHealthCheckStatusesMessage(value sql.NullString) ResourceHealth
 	}
 }
 
-func WithResourceHealthCheckStatusesConsecutiveSuccesses(value int32) ResourceHealthCheckStatusOption {
+func WithResourceHealthCheckStatusesConsecutiveSuccesses(
+	value int32,
+) ResourceHealthCheckStatusOption {
 	return func(f *ResourceHealthCheckStatusFactory) {
 		f.ResourceHealthCheckStatusEntity.ConsecutiveSuccesses = value
 	}
 }
 
-func WithResourceHealthCheckStatusesConsecutiveFailures(value int32) ResourceHealthCheckStatusOption {
+func WithResourceHealthCheckStatusesConsecutiveFailures(
+	value int32,
+) ResourceHealthCheckStatusOption {
 	return func(f *ResourceHealthCheckStatusFactory) {
 		f.ResourceHealthCheckStatusEntity.ConsecutiveFailures = value
 	}

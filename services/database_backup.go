@@ -31,7 +31,11 @@ type DatabaseBackup struct {
 	container *ContainerExecution
 }
 
-func NewDatabaseBackup(configuration config.Config, version CurrentVersion, container *ContainerExecution) *DatabaseBackup {
+func NewDatabaseBackup(
+	configuration config.Config,
+	version CurrentVersion,
+	container *ContainerExecution,
+) *DatabaseBackup {
 	return &DatabaseBackup{config: configuration, version: version, container: container}
 }
 
@@ -64,22 +68,34 @@ func (service *DatabaseBackup) Run(
 	)
 	if remote, err := store.Head(ctx, objectKey); err == nil {
 		expected := map[string]string{
-			"backup-id": scope.Backup.ID.String(), "policy-id": scope.Backup.BackupPolicyID.String(),
-			"resource-id": target.ResourceID.String(), "resource-installation-id": target.InstallationID.String(),
-			"database-name": target.DatabaseName, "instance-id": service.config.App.InstanceID,
-			"format-version": scope.Backup.FormatVersion,
+			"backup-id":                scope.Backup.ID.String(),
+			"policy-id":                scope.Backup.BackupPolicyID.String(),
+			"resource-id":              target.ResourceID.String(),
+			"resource-installation-id": target.InstallationID.String(),
+			"database-name":            target.DatabaseName,
+			"instance-id":              service.config.App.InstanceID,
+			"format-version":           scope.Backup.FormatVersion,
 		}
 		for key, value := range expected {
 			if remote.Metadata[key] != value {
-				return BackupArtifact{}, errors.New("existing database object has conflicting backup identity")
+				return BackupArtifact{}, errors.New(
+					"existing database object has conflicting backup identity",
+				)
 			}
 		}
 		digest, decodeErr := hex.DecodeString(remote.Metadata["sha256"])
 		if decodeErr != nil || len(digest) != sha256.Size {
-			return BackupArtifact{}, errors.New("existing database object has invalid digest metadata")
+			return BackupArtifact{}, errors.New(
+				"existing database object has invalid digest metadata",
+			)
 		}
 		metadata, _ := json.Marshal(remote.Metadata)
-		return BackupArtifact{Reference: objectKey, Metadata: metadata, Size: remote.Size, Digest: digest}, nil
+		return BackupArtifact{
+			Reference: objectKey,
+			Metadata:  metadata,
+			Size:      remote.Size,
+			Digest:    digest,
+		}, nil
 	} else if !objectstorage.IsNotFound(err) {
 		return BackupArtifact{}, err
 	}
@@ -168,7 +184,11 @@ func (service *DatabaseBackup) Run(
 		return BackupArtifact{}, closeErr
 	}
 	if remote.Size != size {
-		return BackupArtifact{}, fmt.Errorf("uploaded database backup size mismatch: local %d, remote %d", size, remote.Size)
+		return BackupArtifact{}, fmt.Errorf(
+			"uploaded database backup size mismatch: local %d, remote %d",
+			size,
+			remote.Size,
+		)
 	}
 	providerMetadata, err := json.Marshal(metadata)
 	if err != nil {
@@ -179,7 +199,11 @@ func (service *DatabaseBackup) Run(
 	}, nil
 }
 
-func (service *DatabaseBackup) dumpDatabase(ctx context.Context, target PostgreSQLBackupTarget, destination string) error {
+func (service *DatabaseBackup) dumpDatabase(
+	ctx context.Context,
+	target PostgreSQLBackupTarget,
+	destination string,
+) error {
 	file, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
@@ -207,7 +231,11 @@ func (service *DatabaseBackup) dumpDatabase(ctx context.Context, target PostgreS
 	return nil
 }
 
-func (service *DatabaseBackup) dumpGlobals(ctx context.Context, target PostgreSQLBackupTarget, destination string) error {
+func (service *DatabaseBackup) dumpGlobals(
+	ctx context.Context,
+	target PostgreSQLBackupTarget,
+	destination string,
+) error {
 	file, err := os.OpenFile(destination, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600)
 	if err != nil {
 		return err
@@ -225,7 +253,11 @@ func (service *DatabaseBackup) dumpGlobals(ctx context.Context, target PostgreSQ
 	return closeErr
 }
 
-func (service *DatabaseBackup) validateDump(ctx context.Context, target PostgreSQLBackupTarget, dumpPath string) error {
+func (service *DatabaseBackup) validateDump(
+	ctx context.Context,
+	target PostgreSQLBackupTarget,
+	dumpPath string,
+) error {
 	dump, err := os.Open(dumpPath)
 	if err != nil {
 		return err
@@ -242,11 +274,22 @@ func (service *DatabaseBackup) runContainerPostgres(
 	executable string,
 	arguments ...string,
 ) error {
-	return service.container.Exec(ctx, target.ServerID, models.ServerCapabilityResource, containerclient.ExecSpec{
-		InstallationID: target.InstallationID.String(), ContainerName: target.ContainerName,
-		Executable: executable, Arguments: arguments,
-		Environment: map[string]string{"PGPASSWORD": target.Password}, Stdin: stdin, Stdout: stdout,
-	})
+	return service.container.Exec(
+		ctx,
+		target.ServerID,
+		models.ServerCapabilityResource,
+		containerclient.ExecSpec{
+			InstallationID: target.InstallationID.String(),
+			ContainerName:  target.ContainerName,
+			Executable:     executable,
+			Arguments:      arguments,
+			Environment: map[string]string{
+				"PGPASSWORD": target.Password,
+			},
+			Stdin:  stdin,
+			Stdout: stdout,
+		},
+	)
 }
 
 func createBackupArchive(destination string, sources ...string) error {

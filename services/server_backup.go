@@ -83,7 +83,12 @@ func (service *ServerBackup) Run(
 		ctx, environment, scope.DestinationPathStyle, tag,
 	)
 	if lookupErr != nil {
-		if _, initErr := runRestic(ctx, environment, scope.DestinationPathStyle, "init"); initErr != nil {
+		if _, initErr := runRestic(
+			ctx,
+			environment,
+			scope.DestinationPathStyle,
+			"init",
+		); initErr != nil {
 			return BackupArtifact{}, fmt.Errorf(
 				"open or initialize Restic repository: %w",
 				errors.Join(lookupErr, initErr),
@@ -150,7 +155,8 @@ func (service *ServerBackup) Run(
 			SnapshotID          string `json:"snapshot_id"`
 			TotalBytesProcessed int64  `json:"total_bytes_processed"`
 		}
-		if json.Unmarshal(scanner.Bytes(), &candidate) == nil && candidate.MessageType == "summary" {
+		if json.Unmarshal(scanner.Bytes(), &candidate) == nil &&
+			candidate.MessageType == "summary" {
 			summary = candidate
 		}
 	}
@@ -160,7 +166,10 @@ func (service *ServerBackup) Run(
 	if summary.SnapshotID == "" {
 		return BackupArtifact{}, errors.New("Restic did not return a snapshot identity")
 	}
-	return serverBackupArtifact(resticSnapshot{ID: summary.SnapshotID, Tags: tags}, summary.TotalBytesProcessed)
+	return serverBackupArtifact(
+		resticSnapshot{ID: summary.SnapshotID, Tags: tags},
+		summary.TotalBytesProcessed,
+	)
 }
 
 func existingServerBackupArtifact(
@@ -238,7 +247,12 @@ func (service *ServerBackup) createServerRecoveryManifest(
 		ScheduledAt:     scope.Backup.ScheduledAt.UTC().Format(time.RFC3339Nano),
 		ProducerVersion: scope.Backup.ProducerVersion,
 		Packages:        commandOutput("/usr/bin/dpkg-query", "-W", "-f=${Package}\t${Version}\n"),
-		SystemdUnits:    commandOutput("/usr/bin/systemctl", "list-unit-files", "--no-pager", "--no-legend"),
+		SystemdUnits: commandOutput(
+			"/usr/bin/systemctl",
+			"list-unit-files",
+			"--no-pager",
+			"--no-legend",
+		),
 		Containers: commandOutput(
 			"/usr/bin/docker", "ps", "--all", "--format", "{{.Names}}\t{{.Image}}\t{{.Status}}",
 		),
@@ -246,8 +260,10 @@ func (service *ServerBackup) createServerRecoveryManifest(
 			"blue":  symlinkTarget("/opt/deploycrate-ce/slots/blue/deploycrate-ce"),
 			"green": symlinkTarget("/opt/deploycrate-ce/slots/green/deploycrate-ce"),
 		},
-		ReleaseDigests: releaseDigests, IdentityFingerprints: identityFingerprints,
-		SSHCARecoverySHA256: sshCARecoveryDigest, ClickHouse: clickhouse,
+		ReleaseDigests:       releaseDigests,
+		IdentityFingerprints: identityFingerprints,
+		SSHCARecoverySHA256:  sshCARecoveryDigest,
+		ClickHouse:           clickhouse,
 	}
 	encoded, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -342,7 +358,9 @@ func findResticSnapshot(
 func serverBackupArtifact(snapshot resticSnapshot, size int64) (BackupArtifact, error) {
 	digest, err := hex.DecodeString(snapshot.ID)
 	if err != nil || len(digest) != sha256.Size {
-		return BackupArtifact{}, errors.New("Restic snapshot identity is not a SHA-256 object digest")
+		return BackupArtifact{}, errors.New(
+			"Restic snapshot identity is not a SHA-256 object digest",
+		)
 	}
 	metadata, err := json.Marshal(map[string]any{
 		"snapshot_id": snapshot.ID,
@@ -366,7 +384,10 @@ func resticRepository(scope BackupScope, serverID string) (string, error) {
 	if config.Endpoint == "" {
 		return "s3:s3.amazonaws.com/" + config.Bucket + "/" + repositoryPath, nil
 	}
-	return "s3:" + strings.TrimRight(config.Endpoint, "/") + "/" + config.Bucket + "/" + repositoryPath, nil
+	return "s3:" + strings.TrimRight(
+		config.Endpoint,
+		"/",
+	) + "/" + config.Bucket + "/" + repositoryPath, nil
 }
 
 func resticEnvironment(

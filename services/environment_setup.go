@@ -2474,7 +2474,11 @@ func (service *EnvironmentSetup) PromoteToProduction(
 			errors.New("Only a staging Environment can be promoted to production"),
 		)
 	}
-	production, err := productionEnvironmentForApplication(ctx, service.db.Executor(), applicationID)
+	production, err := productionEnvironmentForApplication(
+		ctx,
+		service.db.Executor(),
+		applicationID,
+	)
 	if err != nil {
 		return PromotionResult{}, err
 	}
@@ -2492,7 +2496,11 @@ func (service *EnvironmentSetup) PromoteToProduction(
 		}
 		return PromotionResult{}, err
 	}
-	sourceRelease, err := models.Release.Find(ctx, service.db.Executor(), sourceDeployment.ReleaseID)
+	sourceRelease, err := models.Release.Find(
+		ctx,
+		service.db.Executor(),
+		sourceDeployment.ReleaseID,
+	)
 	if err != nil {
 		return PromotionResult{}, err
 	}
@@ -2709,7 +2717,9 @@ func productionEnvironmentForApplication(
 	if len(environments) > 1 {
 		return models.EnvironmentEntity{}, errors.Join(
 			models.ErrDomainValidation,
-			errors.New("Multiple production Environments exist; promotion target selection is not supported"),
+			errors.New(
+				"Multiple production Environments exist; promotion target selection is not supported",
+			),
 		)
 	}
 	return environments[0], nil
@@ -2759,7 +2769,10 @@ func promotionOverview(
 	if err != nil {
 		return false, "", nil, nil, err
 	}
-	return !sameArtifact(sourceRelease, productionRelease), production.Name, &deployment.ID, &deployment.ReleaseID, nil
+	return !sameArtifact(
+		sourceRelease,
+		productionRelease,
+	), production.Name, &deployment.ID, &deployment.ReleaseID, nil
 }
 
 func sameArtifact(a, b models.ReleaseEntity) bool {

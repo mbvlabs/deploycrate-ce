@@ -119,7 +119,10 @@ func runContainer(input io.Reader) error {
 	}
 	if exists {
 		if label != installationID {
-			return fmt.Errorf("container %q already exists and is not owned by this Resource installation", spec.ContainerName)
+			return fmt.Errorf(
+				"container %q already exists and is not owned by this Resource installation",
+				spec.ContainerName,
+			)
 		}
 		running, err := inspectContainerRunning(spec.ContainerName)
 		if err != nil {
@@ -144,7 +147,11 @@ func runContainer(input io.Reader) error {
 		"--restart", spec.RestartPolicy,
 	}
 	for _, mapping := range spec.PortMappings {
-		published := "127.0.0.1:" + strconv.Itoa(int(mapping.HostPort)) + ":" + strconv.Itoa(int(mapping.ContainerPort)) + "/" + mapping.Protocol
+		published := "127.0.0.1:" + strconv.Itoa(
+			int(mapping.HostPort),
+		) + ":" + strconv.Itoa(
+			int(mapping.ContainerPort),
+		) + "/" + mapping.Protocol
 		arguments = append(arguments, "--publish", published)
 	}
 	for _, mount := range spec.VolumeMounts {
@@ -171,7 +178,12 @@ func runContainer(input io.Reader) error {
 	}
 	output, err := command.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("run %s: %w: %s", dockerExecutable, err, strings.TrimSpace(string(output)))
+		return fmt.Errorf(
+			"run %s: %w: %s",
+			dockerExecutable,
+			err,
+			strings.TrimSpace(string(output)),
+		)
 	}
 	return nil
 }
@@ -183,17 +195,23 @@ func validateContainerRunSpec(spec containerRunSpec) error {
 	if !containerNamePattern.MatchString(spec.ContainerName) || len(spec.ContainerName) > 128 {
 		return errors.New("container name is invalid")
 	}
-	if strings.TrimSpace(spec.ImageReference) != spec.ImageReference || spec.ImageReference == "" || strings.HasPrefix(spec.ImageReference, "-") || strings.ContainsAny(spec.ImageReference, " \t\r\n") {
+	if strings.TrimSpace(spec.ImageReference) != spec.ImageReference || spec.ImageReference == "" ||
+		strings.HasPrefix(spec.ImageReference, "-") ||
+		strings.ContainsAny(spec.ImageReference, " \t\r\n") {
 		return errors.New("image reference is invalid")
 	}
-	if !slices.Contains([]string{"no", "always", "on-failure", "unless-stopped"}, spec.RestartPolicy) {
+	if !slices.Contains(
+		[]string{"no", "always", "on-failure", "unless-stopped"},
+		spec.RestartPolicy,
+	) {
 		return errors.New("restart policy is invalid")
 	}
 	if len(spec.PortMappings) > 32 {
 		return errors.New("too many port mappings")
 	}
 	for _, mapping := range spec.PortMappings {
-		if mapping.HostPort < 1 || mapping.HostPort > 65535 || mapping.ContainerPort < 1 || mapping.ContainerPort > 65535 {
+		if mapping.HostPort < 1 || mapping.HostPort > 65535 || mapping.ContainerPort < 1 ||
+			mapping.ContainerPort > 65535 {
 			return errors.New("container port mapping is invalid")
 		}
 		if mapping.Protocol != "tcp" && mapping.Protocol != "udp" {
@@ -207,7 +225,8 @@ func validateContainerRunSpec(spec containerRunSpec) error {
 		if !volumeNamePattern.MatchString(mount.Name) || len(mount.Name) > 255 {
 			return errors.New("Docker volume name is invalid")
 		}
-		if !filepath.IsAbs(mount.MountPath) || filepath.Clean(mount.MountPath) != mount.MountPath || strings.Contains(mount.MountPath, ",") {
+		if !filepath.IsAbs(mount.MountPath) || filepath.Clean(mount.MountPath) != mount.MountPath ||
+			strings.Contains(mount.MountPath, ",") {
 			return errors.New("container mount path is invalid")
 		}
 	}
@@ -336,21 +355,29 @@ func (writer *boundedContainerError) Write(value []byte) (int, error) {
 }
 
 func inspectContainerLabel(name string) (string, bool, error) {
-	output, err := exec.Command(dockerExecutable, "container", "inspect", "--format", "{{ index .Config.Labels \""+installationLabel+"\" }}", name).CombinedOutput()
+	output, err := exec.Command(dockerExecutable, "container", "inspect", "--format", "{{ index .Config.Labels \""+installationLabel+"\" }}", name).
+		CombinedOutput()
 	if err == nil {
 		return strings.TrimSpace(string(output)), true, nil
 	}
 	message := strings.TrimSpace(string(output))
-	if strings.Contains(message, "No such container") || strings.Contains(message, "No such object") {
+	if strings.Contains(message, "No such container") ||
+		strings.Contains(message, "No such object") {
 		return "", false, nil
 	}
 	return "", false, fmt.Errorf("inspect Docker container %q: %w: %s", name, err, message)
 }
 
 func inspectContainerRunning(name string) (bool, error) {
-	output, err := exec.Command(dockerExecutable, "container", "inspect", "--format", "{{.State.Running}}", name).CombinedOutput()
+	output, err := exec.Command(dockerExecutable, "container", "inspect", "--format", "{{.State.Running}}", name).
+		CombinedOutput()
 	if err != nil {
-		return false, fmt.Errorf("inspect Docker container %q: %w: %s", name, err, strings.TrimSpace(string(output)))
+		return false, fmt.Errorf(
+			"inspect Docker container %q: %w: %s",
+			name,
+			err,
+			strings.TrimSpace(string(output)),
+		)
 	}
 	return strings.TrimSpace(string(output)) == "true", nil
 }
@@ -379,7 +406,8 @@ func printContainerLogs(installationIDValue, name string, tail int) error {
 	if !inspection.Exists {
 		return fmt.Errorf("container %q does not exist", name)
 	}
-	output, err := exec.Command(dockerExecutable, "logs", "--tail", strconv.Itoa(tail), name).CombinedOutput()
+	output, err := exec.Command(dockerExecutable, "logs", "--tail", strconv.Itoa(tail), name).
+		CombinedOutput()
 	if len(output) > maximumContainerLogLength {
 		output = output[len(output)-maximumContainerLogLength:]
 	}
@@ -403,10 +431,16 @@ func inspectOwnedContainer(installationIDValue, name string) (containerInspectio
 	output, err := exec.Command(dockerExecutable, "container", "inspect", name).CombinedOutput()
 	if err != nil {
 		message := strings.TrimSpace(string(output))
-		if strings.Contains(message, "No such container") || strings.Contains(message, "No such object") {
+		if strings.Contains(message, "No such container") ||
+			strings.Contains(message, "No such object") {
 			return containerInspection{Exists: false, Name: name}, nil
 		}
-		return containerInspection{}, fmt.Errorf("inspect Docker container %q: %w: %s", name, err, message)
+		return containerInspection{}, fmt.Errorf(
+			"inspect Docker container %q: %w: %s",
+			name,
+			err,
+			message,
+		)
 	}
 	var values []dockerInspection
 	if err := json.Unmarshal(output, &values); err != nil || len(values) != 1 {
@@ -414,7 +448,10 @@ func inspectOwnedContainer(installationIDValue, name string) (containerInspectio
 	}
 	value := values[0]
 	if value.Config.Labels[installationLabel] != installationID.String() {
-		return containerInspection{}, fmt.Errorf("container %q is not owned by this Resource installation", name)
+		return containerInspection{}, fmt.Errorf(
+			"container %q is not owned by this Resource installation",
+			name,
+		)
 	}
 	health := ""
 	if value.State.Health != nil {

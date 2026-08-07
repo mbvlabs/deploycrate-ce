@@ -47,7 +47,11 @@ func (e *CredentialEntity) Validate() error {
 	}
 	if strings.HasPrefix(e.Provider, "backup_") {
 		if e.Provider != "backup_s3" && e.Provider != "backup_r2" {
-			builder.Add("provider", "unsupported", "backup credential provider must be backup_s3 or backup_r2")
+			builder.Add(
+				"provider",
+				"unsupported",
+				"backup credential provider must be backup_s3 or backup_r2",
+			)
 		}
 		var metadata struct {
 			SchemaVersion  int    `json:"schema_version"`
@@ -64,7 +68,11 @@ func (e *CredentialEntity) Validate() error {
 			metadata.Provider != strings.TrimPrefix(e.Provider, "backup_") ||
 			strings.TrimSpace(metadata.Region) == "" || strings.TrimSpace(metadata.Bucket) == "" ||
 			(metadata.Provider == "r2" && strings.TrimSpace(metadata.Endpoint) == "") {
-			builder.Add("metadata", "invalid", "backup credential metadata is incomplete or incompatible")
+			builder.Add(
+				"metadata",
+				"invalid",
+				"backup credential metadata is incomplete or incompatible",
+			)
 		}
 	}
 	if e.Provider == "github_app" {
@@ -78,7 +86,11 @@ func (e *CredentialEntity) Validate() error {
 		if unmarshalErr != nil ||
 			metadata.SchemaVersion != 1 || instanceID == uuid.Nil || parseErr != nil ||
 			metadata.CredentialKind != "github_app" {
-			builder.Add("metadata", "invalid", "GitHub App credential metadata is incomplete or incompatible")
+			builder.Add(
+				"metadata",
+				"invalid",
+				"GitHub App credential metadata is incomplete or incompatible",
+			)
 		}
 	}
 	if e.Provider == CloudflareAccountAPITokenProvider {
@@ -91,11 +103,19 @@ func (e *CredentialEntity) Validate() error {
 			metadata.SchemaVersion != CloudflareCredentialSchemaVersion ||
 			metadata.CredentialKind != "cloudflare_account_api_token" ||
 			!cloudflareAccountIDPattern.MatchString(metadata.AccountID) {
-			builder.Add("metadata", "invalid", "Cloudflare account-owned API token metadata is incomplete or incompatible")
+			builder.Add(
+				"metadata",
+				"invalid",
+				"Cloudflare account-owned API token metadata is incomplete or incompatible",
+			)
 		}
 	}
 	if e.ArchivedAt.Valid && e.VerifiedAt.Valid && e.VerifiedAt.Time.After(e.ArchivedAt.Time) {
-		builder.Add("verified_at", "invalid", "archived credentials cannot be verified after archival")
+		builder.Add(
+			"verified_at",
+			"invalid",
+			"archived credentials cannot be verified after archival",
+		)
 	}
 	if e.ArchivedAt.Valid && e.LastUsedAt.Valid && e.LastUsedAt.Time.After(e.ArchivedAt.Time) {
 		builder.Add("last_used_at", "invalid", "archived credentials cannot be used after archival")
@@ -187,7 +207,12 @@ func (c credential) Update(
 			return CredentialEntity{}, err
 		}
 		if count > 0 {
-			return CredentialEntity{}, errors.Join(ErrDomainValidation, errors.New("active backup policies must be paused or archived before archiving this credential"))
+			return CredentialEntity{}, errors.Join(
+				ErrDomainValidation,
+				errors.New(
+					"active backup policies must be paused or archived before archiving this credential",
+				),
+			)
 		}
 	}
 	entity := CredentialEntity{

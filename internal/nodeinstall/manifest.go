@@ -71,11 +71,14 @@ func (manifest Manifest) Validate() error {
 	if _, err := uuid.Parse(manifest.ServerID); err != nil {
 		errs = append(errs, errors.New("server ID must be a UUID"))
 	}
-	if strings.TrimSpace(manifest.NodeName) == "" || strings.ContainsAny(manifest.NodeName, "\r\n\x00") {
+	if strings.TrimSpace(manifest.NodeName) == "" ||
+		strings.ContainsAny(manifest.NodeName, "\r\n\x00") {
 		errs = append(errs, errors.New("node name is invalid"))
 	}
 	address, err := netip.ParseAddr(strings.TrimSpace(manifest.PrivateAddress))
-	if err != nil || !netip.MustParsePrefix(internalwireguard.NodeCIDR).Contains(address) || address.String() == internalwireguard.ControlPlaneAddress || address == netip.MustParsePrefix(internalwireguard.NodeCIDR).Addr() {
+	if err != nil || !netip.MustParsePrefix(internalwireguard.NodeCIDR).Contains(address) ||
+		address.String() == internalwireguard.ControlPlaneAddress ||
+		address == netip.MustParsePrefix(internalwireguard.NodeCIDR).Addr() {
 		errs = append(errs, errors.New("private address must be an allocatable Node address"))
 	}
 	if manifest.ListenPort < 1 || manifest.ListenPort > 65535 {
@@ -84,7 +87,9 @@ func (manifest Manifest) Validate() error {
 	if manifest.SSHPort < 1 || manifest.SSHPort > 65535 {
 		errs = append(errs, errors.New("SSH port is invalid"))
 	}
-	key, decodeErr := base64.StdEncoding.DecodeString(strings.TrimSpace(manifest.ControlPlanePublicKey))
+	key, decodeErr := base64.StdEncoding.DecodeString(
+		strings.TrimSpace(manifest.ControlPlanePublicKey),
+	)
 	if decodeErr != nil || len(key) != 32 {
 		errs = append(errs, errors.New("control-plane WireGuard public key is invalid"))
 	}
@@ -94,23 +99,43 @@ func (manifest Manifest) Validate() error {
 	}
 	host, port, endpointErr := net.SplitHostPort(strings.TrimSpace(manifest.ControlPlaneEndpoint))
 	portNumber, portErr := strconv.Atoi(port)
-	if endpointErr != nil || strings.TrimSpace(host) == "" || portErr != nil || portNumber < 1 || portNumber > 65535 {
+	if endpointErr != nil || strings.TrimSpace(host) == "" || portErr != nil || portNumber < 1 ||
+		portNumber > 65535 {
 		errs = append(errs, errors.New("control-plane WireGuard endpoint is invalid"))
 	}
-	if _, _, _, remainder, caErr := ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(manifest.SSHUserCAPublicKey))); caErr != nil || len(strings.TrimSpace(string(remainder))) != 0 {
+	if _, _, _, remainder, caErr := ssh.ParseAuthorizedKey(
+		[]byte(strings.TrimSpace(manifest.SSHUserCAPublicKey)),
+	); caErr != nil ||
+		len(strings.TrimSpace(string(remainder))) != 0 {
 		errs = append(errs, errors.New("SSH user CA public key is invalid"))
 	}
 	otlp, otlpErr := url.Parse(strings.TrimSpace(manifest.OTLPEndpoint))
 	otlpValid := otlpErr == nil && otlp != nil
 	if otlpValid {
 		otlpPort, portErr := strconv.Atoi(otlp.Port())
-		otlpValid = (otlp.Scheme == "http" || otlp.Scheme == "https") && otlp.Hostname() == internalwireguard.ControlPlaneAddress && portErr == nil && otlpPort >= 1 && otlpPort <= 65535 && otlp.User == nil && otlp.RawQuery == "" && otlp.Fragment == ""
+		otlpValid = (otlp.Scheme == "http" || otlp.Scheme == "https") &&
+			otlp.Hostname() == internalwireguard.ControlPlaneAddress &&
+			portErr == nil &&
+			otlpPort >= 1 &&
+			otlpPort <= 65535 &&
+			otlp.User == nil &&
+			otlp.RawQuery == "" &&
+			otlp.Fragment == ""
 	}
 	if !otlpValid {
-		errs = append(errs, errors.New("OTLP endpoint must be an absolute HTTP URL on the control-plane WireGuard address"))
+		errs = append(
+			errs,
+			errors.New(
+				"OTLP endpoint must be an absolute HTTP URL on the control-plane WireGuard address",
+			),
+		)
 	}
 	issuer, issuerErr := url.Parse(strings.TrimSpace(manifest.TelemetryIssuer))
-	if issuerErr != nil || issuer == nil || issuer.Host == "" || (issuer.Scheme != "http" && issuer.Scheme != "https") || issuer.User != nil || issuer.RawQuery != "" || issuer.Fragment != "" {
+	if issuerErr != nil || issuer == nil || issuer.Host == "" ||
+		(issuer.Scheme != "http" && issuer.Scheme != "https") ||
+		issuer.User != nil ||
+		issuer.RawQuery != "" ||
+		issuer.Fragment != "" {
 		errs = append(errs, errors.New("telemetry issuer must be an absolute HTTP URL"))
 	}
 	var keySet struct {
@@ -119,7 +144,8 @@ func (manifest Manifest) Validate() error {
 	if json.Unmarshal([]byte(manifest.TelemetryJWKSet), &keySet) != nil || len(keySet.Keys) == 0 {
 		errs = append(errs, errors.New("telemetry JWK set is invalid"))
 	}
-	if strings.Count(manifest.TelemetryNodeToken, ".") != 2 || strings.ContainsAny(manifest.TelemetryNodeToken, " \t\r\n\x00") {
+	if strings.Count(manifest.TelemetryNodeToken, ".") != 2 ||
+		strings.ContainsAny(manifest.TelemetryNodeToken, " \t\r\n\x00") {
 		errs = append(errs, errors.New("telemetry Node token is invalid"))
 	}
 	for _, peer := range manifest.NodePeers {
@@ -128,7 +154,10 @@ func (manifest Manifest) Validate() error {
 			continue
 		}
 		prefix, prefixErr := netip.ParsePrefix(strings.TrimSpace(peer.AllowedIPs[0]))
-		if prefixErr != nil || prefix.Bits() != 32 || !netip.MustParsePrefix(internalwireguard.NodeCIDR).Contains(prefix.Addr()) || prefix.Addr() == address || prefix.Addr().String() == internalwireguard.ControlPlaneAddress {
+		if prefixErr != nil || prefix.Bits() != 32 ||
+			!netip.MustParsePrefix(internalwireguard.NodeCIDR).Contains(prefix.Addr()) ||
+			prefix.Addr() == address ||
+			prefix.Addr().String() == internalwireguard.ControlPlaneAddress {
 			errs = append(errs, errors.New("Node peer allowed IP must identify another Node"))
 		}
 	}

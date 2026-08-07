@@ -36,7 +36,8 @@ type DeploymentEntity struct {
 
 func (e *DeploymentEntity) Validate() error {
 	builder := validation.NewBuilder()
-	if e.ID == uuid.Nil || e.ChangeID == uuid.Nil || e.ReleaseID == uuid.Nil || e.EnvironmentTargetID == uuid.Nil {
+	if e.ID == uuid.Nil || e.ChangeID == uuid.Nil || e.ReleaseID == uuid.Nil ||
+		e.EnvironmentTargetID == uuid.Nil {
 		builder.Add("id", "required", "Deployment ownership identifiers are required")
 	}
 	if e.Attempt < 1 {
@@ -68,7 +69,11 @@ func (d deployment) Find(
 	return entity, nil
 }
 
-func (d deployment) Lock(ctx context.Context, db storage.Executor, id uuid.UUID) (DeploymentEntity, error) {
+func (d deployment) Lock(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (DeploymentEntity, error) {
 	var entity DeploymentEntity
 	err := db.NewSelect().Model(&entity).Where("id = ?", id).For("UPDATE").Scan(ctx)
 	return entity, err
@@ -94,21 +99,48 @@ func (d deployment) LatestSucceededForEnvironment(
 	return entity, nil
 }
 
-func (d deployment) MarkRunning(ctx context.Context, db storage.Executor, id uuid.UUID, step string, at time.Time) error {
-	_, err := db.NewUpdate().TableExpr("deployments").Set("status = 'running'").Set("current_step = ?", step).
-		Set("started_at = COALESCE(started_at, ?)", at).Set("finished_at = NULL").Set("error = NULL").
-		Set("updated_at = ?", at).Where("id = ?", id).Where("status IN ('queued', 'running')").Exec(ctx)
+func (d deployment) MarkRunning(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	step string,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("deployments").
+		Set("status = 'running'").
+		Set("current_step = ?", step).
+		Set("started_at = COALESCE(started_at, ?)", at).
+		Set("finished_at = NULL").
+		Set("error = NULL").
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Where("status IN ('queued', 'running')").
+		Exec(ctx)
 	return err
 }
 
-func (d deployment) MarkFailed(ctx context.Context, db storage.Executor, id uuid.UUID, operationErr error, at time.Time) error {
+func (d deployment) MarkFailed(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	operationErr error,
+	at time.Time,
+) error {
 	message := strings.TrimSpace(operationErr.Error())
 	if len(message) > 2048 {
 		message = message[:2048]
 	}
-	_, err := db.NewUpdate().TableExpr("deployments").Set("status = 'failed'").Set("current_step = 'failed'").
-		Set("finished_at = ?", at).Set("error = ?", message).Set("updated_at = ?", at).
-		Where("id = ?", id).Where("status IN ('queued', 'running')").Exec(ctx)
+	_, err := db.NewUpdate().
+		TableExpr("deployments").
+		Set("status = 'failed'").
+		Set("current_step = 'failed'").
+		Set("finished_at = ?", at).
+		Set("error = ?", message).
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Where("status IN ('queued', 'running')").
+		Exec(ctx)
 	return err
 }
 

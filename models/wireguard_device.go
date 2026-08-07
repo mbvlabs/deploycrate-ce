@@ -46,7 +46,10 @@ func (entity *WireGuardDeviceEntity) Validate() error {
 	address, err := netip.ParseAddr(strings.TrimSpace(entity.PrivateAddress))
 	network := netip.MustParsePrefix(internalwireguard.DeviceCIDR)
 	if err != nil || !address.Is4() || !network.Contains(address) || address == network.Addr() {
-		errs = append(errs, errors.New("private address must be an allocatable host in the WireGuard device pool"))
+		errs = append(
+			errs,
+			errors.New("private address must be an allocatable host in the WireGuard device pool"),
+		)
 	}
 	if entity.ActivatedAt.IsZero() {
 		errs = append(errs, errors.New("activation time is required"))
@@ -70,7 +73,11 @@ type CreateWireGuardDeviceData struct {
 	OwnerUserID    uuid.UUID
 }
 
-func (wireGuardDevice) Create(ctx context.Context, db storage.Executor, data CreateWireGuardDeviceData) (WireGuardDeviceEntity, error) {
+func (wireGuardDevice) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateWireGuardDeviceData,
+) (WireGuardDeviceEntity, error) {
 	now := time.Now()
 	entity := WireGuardDeviceEntity{
 		ID: uuid.New(), CreatedAt: now, UpdatedAt: now, ActivatedAt: now,
@@ -86,7 +93,11 @@ func (wireGuardDevice) Create(ctx context.Context, db storage.Executor, data Cre
 	return entity, nil
 }
 
-func (wireGuardDevice) FindActiveOwned(ctx context.Context, db storage.Executor, id, ownerUserID uuid.UUID) (WireGuardDeviceEntity, error) {
+func (wireGuardDevice) FindActiveOwned(
+	ctx context.Context,
+	db storage.Executor,
+	id, ownerUserID uuid.UUID,
+) (WireGuardDeviceEntity, error) {
 	var entity WireGuardDeviceEntity
 	err := db.NewSelect().Model(&entity).
 		Where("wireguard_device.id = ?", id).
@@ -99,7 +110,11 @@ func (wireGuardDevice) FindActiveOwned(ctx context.Context, db storage.Executor,
 	return entity, err
 }
 
-func (wireGuardDevice) FindActive(ctx context.Context, db storage.Executor, id uuid.UUID) (WireGuardDeviceEntity, error) {
+func (wireGuardDevice) FindActive(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (WireGuardDeviceEntity, error) {
 	var entity WireGuardDeviceEntity
 	err := db.NewSelect().Model(&entity).
 		Where("wireguard_device.id = ?", id).
@@ -111,7 +126,11 @@ func (wireGuardDevice) FindActive(ctx context.Context, db storage.Executor, id u
 	return entity, err
 }
 
-func (wireGuardDevice) ActiveForResource(ctx context.Context, db storage.Executor, resourceID uuid.UUID) ([]WireGuardDeviceEntity, error) {
+func (wireGuardDevice) ActiveForResource(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+) ([]WireGuardDeviceEntity, error) {
 	entities := make([]WireGuardDeviceEntity, 0)
 	err := db.NewSelect().Model(&entities).
 		Join("JOIN wireguard_device_resource_grants AS resource_grant ON resource_grant.wireguard_device_id = wireguard_device.id AND resource_grant.revoked_at IS NULL").
@@ -122,7 +141,12 @@ func (wireGuardDevice) ActiveForResource(ctx context.Context, db storage.Executo
 	return entities, err
 }
 
-func (wireGuardDevice) Revoke(ctx context.Context, db storage.Executor, id uuid.UUID, at time.Time) error {
+func (wireGuardDevice) Revoke(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
 	_, err := db.NewUpdate().TableExpr("wireguard_devices").
 		Set("revoked_at = COALESCE(revoked_at, ?)", at).
 		Set("updated_at = ?", at).

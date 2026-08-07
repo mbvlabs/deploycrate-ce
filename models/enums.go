@@ -11,7 +11,8 @@ const (
 )
 
 func (resourceType ResourceTypeEnum) IsValid() bool {
-	return resourceType == ResourceTypeDatabase || resourceType == ResourceTypeCache || resourceType == ResourceTypeService
+	return resourceType == ResourceTypeDatabase || resourceType == ResourceTypeCache ||
+		resourceType == ResourceTypeService
 }
 
 func (resourceType ResourceTypeEnum) String() string {
@@ -38,7 +39,11 @@ const (
 
 func (state CaddyRouteStateEnum) IsValid() bool {
 	switch state {
-	case CaddyRoutePending, CaddyRouteApplied, CaddyRouteFailed, CaddyRouteRemovalPending, CaddyRouteRemoved:
+	case CaddyRoutePending,
+		CaddyRouteApplied,
+		CaddyRouteFailed,
+		CaddyRouteRemovalPending,
+		CaddyRouteRemoved:
 		return true
 	default:
 		return false

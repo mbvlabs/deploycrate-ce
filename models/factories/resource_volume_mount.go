@@ -20,7 +20,11 @@ type ResourceVolumeMountFactory struct {
 
 type ResourceVolumeMountOption func(*ResourceVolumeMountFactory)
 
-func BuildResourceVolumeMount(resourceVolumeID uuid.UUID, resourceInstallationID uuid.UUID, opts ...ResourceVolumeMountOption) models.ResourceVolumeMountEntity {
+func BuildResourceVolumeMount(
+	resourceVolumeID uuid.UUID,
+	resourceInstallationID uuid.UUID,
+	opts ...ResourceVolumeMountOption,
+) models.ResourceVolumeMountEntity {
 	f := &ResourceVolumeMountFactory{
 		ResourceVolumeMountEntity: models.ResourceVolumeMountEntity{
 			MountPath:              faker.Word(),
@@ -38,7 +42,13 @@ func BuildResourceVolumeMount(resourceVolumeID uuid.UUID, resourceInstallationID
 	return f.ResourceVolumeMountEntity
 }
 
-func CreateResourceVolumeMount(ctx context.Context, exec storage.Executor, resourceVolumeID uuid.UUID, resourceInstallationID uuid.UUID, opts ...ResourceVolumeMountOption) (models.ResourceVolumeMountEntity, error) {
+func CreateResourceVolumeMount(
+	ctx context.Context,
+	exec storage.Executor,
+	resourceVolumeID uuid.UUID,
+	resourceInstallationID uuid.UUID,
+	opts ...ResourceVolumeMountOption,
+) (models.ResourceVolumeMountEntity, error) {
 	built := BuildResourceVolumeMount(resourceVolumeID, resourceInstallationID, opts...)
 
 	entity := models.ResourceVolumeMountEntity{
@@ -59,11 +69,23 @@ func CreateResourceVolumeMount(ctx context.Context, exec storage.Executor, resou
 	return entity, nil
 }
 
-func CreateResourceVolumeMounts(ctx context.Context, exec storage.Executor, resourceVolumeID uuid.UUID, resourceInstallationID uuid.UUID, count int, opts ...ResourceVolumeMountOption) ([]models.ResourceVolumeMountEntity, error) {
+func CreateResourceVolumeMounts(
+	ctx context.Context,
+	exec storage.Executor,
+	resourceVolumeID uuid.UUID,
+	resourceInstallationID uuid.UUID,
+	count int,
+	opts ...ResourceVolumeMountOption,
+) ([]models.ResourceVolumeMountEntity, error) {
 	resourcevolumemounts := make([]models.ResourceVolumeMountEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateResourceVolumeMount(ctx, exec, resourceVolumeID, resourceInstallationID, opts...)
+		entity, err := CreateResourceVolumeMount(
+			ctx,
+			exec,
+			resourceVolumeID,
+			resourceInstallationID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create resourcevolumemount %d: %w", i+1, err)
 		}

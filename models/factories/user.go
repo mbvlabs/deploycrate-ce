@@ -37,7 +37,11 @@ func BuildUser(opts ...UserOption) models.UserEntity {
 	return f.UserEntity
 }
 
-func CreateUser(ctx context.Context, exec storage.Executor, opts ...UserOption) (models.UserEntity, error) {
+func CreateUser(
+	ctx context.Context,
+	exec storage.Executor,
+	opts ...UserOption,
+) (models.UserEntity, error) {
 	built := BuildUser(opts...)
 
 	entity := models.UserEntity{
@@ -57,7 +61,12 @@ func CreateUser(ctx context.Context, exec storage.Executor, opts ...UserOption) 
 	return entity, nil
 }
 
-func CreateUsers(ctx context.Context, exec storage.Executor, count int, opts ...UserOption) ([]models.UserEntity, error) {
+func CreateUsers(
+	ctx context.Context,
+	exec storage.Executor,
+	count int,
+	opts ...UserOption,
+) ([]models.UserEntity, error) {
 	users := make([]models.UserEntity, 0, count)
 
 	for i := range count {

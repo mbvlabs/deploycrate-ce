@@ -45,10 +45,19 @@ type ResourceRestoreEntity struct {
 }
 
 func (entity *ResourceRestoreEntity) Validate() error {
-	if entity.ID == uuid.Nil || entity.ChangeID == uuid.Nil || entity.ChangeTaskID == uuid.Nil || entity.BackupID == uuid.Nil || entity.ResourceID == uuid.Nil {
+	if entity.ID == uuid.Nil || entity.ChangeID == uuid.Nil || entity.ChangeTaskID == uuid.Nil ||
+		entity.BackupID == uuid.Nil ||
+		entity.ResourceID == uuid.Nil {
 		return errors.New("Resource restore identities are required")
 	}
-	valid := map[string]bool{ResourceRestoreStatusPending: true, ResourceRestoreStatusSafetyBackup: true, ResourceRestoreStatusRestoring: true, ResourceRestoreStatusCompleted: true, ResourceRestoreStatusRolledBack: true, ResourceRestoreStatusFailed: true}
+	valid := map[string]bool{
+		ResourceRestoreStatusPending:      true,
+		ResourceRestoreStatusSafetyBackup: true,
+		ResourceRestoreStatusRestoring:    true,
+		ResourceRestoreStatusCompleted:    true,
+		ResourceRestoreStatusRolledBack:   true,
+		ResourceRestoreStatusFailed:       true,
+	}
 	if !valid[entity.Status] {
 		return errors.New("Resource restore status is invalid")
 	}
@@ -67,16 +76,42 @@ type CreateResourceRestoreData struct {
 	ResourceID                       uuid.UUID
 }
 
-func (resourceRestore) Create(ctx context.Context, db storage.Executor, data CreateResourceRestoreData) (ResourceRestoreEntity, error) {
+func (resourceRestore) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateResourceRestoreData,
+) (ResourceRestoreEntity, error) {
 	now := time.Now().UTC()
-	entity := ResourceRestoreEntity{ID: data.ID, CreatedAt: now, UpdatedAt: now, Status: data.Status, RequestedAt: data.RequestedAt, Target: data.Target, ChangeID: data.ChangeID, ChangeTaskID: data.ChangeTaskID, BackupID: data.BackupID, ResourceID: data.ResourceID}
+	entity := ResourceRestoreEntity{
+		ID:           data.ID,
+		CreatedAt:    now,
+		UpdatedAt:    now,
+		Status:       data.Status,
+		RequestedAt:  data.RequestedAt,
+		Target:       data.Target,
+		ChangeID:     data.ChangeID,
+		ChangeTaskID: data.ChangeTaskID,
+		BackupID:     data.BackupID,
+		ResourceID:   data.ResourceID,
+	}
 	if entity.ID == uuid.Nil {
 		entity.ID = uuid.New()
 	}
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceRestoreEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if err := ensureUnique(ctx, db, "resource-active-restore:"+entity.ResourceID.String()+":"+string(entity.Target), db.NewSelect().Model((*ResourceRestoreEntity)(nil)).Where("resource_id = ?", entity.ResourceID).Where("target = ?", entity.Target).Where("status IN (?, ?, ?)", ResourceRestoreStatusPending, ResourceRestoreStatusSafetyBackup, ResourceRestoreStatusRestoring), "target", "the Resource target already has an active restore"); err != nil {
+	if err := ensureUnique(
+		ctx,
+		db,
+		"resource-active-restore:"+entity.ResourceID.String()+":"+string(entity.Target),
+		db.NewSelect().
+			Model((*ResourceRestoreEntity)(nil)).
+			Where("resource_id = ?", entity.ResourceID).
+			Where("target = ?", entity.Target).
+			Where("status IN (?, ?, ?)", ResourceRestoreStatusPending, ResourceRestoreStatusSafetyBackup, ResourceRestoreStatusRestoring),
+		"target",
+		"the Resource target already has an active restore",
+	); err != nil {
 		return ResourceRestoreEntity{}, err
 	}
 	if _, err := db.NewInsert().Model(&entity).Exec(ctx); err != nil {
@@ -85,30 +120,70 @@ func (resourceRestore) Create(ctx context.Context, db storage.Executor, data Cre
 	return entity, nil
 }
 
-func (resourceRestore) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (ResourceRestoreEntity, error) {
+func (resourceRestore) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (ResourceRestoreEntity, error) {
 	var entity ResourceRestoreEntity
-	if err := db.NewSelect().Model(&entity).Where("resource_restore.id = ?", id).Scan(ctx); err != nil {
+	if err := db.NewSelect().
+		Model(&entity).
+		Where("resource_restore.id = ?", id).
+		Scan(ctx); err != nil {
 		return ResourceRestoreEntity{}, err
 	}
 	return entity, nil
 }
 
-func (resourceRestore) FindForUpdate(ctx context.Context, db storage.Executor, id uuid.UUID) (ResourceRestoreEntity, error) {
+func (resourceRestore) FindForUpdate(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (ResourceRestoreEntity, error) {
 	var entity ResourceRestoreEntity
-	if err := db.NewSelect().Model(&entity).Where("resource_restore.id = ?", id).For("UPDATE").Scan(ctx); err != nil {
+	if err := db.NewSelect().
+		Model(&entity).
+		Where("resource_restore.id = ?", id).
+		For("UPDATE").
+		Scan(ctx); err != nil {
 		return ResourceRestoreEntity{}, err
 	}
 	return entity, nil
 }
 
-func (resourceRestore) MarkSafetyBackup(ctx context.Context, db storage.Executor, id, backupID uuid.UUID, at time.Time) error {
-	result, err := db.NewUpdate().TableExpr("resource_restores").Set("status = ?", ResourceRestoreStatusSafetyBackup).Set("safety_backup_id = ?", backupID).Set("started_at = COALESCE(started_at, ?)", at).Set("updated_at = ?", at).Where("id = ?", id).Where("status = ?", ResourceRestoreStatusPending).Exec(ctx)
+func (resourceRestore) MarkSafetyBackup(
+	ctx context.Context,
+	db storage.Executor,
+	id, backupID uuid.UUID,
+	at time.Time,
+) error {
+	result, err := db.NewUpdate().
+		TableExpr("resource_restores").
+		Set("status = ?", ResourceRestoreStatusSafetyBackup).
+		Set("safety_backup_id = ?", backupID).
+		Set("started_at = COALESCE(started_at, ?)", at).
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Where("status = ?", ResourceRestoreStatusPending).
+		Exec(ctx)
 	return oneResourceRestoreTransition(result, err)
 }
 
-func (resourceRestore) MarkRestoringBySafetyBackup(ctx context.Context, db storage.Executor, backupID uuid.UUID, at time.Time) (*uuid.UUID, error) {
+func (resourceRestore) MarkRestoringBySafetyBackup(
+	ctx context.Context,
+	db storage.Executor,
+	backupID uuid.UUID,
+	at time.Time,
+) (*uuid.UUID, error) {
 	var id uuid.UUID
-	err := db.NewUpdate().TableExpr("resource_restores").Set("status = ?", ResourceRestoreStatusRestoring).Set("updated_at = ?", at).Where("safety_backup_id = ?", backupID).Where("status = ?", ResourceRestoreStatusSafetyBackup).Returning("id").Scan(ctx, &id)
+	err := db.NewUpdate().
+		TableExpr("resource_restores").
+		Set("status = ?", ResourceRestoreStatusRestoring).
+		Set("updated_at = ?", at).
+		Where("safety_backup_id = ?", backupID).
+		Where("status = ?", ResourceRestoreStatusSafetyBackup).
+		Returning("id").
+		Scan(ctx, &id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -118,12 +193,35 @@ func (resourceRestore) MarkRestoringBySafetyBackup(ctx context.Context, db stora
 	return &id, nil
 }
 
-func (resourceRestore) MarkCompleted(ctx context.Context, db storage.Executor, id uuid.UUID, cutoverAt, at time.Time) error {
-	result, err := db.NewUpdate().TableExpr("resource_restores").Set("status = ?", ResourceRestoreStatusCompleted).Set("cutover_at = ?", cutoverAt).Set("verified_at = ?", at).Set("finished_at = ?", at).Set("error = NULL").Set("updated_at = ?", at).Where("id = ?", id).Where("status = ?", ResourceRestoreStatusRestoring).Exec(ctx)
+func (resourceRestore) MarkCompleted(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	cutoverAt, at time.Time,
+) error {
+	result, err := db.NewUpdate().
+		TableExpr("resource_restores").
+		Set("status = ?", ResourceRestoreStatusCompleted).
+		Set("cutover_at = ?", cutoverAt).
+		Set("verified_at = ?", at).
+		Set("finished_at = ?", at).
+		Set("error = NULL").
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Where("status = ?", ResourceRestoreStatusRestoring).
+		Exec(ctx)
 	return oneResourceRestoreTransition(result, err)
 }
 
-func (resourceRestore) MarkFailed(ctx context.Context, db storage.Executor, id uuid.UUID, operationErr error, rolledBack bool, cutoverAt *time.Time, at time.Time) error {
+func (resourceRestore) MarkFailed(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	operationErr error,
+	rolledBack bool,
+	cutoverAt *time.Time,
+	at time.Time,
+) error {
 	status := ResourceRestoreStatusFailed
 	if rolledBack {
 		status = ResourceRestoreStatusRolledBack
@@ -132,7 +230,14 @@ func (resourceRestore) MarkFailed(ctx context.Context, db storage.Executor, id u
 	if len(message) > 2000 {
 		message = message[:2000]
 	}
-	query := db.NewUpdate().TableExpr("resource_restores").Set("status = ?", status).Set("finished_at = ?", at).Set("error = ?", message).Set("updated_at = ?", at).Where("id = ?", id).Where("status IN (?, ?, ?)", ResourceRestoreStatusPending, ResourceRestoreStatusSafetyBackup, ResourceRestoreStatusRestoring)
+	query := db.NewUpdate().
+		TableExpr("resource_restores").
+		Set("status = ?", status).
+		Set("finished_at = ?", at).
+		Set("error = ?", message).
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Where("status IN (?, ?, ?)", ResourceRestoreStatusPending, ResourceRestoreStatusSafetyBackup, ResourceRestoreStatusRestoring)
 	if rolledBack {
 		query = query.Set("rolled_back_at = ?", at)
 	}
@@ -158,12 +263,29 @@ type ResourceRestoreHistory struct {
 	SafetyBackupID    *uuid.UUID `bun:"safety_backup_id"`
 }
 
-func (resourceRestore) RecentForResourceDatabase(ctx context.Context, db storage.Executor, resourceID uuid.UUID, databaseName string, limit int) ([]ResourceRestoreHistory, error) {
+func (resourceRestore) RecentForResourceDatabase(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+	databaseName string,
+	limit int,
+) ([]ResourceRestoreHistory, error) {
 	if limit < 1 || limit > 50 {
 		limit = 10
 	}
 	items := make([]ResourceRestoreHistory, 0, limit)
-	err := db.NewSelect().TableExpr("resource_restores AS restore").ColumnExpr("restore.id, restore.status, restore.requested_at, restore.started_at, restore.finished_at").ColumnExpr("restore.verified_at, restore.cutover_at, restore.rolled_back_at").ColumnExpr("LEFT(COALESCE(restore.error, ''), 800) AS error").ColumnExpr("restore.backup_id, backup.scheduled_at AS backup_scheduled_at, restore.safety_backup_id").Join("JOIN backups AS backup ON backup.id = restore.backup_id").Where("restore.resource_id = ?", resourceID).Where("restore.target ->> 'database' = ?", databaseName).OrderExpr("restore.requested_at DESC").Limit(limit).Scan(ctx, &items)
+	err := db.NewSelect().
+		TableExpr("resource_restores AS restore").
+		ColumnExpr("restore.id, restore.status, restore.requested_at, restore.started_at, restore.finished_at").
+		ColumnExpr("restore.verified_at, restore.cutover_at, restore.rolled_back_at").
+		ColumnExpr("LEFT(COALESCE(restore.error, ''), 800) AS error").
+		ColumnExpr("restore.backup_id, backup.scheduled_at AS backup_scheduled_at, restore.safety_backup_id").
+		Join("JOIN backups AS backup ON backup.id = restore.backup_id").
+		Where("restore.resource_id = ?", resourceID).
+		Where("restore.target ->> 'database' = ?", databaseName).
+		OrderExpr("restore.requested_at DESC").
+		Limit(limit).
+		Scan(ctx, &items)
 	return items, err
 }
 

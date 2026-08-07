@@ -53,7 +53,10 @@ func withMigrationLock(
 		unlockCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
 		defer cancel()
 		if err := locker.SessionUnlock(unlockCtx, connection); err != nil {
-			returnErr = errors.Join(returnErr, fmt.Errorf("database: release migration lock: %w", err))
+			returnErr = errors.Join(
+				returnErr,
+				fmt.Errorf("database: release migration lock: %w", err),
+			)
 		}
 	}()
 

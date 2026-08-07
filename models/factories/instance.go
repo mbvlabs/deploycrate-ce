@@ -21,7 +21,13 @@ type InstanceFactory struct {
 
 type InstanceOption func(*InstanceFactory)
 
-func BuildInstance(externalID string, deploymentID uuid.UUID, releaseID uuid.UUID, environmentTargetID uuid.UUID, opts ...InstanceOption) models.InstanceEntity {
+func BuildInstance(
+	externalID string,
+	deploymentID uuid.UUID,
+	releaseID uuid.UUID,
+	environmentTargetID uuid.UUID,
+	opts ...InstanceOption,
+) models.InstanceEntity {
 	f := &InstanceFactory{
 		InstanceEntity: models.InstanceEntity{
 			ExternalID:          externalID,
@@ -46,7 +52,15 @@ func BuildInstance(externalID string, deploymentID uuid.UUID, releaseID uuid.UUI
 	return f.InstanceEntity
 }
 
-func CreateInstance(ctx context.Context, exec storage.Executor, externalID string, deploymentID uuid.UUID, releaseID uuid.UUID, environmentTargetID uuid.UUID, opts ...InstanceOption) (models.InstanceEntity, error) {
+func CreateInstance(
+	ctx context.Context,
+	exec storage.Executor,
+	externalID string,
+	deploymentID uuid.UUID,
+	releaseID uuid.UUID,
+	environmentTargetID uuid.UUID,
+	opts ...InstanceOption,
+) (models.InstanceEntity, error) {
 	built := BuildInstance(externalID, deploymentID, releaseID, environmentTargetID, opts...)
 
 	entity := models.InstanceEntity{
@@ -74,11 +88,27 @@ func CreateInstance(ctx context.Context, exec storage.Executor, externalID strin
 	return entity, nil
 }
 
-func CreateInstances(ctx context.Context, exec storage.Executor, externalID string, deploymentID uuid.UUID, releaseID uuid.UUID, environmentTargetID uuid.UUID, count int, opts ...InstanceOption) ([]models.InstanceEntity, error) {
+func CreateInstances(
+	ctx context.Context,
+	exec storage.Executor,
+	externalID string,
+	deploymentID uuid.UUID,
+	releaseID uuid.UUID,
+	environmentTargetID uuid.UUID,
+	count int,
+	opts ...InstanceOption,
+) ([]models.InstanceEntity, error) {
 	instances := make([]models.InstanceEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateInstance(ctx, exec, externalID, deploymentID, releaseID, environmentTargetID, opts...)
+		entity, err := CreateInstance(
+			ctx,
+			exec,
+			externalID,
+			deploymentID,
+			releaseID,
+			environmentTargetID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create instance %d: %w", i+1, err)
 		}

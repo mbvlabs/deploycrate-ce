@@ -28,7 +28,10 @@ func (worker *DeployReleaseWorker) Timeout(*river.Job[jobs.DeployReleaseArgs]) t
 	return 15 * time.Minute
 }
 
-func (worker *DeployReleaseWorker) Work(ctx context.Context, job *river.Job[jobs.DeployReleaseArgs]) error {
+func (worker *DeployReleaseWorker) Work(
+	ctx context.Context,
+	job *river.Job[jobs.DeployReleaseArgs],
+) error {
 	err := worker.service.Execute(ctx, job.Args.DeploymentID)
 	var permanent *services.PermanentDeploymentError
 	if errors.As(err, &permanent) {

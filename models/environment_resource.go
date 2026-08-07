@@ -233,7 +233,11 @@ func (er environmentResource) Destroy(
 	return err
 }
 
-func (er environmentResource) Archive(ctx context.Context, db storage.Executor, id uuid.UUID) error {
+func (er environmentResource) Archive(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) error {
 	now := time.Now().UTC()
 	result, err := db.NewUpdate().Model((*EnvironmentResourceEntity)(nil)).
 		Set("archived_at = ?", now).
@@ -254,36 +258,71 @@ func (er environmentResource) Archive(ctx context.Context, db storage.Executor, 
 	return nil
 }
 
-func (er environmentResource) ensureActiveConnectionAvailable(ctx context.Context, db storage.Executor, entity EnvironmentResourceEntity, exceptID *uuid.UUID) error {
+func (er environmentResource) ensureActiveConnectionAvailable(
+	ctx context.Context,
+	db storage.Executor,
+	entity EnvironmentResourceEntity,
+	exceptID *uuid.UUID,
+) error {
 	lockKeys := []string{
 		"environment-resource:" + entity.EnvironmentID.String() + ":" + entity.ResourceID.String(),
-		"environment-resource-alias:" + entity.EnvironmentID.String() + ":" + strings.ToLower(entity.Alias),
+		"environment-resource-alias:" + entity.EnvironmentID.String() + ":" + strings.ToLower(
+			entity.Alias,
+		),
 	}
 	for _, lockKey := range lockKeys {
-		if _, err := db.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", lockKey); err != nil {
+		if _, err := db.ExecContext(
+			ctx,
+			"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+			lockKey,
+		); err != nil {
 			return err
 		}
 	}
 	base := func() *bun.SelectQuery {
-		query := db.NewSelect().Model((*EnvironmentResourceEntity)(nil)).Where("archived_at IS NULL")
+		query := db.NewSelect().
+			Model((*EnvironmentResourceEntity)(nil)).
+			Where("archived_at IS NULL")
 		if exceptID != nil {
 			query = query.Where("id <> ?", *exceptID)
 		}
 		return query
 	}
-	count, err := base().Where("environment_id = ?", entity.EnvironmentID).Where("resource_id = ?", entity.ResourceID).Count(ctx)
+	count, err := base().Where("environment_id = ?", entity.EnvironmentID).
+		Where("resource_id = ?", entity.ResourceID).
+		Count(ctx)
 	if err != nil {
 		return err
 	}
 	if count > 0 {
-		return errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "environmentId", Code: "taken", Message: "Environment is already connected to this Resource"}})
+		return errors.Join(
+			ErrDomainValidation,
+			validation.ValidationErrors{
+				{
+					Field:   "environmentId",
+					Code:    "taken",
+					Message: "Environment is already connected to this Resource",
+				},
+			},
+		)
 	}
-	count, err = base().Where("environment_id = ?", entity.EnvironmentID).Where("lower(alias) = ?", strings.ToLower(entity.Alias)).Count(ctx)
+	count, err = base().Where("environment_id = ?", entity.EnvironmentID).
+		Where("lower(alias) = ?", strings.ToLower(entity.Alias)).
+		Count(ctx)
 	if err != nil {
 		return err
 	}
 	if count > 0 {
-		return errors.Join(ErrDomainValidation, validation.ValidationErrors{{Field: "alias", Code: "taken", Message: "alias is already in use in this Environment"}})
+		return errors.Join(
+			ErrDomainValidation,
+			validation.ValidationErrors{
+				{
+					Field:   "alias",
+					Code:    "taken",
+					Message: "alias is already in use in this Environment",
+				},
+			},
+		)
 	}
 	return nil
 }

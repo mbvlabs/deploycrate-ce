@@ -47,7 +47,10 @@ func (application) FindSystemTelemetryContainers(
 	return containers, err
 }
 
-func (application) FindSystemResourceIndex(ctx context.Context, db storage.Executor) ([]SystemResourceIndexItem, error) {
+func (application) FindSystemResourceIndex(
+	ctx context.Context,
+	db storage.Executor,
+) ([]SystemResourceIndexItem, error) {
 	items := make([]SystemResourceIndexItem, 0)
 	err := db.NewSelect().
 		TableExpr("resources AS resource").
@@ -202,7 +205,10 @@ type SystemWireGuardDevice struct {
 	ObservedAt        *time.Time `bun:"observed_at"`
 }
 
-func (application) FindSystemWireGuardDevices(ctx context.Context, db storage.Executor) ([]SystemWireGuardDevice, error) {
+func (application) FindSystemWireGuardDevices(
+	ctx context.Context,
+	db storage.Executor,
+) ([]SystemWireGuardDevice, error) {
 	devices := make([]SystemWireGuardDevice, 0)
 	err := db.NewSelect().TableExpr("wireguard_devices AS device").
 		ColumnExpr("device.id::text AS id, device.name, owner.email AS owner_email, device.private_address::text AS private_address, device.activated_at").
@@ -236,7 +242,11 @@ type SystemResourceDetail struct {
 	AvailableDevices []SystemWireGuardDeviceOption `bun:"-"`
 }
 
-func (application) FindSystemResourceDetail(ctx context.Context, db storage.Executor, resourceID, currentUserID uuid.UUID) (SystemResourceDetail, error) {
+func (application) FindSystemResourceDetail(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID, currentUserID uuid.UUID,
+) (SystemResourceDetail, error) {
 	var detail SystemResourceDetail
 	err := db.NewSelect().TableExpr("resources AS resource").
 		ColumnExpr("resource.id::text AS id, resource.created_at, resource.updated_at, resource.name, resource.configuration ->> 'engine' AS engine").
@@ -271,31 +281,100 @@ func (application) FindSystemResourceDetail(ctx context.Context, db storage.Exec
 	detail.AvailableDevices = make([]SystemWireGuardDeviceOption, 0)
 	queries := []func() error{
 		func() error {
-			return db.NewSelect().TableExpr("environment_resources AS binding").ColumnExpr("binding.id::text AS id, binding.created_at, binding.updated_at, binding.alias, binding.configuration, environment.id::text AS environment_id, environment.name AS environment_name, environment.kind AS environment_kind, binding.resource_endpoint_id::text AS endpoint_id, COALESCE(binding.resource_credential_id::text, '') AS credential_id").Join("JOIN environments AS environment ON environment.id = binding.environment_id AND environment.archived_at IS NULL").Where("binding.resource_id = ?", resourceID).Where("binding.archived_at IS NULL").OrderExpr("binding.created_at").Scan(ctx, &detail.Bindings)
+			return db.NewSelect().
+				TableExpr("environment_resources AS binding").
+				ColumnExpr("binding.id::text AS id, binding.created_at, binding.updated_at, binding.alias, binding.configuration, environment.id::text AS environment_id, environment.name AS environment_name, environment.kind AS environment_kind, binding.resource_endpoint_id::text AS endpoint_id, COALESCE(binding.resource_credential_id::text, '') AS credential_id").
+				Join("JOIN environments AS environment ON environment.id = binding.environment_id AND environment.archived_at IS NULL").
+				Where("binding.resource_id = ?", resourceID).
+				Where("binding.archived_at IS NULL").
+				OrderExpr("binding.created_at").
+				Scan(ctx, &detail.Bindings)
 		},
 		func() error {
-			return db.NewSelect().TableExpr("resource_endpoints AS endpoint").ColumnExpr("endpoint.id::text AS id, endpoint.created_at, endpoint.updated_at, endpoint.name, endpoint.role, endpoint.address, endpoint.port, endpoint.protocol, endpoint.tls_mode, endpoint.settings, COALESCE(endpoint.private_network_id::text, '') AS private_network_id").Where("endpoint.resource_id = ?", resourceID).Where("endpoint.archived_at IS NULL").OrderExpr("endpoint.role, endpoint.created_at").Scan(ctx, &detail.Endpoints)
+			return db.NewSelect().
+				TableExpr("resource_endpoints AS endpoint").
+				ColumnExpr("endpoint.id::text AS id, endpoint.created_at, endpoint.updated_at, endpoint.name, endpoint.role, endpoint.address, endpoint.port, endpoint.protocol, endpoint.tls_mode, endpoint.settings, COALESCE(endpoint.private_network_id::text, '') AS private_network_id").
+				Where("endpoint.resource_id = ?", resourceID).
+				Where("endpoint.archived_at IS NULL").
+				OrderExpr("endpoint.role, endpoint.created_at").
+				Scan(ctx, &detail.Endpoints)
 		},
 		func() error {
-			return db.NewSelect().TableExpr("resource_credentials AS credential").ColumnExpr("credential.id::text AS id, credential.name, COALESCE(credential.username, '') AS username, credential.metadata, octet_length(credential.enc_payload) > 0 AS has_encrypted_payload").Where("credential.resource_id = ?", resourceID).Where("credential.archived_at IS NULL").OrderExpr("credential.created_at").Scan(ctx, &detail.Credentials)
+			return db.NewSelect().
+				TableExpr("resource_credentials AS credential").
+				ColumnExpr("credential.id::text AS id, credential.name, COALESCE(credential.username, '') AS username, credential.metadata, octet_length(credential.enc_payload) > 0 AS has_encrypted_payload").
+				Where("credential.resource_id = ?", resourceID).
+				Where("credential.archived_at IS NULL").
+				OrderExpr("credential.created_at").
+				Scan(ctx, &detail.Credentials)
 		},
 		func() error {
-			return db.NewSelect().TableExpr("resource_installations AS installation").ColumnExpr("installation.id::text AS id, installation.created_at, installation.updated_at, installation.image_reference, COALESCE(installation.image_digest, '') AS image_digest, installation.container_name, installation.restart_policy, installation.configuration, server.id::text AS server_id, server.name AS server_name, server.address AS server_address, COALESCE(status.state, '') AS state, COALESCE(status.service_state, '') AS service_state, COALESCE(status.health, '') AS health, COALESCE(status.health_reason, '') AS health_reason, status.observed_at AS observed_at").Join("JOIN servers AS server ON server.id = installation.server_id AND server.archived_at IS NULL").Join("LEFT JOIN resource_installation_statuses AS status ON status.resource_installation_id = installation.id").Where("installation.resource_id = ?", resourceID).Where("installation.archived_at IS NULL").OrderExpr("installation.created_at").Scan(ctx, &detail.Installations)
+			return db.NewSelect().
+				TableExpr("resource_installations AS installation").
+				ColumnExpr("installation.id::text AS id, installation.created_at, installation.updated_at, installation.image_reference, COALESCE(installation.image_digest, '') AS image_digest, installation.container_name, installation.restart_policy, installation.configuration, server.id::text AS server_id, server.name AS server_name, server.address AS server_address, COALESCE(status.state, '') AS state, COALESCE(status.service_state, '') AS service_state, COALESCE(status.health, '') AS health, COALESCE(status.health_reason, '') AS health_reason, status.observed_at AS observed_at").
+				Join("JOIN servers AS server ON server.id = installation.server_id AND server.archived_at IS NULL").
+				Join("LEFT JOIN resource_installation_statuses AS status ON status.resource_installation_id = installation.id").
+				Where("installation.resource_id = ?", resourceID).
+				Where("installation.archived_at IS NULL").
+				OrderExpr("installation.created_at").
+				Scan(ctx, &detail.Installations)
 		},
 		func() error {
-			return db.NewSelect().TableExpr("resource_volumes AS volume").ColumnExpr("volume.id::text AS id, volume.name, volume.driver, volume.configuration, server.id::text AS server_id, server.name AS server_name").Join("JOIN servers AS server ON server.id = volume.server_id").Where("volume.resource_id = ?", resourceID).Where("volume.archived_at IS NULL").OrderExpr("volume.created_at").Scan(ctx, &detail.Volumes)
+			return db.NewSelect().
+				TableExpr("resource_volumes AS volume").
+				ColumnExpr("volume.id::text AS id, volume.name, volume.driver, volume.configuration, server.id::text AS server_id, server.name AS server_name").
+				Join("JOIN servers AS server ON server.id = volume.server_id").
+				Where("volume.resource_id = ?", resourceID).
+				Where("volume.archived_at IS NULL").
+				OrderExpr("volume.created_at").
+				Scan(ctx, &detail.Volumes)
 		},
 		func() error {
-			return db.NewSelect().TableExpr("resource_health_checks AS health_check").ColumnExpr("health_check.id::text AS id, health_check.name, health_check.kind, health_check.configuration, health_check.interval_seconds, health_check.timeout_seconds, health_check.failure_threshold, health_check.success_threshold, health_check.enabled, COALESCE(status.state, '') AS state, COALESCE(status.message, '') AS message, status.observed_at AS observed_at").Join("LEFT JOIN resource_health_check_statuses AS status ON status.health_check_id = health_check.id").Where("health_check.resource_id = ?", resourceID).Where("health_check.archived_at IS NULL").OrderExpr("health_check.created_at").Scan(ctx, &detail.HealthChecks)
+			return db.NewSelect().
+				TableExpr("resource_health_checks AS health_check").
+				ColumnExpr("health_check.id::text AS id, health_check.name, health_check.kind, health_check.configuration, health_check.interval_seconds, health_check.timeout_seconds, health_check.failure_threshold, health_check.success_threshold, health_check.enabled, COALESCE(status.state, '') AS state, COALESCE(status.message, '') AS message, status.observed_at AS observed_at").
+				Join("LEFT JOIN resource_health_check_statuses AS status ON status.health_check_id = health_check.id").
+				Where("health_check.resource_id = ?", resourceID).
+				Where("health_check.archived_at IS NULL").
+				OrderExpr("health_check.created_at").
+				Scan(ctx, &detail.HealthChecks)
 		},
 		func() error {
-			return db.NewSelect().TableExpr("wireguard_device_resource_grants AS resource_grant").ColumnExpr("device.id::text AS device_id, device.name AS device_name, owner.email AS owner_email, device.private_address::text AS private_address, resource_grant.id::text AS grant_id, resource_grant.granted_at, COALESCE(application.state, 'pending') AS application_state, COALESCE(application.error, '') AS application_error, status.latest_handshake_at, status.observed_at").Join("JOIN wireguard_devices AS device ON device.id = resource_grant.wireguard_device_id AND device.revoked_at IS NULL").Join("JOIN users AS owner ON owner.id = device.owner_user_id").Join("LEFT JOIN wireguard_device_resource_grant_applications AS application ON application.wireguard_device_resource_grant_id = resource_grant.id").Join("LEFT JOIN wireguard_device_statuses AS status ON status.wireguard_device_id = device.id").Where("resource_grant.resource_id = ?", resourceID).Where("resource_grant.revoked_at IS NULL").OrderExpr("device.name").Scan(ctx, &detail.DeviceGrants)
+			return db.NewSelect().
+				TableExpr("wireguard_device_resource_grants AS resource_grant").
+				ColumnExpr("device.id::text AS device_id, device.name AS device_name, owner.email AS owner_email, device.private_address::text AS private_address, resource_grant.id::text AS grant_id, resource_grant.granted_at, COALESCE(application.state, 'pending') AS application_state, COALESCE(application.error, '') AS application_error, status.latest_handshake_at, status.observed_at").
+				Join("JOIN wireguard_devices AS device ON device.id = resource_grant.wireguard_device_id AND device.revoked_at IS NULL").
+				Join("JOIN users AS owner ON owner.id = device.owner_user_id").
+				Join("LEFT JOIN wireguard_device_resource_grant_applications AS application ON application.wireguard_device_resource_grant_id = resource_grant.id").
+				Join("LEFT JOIN wireguard_device_statuses AS status ON status.wireguard_device_id = device.id").
+				Where("resource_grant.resource_id = ?", resourceID).
+				Where("resource_grant.revoked_at IS NULL").
+				OrderExpr("device.name").
+				Scan(ctx, &detail.DeviceGrants)
 		},
 		func() error {
-			return db.NewSelect().TableExpr("private_networks AS network").Distinct().ColumnExpr("network.id::text AS id, network.name AS name").Join("JOIN environment_networks AS binding ON binding.private_network_id = network.id AND binding.removed_at IS NULL").Join("JOIN environments AS environment ON environment.id = binding.environment_id AND environment.archived_at IS NULL").Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").Join("JOIN server_networks AS server_network ON server_network.private_network_id = network.id AND server_network.driver = 'wireguard' AND server_network.removed_at IS NULL").Where("application.slug = ?", SystemApplicationSlug).Where("network.archived_at IS NULL").OrderExpr("network.name").Scan(ctx, &detail.PrivateNetworks)
+			return db.NewSelect().
+				TableExpr("private_networks AS network").
+				Distinct().
+				ColumnExpr("network.id::text AS id, network.name AS name").
+				Join("JOIN environment_networks AS binding ON binding.private_network_id = network.id AND binding.removed_at IS NULL").
+				Join("JOIN environments AS environment ON environment.id = binding.environment_id AND environment.archived_at IS NULL").
+				Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
+				Join("JOIN server_networks AS server_network ON server_network.private_network_id = network.id AND server_network.driver = 'wireguard' AND server_network.removed_at IS NULL").
+				Where("application.slug = ?", SystemApplicationSlug).
+				Where("network.archived_at IS NULL").
+				OrderExpr("network.name").
+				Scan(ctx, &detail.PrivateNetworks)
 		},
 		func() error {
-			return db.NewSelect().TableExpr("wireguard_devices AS device").ColumnExpr("device.id::text AS id, device.name, device.private_address::text AS private_address").Where("device.owner_user_id = ?", currentUserID).Where("device.revoked_at IS NULL").Where("NOT EXISTS (SELECT 1 FROM wireguard_device_resource_grants resource_grant WHERE resource_grant.wireguard_device_id = device.id AND resource_grant.resource_id = ? AND resource_grant.revoked_at IS NULL)", resourceID).OrderExpr("device.name").Scan(ctx, &detail.AvailableDevices)
+			return db.NewSelect().
+				TableExpr("wireguard_devices AS device").
+				ColumnExpr("device.id::text AS id, device.name, device.private_address::text AS private_address").
+				Where("device.owner_user_id = ?", currentUserID).
+				Where("device.revoked_at IS NULL").
+				Where("NOT EXISTS (SELECT 1 FROM wireguard_device_resource_grants resource_grant WHERE resource_grant.wireguard_device_id = device.id AND resource_grant.resource_id = ? AND resource_grant.revoked_at IS NULL)", resourceID).
+				OrderExpr("device.name").
+				Scan(ctx, &detail.AvailableDevices)
 		},
 	}
 	for _, query := range queries {
@@ -305,7 +384,13 @@ func (application) FindSystemResourceDetail(ctx context.Context, db storage.Exec
 	}
 	for index := range detail.Volumes {
 		detail.Volumes[index].Mounts = make([]SystemResourceVolumeMount, 0)
-		if err := db.NewSelect().TableExpr("resource_volume_mounts AS mount").ColumnExpr("mount.id::text AS id, mount.mount_path, mount.read_only, mount.resource_installation_id::text AS installation_id").Where("mount.resource_volume_id::text = ?", detail.Volumes[index].ID).Where("mount.archived_at IS NULL").OrderExpr("mount.created_at").Scan(ctx, &detail.Volumes[index].Mounts); err != nil {
+		if err := db.NewSelect().
+			TableExpr("resource_volume_mounts AS mount").
+			ColumnExpr("mount.id::text AS id, mount.mount_path, mount.read_only, mount.resource_installation_id::text AS installation_id").
+			Where("mount.resource_volume_id::text = ?", detail.Volumes[index].ID).
+			Where("mount.archived_at IS NULL").
+			OrderExpr("mount.created_at").
+			Scan(ctx, &detail.Volumes[index].Mounts); err != nil {
 			return SystemResourceDetail{}, err
 		}
 	}
@@ -326,7 +411,11 @@ type ResourceAccessTarget struct {
 	PrivateNetworkID    uuid.UUID `bun:"private_network_id"`
 }
 
-func (application) FindResourceAccessTarget(ctx context.Context, db storage.Executor, resourceID uuid.UUID) (ResourceAccessTarget, error) {
+func (application) FindResourceAccessTarget(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+) (ResourceAccessTarget, error) {
 	var target ResourceAccessTarget
 	err := db.NewRaw(`
 		SELECT resource.id AS resource_id, resource.name AS resource_name,

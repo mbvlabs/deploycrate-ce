@@ -34,7 +34,9 @@ func (capabilities ServerCapabilities) Validate() error {
 	if !capabilities.Telemetry {
 		return errors.New("managed nodes must collect telemetry")
 	}
-	if !capabilities.Build && !capabilities.Runtime && !capabilities.Resource && !capabilities.Database && !capabilities.Repository {
+	if !capabilities.Build && !capabilities.Runtime && !capabilities.Resource &&
+		!capabilities.Database &&
+		!capabilities.Repository {
 		return errors.New("select at least one node workload capability")
 	}
 	return nil
@@ -72,25 +74,44 @@ func (capabilities ServerCapabilities) Supports(capability ServerCapability) boo
 	}
 }
 
-func RequireServerCapability(ctx context.Context, db storage.Executor, serverID uuid.UUID, capability ServerCapability) (ServerEntity, error) {
+func RequireServerCapability(
+	ctx context.Context,
+	db storage.Executor,
+	serverID uuid.UUID,
+	capability ServerCapability,
+) (ServerEntity, error) {
 	server, err := Server.Find(ctx, db, serverID)
-	if errors.Is(err, sql.ErrNoRows) || err == nil && (server.ArchivedAt.Valid || !server.IsConfigured) {
-		return ServerEntity{}, errors.Join(ErrDomainValidation, fmt.Errorf("Server is unavailable for %s placement", capability))
+	if errors.Is(err, sql.ErrNoRows) ||
+		err == nil && (server.ArchivedAt.Valid || !server.IsConfigured) {
+		return ServerEntity{}, errors.Join(
+			ErrDomainValidation,
+			fmt.Errorf("Server is unavailable for %s placement", capability),
+		)
 	}
 	if err != nil {
 		return ServerEntity{}, err
 	}
 	if server.Kind != "self_hosted" && server.Kind != "worker" {
-		return ServerEntity{}, errors.Join(ErrDomainValidation, fmt.Errorf("Server kind does not support %s placement", capability))
+		return ServerEntity{}, errors.Join(
+			ErrDomainValidation,
+			fmt.Errorf("Server kind does not support %s placement", capability),
+		)
 	}
 	capabilities, err := ParseServerCapabilities(server.Capabilities)
 	if err != nil || !capabilities.Supports(capability) {
-		return ServerEntity{}, errors.Join(ErrDomainValidation, fmt.Errorf("Server does not have the %s capability", capability))
+		return ServerEntity{}, errors.Join(
+			ErrDomainValidation,
+			fmt.Errorf("Server does not have the %s capability", capability),
+		)
 	}
 	return server, nil
 }
 
-func ServerOriginAddress(ctx context.Context, db storage.Executor, serverID uuid.UUID) (string, error) {
+func ServerOriginAddress(
+	ctx context.Context,
+	db storage.Executor,
+	serverID uuid.UUID,
+) (string, error) {
 	server, err := Server.Find(ctx, db, serverID)
 	if err != nil {
 		return "", err

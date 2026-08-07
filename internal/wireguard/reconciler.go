@@ -45,7 +45,9 @@ func BuildPeerConfiguration(peers []Peer) (DesiredState, error) {
 		key := strings.TrimSpace(peer.PublicKey)
 		decodedKey, err := base64.StdEncoding.DecodeString(key)
 		if err != nil || len(decodedKey) != 32 {
-			return DesiredState{}, errors.New("WireGuard peer public key must be a base64-encoded 32-byte key")
+			return DesiredState{}, errors.New(
+				"WireGuard peer public key must be a base64-encoded 32-byte key",
+			)
 		}
 		if _, exists := seenKeys[key]; exists {
 			return DesiredState{}, errors.New("duplicate WireGuard peer public key")
@@ -53,7 +55,8 @@ func BuildPeerConfiguration(peers []Peer) (DesiredState, error) {
 		allowedIPs := make([]string, 0, len(peer.AllowedIPs))
 		for _, value := range peer.AllowedIPs {
 			prefix, prefixErr := netip.ParsePrefix(strings.TrimSpace(value))
-			if prefixErr != nil || !prefix.Addr().Is4() || !mesh.Contains(prefix.Addr()) || prefix.Bits() < mesh.Bits() {
+			if prefixErr != nil || !prefix.Addr().Is4() || !mesh.Contains(prefix.Addr()) ||
+				prefix.Bits() < mesh.Bits() {
 				return DesiredState{}, fmt.Errorf("invalid WireGuard peer allowed IP %q", value)
 			}
 			prefix = prefix.Masked()
@@ -69,7 +72,9 @@ func BuildPeerConfiguration(peers []Peer) (DesiredState, error) {
 		slices.Sort(allowedIPs)
 		host, port, endpointErr := net.SplitHostPort(strings.TrimSpace(peer.Endpoint))
 		portNumber, portErr := strconv.Atoi(port)
-		if endpointErr != nil || strings.TrimSpace(host) == "" || portErr != nil || portNumber < 1 || portNumber > 65535 {
+		if endpointErr != nil || strings.TrimSpace(host) == "" || portErr != nil ||
+			portNumber < 1 ||
+			portNumber > 65535 {
 			return DesiredState{}, fmt.Errorf("invalid WireGuard peer endpoint %q", peer.Endpoint)
 		}
 		seenKeys[key] = struct{}{}
@@ -79,7 +84,10 @@ func BuildPeerConfiguration(peers []Peer) (DesiredState, error) {
 		})
 	}
 	slices.SortFunc(normalized, func(left, right Peer) int {
-		return strings.Compare(strings.Join(left.AllowedIPs, ","), strings.Join(right.AllowedIPs, ","))
+		return strings.Compare(
+			strings.Join(left.AllowedIPs, ","),
+			strings.Join(right.AllowedIPs, ","),
+		)
 	})
 	var builder strings.Builder
 	for _, peer := range normalized {
@@ -153,8 +161,13 @@ func Apply(ctx context.Context, interfaceName, configurationPath string, desired
 	if err := live.Close(); err != nil {
 		return fmt.Errorf("close live WireGuard configuration: %w", err)
 	}
-	if output, err := exec.CommandContext(ctx, "wg", "syncconf", interfaceName, livePath).CombinedOutput(); err != nil {
-		return fmt.Errorf("apply live WireGuard peers: %w: %s", err, strings.TrimSpace(string(output)))
+	if output, err := exec.CommandContext(ctx, "wg", "syncconf", interfaceName, livePath).
+		CombinedOutput(); err != nil {
+		return fmt.Errorf(
+			"apply live WireGuard peers: %w: %s",
+			err,
+			strings.TrimSpace(string(output)),
+		)
 	}
 	if err := os.Rename(stagedPath, configurationPath); err != nil {
 		return fmt.Errorf("persist WireGuard configuration after live apply: %w", err)

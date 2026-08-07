@@ -434,7 +434,9 @@ func (s *SelfUpdate) reconcileLocked(ctx context.Context) (bool, error) {
 		return s.completeRecoveredUpdate(record)
 	}
 
-	cause := errors.New("interrupted update did not have a healthy target selected in database state")
+	cause := errors.New(
+		"interrupted update did not have a healthy target selected in database state",
+	)
 	if inspectionErr != nil {
 		cause = errors.Join(cause, inspectionErr)
 	}
@@ -1177,7 +1179,11 @@ func (s *SelfUpdate) healSteadyStateLocked(ctx context.Context) (bool, error) {
 		"",
 		trafficVerifyTimeout,
 	); err != nil {
-		return false, fmt.Errorf("database-selected slot %s is not healthy: %w", desiredInstance, err)
+		return false, fmt.Errorf(
+			"database-selected slot %s is not healthy: %w",
+			desiredInstance,
+			err,
+		)
 	}
 	if _, err := s.routes.Reconcile(ctx, state.CaddyRouteID); err != nil {
 		return false, fmt.Errorf("reconcile database-selected Caddy route: %w", err)
@@ -1262,7 +1268,11 @@ func (s *SelfUpdate) waitForSlotHealth(
 				case resp.StatusCode != http.StatusOK:
 					lastErr = fmt.Errorf("health check returned status %d", resp.StatusCode)
 				case slot != expectedSlot:
-					lastErr = fmt.Errorf("health check reached slot %q, want %q", slot, expectedSlot)
+					lastErr = fmt.Errorf(
+						"health check reached slot %q, want %q",
+						slot,
+						expectedSlot,
+					)
 				case expectedVersion != "" && version != normalizeVersion(expectedVersion):
 					lastErr = fmt.Errorf(
 						"health check reached version %q, want %q",

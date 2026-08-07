@@ -42,7 +42,11 @@ func (entity *WireGuardDeviceResourceGrantEntity) Validate() error {
 	return builder.Err()
 }
 
-func (wireGuardDeviceResourceGrant) Create(ctx context.Context, db storage.Executor, deviceID, resourceID, userID uuid.UUID) (WireGuardDeviceResourceGrantEntity, error) {
+func (wireGuardDeviceResourceGrant) Create(
+	ctx context.Context,
+	db storage.Executor,
+	deviceID, resourceID, userID uuid.UUID,
+) (WireGuardDeviceResourceGrantEntity, error) {
 	now := time.Now()
 	entity := WireGuardDeviceResourceGrantEntity{
 		ID: uuid.New(), CreatedAt: now, UpdatedAt: now, GrantedAt: now,
@@ -57,7 +61,11 @@ func (wireGuardDeviceResourceGrant) Create(ctx context.Context, db storage.Execu
 	return entity, nil
 }
 
-func (wireGuardDeviceResourceGrant) FindActive(ctx context.Context, db storage.Executor, deviceID, resourceID uuid.UUID) (WireGuardDeviceResourceGrantEntity, error) {
+func (wireGuardDeviceResourceGrant) FindActive(
+	ctx context.Context,
+	db storage.Executor,
+	deviceID, resourceID uuid.UUID,
+) (WireGuardDeviceResourceGrantEntity, error) {
 	var entity WireGuardDeviceResourceGrantEntity
 	err := db.NewSelect().Model(&entity).
 		Where("wireguard_device_resource_grant.wireguard_device_id = ?", deviceID).
@@ -70,7 +78,11 @@ func (wireGuardDeviceResourceGrant) FindActive(ctx context.Context, db storage.E
 	return entity, err
 }
 
-func (wireGuardDeviceResourceGrant) ActiveForDevice(ctx context.Context, db storage.Executor, deviceID uuid.UUID) ([]WireGuardDeviceResourceGrantEntity, error) {
+func (wireGuardDeviceResourceGrant) ActiveForDevice(
+	ctx context.Context,
+	db storage.Executor,
+	deviceID uuid.UUID,
+) ([]WireGuardDeviceResourceGrantEntity, error) {
 	entities := make([]WireGuardDeviceResourceGrantEntity, 0)
 	err := db.NewSelect().Model(&entities).
 		Where("wireguard_device_resource_grant.wireguard_device_id = ?", deviceID).
@@ -80,7 +92,12 @@ func (wireGuardDeviceResourceGrant) ActiveForDevice(ctx context.Context, db stor
 	return entities, err
 }
 
-func (wireGuardDeviceResourceGrant) Revoke(ctx context.Context, db storage.Executor, id uuid.UUID, at time.Time) error {
+func (wireGuardDeviceResourceGrant) Revoke(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
 	_, err := db.NewUpdate().TableExpr("wireguard_device_resource_grants").
 		Set("revoked_at = COALESCE(revoked_at, ?)", at).
 		Set("updated_at = ?", at).
@@ -89,7 +106,11 @@ func (wireGuardDeviceResourceGrant) Revoke(ctx context.Context, db storage.Execu
 	return err
 }
 
-func (wireGuardDeviceResourceGrant) ActiveCountForResource(ctx context.Context, db storage.Executor, resourceID uuid.UUID) (int, error) {
+func (wireGuardDeviceResourceGrant) ActiveCountForResource(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+) (int, error) {
 	return db.NewSelect().TableExpr("wireguard_device_resource_grants").
 		Where("resource_id = ?", resourceID).
 		Where("revoked_at IS NULL").

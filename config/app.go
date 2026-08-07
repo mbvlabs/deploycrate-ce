@@ -4,7 +4,7 @@ import "github.com/caarlos0/env/v11"
 
 type app struct {
 	InstanceID           string   `env:"INSTANCE_ID"`
-	Slot                 string   `env:"DEPLOYCRATE_SLOT"         envDefault:"development"`
+	Slot                 string   `env:"DEPLOYCRATE_SLOT"       envDefault:"development"`
 	Host                 string   `env:"HOST"                   envDefault:"localhost"`
 	Port                 string   `env:"PORT"                   envDefault:"8080"`
 	SessionKey           string   `env:"SESSION_KEY"`

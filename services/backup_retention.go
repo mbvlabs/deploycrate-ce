@@ -55,7 +55,10 @@ func (service *BackupRetention) Apply(ctx context.Context, policyID uuid.UUID) e
 	if err != nil {
 		return err
 	}
-	plaintext, err := secretcrypto.Decrypt(scope.CredentialPayload, service.config.App.SessionEncryptionKey)
+	plaintext, err := secretcrypto.Decrypt(
+		scope.CredentialPayload,
+		service.config.App.SessionEncryptionKey,
+	)
 	if err != nil {
 		return err
 	}
@@ -87,7 +90,10 @@ func (service *BackupRetention) Apply(ctx context.Context, policyID uuid.UUID) e
 			}
 			if found {
 				if snapshot.ID != candidate.ArtifactReference {
-					return fmt.Errorf("expired Restic backup %s has conflicting artifact identity", candidate.ID)
+					return fmt.Errorf(
+						"expired Restic backup %s has conflicting artifact identity",
+						candidate.ID,
+					)
 				}
 				arguments = append(arguments, snapshot.ID)
 				remotePrune = append(remotePrune, candidate)

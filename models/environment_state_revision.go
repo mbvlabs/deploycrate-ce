@@ -102,10 +102,14 @@ func ParseEnvironmentDesiredState(raw json.RawMessage) (EnvironmentDesiredState,
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&state); err != nil {
-		return EnvironmentDesiredState{}, errors.New("Environment state must use the supported schema")
+		return EnvironmentDesiredState{}, errors.New(
+			"Environment state must use the supported schema",
+		)
 	}
 	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		return EnvironmentDesiredState{}, errors.New("Environment state must contain one JSON value")
+		return EnvironmentDesiredState{}, errors.New(
+			"Environment state must contain one JSON value",
+		)
 	}
 	if err := validateEnvironmentDesiredState(&state); err != nil {
 		return EnvironmentDesiredState{}, err
@@ -125,8 +129,12 @@ func CanonicalEnvironmentDesiredState(state EnvironmentDesiredState) (json.RawMe
 		return strings.Compare(left.Alias, right.Alias)
 	})
 	for index := range state.Processes {
-		state.Processes[index].Name = strings.ToLower(strings.TrimSpace(state.Processes[index].Name))
-		state.Processes[index].Kind = strings.ToLower(strings.TrimSpace(state.Processes[index].Kind))
+		state.Processes[index].Name = strings.ToLower(
+			strings.TrimSpace(state.Processes[index].Name),
+		)
+		state.Processes[index].Kind = strings.ToLower(
+			strings.TrimSpace(state.Processes[index].Kind),
+		)
 		if state.Processes[index].Arguments == nil {
 			state.Processes[index].Arguments = []string{}
 		}
@@ -144,7 +152,11 @@ func CanonicalEnvironmentDesiredState(state EnvironmentDesiredState) (json.RawMe
 func validateEnvironmentDesiredState(state *EnvironmentDesiredState) error {
 	builder := validation.NewBuilder()
 	if state.SchemaVersion != EnvironmentStateSchemaVersion {
-		builder.Add("schemaVersion", "unsupported", "Environment state schema version is unsupported")
+		builder.Add(
+			"schemaVersion",
+			"unsupported",
+			"Environment state schema version is unsupported",
+		)
 	}
 	if strings.TrimSpace(state.Runtime.Runtime) != "go" {
 		builder.Add("runtime.runtime", "unsupported", "only the Go runtime is supported")
@@ -157,7 +169,14 @@ func validateEnvironmentDesiredState(state *EnvironmentDesiredState) error {
 	}
 	processInputs := make([]EnvironmentProcessInput, 0, len(state.Processes))
 	for _, process := range state.Processes {
-		input := EnvironmentProcessInput{Name: process.Name, Kind: process.Kind, Command: process.Command, Arguments: process.Arguments, Replicas: process.Replicas, HealthPath: process.HealthPath}
+		input := EnvironmentProcessInput{
+			Name:       process.Name,
+			Kind:       process.Kind,
+			Command:    process.Command,
+			Arguments:  process.Arguments,
+			Replicas:   process.Replicas,
+			HealthPath: process.HealthPath,
+		}
 		if process.Kind == EnvironmentProcessWeb {
 			input.ContainerPort = &process.ContainerPort
 		}
@@ -169,7 +188,8 @@ func validateEnvironmentDesiredState(state *EnvironmentDesiredState) error {
 	if _, err := ValidateEnvironmentProcessFormation(processInputs); err != nil {
 		builder.Add("processes", "invalid", err.Error())
 	}
-	if state.Domain.ID == uuid.Nil || strings.TrimSpace(state.Domain.Hostname) == "" || !state.Domain.Primary {
+	if state.Domain.ID == uuid.Nil || strings.TrimSpace(state.Domain.Hostname) == "" ||
+		!state.Domain.Primary {
 		builder.Add("domain", "invalid", "one primary Environment domain is required")
 	}
 	secretKeys := make(map[string]struct{}, len(state.Secrets))
@@ -187,8 +207,13 @@ func validateEnvironmentDesiredState(state *EnvironmentDesiredState) error {
 			for _, key := range resource.EnvironmentKeys {
 				normalized := NormalizeEnvironmentSecretKey(key)
 				keys[normalized] = struct{}{}
-				if owner, exists := resourceMappedKeys[normalized]; exists && owner != resource.EnvironmentResourceID {
-					builder.Add("resources", "duplicate", "Resource Environment key mappings must be unique")
+				if owner, exists := resourceMappedKeys[normalized]; exists &&
+					owner != resource.EnvironmentResourceID {
+					builder.Add(
+						"resources",
+						"duplicate",
+						"Resource Environment key mappings must be unique",
+					)
 				}
 				resourceMappedKeys[normalized] = resource.EnvironmentResourceID
 			}
@@ -200,7 +225,11 @@ func validateEnvironmentDesiredState(state *EnvironmentDesiredState) error {
 	}
 	for key := range resourceMappedKeys {
 		if _, exists := legacyVariableKeys[key]; exists {
-			builder.Add("resources", "duplicate", "Resource Environment key mapping conflicts with a legacy Resource variable")
+			builder.Add(
+				"resources",
+				"duplicate",
+				"Resource Environment key mapping conflicts with a legacy Resource variable",
+			)
 		}
 	}
 	for index := range state.Secrets {
@@ -213,16 +242,25 @@ func validateEnvironmentDesiredState(state *EnvironmentDesiredState) error {
 		if err := ValidateEnvironmentSecretKey(descriptor.Key, true); err != nil {
 			builder.Add(field+".key", "invalid", "secret key is invalid")
 		}
-		if descriptor.SourceType != EnvironmentSecretSourceUser && descriptor.SourceType != EnvironmentSecretSourceResource {
+		if descriptor.SourceType != EnvironmentSecretSourceUser &&
+			descriptor.SourceType != EnvironmentSecretSourceResource {
 			builder.Add(field+".sourceType", "unsupported", "secret source type is unsupported")
 		}
 		if descriptor.SourceType == EnvironmentSecretSourceResource {
 			if _, exists := resourceConnectionIDs[descriptor.SourceID]; !exists {
-				builder.Add(field+".sourceId", "ownership", "Resource-managed secret owner must be present in the same revision")
+				builder.Add(
+					field+".sourceId",
+					"ownership",
+					"Resource-managed secret owner must be present in the same revision",
+				)
 			}
 			if keys, mapped := resourceSecretKeys[descriptor.SourceID]; mapped {
 				if _, exists := keys[descriptor.Key]; !exists {
-					builder.Add(field+".key", "ownership", "Resource-managed secret key must belong to its Resource mapping")
+					builder.Add(
+						field+".key",
+						"ownership",
+						"Resource-managed secret key must belong to its Resource mapping",
+					)
 				}
 			}
 		}
@@ -233,7 +271,11 @@ func validateEnvironmentDesiredState(state *EnvironmentDesiredState) error {
 			builder.Add(field+".key", "duplicate", "secret keys must be unique")
 		}
 		if _, exists := legacyVariableKeys[descriptor.Key]; exists {
-			builder.Add(field+".key", "duplicate", "secret key conflicts with a legacy Resource variable")
+			builder.Add(
+				field+".key",
+				"duplicate",
+				"secret key conflicts with a legacy Resource variable",
+			)
 		}
 		if _, exists := secretIDs[descriptor.ID]; exists {
 			builder.Add(field+".id", "duplicate", "secret identifiers must be unique")
@@ -245,8 +287,15 @@ func validateEnvironmentDesiredState(state *EnvironmentDesiredState) error {
 	for index, resource := range state.Resources {
 		field := fmt.Sprintf("resources.%d", index)
 		alias := strings.ToUpper(strings.TrimSpace(resource.Alias))
-		if resource.EnvironmentResourceID == uuid.Nil || resource.ResourceID == uuid.Nil || resource.EndpointID == uuid.Nil || alias == "" || strings.TrimSpace(resource.Kind) == "" {
-			builder.Add(field, "invalid", "Resource connection identities, kind, and alias are required")
+		if resource.EnvironmentResourceID == uuid.Nil || resource.ResourceID == uuid.Nil ||
+			resource.EndpointID == uuid.Nil ||
+			alias == "" ||
+			strings.TrimSpace(resource.Kind) == "" {
+			builder.Add(
+				field,
+				"invalid",
+				"Resource connection identities, kind, and alias are required",
+			)
 		}
 		if _, exists := resourceAliases[alias]; exists {
 			builder.Add(field+".alias", "duplicate", "Resource aliases must be unique")
@@ -256,25 +305,52 @@ func validateEnvironmentDesiredState(state *EnvironmentDesiredState) error {
 		for logicalName, key := range resource.EnvironmentKeys {
 			normalized := NormalizeEnvironmentSecretKey(key)
 			if strings.TrimSpace(logicalName) == "" || normalized == "" {
-				builder.Add(field+".environmentKeys", "invalid", "Resource Environment key roles and names are required")
+				builder.Add(
+					field+".environmentKeys",
+					"invalid",
+					"Resource Environment key roles and names are required",
+				)
 				continue
 			}
-			if err := ValidateEnvironmentSecretKey(normalized, false); err != nil || normalized != key {
-				builder.Add(field+".environmentKeys", "invalid", "Resource Environment keys must be normalized and valid")
+			if err := ValidateEnvironmentSecretKey(
+				normalized,
+				false,
+			); err != nil ||
+				normalized != key {
+				builder.Add(
+					field+".environmentKeys",
+					"invalid",
+					"Resource Environment keys must be normalized and valid",
+				)
 			}
 			if _, exists := mappedKeys[normalized]; exists {
-				builder.Add(field+".environmentKeys", "duplicate", "Resource Environment keys must be unique")
+				builder.Add(
+					field+".environmentKeys",
+					"duplicate",
+					"Resource Environment keys must be unique",
+				)
 			}
 			mappedKeys[normalized] = struct{}{}
 		}
 		if len(resource.EnvironmentKeys) > 0 && len(resource.Variables) > 0 {
-			builder.Add(field+".variables", "secret", "Resource projections with owned key mappings must use Environment secrets")
+			builder.Add(
+				field+".variables",
+				"secret",
+				"Resource projections with owned key mappings must use Environment secrets",
+			)
 		}
 		for key := range resource.Variables {
 			normalized := NormalizeEnvironmentSecretKey(key)
 			lower := strings.ToLower(normalized)
-			if normalized != key || strings.Contains(lower, "password") || strings.Contains(lower, "secret") || strings.Contains(lower, "token") || strings.Contains(lower, "credential") {
-				builder.Add(field+".variables", "secret", "Resource variables must be normalized and non-secret")
+			if normalized != key || strings.Contains(lower, "password") ||
+				strings.Contains(lower, "secret") ||
+				strings.Contains(lower, "token") ||
+				strings.Contains(lower, "credential") {
+				builder.Add(
+					field+".variables",
+					"secret",
+					"Resource variables must be normalized and non-secret",
+				)
 			}
 		}
 	}
@@ -309,7 +385,11 @@ func (state EnvironmentDesiredState) LongRunningProcesses() []EnvironmentProcess
 	return processes
 }
 
-func (esr environmentStateRevision) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentStateRevisionEntity, error) {
+func (esr environmentStateRevision) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (EnvironmentStateRevisionEntity, error) {
 	var entity EnvironmentStateRevisionEntity
 	if err := db.NewSelect().Model(&entity).Where("id = ?", id).Scan(ctx); err != nil {
 		return EnvironmentStateRevisionEntity{}, err
@@ -317,7 +397,11 @@ func (esr environmentStateRevision) Find(ctx context.Context, db storage.Executo
 	return entity, nil
 }
 
-func (esr environmentStateRevision) LatestCommitted(ctx context.Context, db storage.Executor, environmentID uuid.UUID) (EnvironmentStateRevisionEntity, error) {
+func (esr environmentStateRevision) LatestCommitted(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) (EnvironmentStateRevisionEntity, error) {
 	var entity EnvironmentStateRevisionEntity
 	if err := db.NewSelect().Model(&entity).
 		Join("JOIN changes AS change ON change.id = environment_state_revisions.change_id").
@@ -335,7 +419,11 @@ type CreateEnvironmentStateRevisionData struct {
 	ChangeID      uuid.UUID
 }
 
-func (esr environmentStateRevision) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentStateRevisionData) (EnvironmentStateRevisionEntity, error) {
+func (esr environmentStateRevision) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentStateRevisionData,
+) (EnvironmentStateRevisionEntity, error) {
 	state, err := ParseEnvironmentDesiredState(data.State)
 	if err != nil {
 		return EnvironmentStateRevisionEntity{}, errors.Join(ErrDomainValidation, err)
@@ -360,28 +448,43 @@ func (esr environmentStateRevision) Create(ctx context.Context, db storage.Execu
 	return entity, nil
 }
 
-func (esr environmentStateRevision) ResolveSecrets(ctx context.Context, db storage.Executor, revision EnvironmentStateRevisionEntity) ([]EnvironmentSecretEntity, error) {
+func (esr environmentStateRevision) ResolveSecrets(
+	ctx context.Context,
+	db storage.Executor,
+	revision EnvironmentStateRevisionEntity,
+) ([]EnvironmentSecretEntity, error) {
 	state, err := ParseEnvironmentDesiredState(revision.State)
 	if err != nil {
 		return nil, err
 	}
 	resolved := make([]EnvironmentSecretEntity, 0, len(state.Secrets))
 	for _, descriptor := range state.Secrets {
-		secret, err := EnvironmentSecret.FindForEnvironment(ctx, db, revision.EnvironmentID, descriptor.ID)
+		secret, err := EnvironmentSecret.FindForEnvironment(
+			ctx,
+			db,
+			revision.EnvironmentID,
+			descriptor.ID,
+		)
 		if err != nil {
 			return nil, fmt.Errorf("resolve Environment secret %s: %w", descriptor.Key, err)
 		}
 		digest, _ := environmentSecretDigestBytes(descriptor.Digest)
-		if secret.Key != descriptor.Key || secret.SourceType != descriptor.SourceType || secret.SourceID != descriptor.SourceID ||
+		if secret.Key != descriptor.Key || secret.SourceType != descriptor.SourceType ||
+			secret.SourceID != descriptor.SourceID ||
 			!hmac.Equal(secret.Digest, digest) {
-			return nil, fmt.Errorf("Environment secret descriptor %s does not match its immutable value", descriptor.Key)
+			return nil, fmt.Errorf(
+				"Environment secret descriptor %s does not match its immutable value",
+				descriptor.Key,
+			)
 		}
 		resolved = append(resolved, secret)
 	}
 	return resolved, nil
 }
 
-func EnvironmentSecretDescriptorFromEntity(secret EnvironmentSecretEntity) EnvironmentSecretDescriptor {
+func EnvironmentSecretDescriptorFromEntity(
+	secret EnvironmentSecretEntity,
+) EnvironmentSecretDescriptor {
 	return EnvironmentSecretDescriptor{
 		ID: secret.ID, Key: secret.Key,
 		Digest:     "hmac-sha256:" + hex.EncodeToString(secret.Digest),

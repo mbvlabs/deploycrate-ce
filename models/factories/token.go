@@ -37,7 +37,11 @@ func BuildToken(opts ...TokenOption) models.TokenEntity {
 	return f.TokenEntity
 }
 
-func CreateToken(ctx context.Context, exec storage.Executor, opts ...TokenOption) (models.TokenEntity, error) {
+func CreateToken(
+	ctx context.Context,
+	exec storage.Executor,
+	opts ...TokenOption,
+) (models.TokenEntity, error) {
 	built := BuildToken(opts...)
 
 	entity := models.TokenEntity{
@@ -57,7 +61,12 @@ func CreateToken(ctx context.Context, exec storage.Executor, opts ...TokenOption
 	return entity, nil
 }
 
-func CreateTokens(ctx context.Context, exec storage.Executor, count int, opts ...TokenOption) ([]models.TokenEntity, error) {
+func CreateTokens(
+	ctx context.Context,
+	exec storage.Executor,
+	count int,
+	opts ...TokenOption,
+) ([]models.TokenEntity, error) {
 	tokens := make([]models.TokenEntity, 0, count)
 
 	for i := range count {

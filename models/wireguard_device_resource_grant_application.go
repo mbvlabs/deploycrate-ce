@@ -27,7 +27,11 @@ type WireGuardDeviceResourceGrantApplicationEntity struct {
 	ServerID           uuid.UUID      `bun:"server_id,type:uuid"`
 }
 
-func (wireGuardGrantApplication) CreatePending(ctx context.Context, db storage.Executor, grantID, endpointID, serverID uuid.UUID) (WireGuardDeviceResourceGrantApplicationEntity, error) {
+func (wireGuardGrantApplication) CreatePending(
+	ctx context.Context,
+	db storage.Executor,
+	grantID, endpointID, serverID uuid.UUID,
+) (WireGuardDeviceResourceGrantApplicationEntity, error) {
 	now := time.Now()
 	entity := WireGuardDeviceResourceGrantApplicationEntity{
 		ID: uuid.New(), CreatedAt: now, UpdatedAt: now, Driver: "wireguard-systemd-ufw",
@@ -38,7 +42,13 @@ func (wireGuardGrantApplication) CreatePending(ctx context.Context, db storage.E
 	return entity, err
 }
 
-func (wireGuardGrantApplication) Mark(ctx context.Context, db storage.Executor, id uuid.UUID, state string, operationErr error) error {
+func (wireGuardGrantApplication) Mark(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	state string,
+	operationErr error,
+) error {
 	now := time.Now()
 	query := db.NewUpdate().TableExpr("wireguard_device_resource_grant_applications").
 		Set("state = ?", state).
@@ -56,7 +66,11 @@ func (wireGuardGrantApplication) Mark(ctx context.Context, db storage.Executor, 
 	return err
 }
 
-func (wireGuardGrantApplication) FindByGrant(ctx context.Context, db storage.Executor, grantID uuid.UUID) (WireGuardDeviceResourceGrantApplicationEntity, error) {
+func (wireGuardGrantApplication) FindByGrant(
+	ctx context.Context,
+	db storage.Executor,
+	grantID uuid.UUID,
+) (WireGuardDeviceResourceGrantApplicationEntity, error) {
 	var entity WireGuardDeviceResourceGrantApplicationEntity
 	err := db.NewSelect().Model(&entity).
 		Where("grant_application.wireguard_device_resource_grant_id = ?", grantID).

@@ -70,7 +70,10 @@ type responseEnvelope[T any] struct {
 }
 
 func NewDNS() *DNS {
-	return &DNS{httpClient: telemetry.NewHTTPClient(20 * time.Second), baseURL: cloudflareAPIBaseURL}
+	return &DNS{
+		httpClient: telemetry.NewHTTPClient(20 * time.Second),
+		baseURL:    cloudflareAPIBaseURL,
+	}
 }
 
 func (client *DNS) VerifyAccountToken(ctx context.Context, accountID, token string) error {
@@ -91,9 +94,20 @@ func (client *DNS) ListZones(ctx context.Context, accountID, token string) ([]Zo
 	zones := make([]Zone, 0)
 	for page := 1; ; page++ {
 		var envelope responseEnvelope[[]Zone]
-		query := url.Values{"account.id": {accountID}, "per_page": {"50"}, "page": {strconv.Itoa(page)}}
+		query := url.Values{
+			"account.id": {accountID},
+			"per_page":   {"50"},
+			"page":       {strconv.Itoa(page)},
+		}
 		path := "/zones?" + query.Encode()
-		if err := client.requestEnvelope(ctx, http.MethodGet, path, token, nil, &envelope); err != nil {
+		if err := client.requestEnvelope(
+			ctx,
+			http.MethodGet,
+			path,
+			token,
+			nil,
+			&envelope,
+		); err != nil {
 			return nil, fmt.Errorf("list Cloudflare zones: %w", err)
 		}
 		zones = append(zones, envelope.Result...)
@@ -104,13 +118,23 @@ func (client *DNS) ListZones(ctx context.Context, accountID, token string) ([]Zo
 	return zones, nil
 }
 
-func (client *DNS) ListAddressRecords(ctx context.Context, token, zoneID, hostname string) ([]DNSRecord, error) {
+func (client *DNS) ListAddressRecords(
+	ctx context.Context,
+	token, zoneID, hostname string,
+) ([]DNSRecord, error) {
 	records := make([]DNSRecord, 0)
 	for page := 1; ; page++ {
 		query := url.Values{"name": {hostname}, "per_page": {"100"}, "page": {strconv.Itoa(page)}}
 		var envelope responseEnvelope[[]DNSRecord]
 		path := "/zones/" + url.PathEscape(zoneID) + "/dns_records?" + query.Encode()
-		if err := client.requestEnvelope(ctx, http.MethodGet, path, token, nil, &envelope); err != nil {
+		if err := client.requestEnvelope(
+			ctx,
+			http.MethodGet,
+			path,
+			token,
+			nil,
+			&envelope,
+		); err != nil {
 			return nil, fmt.Errorf("list Cloudflare address records: %w", err)
 		}
 		for _, record := range envelope.Result {
@@ -125,7 +149,11 @@ func (client *DNS) ListAddressRecords(ctx context.Context, token, zoneID, hostna
 	return records, nil
 }
 
-func (client *DNS) CreateARecord(ctx context.Context, token, zoneID string, input DNSRecordInput) (DNSRecord, error) {
+func (client *DNS) CreateARecord(
+	ctx context.Context,
+	token, zoneID string,
+	input DNSRecordInput,
+) (DNSRecord, error) {
 	var record DNSRecord
 	path := "/zones/" + url.PathEscape(zoneID) + "/dns_records"
 	if err := client.request(ctx, http.MethodPost, path, token, input, &record); err != nil {
@@ -134,7 +162,11 @@ func (client *DNS) CreateARecord(ctx context.Context, token, zoneID string, inpu
 	return record, nil
 }
 
-func (client *DNS) UpdateARecord(ctx context.Context, token, zoneID, recordID string, input DNSRecordInput) (DNSRecord, error) {
+func (client *DNS) UpdateARecord(
+	ctx context.Context,
+	token, zoneID, recordID string,
+	input DNSRecordInput,
+) (DNSRecord, error) {
 	var record DNSRecord
 	path := "/zones/" + url.PathEscape(zoneID) + "/dns_records/" + url.PathEscape(recordID)
 	if err := client.request(ctx, http.MethodPatch, path, token, input, &record); err != nil {
@@ -145,13 +177,25 @@ func (client *DNS) UpdateARecord(ctx context.Context, token, zoneID, recordID st
 
 func (client *DNS) DeleteRecord(ctx context.Context, token, zoneID, recordID string) error {
 	path := "/zones/" + url.PathEscape(zoneID) + "/dns_records/" + url.PathEscape(recordID)
-	if err := client.request(ctx, http.MethodDelete, path, token, nil, nil); err != nil && !errors.Is(err, ErrNotFound) {
+	if err := client.request(
+		ctx,
+		http.MethodDelete,
+		path,
+		token,
+		nil,
+		nil,
+	); err != nil &&
+		!errors.Is(err, ErrNotFound) {
 		return fmt.Errorf("delete Cloudflare DNS record: %w", err)
 	}
 	return nil
 }
 
-func (client *DNS) request(ctx context.Context, method, path, token string, body, result any) error {
+func (client *DNS) request(
+	ctx context.Context,
+	method, path, token string,
+	body, result any,
+) error {
 	envelope := responseEnvelope[json.RawMessage]{}
 	if err := client.requestEnvelope(ctx, method, path, token, body, &envelope); err != nil {
 		return err
@@ -165,7 +209,12 @@ func (client *DNS) request(ctx context.Context, method, path, token string, body
 	return nil
 }
 
-func (client *DNS) requestEnvelope(ctx context.Context, method, path, token string, body any, destination any) error {
+func (client *DNS) requestEnvelope(
+	ctx context.Context,
+	method, path, token string,
+	body any,
+	destination any,
+) error {
 	var payload io.Reader
 	if body != nil {
 		encoded, err := json.Marshal(body)
@@ -196,7 +245,8 @@ func (client *DNS) requestEnvelope(ctx context.Context, method, path, token stri
 	if len(data) > cloudflareBodyLimit {
 		return errors.New("Cloudflare response exceeded the allowed size")
 	}
-	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+	if response.StatusCode == http.StatusUnauthorized ||
+		response.StatusCode == http.StatusForbidden {
 		return ErrUnauthorized
 	}
 	if response.StatusCode == http.StatusNotFound {

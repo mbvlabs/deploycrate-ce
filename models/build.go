@@ -38,22 +38,31 @@ type BuildEntity struct {
 
 func (e *BuildEntity) Validate() error {
 	builder := validation.NewBuilder()
-	if e.ID == uuid.Nil || e.EnvironmentID == uuid.Nil || e.EnvironmentSourceID == uuid.Nil || e.ChangeID == uuid.Nil {
+	if e.ID == uuid.Nil || e.EnvironmentID == uuid.Nil || e.EnvironmentSourceID == uuid.Nil ||
+		e.ChangeID == uuid.Nil {
 		builder.Add("id", "required", "Build ownership identifiers are required")
 	}
 	if len(strings.TrimSpace(e.SourceRevision)) != 40 {
-		builder.Add("sourceRevision", "invalid", "Build source revision must be an exact commit SHA")
+		builder.Add(
+			"sourceRevision",
+			"invalid",
+			"Build source revision must be an exact commit SHA",
+		)
 	}
 	if e.BuildMethod != "buildpacks" {
 		builder.Add("buildMethod", "unsupported", "only Buildpacks builds are supported")
 	}
-	if !slices.Contains([]string{"pending", "running", "succeeded", "failed", "cancelled"}, e.Status) {
+	if !slices.Contains(
+		[]string{"pending", "running", "succeeded", "failed", "cancelled"},
+		e.Status,
+	) {
 		builder.Add("status", "invalid", "Build status is invalid")
 	}
 	if len(e.BuildConfiguration) == 0 || !json.Valid(e.BuildConfiguration) {
 		builder.Add("buildConfiguration", "invalid", "Build configuration must be valid JSON")
 	}
-	if e.Status == "succeeded" && (!e.ArtifactReference.Valid || len(e.ArtifactDigest) != sha256.Size) {
+	if e.Status == "succeeded" &&
+		(!e.ArtifactReference.Valid || len(e.ArtifactDigest) != sha256.Size) {
 		builder.Add("artifact", "required", "successful Builds require an immutable artifact")
 	}
 	return builder.Err()
@@ -65,11 +74,18 @@ func (b build) Lock(ctx context.Context, db storage.Executor, id uuid.UUID) (Bui
 	return entity, err
 }
 
-func (b build) MarkRunning(ctx context.Context, db storage.Executor, id uuid.UUID, at time.Time) error {
+func (b build) MarkRunning(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
 	result, err := db.NewUpdate().TableExpr("builds").Set("status = 'running'").
 		Set("current_step = 'starting'").
-		Set("started_at = COALESCE(started_at, ?)", at).Set("finished_at = NULL").Set("error = NULL").
-		Set("updated_at = ?", at).Where("id = ?", id).Where("status IN ('pending', 'running')").Exec(ctx)
+		Set("started_at = COALESCE(started_at, ?)", at).
+		Set("finished_at = NULL").Set("error = NULL").
+		Set("updated_at = ?", at).
+		Where("id = ?", id).Where("status IN ('pending', 'running')").Exec(ctx)
 	if err != nil {
 		return err
 	}
@@ -80,13 +96,24 @@ func (b build) MarkRunning(ctx context.Context, db storage.Executor, id uuid.UUI
 	return nil
 }
 
-func (b build) MarkProgress(ctx context.Context, db storage.Executor, id uuid.UUID, step string, at time.Time) error {
+func (b build) MarkProgress(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	step string,
+	at time.Time,
+) error {
 	step = strings.TrimSpace(step)
 	if step == "" {
 		return errors.New("Build progress step is required")
 	}
-	result, err := db.NewUpdate().TableExpr("builds").Set("current_step = ?", step).Set("updated_at = ?", at).
-		Where("id = ?", id).Where("status = 'running'").Exec(ctx)
+	result, err := db.NewUpdate().
+		TableExpr("builds").
+		Set("current_step = ?", step).
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Where("status = 'running'").
+		Exec(ctx)
 	if err != nil {
 		return err
 	}
@@ -97,13 +124,29 @@ func (b build) MarkProgress(ctx context.Context, db storage.Executor, id uuid.UU
 	return nil
 }
 
-func (b build) MarkSucceeded(ctx context.Context, db storage.Executor, id uuid.UUID, reference string, digest []byte, at time.Time) error {
+func (b build) MarkSucceeded(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	reference string,
+	digest []byte,
+	at time.Time,
+) error {
 	if !strings.Contains(reference, "@sha256:") || len(digest) != sha256.Size {
 		return errors.New("successful Build requires an immutable artifact digest")
 	}
-	result, err := db.NewUpdate().TableExpr("builds").Set("status = 'succeeded'").Set("artifact_reference = ?", reference).
-		Set("artifact_digest = ?", digest).Set("current_step = 'completed'").Set("finished_at = ?", at).Set("error = NULL").Set("updated_at = ?", at).
-		Where("id = ?", id).Where("status = 'running'").Exec(ctx)
+	result, err := db.NewUpdate().
+		TableExpr("builds").
+		Set("status = 'succeeded'").
+		Set("artifact_reference = ?", reference).
+		Set("artifact_digest = ?", digest).
+		Set("current_step = 'completed'").
+		Set("finished_at = ?", at).
+		Set("error = NULL").
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Where("status = 'running'").
+		Exec(ctx)
 	if err != nil {
 		return err
 	}
@@ -114,22 +157,47 @@ func (b build) MarkSucceeded(ctx context.Context, db storage.Executor, id uuid.U
 	return nil
 }
 
-func (b build) MarkFailed(ctx context.Context, db storage.Executor, id uuid.UUID, operationErr error, at time.Time) error {
+func (b build) MarkFailed(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	operationErr error,
+	at time.Time,
+) error {
 	message := strings.TrimSpace(strings.ReplaceAll(operationErr.Error(), "\x00", "�"))
 	runes := []rune(message)
 	if len(runes) > 2048 {
 		message = "[earlier error output truncated]\n" + string(runes[len(runes)-2048:])
 	}
-	_, err := db.NewUpdate().TableExpr("builds").Set("status = 'failed'").Set("finished_at = ?", at).
-		Set("current_step = 'failed'").Set("error = ?", message).Set("updated_at = ?", at).
-		Where("id = ?", id).Where("status IN ('pending', 'running')").Exec(ctx)
+	_, err := db.NewUpdate().
+		TableExpr("builds").
+		Set("status = 'failed'").
+		Set("finished_at = ?", at).
+		Set("current_step = 'failed'").
+		Set("error = ?", message).
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Where("status IN ('pending', 'running')").
+		Exec(ctx)
 	return err
 }
 
-func (b build) MarkCancelled(ctx context.Context, db storage.Executor, id uuid.UUID, at time.Time) error {
-	result, err := db.NewUpdate().TableExpr("builds").Set("status = 'cancelled'").Set("finished_at = ?", at).
-		Set("current_step = 'cancelled'").Set("error = 'Build cancelled by user'").Set("updated_at = ?", at).
-		Where("id = ?", id).Where("status IN ('pending', 'running')").Exec(ctx)
+func (b build) MarkCancelled(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
+	result, err := db.NewUpdate().
+		TableExpr("builds").
+		Set("status = 'cancelled'").
+		Set("finished_at = ?", at).
+		Set("current_step = 'cancelled'").
+		Set("error = 'Build cancelled by user'").
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Where("status IN ('pending', 'running')").
+		Exec(ctx)
 	if err != nil {
 		return err
 	}
@@ -140,11 +208,25 @@ func (b build) MarkCancelled(ctx context.Context, db storage.Executor, id uuid.U
 	return nil
 }
 
-func (b build) ResetForRetry(ctx context.Context, db storage.Executor, id uuid.UUID, at time.Time) error {
-	result, err := db.NewUpdate().TableExpr("builds").Set("status = 'pending'").Set("current_step = 'queued'").
-		Set("started_at = NULL").Set("finished_at = NULL").Set("error = NULL").
-		Set("artifact_reference = NULL").Set("artifact_digest = NULL").Set("updated_at = ?", at).
-		Where("id = ?", id).Where("status IN ('failed', 'cancelled')").Exec(ctx)
+func (b build) ResetForRetry(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
+	result, err := db.NewUpdate().
+		TableExpr("builds").
+		Set("status = 'pending'").
+		Set("current_step = 'queued'").
+		Set("started_at = NULL").
+		Set("finished_at = NULL").
+		Set("error = NULL").
+		Set("artifact_reference = NULL").
+		Set("artifact_digest = NULL").
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Where("status IN ('failed', 'cancelled')").
+		Exec(ctx)
 	if err != nil {
 		return err
 	}

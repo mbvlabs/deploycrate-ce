@@ -12,45 +12,45 @@ import (
 )
 
 type DashboardMetrics struct {
-	Applications      int64   `json:"applications" bun:"applications"`
-	Environments      int64   `json:"environments" bun:"environments"`
-	Deployments       int64   `json:"deployments" bun:"deployments"`
-	ActiveDeployments int64   `json:"activeDeployments" bun:"active_deployments"`
+	Applications      int64   `json:"applications"          bun:"applications"`
+	Environments      int64   `json:"environments"          bun:"environments"`
+	Deployments       int64   `json:"deployments"           bun:"deployments"`
+	ActiveDeployments int64   `json:"activeDeployments"     bun:"active_deployments"`
 	SuccessfulDeploys int64   `json:"successfulDeployments" bun:"successful_deployments"`
-	FinishedDeploys   int64   `json:"finishedDeployments" bun:"finished_deployments"`
+	FinishedDeploys   int64   `json:"finishedDeployments"   bun:"finished_deployments"`
 	DeploymentSuccess float64 `json:"deploymentSuccess"`
-	Resources         int64   `json:"resources" bun:"resources"`
-	Nodes             int64   `json:"nodes" bun:"nodes"`
+	Resources         int64   `json:"resources"             bun:"resources"`
+	Nodes             int64   `json:"nodes"                 bun:"nodes"`
 }
 
 type DashboardDeploymentActivity struct {
-	Day       string `json:"day" bun:"day"`
-	Total     int64  `json:"total" bun:"total"`
+	Day       string `json:"day"       bun:"day"`
+	Total     int64  `json:"total"     bun:"total"`
 	Succeeded int64  `json:"succeeded" bun:"succeeded"`
-	Failed    int64  `json:"failed" bun:"failed"`
+	Failed    int64  `json:"failed"    bun:"failed"`
 }
 
 type DashboardDeployment struct {
-	ID              uuid.UUID `json:"id" bun:"id"`
-	ApplicationID   uuid.UUID `json:"applicationId" bun:"application_id"`
+	ID              uuid.UUID `json:"id"              bun:"id"`
+	ApplicationID   uuid.UUID `json:"applicationId"   bun:"application_id"`
 	ApplicationName string    `json:"applicationName" bun:"application_name"`
-	EnvironmentID   uuid.UUID `json:"environmentId" bun:"environment_id"`
+	EnvironmentID   uuid.UUID `json:"environmentId"   bun:"environment_id"`
 	EnvironmentName string    `json:"environmentName" bun:"environment_name"`
 	EnvironmentKind string    `json:"environmentKind" bun:"environment_kind"`
-	Status          string    `json:"status" bun:"status"`
-	CurrentStep     string    `json:"currentStep" bun:"current_step"`
-	SourceRevision  string    `json:"sourceRevision" bun:"source_revision"`
-	CreatedAt       time.Time `json:"createdAt" bun:"created_at"`
+	Status          string    `json:"status"          bun:"status"`
+	CurrentStep     string    `json:"currentStep"     bun:"current_step"`
+	SourceRevision  string    `json:"sourceRevision"  bun:"source_revision"`
+	CreatedAt       time.Time `json:"createdAt"       bun:"created_at"`
 }
 
 type DashboardApplication struct {
-	ID                     uuid.UUID `json:"id" bun:"id"`
-	Name                   string    `json:"name" bun:"name"`
-	Slug                   string    `json:"slug" bun:"slug"`
-	EnvironmentCount       int64     `json:"environmentCount" bun:"environment_count"`
-	DeploymentCount        int64     `json:"deploymentCount" bun:"deployment_count"`
+	ID                     uuid.UUID `json:"id"                     bun:"id"`
+	Name                   string    `json:"name"                   bun:"name"`
+	Slug                   string    `json:"slug"                   bun:"slug"`
+	EnvironmentCount       int64     `json:"environmentCount"       bun:"environment_count"`
+	DeploymentCount        int64     `json:"deploymentCount"        bun:"deployment_count"`
 	LatestDeploymentStatus string    `json:"latestDeploymentStatus" bun:"latest_deployment_status"`
-	LatestDeploymentAt     time.Time `json:"latestDeploymentAt" bun:"latest_deployment_at"`
+	LatestDeploymentAt     time.Time `json:"latestDeploymentAt"     bun:"latest_deployment_at"`
 }
 
 type DashboardSnapshot struct {
@@ -84,7 +84,11 @@ func (service *Dashboard) Snapshot(ctx context.Context) (DashboardSnapshot, erro
 		return DashboardSnapshot{}, fmt.Errorf("load dashboard metrics: %w", err)
 	}
 	if metrics.FinishedDeploys > 0 {
-		metrics.DeploymentSuccess = float64(metrics.SuccessfulDeploys) / float64(metrics.FinishedDeploys) * 100
+		metrics.DeploymentSuccess = float64(
+			metrics.SuccessfulDeploys,
+		) / float64(
+			metrics.FinishedDeploys,
+		) * 100
 	}
 
 	activityRows := make([]DashboardDeploymentActivity, 0, 7)

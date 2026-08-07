@@ -23,7 +23,14 @@ type WireGuardDeviceStatusEntity struct {
 	WireGuardDeviceID uuid.UUID      `bun:"wireguard_device_id,type:uuid"`
 }
 
-func (wireGuardDeviceStatus) Upsert(ctx context.Context, db storage.Executor, deviceID uuid.UUID, state string, handshake sql.NullTime, operationErr error) error {
+func (wireGuardDeviceStatus) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	deviceID uuid.UUID,
+	state string,
+	handshake sql.NullTime,
+	operationErr error,
+) error {
 	now := time.Now()
 	entity := WireGuardDeviceStatusEntity{
 		CreatedAt: now, UpdatedAt: now, State: state, LatestHandshakeAt: handshake,

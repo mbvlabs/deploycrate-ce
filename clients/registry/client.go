@@ -67,8 +67,10 @@ type Client struct{}
 func New() Client { return Client{} }
 
 func (Client) Authenticate(ctx context.Context, credentials Credentials) (Authentication, error) {
-	if strings.TrimSpace(credentials.Endpoint) == "" || strings.ContainsAny(credentials.Endpoint, " \t\r\n") ||
-		strings.TrimSpace(credentials.Username) == "" || credentials.Password == "" {
+	if strings.TrimSpace(credentials.Endpoint) == "" ||
+		strings.ContainsAny(credentials.Endpoint, " \t\r\n") ||
+		strings.TrimSpace(credentials.Username) == "" ||
+		credentials.Password == "" {
 		return Authentication{}, errors.New("registry endpoint and credentials are required")
 	}
 	directory, err := createAuthenticationDirectory(ctx)
@@ -76,7 +78,15 @@ func (Client) Authenticate(ctx context.Context, credentials Credentials) (Authen
 		return Authentication{}, fmt.Errorf("create private Docker configuration: %w", err)
 	}
 	authentication := Authentication{DockerConfig: filepath.Clean(directory)}
-	command := exec.CommandContext(ctx, dockerExecutable, "login", credentials.Endpoint, "--username", credentials.Username, "--password-stdin")
+	command := exec.CommandContext(
+		ctx,
+		dockerExecutable,
+		"login",
+		credentials.Endpoint,
+		"--username",
+		credentials.Username,
+		"--password-stdin",
+	)
 	command.Env = authentication.Environment()
 	command.Stdin = bytes.NewBufferString(credentials.Password)
 	output, err := command.CombinedOutput()
@@ -85,7 +95,11 @@ func (Client) Authenticate(ctx context.Context, credentials Credentials) (Authen
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return Authentication{}, fmt.Errorf("authenticate Docker registry client: %w", ctxErr)
 		}
-		return Authentication{}, fmt.Errorf("authenticate Docker registry client: %w: %s", err, sanitizedDockerError(output))
+		return Authentication{}, fmt.Errorf(
+			"authenticate Docker registry client: %w: %s",
+			err,
+			sanitizedDockerError(output),
+		)
 	}
 	return authentication, nil
 }
@@ -116,7 +130,8 @@ func createAuthenticationDirectory(ctx context.Context) (string, error) {
 		cleanupAuthenticationDirectory(ctx, directory)
 		return "", commandError(err, output)
 	}
-	if output, err := sudo.CommandContext(ctx, "/usr/bin/chmod", "0700", "--", directory).CombinedOutput(); err != nil {
+	if output, err := sudo.CommandContext(ctx, "/usr/bin/chmod", "0700", "--", directory).
+		CombinedOutput(); err != nil {
 		cleanupAuthenticationDirectory(ctx, directory)
 		return "", commandError(err, output)
 	}
@@ -163,17 +178,37 @@ func (Client) Pull(ctx context.Context, authentication Authentication, image str
 	command := exec.CommandContext(ctx, dockerExecutable, "pull", image)
 	command.Env = authentication.Environment()
 	if output, err := command.CombinedOutput(); err != nil {
-		return fmt.Errorf("pull immutable registry image: %w: %s", err, sanitizedDockerError(output))
+		return fmt.Errorf(
+			"pull immutable registry image: %w: %s",
+			err,
+			sanitizedDockerError(output),
+		)
 	}
 	return nil
 }
 
-func (Client) ResolveDigest(ctx context.Context, authentication Authentication, imageTag string) (string, error) {
-	command := exec.CommandContext(ctx, dockerExecutable, "image", "inspect", "--format", "{{json .RepoDigests}}", imageTag)
+func (Client) ResolveDigest(
+	ctx context.Context,
+	authentication Authentication,
+	imageTag string,
+) (string, error) {
+	command := exec.CommandContext(
+		ctx,
+		dockerExecutable,
+		"image",
+		"inspect",
+		"--format",
+		"{{json .RepoDigests}}",
+		imageTag,
+	)
 	command.Env = authentication.Environment()
 	output, err := command.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("inspect published image digest: %w: %s", err, sanitizedDockerError(output))
+		return "", fmt.Errorf(
+			"inspect published image digest: %w: %s",
+			err,
+			sanitizedDockerError(output),
+		)
 	}
 	var references []string
 	if err := json.Unmarshal(bytes.TrimSpace(output), &references); err != nil {
@@ -187,7 +222,11 @@ func (Client) ResolveDigest(ctx context.Context, authentication Authentication, 
 	return "", errors.New("published image has no immutable registry digest")
 }
 
-func (Client) ResolveRemoteDigest(ctx context.Context, credentials Credentials, imageReference string) (string, error) {
+func (Client) ResolveRemoteDigest(
+	ctx context.Context,
+	credentials Credentials,
+	imageReference string,
+) (string, error) {
 	endpoint := strings.TrimSuffix(strings.TrimSpace(credentials.Endpoint), "/")
 	imageReference = strings.TrimSpace(imageReference)
 	prefix := endpoint + "/"
@@ -221,7 +260,9 @@ func (Client) ResolveRemoteDigest(ctx context.Context, credentials Credentials, 
 			apiRepository = "library/" + apiRepository
 		}
 	}
-	requestURL := "https://" + apiEndpoint + "/v2/" + apiRepository + "/manifests/" + url.PathEscape(manifestReference)
+	requestURL := "https://" + apiEndpoint + "/v2/" + apiRepository + "/manifests/" + url.PathEscape(
+		manifestReference,
+	)
 	accept := strings.Join([]string{
 		"application/vnd.oci.image.index.v1+json",
 		"application/vnd.docker.distribution.manifest.list.v2+json",
@@ -241,7 +282,10 @@ func (Client) ResolveRemoteDigest(ctx context.Context, credentials Credentials, 
 		_ = response.Body.Close()
 		token, tokenErr := registryBearerToken(ctx, client, challenge, credentials)
 		if tokenErr != nil {
-			return "", fmt.Errorf("authenticate published registry manifest inspection: %w", tokenErr)
+			return "", fmt.Errorf(
+				"authenticate published registry manifest inspection: %w",
+				tokenErr,
+			)
 		}
 		response, err = manifestHead(ctx, client, requestURL, accept, credentials, token)
 		if err != nil {
@@ -295,7 +339,8 @@ func (Client) ListRepositories(ctx context.Context, credentials Credentials) ([]
 		}
 		for _, name := range payload.Repositories {
 			name = strings.TrimSpace(name)
-			if name == "" || len(name) > 512 || strings.ContainsAny(name, " \\?#\t\r\n") || strings.Trim(name, "/") != name {
+			if name == "" || len(name) > 512 || strings.ContainsAny(name, " \\?#\t\r\n") ||
+				strings.Trim(name, "/") != name {
 				return nil, errors.New("Registry returned an invalid repository name")
 			}
 			names = append(names, name)
@@ -331,7 +376,11 @@ func listRepositoryTags(
 	for index := range segments {
 		segments[index] = url.PathEscape(segments[index])
 	}
-	tagsURL := &url.URL{Scheme: "https", Host: endpoint, Path: "/v2/" + strings.Join(segments, "/") + "/tags/list"}
+	tagsURL := &url.URL{
+		Scheme: "https",
+		Host:   endpoint,
+		Path:   "/v2/" + strings.Join(segments, "/") + "/tags/list",
+	}
 	query := tagsURL.Query()
 	query.Set("n", fmt.Sprintf("%d", registryListPageSize))
 	tagsURL.RawQuery = query.Encode()
@@ -394,9 +443,13 @@ func registryJSONPage(
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return registryPage{}, fmt.Errorf("Registry inventory returned status %d", response.StatusCode)
+		return registryPage{}, fmt.Errorf(
+			"Registry inventory returned status %d",
+			response.StatusCode,
+		)
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, registryListResponseLimit)).Decode(target); err != nil {
+	if err := json.NewDecoder(io.LimitReader(response.Body, registryListResponseLimit)).
+		Decode(target); err != nil {
 		return registryPage{}, errors.New("Registry inventory response is invalid")
 	}
 	return registryPage{URL: response.Request.URL, Header: response.Header.Clone()}, nil
@@ -418,7 +471,8 @@ func nextRegistryPage(current *url.URL, header string) (string, error) {
 			return "", errors.New("Registry inventory pagination link is invalid")
 		}
 		next := current.ResolveReference(reference)
-		if next.Scheme != current.Scheme || !strings.EqualFold(next.Host, current.Host) || !strings.HasPrefix(next.Path, "/v2/") {
+		if next.Scheme != current.Scheme || !strings.EqualFold(next.Host, current.Host) ||
+			!strings.HasPrefix(next.Path, "/v2/") {
 			return "", errors.New("Registry inventory pagination changed origin")
 		}
 		return next.String(), nil

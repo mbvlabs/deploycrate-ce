@@ -21,7 +21,14 @@ type GitHubAppFactory struct {
 
 type GitHubAppOption func(*GitHubAppFactory)
 
-func BuildGitHubApp(credentialID uuid.UUID, instanceID uuid.UUID, externalID int64, clientID string, ownerID int64, opts ...GitHubAppOption) models.GitHubAppEntity {
+func BuildGitHubApp(
+	credentialID uuid.UUID,
+	instanceID uuid.UUID,
+	externalID int64,
+	clientID string,
+	ownerID int64,
+	opts ...GitHubAppOption,
+) models.GitHubAppEntity {
 	f := &GitHubAppFactory{
 		GitHubAppEntity: models.GitHubAppEntity{
 			ArchivedAt:   sql.NullTime{Time: time.Now(), Valid: true},
@@ -48,7 +55,16 @@ func BuildGitHubApp(credentialID uuid.UUID, instanceID uuid.UUID, externalID int
 	return f.GitHubAppEntity
 }
 
-func CreateGitHubApp(ctx context.Context, exec storage.Executor, credentialID uuid.UUID, instanceID uuid.UUID, externalID int64, clientID string, ownerID int64, opts ...GitHubAppOption) (models.GitHubAppEntity, error) {
+func CreateGitHubApp(
+	ctx context.Context,
+	exec storage.Executor,
+	credentialID uuid.UUID,
+	instanceID uuid.UUID,
+	externalID int64,
+	clientID string,
+	ownerID int64,
+	opts ...GitHubAppOption,
+) (models.GitHubAppEntity, error) {
 	built := BuildGitHubApp(credentialID, instanceID, externalID, clientID, ownerID, opts...)
 
 	entity := models.GitHubAppEntity{
@@ -78,11 +94,29 @@ func CreateGitHubApp(ctx context.Context, exec storage.Executor, credentialID uu
 	return entity, nil
 }
 
-func CreateGitHubApps(ctx context.Context, exec storage.Executor, credentialID uuid.UUID, instanceID uuid.UUID, externalID int64, clientID string, ownerID int64, count int, opts ...GitHubAppOption) ([]models.GitHubAppEntity, error) {
+func CreateGitHubApps(
+	ctx context.Context,
+	exec storage.Executor,
+	credentialID uuid.UUID,
+	instanceID uuid.UUID,
+	externalID int64,
+	clientID string,
+	ownerID int64,
+	count int,
+	opts ...GitHubAppOption,
+) ([]models.GitHubAppEntity, error) {
 	githubapps := make([]models.GitHubAppEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateGitHubApp(ctx, exec, credentialID, instanceID, externalID, clientID, ownerID, opts...)
+		entity, err := CreateGitHubApp(
+			ctx,
+			exec,
+			credentialID,
+			instanceID,
+			externalID,
+			clientID,
+			ownerID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create githubapp %d: %w", i+1, err)
 		}

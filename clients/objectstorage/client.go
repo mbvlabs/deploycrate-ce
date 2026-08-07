@@ -162,7 +162,11 @@ func (client *Client) Head(ctx context.Context, key string) (ObjectInfo, error) 
 	if err != nil {
 		return ObjectInfo{}, fmt.Errorf("head object %q: %w", key, err)
 	}
-	return ObjectInfo{Key: key, Size: aws.ToInt64(output.ContentLength), Metadata: output.Metadata}, nil
+	return ObjectInfo{
+		Key:      key,
+		Size:     aws.ToInt64(output.ContentLength),
+		Metadata: output.Metadata,
+	}, nil
 }
 
 func (client *Client) Get(
@@ -185,7 +189,11 @@ func (client *Client) Get(
 	if _, err := io.Copy(destination, output.Body); err != nil {
 		return ObjectInfo{}, fmt.Errorf("read object %q: %w", key, err)
 	}
-	return ObjectInfo{Key: key, Size: aws.ToInt64(output.ContentLength), Metadata: output.Metadata}, nil
+	return ObjectInfo{
+		Key:      key,
+		Size:     aws.ToInt64(output.ContentLength),
+		Metadata: output.Metadata,
+	}, nil
 }
 
 func (client *Client) List(ctx context.Context, prefix string) ([]ObjectInfo, error) {
@@ -204,7 +212,10 @@ func (client *Client) List(ctx context.Context, prefix string) ([]ObjectInfo, er
 			return nil, fmt.Errorf("list objects under %q: %w", prefix, err)
 		}
 		for _, object := range page.Contents {
-			objects = append(objects, ObjectInfo{Key: aws.ToString(object.Key), Size: aws.ToInt64(object.Size)})
+			objects = append(
+				objects,
+				ObjectInfo{Key: aws.ToString(object.Key), Size: aws.ToInt64(object.Size)},
+			)
 		}
 	}
 	return objects, nil
@@ -233,7 +244,12 @@ func (client *Client) Probe(ctx context.Context, installationID string) error {
 	key := path.Join("probes", installationID, nonce)
 	payload := []byte("deploycrate-ce-storage-probe:" + nonce)
 
-	if _, err := client.Put(ctx, key, bytes.NewReader(payload), map[string]string{"probe": nonce}); err != nil {
+	if _, err := client.Put(
+		ctx,
+		key,
+		bytes.NewReader(payload),
+		map[string]string{"probe": nonce},
+	); err != nil {
 		return fmt.Errorf("object storage probe write failed: %w", err)
 	}
 	defer client.Delete(context.WithoutCancel(ctx), key)

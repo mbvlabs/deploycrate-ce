@@ -94,35 +94,35 @@ type ApplicationListEnvironment struct {
 }
 
 type ApplicationDetails struct {
-	ID                           uuid.UUID       `json:"id"                      bun:"id"`
-	Name                         string          `json:"name"                    bun:"name"`
-	Slug                         string          `json:"slug"                    bun:"slug"`
-	EnvironmentID                uuid.UUID       `json:"environmentId"           bun:"environment_id"`
-	EnvironmentName              string          `json:"environmentName"         bun:"environment_name"`
-	EnvironmentSlug              string          `json:"environmentSlug"         bun:"environment_slug"`
-	EnvironmentKind              string          `json:"environmentKind"         bun:"environment_kind"`
-	SetupComplete                bool            `json:"setupComplete"           bun:"setup_complete"`
-	EnvironmentSourceID          uuid.UUID       `json:"environmentSourceId"     bun:"environment_source_id"`
-	SourceType                   string          `json:"sourceType"              bun:"source_type"`
-	RepositoryID                 uuid.UUID       `json:"repositoryId"            bun:"repository_id"`
-	RepositoryFullName           string          `json:"repositoryFullName"      bun:"repository_full_name"`
-	RepositoryRemovedAt          sql.NullTime    `json:"repositoryRemovedAt"     bun:"repository_removed_at"`
-	InstallationID               uuid.UUID       `json:"installationId"          bun:"installation_id"`
-	InstallationAccount          string          `json:"installationAccount"     bun:"installation_account"`
-	InstallationSuspendedAt      sql.NullTime    `json:"installationSuspendedAt" bun:"installation_suspended_at"`
-	Reference                    string          `json:"reference"               bun:"reference"`
-	AutoBuild                    bool            `json:"autoBuild"               bun:"auto_build"`
-	ContextPath                  string          `json:"contextPath"             bun:"context_path"`
-	BuilderReference             sql.NullString  `json:"builderReference"        bun:"builder_reference"`
-	BuildpackSettings            json.RawMessage `json:"buildpackSettings"       bun:"buildpack_settings"`
-	ImageRepository              string          `json:"imageRepository"         bun:"image_repository"`
-	RegistryName                 string          `json:"registryName"            bun:"registry_name"`
-	RegistryID                   uuid.UUID       `json:"registryId"              bun:"registry_id"`
-	BuildServerID                uuid.UUID       `json:"buildServerId"           bun:"build_server_id"`
-	BuildServerName              string          `json:"buildServerName"         bun:"build_server_name"`
-	LatestRevision               sql.NullString  `json:"latestRevision"          bun:"latest_revision"`
-	LatestDeliveryStatus         sql.NullString  `json:"latestDeliveryStatus"    bun:"latest_delivery_status"`
-	LatestBuildStatus            sql.NullString  `json:"latestBuildStatus"       bun:"latest_build_status"`
+	ID                           uuid.UUID       `json:"id"                                     bun:"id"`
+	Name                         string          `json:"name"                                   bun:"name"`
+	Slug                         string          `json:"slug"                                   bun:"slug"`
+	EnvironmentID                uuid.UUID       `json:"environmentId"                          bun:"environment_id"`
+	EnvironmentName              string          `json:"environmentName"                        bun:"environment_name"`
+	EnvironmentSlug              string          `json:"environmentSlug"                        bun:"environment_slug"`
+	EnvironmentKind              string          `json:"environmentKind"                        bun:"environment_kind"`
+	SetupComplete                bool            `json:"setupComplete"                          bun:"setup_complete"`
+	EnvironmentSourceID          uuid.UUID       `json:"environmentSourceId"                    bun:"environment_source_id"`
+	SourceType                   string          `json:"sourceType"                             bun:"source_type"`
+	RepositoryID                 uuid.UUID       `json:"repositoryId"                           bun:"repository_id"`
+	RepositoryFullName           string          `json:"repositoryFullName"                     bun:"repository_full_name"`
+	RepositoryRemovedAt          sql.NullTime    `json:"repositoryRemovedAt"                    bun:"repository_removed_at"`
+	InstallationID               uuid.UUID       `json:"installationId"                         bun:"installation_id"`
+	InstallationAccount          string          `json:"installationAccount"                    bun:"installation_account"`
+	InstallationSuspendedAt      sql.NullTime    `json:"installationSuspendedAt"                bun:"installation_suspended_at"`
+	Reference                    string          `json:"reference"                              bun:"reference"`
+	AutoBuild                    bool            `json:"autoBuild"                              bun:"auto_build"`
+	ContextPath                  string          `json:"contextPath"                            bun:"context_path"`
+	BuilderReference             sql.NullString  `json:"builderReference"                       bun:"builder_reference"`
+	BuildpackSettings            json.RawMessage `json:"buildpackSettings"                      bun:"buildpack_settings"`
+	ImageRepository              string          `json:"imageRepository"                        bun:"image_repository"`
+	RegistryName                 string          `json:"registryName"                           bun:"registry_name"`
+	RegistryID                   uuid.UUID       `json:"registryId"                             bun:"registry_id"`
+	BuildServerID                uuid.UUID       `json:"buildServerId"                          bun:"build_server_id"`
+	BuildServerName              string          `json:"buildServerName"                        bun:"build_server_name"`
+	LatestRevision               sql.NullString  `json:"latestRevision"                         bun:"latest_revision"`
+	LatestDeliveryStatus         sql.NullString  `json:"latestDeliveryStatus"                   bun:"latest_delivery_status"`
+	LatestBuildStatus            sql.NullString  `json:"latestBuildStatus"                      bun:"latest_build_status"`
 	CanPromoteToProduction       bool            `json:"canPromoteToProduction"`
 	PromotionTargetName          string          `json:"promotionTargetName"`
 	LatestSuccessfulDeploymentID *uuid.UUID      `json:"latestSuccessfulDeploymentId,omitempty"`

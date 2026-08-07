@@ -431,7 +431,12 @@ func (c change) MarkFailed(
 	return err
 }
 
-func (c change) MarkBuildCancelled(ctx context.Context, db storage.Executor, id uuid.UUID, at time.Time) error {
+func (c change) MarkBuildCancelled(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
 	_, err := db.NewUpdate().TableExpr("changes").
 		Set("status = CASE WHEN kind = 'environment_setup' THEN 'committed' ELSE 'cancelled' END").
 		Set("started_at = CASE WHEN kind = 'environment_setup' THEN NULL ELSE started_at END").
@@ -443,14 +448,24 @@ func (c change) MarkBuildCancelled(ctx context.Context, db storage.Executor, id 
 	return err
 }
 
-func (c change) ResetBuildForRetry(ctx context.Context, db storage.Executor, id uuid.UUID, at time.Time) error {
+func (c change) ResetBuildForRetry(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
 	_, err := db.NewUpdate().TableExpr("changes").Set("status = 'committed'").
 		Set("started_at = NULL").Set("finished_at = NULL").Set("cancelled_at = NULL").
 		Set("error = NULL").Set("updated_at = ?", at).Where("id = ?", id).Exec(ctx)
 	return err
 }
 
-func (c change) ResetForRetry(ctx context.Context, db storage.Executor, id uuid.UUID, at time.Time) error {
+func (c change) ResetForRetry(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
 	_, err := db.NewUpdate().TableExpr("changes").Set("status = 'committed'").
 		Set("started_at = NULL").Set("finished_at = NULL").Set("cancelled_at = NULL").
 		Set("error = NULL").Set("updated_at = ?", at).Where("id = ?", id).Exec(ctx)

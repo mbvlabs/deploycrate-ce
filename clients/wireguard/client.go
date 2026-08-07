@@ -15,7 +15,12 @@ type Client struct{}
 func New() Client { return Client{} }
 
 func (Client) ApplyPeer(ctx context.Context, publicKey, privateAddress string) error {
-	_, err := hostcommand.Run(ctx, "peer-apply", strings.TrimSpace(publicKey), strings.TrimSpace(privateAddress))
+	_, err := hostcommand.Run(
+		ctx,
+		"peer-apply",
+		strings.TrimSpace(publicKey),
+		strings.TrimSpace(privateAddress),
+	)
 	return err
 }
 

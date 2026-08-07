@@ -18,14 +18,14 @@ const MaxBuildLogMessageBytes = 65536
 
 type BuildLogEntity struct {
 	bun.BaseModel `bun:"table:build_logs,alias:build_logs"`
-	ID            uuid.UUID `json:"id" bun:"id,pk,type:uuid"`
-	CreatedAt     time.Time `json:"createdAt" bun:"created_at"`
-	UpdatedAt     time.Time `json:"-" bun:"updated_at"`
-	Sequence      int64     `json:"sequence" bun:"sequence"`
-	Stream        string    `json:"stream" bun:"stream"`
-	Message       string    `json:"message" bun:"message"`
-	OccurredAt    time.Time `json:"occurredAt" bun:"occurred_at"`
-	BuildID       uuid.UUID `json:"-" bun:"build_id,type:uuid"`
+	ID            uuid.UUID `bun:"id,pk,type:uuid"                   json:"id"`
+	CreatedAt     time.Time `bun:"created_at"                        json:"createdAt"`
+	UpdatedAt     time.Time `bun:"updated_at"                        json:"-"`
+	Sequence      int64     `bun:"sequence"                          json:"sequence"`
+	Stream        string    `bun:"stream"                            json:"stream"`
+	Message       string    `bun:"message"                           json:"message"`
+	OccurredAt    time.Time `bun:"occurred_at"                       json:"occurredAt"`
+	BuildID       uuid.UUID `bun:"build_id,type:uuid"                json:"-"`
 }
 
 func (entity *BuildLogEntity) Validate() error {
@@ -39,7 +39,8 @@ func (entity *BuildLogEntity) Validate() error {
 	if !slices.Contains([]string{"system", "pack"}, entity.Stream) {
 		builder.Add("stream", "invalid", "Build log stream is invalid")
 	}
-	if strings.TrimSpace(entity.Message) == "" || len(entity.Message) > MaxBuildLogMessageBytes || !utf8.ValidString(entity.Message) {
+	if strings.TrimSpace(entity.Message) == "" || len(entity.Message) > MaxBuildLogMessageBytes ||
+		!utf8.ValidString(entity.Message) {
 		builder.Add("message", "invalid", "Build log message is invalid")
 	}
 	if entity.OccurredAt.IsZero() {
@@ -56,11 +57,21 @@ type CreateBuildLogData struct {
 	BuildID    uuid.UUID
 }
 
-func (buildLog) Create(ctx context.Context, db storage.Executor, data CreateBuildLogData) (BuildLogEntity, error) {
+func (buildLog) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateBuildLogData,
+) (BuildLogEntity, error) {
 	now := time.Now().UTC()
 	entity := BuildLogEntity{
-		ID: uuid.New(), CreatedAt: now, UpdatedAt: now, Sequence: data.Sequence, Stream: data.Stream,
-		Message: data.Message, OccurredAt: data.OccurredAt, BuildID: data.BuildID,
+		ID:         uuid.New(),
+		CreatedAt:  now,
+		UpdatedAt:  now,
+		Sequence:   data.Sequence,
+		Stream:     data.Stream,
+		Message:    data.Message,
+		OccurredAt: data.OccurredAt,
+		BuildID:    data.BuildID,
 	}
 	if err := validation.Validate(&entity); err != nil {
 		return BuildLogEntity{}, errors.Join(ErrDomainValidation, err)
@@ -71,17 +82,29 @@ func (buildLog) Create(ctx context.Context, db storage.Executor, data CreateBuil
 	return entity, nil
 }
 
-func (buildLog) NextSequence(ctx context.Context, db storage.Executor, buildID uuid.UUID) (int64, error) {
+func (buildLog) NextSequence(
+	ctx context.Context,
+	db storage.Executor,
+	buildID uuid.UUID,
+) (int64, error) {
 	var sequence int64
 	err := db.NewSelect().TableExpr("build_logs").ColumnExpr("COALESCE(MAX(sequence), 0) + 1").
 		Where("build_id = ?", buildID).Scan(ctx, &sequence)
 	return sequence, err
 }
 
-func (buildLog) PackBytes(ctx context.Context, db storage.Executor, buildID uuid.UUID) (int64, error) {
+func (buildLog) PackBytes(
+	ctx context.Context,
+	db storage.Executor,
+	buildID uuid.UUID,
+) (int64, error) {
 	var total int64
-	err := db.NewSelect().TableExpr("build_logs").ColumnExpr("COALESCE(SUM(octet_length(message)), 0)").
-		Where("build_id = ?", buildID).Where("stream = 'pack'").Scan(ctx, &total)
+	err := db.NewSelect().
+		TableExpr("build_logs").
+		ColumnExpr("COALESCE(SUM(octet_length(message)), 0)").
+		Where("build_id = ?", buildID).
+		Where("stream = 'pack'").
+		Scan(ctx, &total)
 	return total, err
 }
 

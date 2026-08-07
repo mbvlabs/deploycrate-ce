@@ -40,7 +40,11 @@ func BuildResource(opts ...ResourceOption) models.ResourceEntity {
 	return f.ResourceEntity
 }
 
-func CreateResource(ctx context.Context, exec storage.Executor, opts ...ResourceOption) (models.ResourceEntity, error) {
+func CreateResource(
+	ctx context.Context,
+	exec storage.Executor,
+	opts ...ResourceOption,
+) (models.ResourceEntity, error) {
 	built := BuildResource(opts...)
 
 	entity, err := models.Resource.Create(ctx, exec, models.CreateResourceData{
@@ -59,7 +63,12 @@ func CreateResource(ctx context.Context, exec storage.Executor, opts ...Resource
 	return entity, nil
 }
 
-func CreateResources(ctx context.Context, exec storage.Executor, count int, opts ...ResourceOption) ([]models.ResourceEntity, error) {
+func CreateResources(
+	ctx context.Context,
+	exec storage.Executor,
+	count int,
+	opts ...ResourceOption,
+) ([]models.ResourceEntity, error) {
 	resources := make([]models.ResourceEntity, 0, count)
 
 	for i := range count {

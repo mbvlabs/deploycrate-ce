@@ -19,7 +19,11 @@ type DatabaseRestoreEngine struct {
 	resources *ResourceManagement
 }
 
-func NewDatabaseRestoreEngine(artifact *DatabaseArtifact, database *DatabaseBackup, resources *ResourceManagement) *DatabaseRestoreEngine {
+func NewDatabaseRestoreEngine(
+	artifact *DatabaseArtifact,
+	database *DatabaseBackup,
+	resources *ResourceManagement,
+) *DatabaseRestoreEngine {
 	return &DatabaseRestoreEngine{artifact: artifact, database: database, resources: resources}
 }
 
@@ -55,7 +59,16 @@ func (service *DatabaseRestoreEngine) Run(
 	if err := service.dropDatabase(ctx, target, stagingName); err != nil {
 		return DatabaseRestoreResult{}, fmt.Errorf("remove stale staging database: %w", err)
 	}
-	if err := service.sql(ctx, target, "postgres", "CREATE DATABASE "+postgresIdentifier(stagingName)+" WITH TEMPLATE template0 OWNER "+postgresIdentifier(target.Username)); err != nil {
+	if err := service.sql(
+		ctx,
+		target,
+		"postgres",
+		"CREATE DATABASE "+postgresIdentifier(
+			stagingName,
+		)+" WITH TEMPLATE template0 OWNER "+postgresIdentifier(
+			target.Username,
+		),
+	); err != nil {
 		return DatabaseRestoreResult{}, fmt.Errorf("create staging database: %w", err)
 	}
 	cleanupStaging := true
@@ -67,8 +80,16 @@ func (service *DatabaseRestoreEngine) Run(
 	if err := service.restoreDump(ctx, target, stagingName, loaded.DumpPath); err != nil {
 		return DatabaseRestoreResult{}, fmt.Errorf("restore staging database: %w", err)
 	}
-	if err := service.resources.reconcilePostgreSQLDatabaseCredentials(ctx, target.ResourceID, target.InstallationID, stagingName); err != nil {
-		return DatabaseRestoreResult{}, fmt.Errorf("reconcile restored database credentials: %w", err)
+	if err := service.resources.reconcilePostgreSQLDatabaseCredentials(
+		ctx,
+		target.ResourceID,
+		target.InstallationID,
+		stagingName,
+	); err != nil {
+		return DatabaseRestoreResult{}, fmt.Errorf(
+			"reconcile restored database credentials: %w",
+			err,
+		)
 	}
 	if err := service.verifyDatabase(ctx, target, stagingName); err != nil {
 		return DatabaseRestoreResult{}, fmt.Errorf("verify staging database: %w", err)
@@ -87,24 +108,60 @@ func (service *DatabaseRestoreEngine) Run(
 		return DatabaseRestoreResult{}, fmt.Errorf("preserve target database for rollback: %w", err)
 	}
 	if err := service.renameDatabase(ctx, target, stagingName, target.DatabaseName); err != nil {
-		rollbackErr := service.renameDatabase(context.WithoutCancel(ctx), target, rollbackName, target.DatabaseName)
+		rollbackErr := service.renameDatabase(
+			context.WithoutCancel(ctx),
+			target,
+			rollbackName,
+			target.DatabaseName,
+		)
 		_ = service.setConnections(context.WithoutCancel(ctx), target, target.DatabaseName, true)
-		return DatabaseRestoreResult{CutoverAt: &cutoverAt, RolledBack: rollbackErr == nil}, errors.Join(fmt.Errorf("activate restored database: %w", err), rollbackErr)
+		return DatabaseRestoreResult{
+				CutoverAt:  &cutoverAt,
+				RolledBack: rollbackErr == nil,
+			}, errors.Join(
+				fmt.Errorf("activate restored database: %w", err),
+				rollbackErr,
+			)
 	}
 	cleanupStaging = false
 	if err := service.setConnections(ctx, target, target.DatabaseName, true); err != nil {
-		return service.rollback(ctx, target, stagingName, rollbackName, cutoverAt, fmt.Errorf("allow restored database connections: %w", err))
+		return service.rollback(
+			ctx,
+			target,
+			stagingName,
+			rollbackName,
+			cutoverAt,
+			fmt.Errorf("allow restored database connections: %w", err),
+		)
 	}
 	if err := service.verifyDatabase(ctx, target, target.DatabaseName); err != nil {
-		return service.rollback(ctx, target, stagingName, rollbackName, cutoverAt, fmt.Errorf("verify restored database after cutover: %w", err))
+		return service.rollback(
+			ctx,
+			target,
+			stagingName,
+			rollbackName,
+			cutoverAt,
+			fmt.Errorf("verify restored database after cutover: %w", err),
+		)
 	}
 	if err := service.dropDatabase(ctx, target, rollbackName); err != nil {
-		slog.WarnContext(ctx, "restored database verified but rollback database cleanup failed", "rollback_database", rollbackName, "error", err)
+		slog.WarnContext(
+			ctx,
+			"restored database verified but rollback database cleanup failed",
+			"rollback_database",
+			rollbackName,
+			"error",
+			err,
+		)
 	}
 	return DatabaseRestoreResult{CutoverAt: &cutoverAt}, nil
 }
 
-func (service *DatabaseRestoreEngine) resumeCutover(ctx context.Context, target PostgreSQLBackupTarget, stagingName, rollbackName string) (bool, DatabaseRestoreResult, error) {
+func (service *DatabaseRestoreEngine) resumeCutover(
+	ctx context.Context,
+	target PostgreSQLBackupTarget,
+	stagingName, rollbackName string,
+) (bool, DatabaseRestoreResult, error) {
 	rollbackExists, err := service.databaseExists(ctx, target, rollbackName)
 	if err != nil || !rollbackExists {
 		return false, DatabaseRestoreResult{}, err
@@ -118,39 +175,101 @@ func (service *DatabaseRestoreEngine) resumeCutover(ctx context.Context, target 
 		rollbackErr := service.renameDatabase(ctx, target, rollbackName, target.DatabaseName)
 		_ = service.setConnections(context.WithoutCancel(ctx), target, target.DatabaseName, true)
 		_ = service.dropDatabase(context.WithoutCancel(ctx), target, stagingName)
-		return true, DatabaseRestoreResult{CutoverAt: &cutoverAt, RolledBack: rollbackErr == nil}, errors.Join(errors.New("restore cutover was interrupted and the original database was recovered"), rollbackErr)
+		return true, DatabaseRestoreResult{
+				CutoverAt:  &cutoverAt,
+				RolledBack: rollbackErr == nil,
+			}, errors.Join(
+				errors.New(
+					"restore cutover was interrupted and the original database was recovered",
+				),
+				rollbackErr,
+			)
 	}
 	if err := service.verifyDatabase(ctx, target, target.DatabaseName); err != nil {
-		result, rollbackErr := service.rollback(ctx, target, stagingName, rollbackName, cutoverAt, err)
+		result, rollbackErr := service.rollback(
+			ctx,
+			target,
+			stagingName,
+			rollbackName,
+			cutoverAt,
+			err,
+		)
 		return true, result, rollbackErr
 	}
 	if err := service.dropDatabase(ctx, target, rollbackName); err != nil {
-		slog.WarnContext(ctx, "resumed database restore verified but rollback database cleanup failed", "rollback_database", rollbackName, "error", err)
+		slog.WarnContext(
+			ctx,
+			"resumed database restore verified but rollback database cleanup failed",
+			"rollback_database",
+			rollbackName,
+			"error",
+			err,
+		)
 	}
 	return true, DatabaseRestoreResult{CutoverAt: &cutoverAt}, nil
 }
 
-func (service *DatabaseRestoreEngine) rollback(ctx context.Context, target PostgreSQLBackupTarget, stagingName, rollbackName string, cutoverAt time.Time, operationErr error) (DatabaseRestoreResult, error) {
+func (service *DatabaseRestoreEngine) rollback(
+	ctx context.Context,
+	target PostgreSQLBackupTarget,
+	stagingName, rollbackName string,
+	cutoverAt time.Time,
+	operationErr error,
+) (DatabaseRestoreResult, error) {
 	rollbackContext := context.WithoutCancel(ctx)
 	if exists, _ := service.databaseExists(rollbackContext, target, target.DatabaseName); exists {
 		_ = service.setConnections(rollbackContext, target, target.DatabaseName, false)
 		_ = service.terminateConnections(rollbackContext, target, target.DatabaseName)
 		_ = service.dropDatabase(rollbackContext, target, stagingName)
-		if err := service.renameDatabase(rollbackContext, target, target.DatabaseName, stagingName); err != nil {
-			return DatabaseRestoreResult{CutoverAt: &cutoverAt}, errors.Join(operationErr, fmt.Errorf("preserve failed restored database: %w", err))
+		if err := service.renameDatabase(
+			rollbackContext,
+			target,
+			target.DatabaseName,
+			stagingName,
+		); err != nil {
+			return DatabaseRestoreResult{
+					CutoverAt: &cutoverAt,
+				}, errors.Join(
+					operationErr,
+					fmt.Errorf("preserve failed restored database: %w", err),
+				)
 		}
 	}
-	if err := service.renameDatabase(rollbackContext, target, rollbackName, target.DatabaseName); err != nil {
-		return DatabaseRestoreResult{CutoverAt: &cutoverAt}, errors.Join(operationErr, fmt.Errorf("restore original database: %w", err))
+	if err := service.renameDatabase(
+		rollbackContext,
+		target,
+		rollbackName,
+		target.DatabaseName,
+	); err != nil {
+		return DatabaseRestoreResult{
+				CutoverAt: &cutoverAt,
+			}, errors.Join(
+				operationErr,
+				fmt.Errorf("restore original database: %w", err),
+			)
 	}
-	if err := service.setConnections(rollbackContext, target, target.DatabaseName, true); err != nil {
-		return DatabaseRestoreResult{CutoverAt: &cutoverAt}, errors.Join(operationErr, fmt.Errorf("reopen original database: %w", err))
+	if err := service.setConnections(
+		rollbackContext,
+		target,
+		target.DatabaseName,
+		true,
+	); err != nil {
+		return DatabaseRestoreResult{
+				CutoverAt: &cutoverAt,
+			}, errors.Join(
+				operationErr,
+				fmt.Errorf("reopen original database: %w", err),
+			)
 	}
 	_ = service.dropDatabase(rollbackContext, target, stagingName)
 	return DatabaseRestoreResult{CutoverAt: &cutoverAt, RolledBack: true}, operationErr
 }
 
-func (service *DatabaseRestoreEngine) restoreDump(ctx context.Context, target PostgreSQLBackupTarget, databaseName, dumpPath string) error {
+func (service *DatabaseRestoreEngine) restoreDump(
+	ctx context.Context,
+	target PostgreSQLBackupTarget,
+	databaseName, dumpPath string,
+) error {
 	dump, err := os.Open(dumpPath)
 	if err != nil {
 		return err
@@ -160,10 +279,28 @@ func (service *DatabaseRestoreEngine) restoreDump(ctx context.Context, target Po
 		"--username", target.Username, "--dbname", databaseName, "--exit-on-error", "--no-password")
 }
 
-func (service *DatabaseRestoreEngine) verifyDatabase(ctx context.Context, target PostgreSQLBackupTarget, databaseName string) error {
+func (service *DatabaseRestoreEngine) verifyDatabase(
+	ctx context.Context,
+	target PostgreSQLBackupTarget,
+	databaseName string,
+) error {
 	var output bytes.Buffer
-	if err := service.database.runContainerPostgres(ctx, target, nil, &output, "psql",
-		"--username", target.Username, "--dbname", databaseName, "--no-password", "--tuples-only", "--no-align", "--command", "SELECT 1"); err != nil {
+	if err := service.database.runContainerPostgres(
+		ctx,
+		target,
+		nil,
+		&output,
+		"psql",
+		"--username",
+		target.Username,
+		"--dbname",
+		databaseName,
+		"--no-password",
+		"--tuples-only",
+		"--no-align",
+		"--command",
+		"SELECT 1",
+	); err != nil {
 		return err
 	}
 	if strings.TrimSpace(output.String()) != "1" {
@@ -172,39 +309,114 @@ func (service *DatabaseRestoreEngine) verifyDatabase(ctx context.Context, target
 	return nil
 }
 
-func (service *DatabaseRestoreEngine) databaseExists(ctx context.Context, target PostgreSQLBackupTarget, databaseName string) (bool, error) {
+func (service *DatabaseRestoreEngine) databaseExists(
+	ctx context.Context,
+	target PostgreSQLBackupTarget,
+	databaseName string,
+) (bool, error) {
 	var output bytes.Buffer
 	query := "SELECT 1 FROM pg_database WHERE datname = " + postgresLiteral(databaseName)
-	if err := service.database.runContainerPostgres(ctx, target, nil, &output, "psql",
-		"--username", target.Username, "--dbname", "postgres", "--no-password", "--tuples-only", "--no-align", "--command", query); err != nil {
+	if err := service.database.runContainerPostgres(
+		ctx,
+		target,
+		nil,
+		&output,
+		"psql",
+		"--username",
+		target.Username,
+		"--dbname",
+		"postgres",
+		"--no-password",
+		"--tuples-only",
+		"--no-align",
+		"--command",
+		query,
+	); err != nil {
 		return false, err
 	}
 	return strings.TrimSpace(output.String()) == "1", nil
 }
 
-func (service *DatabaseRestoreEngine) dropDatabase(ctx context.Context, target PostgreSQLBackupTarget, databaseName string) error {
-	return service.sql(ctx, target, "postgres", "DROP DATABASE IF EXISTS "+postgresIdentifier(databaseName)+" WITH (FORCE)")
+func (service *DatabaseRestoreEngine) dropDatabase(
+	ctx context.Context,
+	target PostgreSQLBackupTarget,
+	databaseName string,
+) error {
+	return service.sql(
+		ctx,
+		target,
+		"postgres",
+		"DROP DATABASE IF EXISTS "+postgresIdentifier(databaseName)+" WITH (FORCE)",
+	)
 }
 
-func (service *DatabaseRestoreEngine) renameDatabase(ctx context.Context, target PostgreSQLBackupTarget, from, to string) error {
-	return service.sql(ctx, target, "postgres", "ALTER DATABASE "+postgresIdentifier(from)+" RENAME TO "+postgresIdentifier(to))
+func (service *DatabaseRestoreEngine) renameDatabase(
+	ctx context.Context,
+	target PostgreSQLBackupTarget,
+	from, to string,
+) error {
+	return service.sql(
+		ctx,
+		target,
+		"postgres",
+		"ALTER DATABASE "+postgresIdentifier(from)+" RENAME TO "+postgresIdentifier(to),
+	)
 }
 
-func (service *DatabaseRestoreEngine) setConnections(ctx context.Context, target PostgreSQLBackupTarget, databaseName string, allowed bool) error {
+func (service *DatabaseRestoreEngine) setConnections(
+	ctx context.Context,
+	target PostgreSQLBackupTarget,
+	databaseName string,
+	allowed bool,
+) error {
 	value := "false"
 	if allowed {
 		value = "true"
 	}
-	return service.sql(ctx, target, "postgres", "ALTER DATABASE "+postgresIdentifier(databaseName)+" ALLOW_CONNECTIONS "+value)
+	return service.sql(
+		ctx,
+		target,
+		"postgres",
+		"ALTER DATABASE "+postgresIdentifier(databaseName)+" ALLOW_CONNECTIONS "+value,
+	)
 }
 
-func (service *DatabaseRestoreEngine) terminateConnections(ctx context.Context, target PostgreSQLBackupTarget, databaseName string) error {
-	return service.sql(ctx, target, "postgres", "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = "+postgresLiteral(databaseName)+" AND pid <> pg_backend_pid()")
+func (service *DatabaseRestoreEngine) terminateConnections(
+	ctx context.Context,
+	target PostgreSQLBackupTarget,
+	databaseName string,
+) error {
+	return service.sql(
+		ctx,
+		target,
+		"postgres",
+		"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = "+postgresLiteral(
+			databaseName,
+		)+" AND pid <> pg_backend_pid()",
+	)
 }
 
-func (service *DatabaseRestoreEngine) sql(ctx context.Context, target PostgreSQLBackupTarget, databaseName, statement string) error {
-	return service.database.runContainerPostgres(ctx, target, nil, nil, "psql",
-		"--username", target.Username, "--dbname", databaseName, "--no-password", "--set", "ON_ERROR_STOP=1", "--command", statement)
+func (service *DatabaseRestoreEngine) sql(
+	ctx context.Context,
+	target PostgreSQLBackupTarget,
+	databaseName, statement string,
+) error {
+	return service.database.runContainerPostgres(
+		ctx,
+		target,
+		nil,
+		nil,
+		"psql",
+		"--username",
+		target.Username,
+		"--dbname",
+		databaseName,
+		"--no-password",
+		"--set",
+		"ON_ERROR_STOP=1",
+		"--command",
+		statement,
+	)
 }
 
 func postgresIdentifier(value string) string {

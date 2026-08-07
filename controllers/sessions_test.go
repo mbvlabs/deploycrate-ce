@@ -43,7 +43,13 @@ func TestSignIn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read Vite manifest: %v", err)
 	}
-	if err := inertia.Init(config.ProjectName, config.Env, routes.ViteBuild.Path(), rootHTML, viteManifest); err != nil {
+	if err := inertia.Init(
+		config.ProjectName,
+		config.Env,
+		routes.ViteBuild.Path(),
+		rootHTML,
+		viteManifest,
+	); err != nil {
 		t.Fatalf("initialize Inertia: %v", err)
 	}
 

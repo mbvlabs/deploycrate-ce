@@ -37,8 +37,18 @@ func (controller Networks) RegisterRoutes(r *router.Router) error {
 		handler     echo.HandlerFunc
 		middlewares []echo.MiddlewareFunc
 	}{
-		{http.MethodGet, routes.Networks, controller.Index, []echo.MiddlewareFunc{middleware.AuthOnly}},
-		{http.MethodDelete, routes.NetworkWireGuardDeviceDestroy, controller.DestroyWireGuardDevice, []echo.MiddlewareFunc{middleware.AdminOnly}},
+		{
+			http.MethodGet,
+			routes.Networks,
+			controller.Index,
+			[]echo.MiddlewareFunc{middleware.AuthOnly},
+		},
+		{
+			http.MethodDelete,
+			routes.NetworkWireGuardDeviceDestroy,
+			controller.DestroyWireGuardDevice,
+			[]echo.MiddlewareFunc{middleware.AdminOnly},
+		},
 	}
 
 	errList := make([]error, 0, len(routesToRegister))

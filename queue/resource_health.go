@@ -23,7 +23,9 @@ func (worker *ResourceHealthSweepWorker) Register(workers *river.Workers) error 
 	return river.AddWorkerSafely(workers, worker)
 }
 
-func (worker *ResourceHealthSweepWorker) Timeout(*river.Job[jobs.ResourceHealthSweepArgs]) time.Duration {
+func (worker *ResourceHealthSweepWorker) Timeout(
+	*river.Job[jobs.ResourceHealthSweepArgs],
+) time.Duration {
 	return 10 * time.Minute
 }
 

@@ -47,7 +47,8 @@ func (e *EnvironmentSourceEntity) Validate() error {
 	if e.Provider == "registry" && e.Kind != "image" {
 		builder.Add("kind", "invalid", "registry sources must use the image kind")
 	}
-	if (e.Kind == "git" && e.Provider != "github") || (e.Kind == "image" && e.Provider != "registry") {
+	if (e.Kind == "git" && e.Provider != "github") ||
+		(e.Kind == "image" && e.Provider != "registry") {
 		builder.Add("provider", "invalid", "source kind and provider are incompatible")
 	}
 	if strings.TrimSpace(e.Repository) == "" || strings.TrimSpace(e.Reference) == "" {

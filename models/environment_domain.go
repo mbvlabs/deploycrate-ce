@@ -25,7 +25,9 @@ type EnvironmentDomainEntity struct {
 	EnvironmentID uuid.UUID    `bun:"environment_id,type:uuid"`
 }
 
-var environmentHostnamePattern = regexp.MustCompile(`^(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))+$`)
+var environmentHostnamePattern = regexp.MustCompile(
+	`^(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)(?:\.(?i:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?))+$`,
+)
 
 func NormalizeHostname(value string) string {
 	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(value), "."))
@@ -51,21 +53,38 @@ func (e *EnvironmentDomainEntity) Validate() error {
 	return builder.Err()
 }
 
-func ensureEnvironmentDomainUnique(ctx context.Context, db storage.Executor, entity EnvironmentDomainEntity) error {
+func ensureEnvironmentDomainUnique(
+	ctx context.Context,
+	db storage.Executor,
+	entity EnvironmentDomainEntity,
+) error {
 	if entity.ArchivedAt.Valid {
 		return nil
 	}
 	if err := ensureActiveUnique(
-		ctx, db, "environment-domain-hostname:"+entity.Hostname, entity.ID,
-		db.NewSelect().Model((*EnvironmentDomainEntity)(nil)).Where("lower(hostname) = ?", strings.ToLower(entity.Hostname)),
-		"hostname", "an active Environment domain already uses this hostname",
+		ctx,
+		db,
+		"environment-domain-hostname:"+entity.Hostname,
+		entity.ID,
+		db.NewSelect().
+			Model((*EnvironmentDomainEntity)(nil)).
+			Where("lower(hostname) = ?", strings.ToLower(entity.Hostname)),
+		"hostname",
+		"an active Environment domain already uses this hostname",
 	); err != nil {
 		return err
 	}
 	return ensureActiveUnique(
-		ctx, db, "environment-domain-primary:"+entity.EnvironmentID.String(), entity.ID,
-		db.NewSelect().Model((*EnvironmentDomainEntity)(nil)).Where("environment_id = ?", entity.EnvironmentID).Where("is_primary = TRUE"),
-		"isPrimary", "the Environment already has an active primary domain",
+		ctx,
+		db,
+		"environment-domain-primary:"+entity.EnvironmentID.String(),
+		entity.ID,
+		db.NewSelect().
+			Model((*EnvironmentDomainEntity)(nil)).
+			Where("environment_id = ?", entity.EnvironmentID).
+			Where("is_primary = TRUE"),
+		"isPrimary",
+		"the Environment already has an active primary domain",
 	)
 }
 

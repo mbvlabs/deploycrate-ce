@@ -21,7 +21,12 @@ type GitHubInstallationFactory struct {
 
 type GitHubInstallationOption func(*GitHubInstallationFactory)
 
-func BuildGitHubInstallation(gitHubAppID uuid.UUID, externalID int64, accountID int64, opts ...GitHubInstallationOption) models.GitHubInstallationEntity {
+func BuildGitHubInstallation(
+	gitHubAppID uuid.UUID,
+	externalID int64,
+	accountID int64,
+	opts ...GitHubInstallationOption,
+) models.GitHubInstallationEntity {
 	f := &GitHubInstallationFactory{
 		GitHubInstallationEntity: models.GitHubInstallationEntity{
 			ArchivedAt:          sql.NullTime{Time: time.Now(), Valid: true},
@@ -45,7 +50,14 @@ func BuildGitHubInstallation(gitHubAppID uuid.UUID, externalID int64, accountID 
 	return f.GitHubInstallationEntity
 }
 
-func CreateGitHubInstallation(ctx context.Context, exec storage.Executor, gitHubAppID uuid.UUID, externalID int64, accountID int64, opts ...GitHubInstallationOption) (models.GitHubInstallationEntity, error) {
+func CreateGitHubInstallation(
+	ctx context.Context,
+	exec storage.Executor,
+	gitHubAppID uuid.UUID,
+	externalID int64,
+	accountID int64,
+	opts ...GitHubInstallationOption,
+) (models.GitHubInstallationEntity, error) {
 	built := BuildGitHubInstallation(gitHubAppID, externalID, accountID, opts...)
 
 	entity := models.GitHubInstallationEntity{
@@ -72,11 +84,25 @@ func CreateGitHubInstallation(ctx context.Context, exec storage.Executor, gitHub
 	return entity, nil
 }
 
-func CreateGitHubInstallations(ctx context.Context, exec storage.Executor, gitHubAppID uuid.UUID, externalID int64, accountID int64, count int, opts ...GitHubInstallationOption) ([]models.GitHubInstallationEntity, error) {
+func CreateGitHubInstallations(
+	ctx context.Context,
+	exec storage.Executor,
+	gitHubAppID uuid.UUID,
+	externalID int64,
+	accountID int64,
+	count int,
+	opts ...GitHubInstallationOption,
+) ([]models.GitHubInstallationEntity, error) {
 	githubinstallations := make([]models.GitHubInstallationEntity, 0, count)
 
 	for i := range count {
-		entity, err := CreateGitHubInstallation(ctx, exec, gitHubAppID, externalID, accountID, opts...)
+		entity, err := CreateGitHubInstallation(
+			ctx,
+			exec,
+			gitHubAppID,
+			externalID,
+			accountID,
+			opts...)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create githubinstallation %d: %w", i+1, err)
 		}

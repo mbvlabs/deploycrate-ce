@@ -24,8 +24,13 @@ const (
 )
 
 var environmentDNSStates = []string{
-	EnvironmentDNSPending, EnvironmentDNSReconciling, EnvironmentDNSApplied,
-	EnvironmentDNSConflict, EnvironmentDNSFailed, EnvironmentDNSRemoving, EnvironmentDNSRemovalFailed,
+	EnvironmentDNSPending,
+	EnvironmentDNSReconciling,
+	EnvironmentDNSApplied,
+	EnvironmentDNSConflict,
+	EnvironmentDNSFailed,
+	EnvironmentDNSRemoving,
+	EnvironmentDNSRemovalFailed,
 }
 
 type EnvironmentDNSBindingEntity struct {
@@ -54,7 +59,8 @@ func (entity *EnvironmentDNSBindingEntity) Validate() error {
 	if !slices.Contains(environmentDNSStates, entity.State) {
 		builder.Add("state", "invalid", "DNS binding state is invalid")
 	}
-	if entity.Generation < 1 || entity.AppliedGeneration < 0 || entity.AppliedGeneration > entity.Generation {
+	if entity.Generation < 1 || entity.AppliedGeneration < 0 ||
+		entity.AppliedGeneration > entity.Generation {
 		builder.Add("generation", "invalid", "DNS binding generation is invalid")
 	}
 	if entity.EnvironmentDomainID == uuid.Nil {
@@ -73,7 +79,11 @@ type CreateEnvironmentDNSBindingData struct {
 	DeploymentActorID   *uuid.UUID
 }
 
-func (environmentDNSBinding) Create(ctx context.Context, db storage.Executor, data CreateEnvironmentDNSBindingData) (EnvironmentDNSBindingEntity, error) {
+func (environmentDNSBinding) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data CreateEnvironmentDNSBindingData,
+) (EnvironmentDNSBindingEntity, error) {
 	now := time.Now().UTC()
 	entity := EnvironmentDNSBindingEntity{
 		ID: uuid.New(), CreatedAt: now, UpdatedAt: now, State: EnvironmentDNSPending,
@@ -89,7 +99,9 @@ func (environmentDNSBinding) Create(ctx context.Context, db storage.Executor, da
 		db,
 		"environment-dns-binding-domain:"+entity.EnvironmentDomainID.String(),
 		entity.ID,
-		db.NewSelect().Model((*EnvironmentDNSBindingEntity)(nil)).Where("environment_domain_id = ?", entity.EnvironmentDomainID),
+		db.NewSelect().
+			Model((*EnvironmentDNSBindingEntity)(nil)).
+			Where("environment_domain_id = ?", entity.EnvironmentDomainID),
 		"environmentDomainId",
 		"the Environment domain already has an active DNS binding",
 	); err != nil {
@@ -101,7 +113,11 @@ func (environmentDNSBinding) Create(ctx context.Context, db storage.Executor, da
 	return entity, nil
 }
 
-func (environmentDNSBinding) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentDNSBindingEntity, error) {
+func (environmentDNSBinding) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (EnvironmentDNSBindingEntity, error) {
 	var entity EnvironmentDNSBindingEntity
 	if err := db.NewSelect().Model(&entity).Where("id = ?", id).Scan(ctx); err != nil {
 		return EnvironmentDNSBindingEntity{}, err
@@ -109,7 +125,11 @@ func (environmentDNSBinding) Find(ctx context.Context, db storage.Executor, id u
 	return entity, nil
 }
 
-func (environmentDNSBinding) ActiveForDomain(ctx context.Context, db storage.Executor, domainID uuid.UUID) (EnvironmentDNSBindingEntity, error) {
+func (environmentDNSBinding) ActiveForDomain(
+	ctx context.Context,
+	db storage.Executor,
+	domainID uuid.UUID,
+) (EnvironmentDNSBindingEntity, error) {
 	var entity EnvironmentDNSBindingEntity
 	if err := db.NewSelect().Model(&entity).Where("environment_domain_id = ?", domainID).
 		Where("archived_at IS NULL").Limit(1).Scan(ctx); err != nil {
@@ -118,7 +138,11 @@ func (environmentDNSBinding) ActiveForDomain(ctx context.Context, db storage.Exe
 	return entity, nil
 }
 
-func (environmentDNSBinding) ActiveForEnvironment(ctx context.Context, db storage.Executor, environmentID uuid.UUID) (EnvironmentDNSBindingEntity, error) {
+func (environmentDNSBinding) ActiveForEnvironment(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) (EnvironmentDNSBindingEntity, error) {
 	var entity EnvironmentDNSBindingEntity
 	if err := db.NewSelect().Model(&entity).
 		Join("JOIN environment_domains AS domain ON domain.id = environment_dns_bindings.environment_domain_id").
@@ -145,7 +169,8 @@ func (environmentDNSBinding) Reconfigure(
 		Set("deploy_after_apply = ?", deployAfterApply).Set("deployment_actor_id = ?", actorID).
 		Set("deployment_trigger_type = 'user'").Set("deployment_reference = ''").
 		Set("deployment_dispatched_at = NULL").
-		Where("id = ?", id).Where("archived_at IS NULL").Where("state <> ?", EnvironmentDNSReconciling).
+		Where("id = ?", id).
+		Where("archived_at IS NULL").Where("state <> ?", EnvironmentDNSReconciling).
 		Returning("*").Scan(ctx); err != nil {
 		return EnvironmentDNSBindingEntity{}, err
 	}
@@ -167,19 +192,25 @@ func (environmentDNSBinding) MarkRemoving(
 		Set("deploy_after_apply = ?", deployAfterApply).Set("deployment_actor_id = ?", actorID).
 		Set("deployment_trigger_type = 'user'").Set("deployment_reference = ''").
 		Set("deployment_dispatched_at = NULL").
-		Where("id = ?", id).Where("archived_at IS NULL").Where("state <> ?", EnvironmentDNSReconciling).
+		Where("id = ?", id).
+		Where("archived_at IS NULL").Where("state <> ?", EnvironmentDNSReconciling).
 		Returning("*").Scan(ctx); err != nil {
 		return EnvironmentDNSBindingEntity{}, err
 	}
 	return entity, nil
 }
 
-func (environmentDNSBinding) ConfirmAdoption(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentDNSBindingEntity, error) {
+func (environmentDNSBinding) ConfirmAdoption(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (EnvironmentDNSBindingEntity, error) {
 	var entity EnvironmentDNSBindingEntity
 	now := time.Now().UTC()
 	if err := db.NewUpdate().Model(&entity).
 		Set("updated_at = ?", now).Set("state = ?", EnvironmentDNSPending).
-		Set("generation = generation + 1").Set("last_error = NULL").Set("adoption_confirmed_at = ?", now).
+		Set("generation = generation + 1").
+		Set("last_error = NULL").Set("adoption_confirmed_at = ?", now).
 		Where("id = ?", id).Where("archived_at IS NULL").Returning("*").Scan(ctx); err != nil {
 		return EnvironmentDNSBindingEntity{}, err
 	}
@@ -207,7 +238,11 @@ func (environmentDNSBinding) PrepareDeployment(
 	return entity, nil
 }
 
-func (environmentDNSBinding) Retry(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentDNSBindingEntity, error) {
+func (environmentDNSBinding) Retry(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (EnvironmentDNSBindingEntity, error) {
 	var entity EnvironmentDNSBindingEntity
 	now := time.Now().UTC()
 	if err := db.NewUpdate().Model(&entity).
@@ -219,20 +254,29 @@ func (environmentDNSBinding) Retry(ctx context.Context, db storage.Executor, id 
 	return entity, nil
 }
 
-func (environmentDNSBinding) Refresh(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentDNSBindingEntity, error) {
+func (environmentDNSBinding) Refresh(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (EnvironmentDNSBindingEntity, error) {
 	var entity EnvironmentDNSBindingEntity
 	now := time.Now().UTC()
 	if err := db.NewUpdate().Model(&entity).
 		Set("updated_at = ?", now).Set("state = ?", EnvironmentDNSPending).
 		Set("generation = generation + 1").Set("last_error = NULL").Set("applied_at = NULL").
-		Where("id = ?", id).Where("archived_at IS NULL").Where("state <> ?", EnvironmentDNSReconciling).
+		Where("id = ?", id).
+		Where("archived_at IS NULL").Where("state <> ?", EnvironmentDNSReconciling).
 		Returning("*").Scan(ctx); err != nil {
 		return EnvironmentDNSBindingEntity{}, err
 	}
 	return entity, nil
 }
 
-func (environmentDNSBinding) RetryRemoval(ctx context.Context, db storage.Executor, id uuid.UUID) (EnvironmentDNSBindingEntity, error) {
+func (environmentDNSBinding) RetryRemoval(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (EnvironmentDNSBindingEntity, error) {
 	var entity EnvironmentDNSBindingEntity
 	now := time.Now().UTC()
 	if err := db.NewUpdate().Model(&entity).

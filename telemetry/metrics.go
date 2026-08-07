@@ -36,7 +36,12 @@ func HTTPRequestsInFlight() (metric.Int64UpDownCounter, error) {
 	return counter, nil
 }
 
-func RecordMetricRollup(ctx context.Context, succeeded bool, insertedRows, rejectedSamples int, duration time.Duration) {
+func RecordMetricRollup(
+	ctx context.Context,
+	succeeded bool,
+	insertedRows, rejectedSamples int,
+	duration time.Duration,
+) {
 	meter := GetMeter(config.ServiceName)
 	status := "success"
 	if !succeeded {
@@ -69,6 +74,10 @@ func RecordMetricRollup(ctx context.Context, succeeded bool, insertedRows, rejec
 		metric.WithUnit("s"),
 		metric.WithExplicitBucketBoundaries(0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60),
 	); err == nil {
-		elapsed.Record(ctx, duration.Seconds(), metric.WithAttributes(attribute.String("status", status)))
+		elapsed.Record(
+			ctx,
+			duration.Seconds(),
+			metric.WithAttributes(attribute.String("status", status)),
+		)
 	}
 }

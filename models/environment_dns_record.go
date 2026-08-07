@@ -50,7 +50,11 @@ func (entity *EnvironmentDNSRecordEntity) Validate() error {
 	return builder.Err()
 }
 
-func (environmentDNSRecord) ActiveForBinding(ctx context.Context, db storage.Executor, bindingID uuid.UUID) ([]EnvironmentDNSRecordEntity, error) {
+func (environmentDNSRecord) ActiveForBinding(
+	ctx context.Context,
+	db storage.Executor,
+	bindingID uuid.UUID,
+) ([]EnvironmentDNSRecordEntity, error) {
 	entities := make([]EnvironmentDNSRecordEntity, 0)
 	err := db.NewSelect().Model(&entities).Where("environment_dns_binding_id = ?", bindingID).
 		Where("archived_at IS NULL").OrderExpr("external_id").Scan(ctx)
@@ -65,7 +69,11 @@ type UpsertEnvironmentDNSRecordData struct {
 	DNSZoneID               uuid.UUID
 }
 
-func (environmentDNSRecord) Upsert(ctx context.Context, db storage.Executor, data UpsertEnvironmentDNSRecordData) (EnvironmentDNSRecordEntity, error) {
+func (environmentDNSRecord) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data UpsertEnvironmentDNSRecordData,
+) (EnvironmentDNSRecordEntity, error) {
 	now := time.Now().UTC()
 	entity := EnvironmentDNSRecordEntity{
 		ID: uuid.New(), CreatedAt: now, UpdatedAt: now, ExternalID: data.ExternalID,
@@ -109,9 +117,16 @@ func (environmentDNSRecord) Upsert(ctx context.Context, db storage.Executor, dat
 	return entity, nil
 }
 
-func (environmentDNSRecord) ArchiveMissing(ctx context.Context, db storage.Executor, bindingID uuid.UUID, externalIDs []string, at time.Time) error {
+func (environmentDNSRecord) ArchiveMissing(
+	ctx context.Context,
+	db storage.Executor,
+	bindingID uuid.UUID,
+	externalIDs []string,
+	at time.Time,
+) error {
 	query := db.NewUpdate().Model((*EnvironmentDNSRecordEntity)(nil)).Set("updated_at = ?", at).
-		Set("archived_at = ?", at).Where("environment_dns_binding_id = ?", bindingID).Where("archived_at IS NULL")
+		Set("archived_at = ?", at).
+		Where("environment_dns_binding_id = ?", bindingID).Where("archived_at IS NULL")
 	if len(externalIDs) > 0 {
 		query = query.Where("external_id NOT IN (?)", bun.In(externalIDs))
 	}

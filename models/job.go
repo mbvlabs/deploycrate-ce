@@ -51,7 +51,11 @@ type BuildJobReference struct {
 	State string `bun:"state"`
 }
 
-func (job) FindForBuild(ctx context.Context, db storage.Executor, buildID uuid.UUID) (BuildJobReference, error) {
+func (job) FindForBuild(
+	ctx context.Context,
+	db storage.Executor,
+	buildID uuid.UUID,
+) (BuildJobReference, error) {
 	var reference BuildJobReference
 	err := db.NewSelect().TableExpr("river_job").ColumnExpr("id, state::text AS state").
 		Where("kind = 'build_source'").Where("args ->> 'build_id' = ?", buildID.String()).

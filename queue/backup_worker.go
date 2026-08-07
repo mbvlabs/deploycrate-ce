@@ -15,7 +15,15 @@ func runBackupWorker(
 	work func() error,
 ) error {
 	startedAt := time.Now()
-	attributes = append(attributes, "operation", operation, "river_job_id", jobID, "attempt", attempt)
+	attributes = append(
+		attributes,
+		"operation",
+		operation,
+		"river_job_id",
+		jobID,
+		"attempt",
+		attempt,
+	)
 	slog.InfoContext(ctx, "backup job started", attributes...)
 	if err := work(); err != nil {
 		failureAttributes := append(

@@ -26,7 +26,11 @@ type GitHubWebhook struct {
 	connection *GitHubConnection
 }
 
-func NewGitHubWebhook(db storage.Pool, queue storage.InsertQueue, connection *GitHubConnection) *GitHubWebhook {
+func NewGitHubWebhook(
+	db storage.Pool,
+	queue storage.InsertQueue,
+	connection *GitHubConnection,
+) *GitHubWebhook {
 	return &GitHubWebhook{db: db, queue: queue, connection: connection}
 }
 
@@ -44,7 +48,11 @@ type githubWebhookPayload struct {
 	} `json:"repository"`
 }
 
-func (service *GitHubWebhook) Process(ctx context.Context, deliveryID, event, signature string, body []byte) error {
+func (service *GitHubWebhook) Process(
+	ctx context.Context,
+	deliveryID, event, signature string,
+	body []byte,
+) error {
 	deliveryID = strings.TrimSpace(deliveryID)
 	event = strings.TrimSpace(event)
 	if deliveryID == "" || event == "" || signature == "" {
@@ -97,17 +105,38 @@ func (service *GitHubWebhook) Process(ctx context.Context, deliveryID, event, si
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))", "github-delivery:"+deliveryID); err != nil {
+	if _, err := tx.ExecContext(
+		ctx,
+		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+		"github-delivery:"+deliveryID,
+	); err != nil {
 		return err
 	}
-	delivery, duplicate, err := models.GitHubWebhookDelivery.CreateOrFind(ctx, tx, models.CreateGitHubWebhookDeliveryData{DeliveryID: deliveryID, Event: event, Action: sql.NullString{String: payload.Action, Valid: payload.Action != ""}, InstallationExternalID: installationExternalID, RepositoryExternalID: repositoryExternalID, BodyDigest: digest[:], Payload: sanitized, ReceivedAt: time.Now().UTC()})
+	delivery, duplicate, err := models.GitHubWebhookDelivery.CreateOrFind(
+		ctx,
+		tx,
+		models.CreateGitHubWebhookDeliveryData{
+			DeliveryID: deliveryID,
+			Event:      event,
+			Action: sql.NullString{
+				String: payload.Action,
+				Valid:  payload.Action != "",
+			},
+			InstallationExternalID: installationExternalID,
+			RepositoryExternalID:   repositoryExternalID,
+			BodyDigest:             digest[:],
+			Payload:                sanitized,
+			ReceivedAt:             time.Now().UTC(),
+		},
+	)
 	if err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	if duplicate && (delivery.Status == models.GitHubDeliveryProcessed || delivery.Status == models.GitHubDeliveryIgnored || delivery.Status == models.GitHubDeliveryProcessing) {
+	if duplicate &&
+		(delivery.Status == models.GitHubDeliveryProcessed || delivery.Status == models.GitHubDeliveryIgnored || delivery.Status == models.GitHubDeliveryProcessing) {
 		return nil
 	}
 
@@ -121,46 +150,94 @@ func (service *GitHubWebhook) Process(ctx context.Context, deliveryID, event, si
 		if !installationExternalID.Valid {
 			processErr = service.markIgnored(ctx, delivery.ID)
 		} else {
-			_, processErr = service.connection.synchronizeExternal(ctx, installationExternalID.Int64)
+			_, processErr = service.connection.synchronizeExternal(
+				ctx,
+				installationExternalID.Int64,
+			)
 			if processErr == nil {
-				processErr = models.GitHubWebhookDelivery.Mark(ctx, service.db.Executor(), delivery.ID, models.GitHubDeliveryProcessed, nil)
+				processErr = models.GitHubWebhookDelivery.Mark(
+					ctx,
+					service.db.Executor(),
+					delivery.ID,
+					models.GitHubDeliveryProcessed,
+					nil,
+				)
 			}
 		}
 	default:
 		processErr = service.markIgnored(ctx, delivery.ID)
 	}
 	if processErr != nil {
-		_ = models.GitHubWebhookDelivery.Mark(ctx, service.db.Executor(), delivery.ID, models.GitHubDeliveryFailed, processErr)
+		_ = models.GitHubWebhookDelivery.Mark(
+			ctx,
+			service.db.Executor(),
+			delivery.ID,
+			models.GitHubDeliveryFailed,
+			processErr,
+		)
 	}
 	return processErr
 }
 
-func (service *GitHubWebhook) processInstallationLifecycle(ctx context.Context, delivery models.GitHubWebhookDeliveryEntity, payload githubWebhookPayload) error {
+func (service *GitHubWebhook) processInstallationLifecycle(
+	ctx context.Context,
+	delivery models.GitHubWebhookDeliveryEntity,
+	payload githubWebhookPayload,
+) error {
 	if payload.Installation == nil || payload.Installation.ID <= 0 {
 		return service.markIgnored(ctx, delivery.ID)
 	}
 	now := time.Now().UTC()
 	switch payload.Action {
 	case "created", "unsuspended", "new_permissions_accepted":
-		if _, err := service.connection.synchronizeExternal(ctx, payload.Installation.ID); err != nil {
+		if _, err := service.connection.synchronizeExternal(
+			ctx,
+			payload.Installation.ID,
+		); err != nil {
 			return err
 		}
 	case "deleted":
-		if _, err := service.db.Executor().NewUpdate().TableExpr("github_installations").Set("archived_at = ?", now).Set("updated_at = ?", now).Where("external_id = ?", payload.Installation.ID).Exec(ctx); err != nil {
+		if _, err := service.db.Executor().
+			NewUpdate().
+			TableExpr("github_installations").
+			Set("archived_at = ?", now).
+			Set("updated_at = ?", now).
+			Where("external_id = ?", payload.Installation.ID).
+			Exec(ctx); err != nil {
 			return err
 		}
 	case "suspended":
-		if _, err := service.db.Executor().NewUpdate().TableExpr("github_installations").Set("suspended_at = ?", now).Set("updated_at = ?", now).Where("external_id = ? AND archived_at IS NULL", payload.Installation.ID).Exec(ctx); err != nil {
+		if _, err := service.db.Executor().
+			NewUpdate().
+			TableExpr("github_installations").
+			Set("suspended_at = ?", now).
+			Set("updated_at = ?", now).
+			Where("external_id = ? AND archived_at IS NULL", payload.Installation.ID).
+			Exec(ctx); err != nil {
 			return err
 		}
 	default:
 		return service.markIgnored(ctx, delivery.ID)
 	}
-	return models.GitHubWebhookDelivery.Mark(ctx, service.db.Executor(), delivery.ID, models.GitHubDeliveryProcessed, nil)
+	return models.GitHubWebhookDelivery.Mark(
+		ctx,
+		service.db.Executor(),
+		delivery.ID,
+		models.GitHubDeliveryProcessed,
+		nil,
+	)
 }
 
-func (service *GitHubWebhook) processPush(ctx context.Context, delivery models.GitHubWebhookDeliveryEntity, payload githubWebhookPayload, sanitized json.RawMessage) error {
-	if payload.Installation == nil || payload.Repository == nil || payload.Installation.ID <= 0 || payload.Repository.ID <= 0 || payload.Deleted || strings.Trim(payload.After, "0") == "" {
+func (service *GitHubWebhook) processPush(
+	ctx context.Context,
+	delivery models.GitHubWebhookDeliveryEntity,
+	payload githubWebhookPayload,
+	sanitized json.RawMessage,
+) error {
+	if payload.Installation == nil || payload.Repository == nil || payload.Installation.ID <= 0 ||
+		payload.Repository.ID <= 0 ||
+		payload.Deleted ||
+		strings.Trim(payload.After, "0") == "" {
 		return service.markIgnored(ctx, delivery.ID)
 	}
 	reference := normalizeGitReference(payload.Ref)
@@ -177,18 +254,37 @@ func (service *GitHubWebhook) processPush(ctx context.Context, delivery models.G
 	if err != nil {
 		return err
 	}
-	if locked.Status == models.GitHubDeliveryProcessed || locked.Status == models.GitHubDeliveryIgnored {
+	if locked.Status == models.GitHubDeliveryProcessed ||
+		locked.Status == models.GitHubDeliveryIgnored {
 		return tx.Commit()
 	}
-	if err := models.GitHubWebhookDelivery.Mark(ctx, tx, delivery.ID, models.GitHubDeliveryProcessing, nil); err != nil {
+	if err := models.GitHubWebhookDelivery.Mark(
+		ctx,
+		tx,
+		delivery.ID,
+		models.GitHubDeliveryProcessing,
+		nil,
+	); err != nil {
 		return err
 	}
-	matches, err := models.GitHubEnvironmentSource.MatchingActive(ctx, tx, payload.Installation.ID, payload.Repository.ID, reference)
+	matches, err := models.GitHubEnvironmentSource.MatchingActive(
+		ctx,
+		tx,
+		payload.Installation.ID,
+		payload.Repository.ID,
+		reference,
+	)
 	if err != nil {
 		return err
 	}
 	if len(matches) == 0 {
-		if err := models.GitHubWebhookDelivery.Mark(ctx, tx, delivery.ID, models.GitHubDeliveryIgnored, nil); err != nil {
+		if err := models.GitHubWebhookDelivery.Mark(
+			ctx,
+			tx,
+			delivery.ID,
+			models.GitHubDeliveryIgnored,
+			nil,
+		); err != nil {
 			return err
 		}
 		return tx.Commit()
@@ -196,7 +292,11 @@ func (service *GitHubWebhook) processPush(ctx context.Context, delivery models.G
 
 	now := time.Now().UTC()
 	for _, source := range matches {
-		stateRevision, err := models.EnvironmentStateRevision.LatestCommitted(ctx, tx, source.EnvironmentID)
+		stateRevision, err := models.EnvironmentStateRevision.LatestCommitted(
+			ctx,
+			tx,
+			source.EnvironmentID,
+		)
 		if err != nil {
 			return fmt.Errorf("load current Environment state: %w", err)
 		}
@@ -204,7 +304,19 @@ func (service *GitHubWebhook) processPush(ctx context.Context, delivery models.G
 		if err != nil {
 			return fmt.Errorf("parse current Environment state: %w", err)
 		}
-		event, err := models.SourceEvent.Create(ctx, tx, models.CreateSourceEventData{ExternalID: delivery.DeliveryID, Kind: "github_push", SourceRevision: sql.NullString{String: payload.After, Valid: true}, Payload: sanitized, ReceivedAt: delivery.ReceivedAt, ProcessedAt: sql.NullTime{Time: now, Valid: true}, EnvironmentSourceID: source.EnvironmentSourceID})
+		event, err := models.SourceEvent.Create(
+			ctx,
+			tx,
+			models.CreateSourceEventData{
+				ExternalID:          delivery.DeliveryID,
+				Kind:                "github_push",
+				SourceRevision:      sql.NullString{String: payload.After, Valid: true},
+				Payload:             sanitized,
+				ReceivedAt:          delivery.ReceivedAt,
+				ProcessedAt:         sql.NullTime{Time: now, Valid: true},
+				EnvironmentSourceID: source.EnvironmentSourceID,
+			},
+		)
 		if err != nil {
 			return fmt.Errorf("create source event: %w", err)
 		}
@@ -212,47 +324,111 @@ func (service *GitHubWebhook) processPush(ctx context.Context, delivery models.G
 		if err != nil {
 			return err
 		}
-		change, err := models.Change.Create(ctx, tx, models.CreateChangeData{Sequence: sequence, Kind: "build", TriggerType: "webhook", ActorType: "system", CauseSystem: sql.NullString{String: "github", Valid: true}, CauseReference: sql.NullString{String: delivery.DeliveryID, Valid: true}, CorrelationID: delivery.ID, Summary: "Build " + source.RepositoryFullName + " at " + shortRevision(payload.After), Status: "committed", RequestedAt: now, CommittedAt: sql.NullTime{Time: now, Valid: true}, EnvironmentID: source.EnvironmentID})
+		change, err := models.Change.Create(
+			ctx,
+			tx,
+			models.CreateChangeData{
+				Sequence:       sequence,
+				Kind:           "build",
+				TriggerType:    "webhook",
+				ActorType:      "system",
+				CauseSystem:    sql.NullString{String: "github", Valid: true},
+				CauseReference: sql.NullString{String: delivery.DeliveryID, Valid: true},
+				CorrelationID:  delivery.ID,
+				Summary: "Build " + source.RepositoryFullName + " at " + shortRevision(
+					payload.After,
+				),
+				Status:        "committed",
+				RequestedAt:   now,
+				CommittedAt:   sql.NullTime{Time: now, Valid: true},
+				EnvironmentID: source.EnvironmentID,
+			},
+		)
 		if err != nil {
 			return fmt.Errorf("create build change: %w", err)
 		}
-		requestedValue, _ := json.Marshal(map[string]any{"source_event_id": event.ID, "revision": payload.After, "reference": reference})
-		if _, err := models.ChangeItem.Create(ctx, tx, models.CreateChangeItemData{Action: "build", SubjectType: "environment_source", SubjectID: source.EnvironmentSourceID, RequestedValue: requestedValue, ChangeID: change.ID}); err != nil {
+		requestedValue, _ := json.Marshal(
+			map[string]any{
+				"source_event_id": event.ID,
+				"revision":        payload.After,
+				"reference":       reference,
+			},
+		)
+		if _, err := models.ChangeItem.Create(
+			ctx,
+			tx,
+			models.CreateChangeItemData{
+				Action:         "build",
+				SubjectType:    "environment_source",
+				SubjectID:      source.EnvironmentSourceID,
+				RequestedValue: requestedValue,
+				ChangeID:       change.ID,
+			},
+		); err != nil {
 			return fmt.Errorf("create build change item: %w", err)
 		}
 		buildConfiguration, err := marshalBuildSnapshot(buildSnapshot{
-			SchemaVersion: 2, SourceEventID: event.ID, EnvironmentStateRevisionID: stateRevision.ID,
-			Repository: source.RepositoryFullName, Reference: source.Reference, SourceRevision: payload.After,
-			ContextPath: source.ContextPath, BuilderReference: nullableStringPointer(source.BuilderReference),
-			ImageRepository: source.ImageRepository, RegistryResourceID: source.RegistryResourceID,
-			RegistryCredentialID: source.RegistryCredentialID,
-			RegistryEndpoint:     source.RegistryEndpoint, Settings: source.BuildpackSettings,
-			BPGOTargets: models.FlattenGoProcessTargets(state.Runtime.BPGOTargets),
-			ServerID:    source.BuildServerID,
+			SchemaVersion:              2,
+			SourceEventID:              event.ID,
+			EnvironmentStateRevisionID: stateRevision.ID,
+			Repository:                 source.RepositoryFullName,
+			Reference:                  source.Reference,
+			SourceRevision:             payload.After,
+			ContextPath:                source.ContextPath,
+			BuilderReference:           nullableStringPointer(source.BuilderReference),
+			ImageRepository:            source.ImageRepository,
+			RegistryResourceID:         source.RegistryResourceID,
+			RegistryCredentialID:       source.RegistryCredentialID,
+			RegistryEndpoint:           source.RegistryEndpoint,
+			Settings:                   source.BuildpackSettings,
+			BPGOTargets:                models.FlattenGoProcessTargets(state.Runtime.BPGOTargets),
+			ServerID:                   source.BuildServerID,
 		})
 		if err != nil {
 			return fmt.Errorf("create Build configuration snapshot: %w", err)
 		}
 		build, err := models.Build.Create(ctx, tx, models.CreateBuildData{
-			SourceRevision: payload.After, BuildMethod: "buildpacks", BuildConfiguration: buildConfiguration,
-			Status: "pending", CurrentStep: sql.NullString{String: "queued", Valid: true},
-			EnvironmentID: source.EnvironmentID, EnvironmentSourceID: source.EnvironmentSourceID, ChangeID: change.ID,
+			SourceRevision:      payload.After,
+			BuildMethod:         "buildpacks",
+			BuildConfiguration:  buildConfiguration,
+			Status:              "pending",
+			CurrentStep:         sql.NullString{String: "queued", Valid: true},
+			EnvironmentID:       source.EnvironmentID,
+			EnvironmentSourceID: source.EnvironmentSourceID,
+			ChangeID:            change.ID,
 		})
 		if err != nil {
 			return fmt.Errorf("create pending build: %w", err)
 		}
-		if _, err := service.queue.InsertTx(ctx, tx.Tx, jobs.BuildSourceArgs{BuildID: build.ID}, jobs.BuildSourceInsertOpts(build.ID)); err != nil {
+		if _, err := service.queue.InsertTx(
+			ctx,
+			tx.Tx,
+			jobs.BuildSourceArgs{BuildID: build.ID},
+			jobs.BuildSourceInsertOpts(build.ID),
+		); err != nil {
 			return fmt.Errorf("insert build source job: %w", err)
 		}
 	}
-	if err := models.GitHubWebhookDelivery.Mark(ctx, tx, delivery.ID, models.GitHubDeliveryProcessed, nil); err != nil {
+	if err := models.GitHubWebhookDelivery.Mark(
+		ctx,
+		tx,
+		delivery.ID,
+		models.GitHubDeliveryProcessed,
+		nil,
+	); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 func (service *GitHubWebhook) markIgnored(ctx context.Context, deliveryID uuid.UUID) error {
-	return models.GitHubWebhookDelivery.Mark(ctx, service.db.Executor(), deliveryID, models.GitHubDeliveryIgnored, nil)
+	return models.GitHubWebhookDelivery.Mark(
+		ctx,
+		service.db.Executor(),
+		deliveryID,
+		models.GitHubDeliveryIgnored,
+		nil,
+	)
 }
 
 func validGitHubSignature(body []byte, header, secret string) bool {

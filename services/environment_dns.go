@@ -45,9 +45,9 @@ type EnvironmentDNSInput struct {
 }
 
 type EnvironmentDNSOption struct {
-	ZoneID         uuid.UUID `json:"zoneId" bun:"zone_id"`
-	ZoneName       string    `json:"zoneName" bun:"zone_name"`
-	ConnectionID   uuid.UUID `json:"connectionId" bun:"connection_id"`
+	ZoneID         uuid.UUID `json:"zoneId"         bun:"zone_id"`
+	ZoneName       string    `json:"zoneName"       bun:"zone_name"`
+	ConnectionID   uuid.UUID `json:"connectionId"   bun:"connection_id"`
 	ConnectionName string    `json:"connectionName" bun:"connection_name"`
 }
 
@@ -67,8 +67,8 @@ type EnvironmentDNSStatus struct {
 }
 
 type DNSRecordStatus struct {
-	Type    string `json:"type" bun:"record_type"`
-	Name    string `json:"name" bun:"observed_name"`
+	Type    string `json:"type"    bun:"record_type"`
+	Name    string `json:"name"    bun:"observed_name"`
 	Content string `json:"content" bun:"content"`
 }
 
@@ -117,7 +117,12 @@ type dnsTrackedRemoval struct {
 	CredentialPayload []byte    `bun:"credential_payload"`
 }
 
-func NewEnvironmentDNS(db storage.Pool, queue storage.InsertQueue, client CloudflareDNSClient, cfg config.Config) *EnvironmentDNS {
+func NewEnvironmentDNS(
+	db storage.Pool,
+	queue storage.InsertQueue,
+	client CloudflareDNSClient,
+	cfg config.Config,
+) *EnvironmentDNS {
 	return &EnvironmentDNS{db: db, queue: queue, client: client, config: cfg}
 }
 
@@ -131,8 +136,15 @@ func (service *EnvironmentDNS) Options(ctx context.Context) ([]EnvironmentDNSOpt
 	return options, err
 }
 
-func (service *EnvironmentDNS) Status(ctx context.Context, environmentID uuid.UUID) (EnvironmentDNSStatus, error) {
-	status := EnvironmentDNSStatus{Mode: DNSModeManual, State: "manual", Records: []DNSRecordStatus{}}
+func (service *EnvironmentDNS) Status(
+	ctx context.Context,
+	environmentID uuid.UUID,
+) (EnvironmentDNSStatus, error) {
+	status := EnvironmentDNSStatus{
+		Mode:    DNSModeManual,
+		State:   "manual",
+		Records: []DNSRecordStatus{},
+	}
 	var row struct {
 		BindingID         uuid.UUID      `bun:"binding_id"`
 		ZoneID            uuid.UUID      `bun:"zone_id"`
@@ -150,7 +162,8 @@ func (service *EnvironmentDNS) Status(ctx context.Context, environmentID uuid.UU
 		Join("JOIN environment_domains AS domain ON domain.id = binding.environment_domain_id AND domain.archived_at IS NULL").
 		Join("JOIN dns_zones AS zone ON zone.id = binding.dns_zone_id").
 		Join("JOIN dns_connections AS connection ON connection.id = zone.dns_connection_id").
-		Where("domain.environment_id = ?", environmentID).Where("binding.archived_at IS NULL").Limit(1).Scan(ctx, &row)
+		Where("domain.environment_id = ?", environmentID).
+		Where("binding.archived_at IS NULL").Limit(1).Scan(ctx, &row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return status, nil
 	}
@@ -171,13 +184,15 @@ func (service *EnvironmentDNS) Status(ctx context.Context, environmentID uuid.UU
 		Where("job.kind = 'dns_reconciliation'").
 		Where("job.args ->> 'binding_id' = ?", row.BindingID.String()).
 		Where("job.args ->> 'generation' = ?", fmt.Sprint(row.Generation)).
-		Where("job.state::text IN ('available', 'pending', 'retryable', 'running', 'scheduled')").Count(ctx)
+		Where("job.state::text IN ('available', 'pending', 'retryable', 'running', 'scheduled')").
+		Count(ctx)
 	if err != nil {
 		return EnvironmentDNSStatus{}, err
 	}
 	status.ReconciliationQueued = queued > 0
 	if err := service.db.Executor().NewSelect().TableExpr("environment_dns_records").
-		ColumnExpr("record_type, observed_name, content").Where("environment_dns_binding_id = ?", row.BindingID).
+		ColumnExpr("record_type, observed_name, content").
+		Where("environment_dns_binding_id = ?", row.BindingID).
 		Where("archived_at IS NULL").OrderExpr("content").Scan(ctx, &status.Records); err != nil {
 		return EnvironmentDNSStatus{}, err
 	}
@@ -206,9 +221,18 @@ func (service *EnvironmentDNS) ConfigureTx(
 		if existingErr != nil {
 			return DNSConfigureResult{}, existingErr
 		}
-		binding, err := models.EnvironmentDNSBinding.MarkRemoving(ctx, tx, existing.ID, deployAfterApply, actorID)
+		binding, err := models.EnvironmentDNSBinding.MarkRemoving(
+			ctx,
+			tx,
+			existing.ID,
+			deployAfterApply,
+			actorID,
+		)
 		if errors.Is(err, sql.ErrNoRows) {
-			return DNSConfigureResult{}, errors.Join(models.ErrDomainValidation, errors.New("DNS reconciliation is in progress; retry this change shortly"))
+			return DNSConfigureResult{}, errors.Join(
+				models.ErrDomainValidation,
+				errors.New("DNS reconciliation is in progress; retry this change shortly"),
+			)
 		}
 		if err != nil {
 			return DNSConfigureResult{}, err
@@ -221,18 +245,30 @@ func (service *EnvironmentDNS) ConfigureTx(
 		return DNSConfigureResult{DeploymentDeferred: deployAfterApply, Binding: binding}, nil
 	}
 	if mode != DNSModeCloudflare || input.ZoneID == nil || *input.ZoneID == uuid.Nil {
-		return DNSConfigureResult{}, errors.Join(models.ErrDomainValidation, errors.New("select a Cloudflare DNS zone or use manual DNS"))
+		return DNSConfigureResult{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("select a Cloudflare DNS zone or use manual DNS"),
+		)
 	}
 	zone, err := models.DNSZone.Find(ctx, tx, *input.ZoneID)
 	if err != nil || zone.ArchivedAt.Valid || zone.Status != "active" {
-		return DNSConfigureResult{}, errors.Join(models.ErrDomainValidation, errors.New("selected Cloudflare DNS zone is unavailable"))
+		return DNSConfigureResult{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("selected Cloudflare DNS zone is unavailable"),
+		)
 	}
 	connection, err := models.DNSConnection.Find(ctx, tx, zone.DNSConnectionID)
 	if err != nil || connection.ArchivedAt.Valid {
-		return DNSConfigureResult{}, errors.Join(models.ErrDomainValidation, errors.New("selected Cloudflare DNS connection is unavailable"))
+		return DNSConfigureResult{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("selected Cloudflare DNS connection is unavailable"),
+		)
 	}
 	if !hostnameBelongsToZone(domain.Hostname, zone.Name) {
-		return DNSConfigureResult{}, errors.Join(models.ErrDomainValidation, fmt.Errorf("hostname must be %s or a subdomain of %s", zone.Name, zone.Name))
+		return DNSConfigureResult{}, errors.Join(
+			models.ErrDomainValidation,
+			fmt.Errorf("hostname must be %s or a subdomain of %s", zone.Name, zone.Name),
+		)
 	}
 	if enqueue {
 		if _, err := service.desiredIPv4(ctx, tx, domain.EnvironmentID); err != nil {
@@ -240,10 +276,16 @@ func (service *EnvironmentDNS) ConfigureTx(
 		}
 	}
 	if errors.Is(existingErr, sql.ErrNoRows) {
-		binding, err := models.EnvironmentDNSBinding.Create(ctx, tx, models.CreateEnvironmentDNSBindingData{
-			DNSZoneID: zone.ID, EnvironmentDomainID: domain.ID, DeployAfterApply: deployAfterApply,
-			DeploymentActorID: actorID,
-		})
+		binding, err := models.EnvironmentDNSBinding.Create(
+			ctx,
+			tx,
+			models.CreateEnvironmentDNSBindingData{
+				DNSZoneID:           zone.ID,
+				EnvironmentDomainID: domain.ID,
+				DeployAfterApply:    deployAfterApply,
+				DeploymentActorID:   actorID,
+			},
+		)
 		if err != nil {
 			return DNSConfigureResult{}, err
 		}
@@ -252,18 +294,37 @@ func (service *EnvironmentDNS) ConfigureTx(
 				return DNSConfigureResult{}, err
 			}
 		}
-		return DNSConfigureResult{Managed: true, DeploymentDeferred: deployAfterApply, Binding: binding}, nil
+		return DNSConfigureResult{
+			Managed:            true,
+			DeploymentDeferred: deployAfterApply,
+			Binding:            binding,
+		}, nil
 	}
 	if existingErr != nil {
 		return DNSConfigureResult{}, existingErr
 	}
 	if existing.DNSZoneID == zone.ID && !force {
-		deferred := existing.State != models.EnvironmentDNSApplied || existing.AppliedGeneration != existing.Generation
-		return DNSConfigureResult{Managed: true, DeploymentDeferred: deferred, Binding: existing}, nil
+		deferred := existing.State != models.EnvironmentDNSApplied ||
+			existing.AppliedGeneration != existing.Generation
+		return DNSConfigureResult{
+			Managed:            true,
+			DeploymentDeferred: deferred,
+			Binding:            existing,
+		}, nil
 	}
-	binding, err := models.EnvironmentDNSBinding.Reconfigure(ctx, tx, existing.ID, zone.ID, deployAfterApply, actorID)
+	binding, err := models.EnvironmentDNSBinding.Reconfigure(
+		ctx,
+		tx,
+		existing.ID,
+		zone.ID,
+		deployAfterApply,
+		actorID,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return DNSConfigureResult{}, errors.Join(models.ErrDomainValidation, errors.New("DNS reconciliation is in progress; retry this change shortly"))
+		return DNSConfigureResult{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("DNS reconciliation is in progress; retry this change shortly"),
+		)
 	}
 	if err != nil {
 		return DNSConfigureResult{}, err
@@ -273,7 +334,11 @@ func (service *EnvironmentDNS) ConfigureTx(
 			return DNSConfigureResult{}, err
 		}
 	}
-	return DNSConfigureResult{Managed: true, DeploymentDeferred: deployAfterApply, Binding: binding}, nil
+	return DNSConfigureResult{
+		Managed:            true,
+		DeploymentDeferred: deployAfterApply,
+		Binding:            binding,
+	}, nil
 }
 
 func (service *EnvironmentDNS) PrepareDeployment(
@@ -298,11 +363,19 @@ func (service *EnvironmentDNS) PrepareDeployment(
 	if err != nil {
 		return false, err
 	}
-	if binding.State == models.EnvironmentDNSApplied && binding.AppliedGeneration == binding.Generation {
+	if binding.State == models.EnvironmentDNSApplied &&
+		binding.AppliedGeneration == binding.Generation {
 		if !binding.DeployAfterApply || binding.DeploymentDispatchedAt.Valid {
 			return false, nil
 		}
-		binding, err = models.EnvironmentDNSBinding.PrepareDeployment(ctx, tx, binding.ID, actorID, triggerType, strings.TrimSpace(reference))
+		binding, err = models.EnvironmentDNSBinding.PrepareDeployment(
+			ctx,
+			tx,
+			binding.ID,
+			actorID,
+			triggerType,
+			strings.TrimSpace(reference),
+		)
 		if err != nil {
 			return false, err
 		}
@@ -314,21 +387,41 @@ func (service *EnvironmentDNS) PrepareDeployment(
 		}
 		return true, nil
 	}
-	if binding.State != models.EnvironmentDNSPending && binding.State != models.EnvironmentDNSReconciling && binding.State != models.EnvironmentDNSRemoving {
-		return false, errors.Join(models.ErrDomainValidation, fmt.Errorf("managed DNS is %s; resolve the DNS status before deploying", strings.ReplaceAll(binding.State, "_", " ")))
+	if binding.State != models.EnvironmentDNSPending &&
+		binding.State != models.EnvironmentDNSReconciling &&
+		binding.State != models.EnvironmentDNSRemoving {
+		return false, errors.Join(
+			models.ErrDomainValidation,
+			fmt.Errorf(
+				"managed DNS is %s; resolve the DNS status before deploying",
+				strings.ReplaceAll(binding.State, "_", " "),
+			),
+		)
 	}
 	if binding.State == models.EnvironmentDNSPending {
 		if _, err := service.desiredIPv4(ctx, tx, environmentID); err != nil {
 			return false, err
 		}
 	}
-	binding, err = models.EnvironmentDNSBinding.PrepareDeployment(ctx, tx, binding.ID, actorID, triggerType, strings.TrimSpace(reference))
+	binding, err = models.EnvironmentDNSBinding.PrepareDeployment(
+		ctx,
+		tx,
+		binding.ID,
+		actorID,
+		triggerType,
+		strings.TrimSpace(reference),
+	)
 	if errors.Is(err, sql.ErrNoRows) {
-		latest, latestErr := models.EnvironmentDNSBinding.ActiveForEnvironment(ctx, tx, environmentID)
+		latest, latestErr := models.EnvironmentDNSBinding.ActiveForEnvironment(
+			ctx,
+			tx,
+			environmentID,
+		)
 		if errors.Is(latestErr, sql.ErrNoRows) {
 			return false, nil
 		}
-		if latestErr == nil && latest.State == models.EnvironmentDNSApplied && latest.AppliedGeneration == latest.Generation {
+		if latestErr == nil && latest.State == models.EnvironmentDNSApplied &&
+			latest.AppliedGeneration == latest.Generation {
 			return false, nil
 		}
 	}
@@ -365,10 +458,17 @@ func (service *EnvironmentDNS) Refresh(ctx context.Context, environmentID uuid.U
 		return err
 	}
 	if binding.State == models.EnvironmentDNSReconciling {
-		return errors.Join(models.ErrDomainValidation, errors.New("DNS reconciliation is already in progress"))
+		return errors.Join(
+			models.ErrDomainValidation,
+			errors.New("DNS reconciliation is already in progress"),
+		)
 	}
-	if binding.State == models.EnvironmentDNSRemoving || binding.State == models.EnvironmentDNSRemovalFailed {
-		return errors.Join(models.ErrDomainValidation, errors.New("DNS removal is in progress; wait for it to finish"))
+	if binding.State == models.EnvironmentDNSRemoving ||
+		binding.State == models.EnvironmentDNSRemovalFailed {
+		return errors.Join(
+			models.ErrDomainValidation,
+			errors.New("DNS removal is in progress; wait for it to finish"),
+		)
 	}
 	binding, err = models.EnvironmentDNSBinding.Refresh(ctx, tx, binding.ID)
 	if err != nil {
@@ -380,7 +480,11 @@ func (service *EnvironmentDNS) Refresh(ctx context.Context, environmentID uuid.U
 	return tx.Commit()
 }
 
-func (service *EnvironmentDNS) requeue(ctx context.Context, environmentID uuid.UUID, adopt bool) error {
+func (service *EnvironmentDNS) requeue(
+	ctx context.Context,
+	environmentID uuid.UUID,
+	adopt bool,
+) error {
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -392,12 +496,20 @@ func (service *EnvironmentDNS) requeue(ctx context.Context, environmentID uuid.U
 	}
 	if adopt {
 		if binding.State != models.EnvironmentDNSConflict {
-			return errors.Join(models.ErrDomainValidation, errors.New("DNS binding is not waiting for adoption"))
+			return errors.Join(
+				models.ErrDomainValidation,
+				errors.New("DNS binding is not waiting for adoption"),
+			)
 		}
 		binding, err = models.EnvironmentDNSBinding.ConfirmAdoption(ctx, tx, binding.ID)
 	} else {
-		if binding.State != models.EnvironmentDNSFailed && binding.State != models.EnvironmentDNSConflict && binding.State != models.EnvironmentDNSRemovalFailed {
-			return errors.Join(models.ErrDomainValidation, errors.New("DNS binding is not retryable"))
+		if binding.State != models.EnvironmentDNSFailed &&
+			binding.State != models.EnvironmentDNSConflict &&
+			binding.State != models.EnvironmentDNSRemovalFailed {
+			return errors.Join(
+				models.ErrDomainValidation,
+				errors.New("DNS binding is not retryable"),
+			)
 		}
 		if binding.State == models.EnvironmentDNSRemovalFailed {
 			binding, err = models.EnvironmentDNSBinding.RetryRemoval(ctx, tx, binding.ID)
@@ -414,7 +526,11 @@ func (service *EnvironmentDNS) requeue(ctx context.Context, environmentID uuid.U
 	return tx.Commit()
 }
 
-func (service *EnvironmentDNS) Reconcile(ctx context.Context, bindingID uuid.UUID, generation int64) (*DNSDeploymentIntent, error) {
+func (service *EnvironmentDNS) Reconcile(
+	ctx context.Context,
+	bindingID uuid.UUID,
+	generation int64,
+) (*DNSDeploymentIntent, error) {
 	scope, err := service.scope(ctx, bindingID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -428,7 +544,8 @@ func (service *EnvironmentDNS) Reconcile(ctx context.Context, bindingID uuid.UUI
 	if scope.State == models.EnvironmentDNSApplied {
 		return deploymentIntent(scope), nil
 	}
-	if scope.State == models.EnvironmentDNSRemoving || scope.State == models.EnvironmentDNSRemovalFailed {
+	if scope.State == models.EnvironmentDNSRemoving ||
+		scope.State == models.EnvironmentDNSRemovalFailed {
 		if err := service.removeTracked(ctx, bindingID, nil); err != nil {
 			return nil, service.failRemoval(ctx, bindingID, generation, err)
 		}
@@ -438,12 +555,23 @@ func (service *EnvironmentDNS) Reconcile(ctx context.Context, bindingID uuid.UUI
 			return nil, err
 		}
 		defer tx.Rollback()
-		if err := models.EnvironmentDNSRecord.ArchiveMissing(ctx, tx, bindingID, nil, now); err != nil {
+		if err := models.EnvironmentDNSRecord.ArchiveMissing(
+			ctx,
+			tx,
+			bindingID,
+			nil,
+			now,
+		); err != nil {
 			return nil, err
 		}
-		if _, err := tx.NewUpdate().TableExpr("environment_dns_bindings").Set("updated_at = ?", now).
-			Set("archived_at = ?", now).Set("last_error = NULL").Where("id = ?", bindingID).
-			Where("generation = ?", generation).Exec(ctx); err != nil {
+		if _, err := tx.NewUpdate().
+			TableExpr("environment_dns_bindings").
+			Set("updated_at = ?", now).
+			Set("archived_at = ?", now).
+			Set("last_error = NULL").
+			Where("id = ?", bindingID).
+			Where("generation = ?", generation).
+			Exec(ctx); err != nil {
 			return nil, err
 		}
 		if err := tx.Commit(); err != nil {
@@ -451,9 +579,18 @@ func (service *EnvironmentDNS) Reconcile(ctx context.Context, bindingID uuid.UUI
 		}
 		return deploymentIntent(scope), nil
 	}
-	token, err := secretcrypto.DecryptForPurpose(scope.CredentialPayload, service.config.App.SessionEncryptionKey, cloudflareTokenEncryptionPurpose)
+	token, err := secretcrypto.DecryptForPurpose(
+		scope.CredentialPayload,
+		service.config.App.SessionEncryptionKey,
+		cloudflareTokenEncryptionPurpose,
+	)
 	if err != nil {
-		return nil, service.fail(ctx, bindingID, generation, errors.New("Cloudflare account-owned API token could not be decrypted"))
+		return nil, service.fail(
+			ctx,
+			bindingID,
+			generation,
+			errors.New("Cloudflare account-owned API token could not be decrypted"),
+		)
 	}
 	claimed, err := service.markReconciling(ctx, bindingID, generation)
 	if err != nil {
@@ -466,17 +603,27 @@ func (service *EnvironmentDNS) Reconcile(ctx context.Context, bindingID uuid.UUI
 	if err != nil {
 		return nil, service.fail(ctx, bindingID, generation, err)
 	}
-	remote, err := service.client.ListAddressRecords(ctx, string(token), scope.ZoneExternalID, scope.Hostname)
+	remote, err := service.client.ListAddressRecords(
+		ctx,
+		string(token),
+		scope.ZoneExternalID,
+		scope.Hostname,
+	)
 	if err != nil {
 		return nil, service.fail(ctx, bindingID, generation, err)
 	}
-	tracked, err := models.EnvironmentDNSRecord.ActiveForBinding(ctx, service.db.Executor(), bindingID)
+	tracked, err := models.EnvironmentDNSRecord.ActiveForBinding(
+		ctx,
+		service.db.Executor(),
+		bindingID,
+	)
 	if err != nil {
 		return nil, service.fail(ctx, bindingID, generation, err)
 	}
 	trackedIDs := make(map[string]struct{}, len(tracked))
 	for _, record := range tracked {
-		if record.DNSZoneID == scope.ZoneID && strings.EqualFold(record.ObservedName, scope.Hostname) {
+		if record.DNSZoneID == scope.ZoneID &&
+			strings.EqualFold(record.ObservedName, scope.Hostname) {
 			trackedIDs[record.ExternalID] = struct{}{}
 		}
 	}
@@ -492,8 +639,18 @@ func (service *EnvironmentDNS) Reconcile(ctx context.Context, bindingID uuid.UUI
 		}
 	}
 	if len(unmanaged) > 0 {
-		message := fmt.Sprintf("%d unmanaged Cloudflare address record(s) already use %s", len(unmanaged), scope.Hostname)
-		if err := service.markState(ctx, bindingID, generation, models.EnvironmentDNSConflict, errors.New(message)); err != nil {
+		message := fmt.Sprintf(
+			"%d unmanaged Cloudflare address record(s) already use %s",
+			len(unmanaged),
+			scope.Hostname,
+		)
+		if err := service.markState(
+			ctx,
+			bindingID,
+			generation,
+			models.EnvironmentDNSConflict,
+			errors.New(message),
+		); err != nil {
 			return nil, err
 		}
 		return nil, nil
@@ -501,16 +658,39 @@ func (service *EnvironmentDNS) Reconcile(ctx context.Context, bindingID uuid.UUI
 	sort.Slice(owned, func(i, j int) bool { return owned[i].ID < owned[j].ID })
 	applied := make([]cloudflareclient.DNSRecord, 0, len(desired))
 	for index, address := range desired {
-		input := cloudflareclient.DNSRecordInput{Type: "A", Name: scope.Hostname, Content: address, TTL: 1, Proxied: true, Comment: marker}
+		input := cloudflareclient.DNSRecordInput{
+			Type:    "A",
+			Name:    scope.Hostname,
+			Content: address,
+			TTL:     1,
+			Proxied: true,
+			Comment: marker,
+		}
 		var record cloudflareclient.DNSRecord
 		if index < len(owned) && strings.EqualFold(owned[index].Type, "A") {
-			record, err = service.client.UpdateARecord(ctx, string(token), scope.ZoneExternalID, owned[index].ID, input)
+			record, err = service.client.UpdateARecord(
+				ctx,
+				string(token),
+				scope.ZoneExternalID,
+				owned[index].ID,
+				input,
+			)
 		} else {
 			if index < len(owned) {
-				err = service.client.DeleteRecord(ctx, string(token), scope.ZoneExternalID, owned[index].ID)
+				err = service.client.DeleteRecord(
+					ctx,
+					string(token),
+					scope.ZoneExternalID,
+					owned[index].ID,
+				)
 			}
 			if err == nil {
-				record, err = service.client.CreateARecord(ctx, string(token), scope.ZoneExternalID, input)
+				record, err = service.client.CreateARecord(
+					ctx,
+					string(token),
+					scope.ZoneExternalID,
+					input,
+				)
 			}
 		}
 		if err != nil {
@@ -519,12 +699,18 @@ func (service *EnvironmentDNS) Reconcile(ctx context.Context, bindingID uuid.UUI
 		applied = append(applied, record)
 	}
 	for index := len(desired); index < len(owned); index++ {
-		if err := service.client.DeleteRecord(ctx, string(token), scope.ZoneExternalID, owned[index].ID); err != nil {
+		if err := service.client.DeleteRecord(
+			ctx,
+			string(token),
+			scope.ZoneExternalID,
+			owned[index].ID,
+		); err != nil {
 			return nil, service.fail(ctx, bindingID, generation, err)
 		}
 	}
 	if err := service.removeTracked(ctx, bindingID, func(record dnsTrackedRemoval) bool {
-		return record.ZoneID != scope.ZoneID || !strings.EqualFold(record.ObservedName, scope.Hostname)
+		return record.ZoneID != scope.ZoneID ||
+			!strings.EqualFold(record.ObservedName, scope.Hostname)
 	}); err != nil {
 		return nil, service.fail(ctx, bindingID, generation, err)
 	}
@@ -537,14 +723,24 @@ func (service *EnvironmentDNS) Reconcile(ctx context.Context, bindingID uuid.UUI
 	externalIDs := make([]string, 0, len(applied))
 	for _, record := range applied {
 		externalIDs = append(externalIDs, record.ID)
-		if _, err := models.EnvironmentDNSRecord.Upsert(ctx, tx, models.UpsertEnvironmentDNSRecordData{
-			ExternalID: record.ID, Content: record.Content, ObservedName: record.Name,
-			EnvironmentDNSBindingID: bindingID, DNSZoneID: scope.ZoneID,
-		}); err != nil {
+		if _, err := models.EnvironmentDNSRecord.Upsert(
+			ctx,
+			tx,
+			models.UpsertEnvironmentDNSRecordData{
+				ExternalID: record.ID, Content: record.Content, ObservedName: record.Name,
+				EnvironmentDNSBindingID: bindingID, DNSZoneID: scope.ZoneID,
+			},
+		); err != nil {
 			return nil, err
 		}
 	}
-	if err := models.EnvironmentDNSRecord.ArchiveMissing(ctx, tx, bindingID, externalIDs, now); err != nil {
+	if err := models.EnvironmentDNSRecord.ArchiveMissing(
+		ctx,
+		tx,
+		bindingID,
+		externalIDs,
+		now,
+	); err != nil {
 		return nil, err
 	}
 	result, err := tx.NewUpdate().TableExpr("environment_dns_bindings").Set("updated_at = ?", now).
@@ -564,7 +760,11 @@ func (service *EnvironmentDNS) Reconcile(ctx context.Context, bindingID uuid.UUI
 	return service.currentDeploymentIntent(ctx, bindingID, generation)
 }
 
-func (service *EnvironmentDNS) currentDeploymentIntent(ctx context.Context, bindingID uuid.UUID, generation int64) (*DNSDeploymentIntent, error) {
+func (service *EnvironmentDNS) currentDeploymentIntent(
+	ctx context.Context,
+	bindingID uuid.UUID,
+	generation int64,
+) (*DNSDeploymentIntent, error) {
 	scope, err := service.scope(ctx, bindingID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -583,21 +783,33 @@ func deploymentIntent(scope dnsReconciliationScope) *DNSDeploymentIntent {
 		return nil
 	}
 	return &DNSDeploymentIntent{
-		BindingID: scope.BindingID, Generation: scope.Generation, ApplicationID: scope.ApplicationID,
-		EnvironmentID: scope.EnvironmentID, ActorID: scope.DeploymentActorID,
-		TriggerType: scope.DeploymentTrigger, Reference: scope.DeploymentReference,
+		BindingID:     scope.BindingID,
+		Generation:    scope.Generation,
+		ApplicationID: scope.ApplicationID,
+		EnvironmentID: scope.EnvironmentID,
+		ActorID:       scope.DeploymentActorID,
+		TriggerType:   scope.DeploymentTrigger,
+		Reference:     scope.DeploymentReference,
 	}
 }
 
-func (service *EnvironmentDNS) MarkDeploymentDispatched(ctx context.Context, bindingID uuid.UUID, generation int64) error {
+func (service *EnvironmentDNS) MarkDeploymentDispatched(
+	ctx context.Context,
+	bindingID uuid.UUID,
+	generation int64,
+) error {
 	_, err := service.db.Executor().NewUpdate().TableExpr("environment_dns_bindings").
-		Set("updated_at = ?", time.Now().UTC()).Set("deployment_dispatched_at = ?", time.Now().UTC()).
+		Set("updated_at = ?", time.Now().UTC()).
+		Set("deployment_dispatched_at = ?", time.Now().UTC()).
 		Where("id = ?", bindingID).Where("generation = ?", generation).
 		Where("deployment_dispatched_at IS NULL").Exec(ctx)
 	return err
 }
 
-func (service *EnvironmentDNS) RemoveForEnvironment(ctx context.Context, environmentID uuid.UUID) error {
+func (service *EnvironmentDNS) RemoveForEnvironment(
+	ctx context.Context,
+	environmentID uuid.UUID,
+) error {
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -626,12 +838,24 @@ func (service *EnvironmentDNS) RemoveForEnvironment(ctx context.Context, environ
 	return service.removeTracked(ctx, binding.ID, nil)
 }
 
-func (service *EnvironmentDNS) enqueueTx(ctx context.Context, tx bun.Tx, binding models.EnvironmentDNSBindingEntity) error {
-	_, err := service.queue.InsertTx(ctx, tx.Tx, jobs.DNSReconciliationArgs{BindingID: binding.ID, Generation: binding.Generation}, jobs.DNSReconciliationInsertOpts(binding.ID, binding.Generation))
+func (service *EnvironmentDNS) enqueueTx(
+	ctx context.Context,
+	tx bun.Tx,
+	binding models.EnvironmentDNSBindingEntity,
+) error {
+	_, err := service.queue.InsertTx(
+		ctx,
+		tx.Tx,
+		jobs.DNSReconciliationArgs{BindingID: binding.ID, Generation: binding.Generation},
+		jobs.DNSReconciliationInsertOpts(binding.ID, binding.Generation),
+	)
 	return err
 }
 
-func (service *EnvironmentDNS) scope(ctx context.Context, bindingID uuid.UUID) (dnsReconciliationScope, error) {
+func (service *EnvironmentDNS) scope(
+	ctx context.Context,
+	bindingID uuid.UUID,
+) (dnsReconciliationScope, error) {
 	var scope dnsReconciliationScope
 	err := service.db.Executor().NewSelect().TableExpr("environment_dns_bindings AS binding").
 		ColumnExpr("binding.id AS binding_id, binding.generation, binding.state, binding.adoption_confirmed_at, binding.deploy_after_apply, binding.deployment_actor_id, binding.deployment_trigger_type, binding.deployment_reference, binding.deployment_dispatched_at").
@@ -653,7 +877,11 @@ type dnsServerAddress struct {
 	Addr string    `bun:"address"`
 }
 
-func (service *EnvironmentDNS) desiredIPv4(ctx context.Context, db storage.Executor, environmentID uuid.UUID) ([]string, error) {
+func (service *EnvironmentDNS) desiredIPv4(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) ([]string, error) {
 	servers := make([]dnsServerAddress, 0)
 	if err := db.NewSelect().TableExpr("environment_targets AS target").
 		ColumnExpr("server.id, server.kind, server.ipv4_address, server.address").
@@ -675,26 +903,47 @@ func (service *EnvironmentDNS) desiredIPv4(ctx context.Context, db storage.Execu
 		}
 	}
 	if len(unique) == 0 {
-		return nil, errors.Join(models.ErrDomainValidation, errors.New("Cloudflare-managed DNS requires at least one runtime Server IPv4 address"))
+		return nil, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("Cloudflare-managed DNS requires at least one runtime Server IPv4 address"),
+		)
 	}
 	sort.Strings(unique)
 	return unique, nil
 }
 
-func (service *EnvironmentDNS) resolvePublicIPv4(ctx context.Context, db storage.Executor, server dnsServerAddress) (string, error) {
+func (service *EnvironmentDNS) resolvePublicIPv4(
+	ctx context.Context,
+	db storage.Executor,
+	server dnsServerAddress,
+) (string, error) {
 	for _, candidate := range []string{server.IPv4, server.Addr} {
-		if parsed, err := netip.ParseAddr(strings.TrimSpace(candidate)); err == nil && isPublicIPv4(parsed) {
+		if parsed, err := netip.ParseAddr(
+			strings.TrimSpace(candidate),
+		); err == nil &&
+			isPublicIPv4(parsed) {
 			return parsed.String(), nil
 		}
 	}
 	if server.Kind != "self_hosted" {
-		return "", errors.Join(models.ErrDomainValidation, fmt.Errorf("Cloudflare-managed DNS requires a public IPv4 address on runtime Server %s; set one in the Server settings", server.ID))
+		return "", errors.Join(
+			models.ErrDomainValidation,
+			fmt.Errorf(
+				"Cloudflare-managed DNS requires a public IPv4 address on runtime Server %s; set one in the Server settings",
+				server.ID,
+			),
+		)
 	}
 	detected, err := detectHostPublicIPv4(ctx)
 	if err != nil {
 		return "", errors.Join(models.ErrDomainValidation, err)
 	}
-	if _, err := db.NewUpdate().TableExpr("servers").Set("ipv4_address = ?", detected).Set("updated_at = ?", time.Now().UTC()).Where("id = ?", server.ID).Exec(ctx); err != nil {
+	if _, err := db.NewUpdate().
+		TableExpr("servers").
+		Set("ipv4_address = ?", detected).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", server.ID).
+		Exec(ctx); err != nil {
 		return "", err
 	}
 	return detected, nil
@@ -703,7 +952,11 @@ func (service *EnvironmentDNS) resolvePublicIPv4(ctx context.Context, db storage
 func detectHostPublicIPv4(ctx context.Context) (string, error) {
 	var lastErr error
 	for _, endpoint := range []string{"1.1.1.1:53", "8.8.8.8:53", "9.9.9.9:53"} {
-		connection, err := (&net.Dialer{Timeout: 3 * time.Second}).DialContext(ctx, "tcp4", endpoint)
+		connection, err := (&net.Dialer{Timeout: 3 * time.Second}).DialContext(
+			ctx,
+			"tcp4",
+			endpoint,
+		)
 		if err != nil {
 			lastErr = err
 			continue
@@ -737,10 +990,16 @@ func detectHostPublicIPv4(ctx context.Context) (string, error) {
 }
 
 func isPublicIPv4(address netip.Addr) bool {
-	return address.Is4() && address.IsGlobalUnicast() && !address.IsPrivate() && !address.IsLoopback() && !address.IsLinkLocalUnicast()
+	return address.Is4() && address.IsGlobalUnicast() && !address.IsPrivate() &&
+		!address.IsLoopback() &&
+		!address.IsLinkLocalUnicast()
 }
 
-func (service *EnvironmentDNS) markReconciling(ctx context.Context, bindingID uuid.UUID, generation int64) (bool, error) {
+func (service *EnvironmentDNS) markReconciling(
+	ctx context.Context,
+	bindingID uuid.UUID,
+	generation int64,
+) (bool, error) {
 	result, err := service.db.Executor().NewUpdate().TableExpr("environment_dns_bindings").
 		Set("updated_at = ?", time.Now().UTC()).Set("state = ?", models.EnvironmentDNSReconciling).
 		Set("last_error = NULL").Where("id = ?", bindingID).Where("generation = ?", generation).
@@ -752,7 +1011,13 @@ func (service *EnvironmentDNS) markReconciling(ctx context.Context, bindingID uu
 	return rows == 1, err
 }
 
-func (service *EnvironmentDNS) markState(ctx context.Context, bindingID uuid.UUID, generation int64, state string, stateErr error) error {
+func (service *EnvironmentDNS) markState(
+	ctx context.Context,
+	bindingID uuid.UUID,
+	generation int64,
+	state string,
+	stateErr error,
+) error {
 	message := ""
 	if stateErr != nil {
 		message = strings.TrimSpace(stateErr.Error())
@@ -772,28 +1037,55 @@ func (service *EnvironmentDNS) markState(ctx context.Context, bindingID uuid.UUI
 	return err
 }
 
-func (service *EnvironmentDNS) fail(ctx context.Context, bindingID uuid.UUID, generation int64, cause error) error {
-	if err := service.markState(ctx, bindingID, generation, models.EnvironmentDNSFailed, cause); err != nil {
+func (service *EnvironmentDNS) fail(
+	ctx context.Context,
+	bindingID uuid.UUID,
+	generation int64,
+	cause error,
+) error {
+	if err := service.markState(
+		ctx,
+		bindingID,
+		generation,
+		models.EnvironmentDNSFailed,
+		cause,
+	); err != nil {
 		return errors.Join(cause, err)
 	}
 	return cause
 }
 
-func (service *EnvironmentDNS) failRemoval(ctx context.Context, bindingID uuid.UUID, generation int64, cause error) error {
-	if err := service.markState(ctx, bindingID, generation, models.EnvironmentDNSRemovalFailed, cause); err != nil {
+func (service *EnvironmentDNS) failRemoval(
+	ctx context.Context,
+	bindingID uuid.UUID,
+	generation int64,
+	cause error,
+) error {
+	if err := service.markState(
+		ctx,
+		bindingID,
+		generation,
+		models.EnvironmentDNSRemovalFailed,
+		cause,
+	); err != nil {
 		return errors.Join(cause, err)
 	}
 	return cause
 }
 
-func (service *EnvironmentDNS) removeTracked(ctx context.Context, bindingID uuid.UUID, remove func(dnsTrackedRemoval) bool) error {
+func (service *EnvironmentDNS) removeTracked(
+	ctx context.Context,
+	bindingID uuid.UUID,
+	remove func(dnsTrackedRemoval) bool,
+) error {
 	records := make([]dnsTrackedRemoval, 0)
 	err := service.db.Executor().NewSelect().TableExpr("environment_dns_records AS record").
 		ColumnExpr("record.id AS record_id, record.external_id, record.observed_name, zone.id AS zone_id, zone.external_id AS zone_external_id, credential.enc_payload AS credential_payload").
 		Join("JOIN dns_zones AS zone ON zone.id = record.dns_zone_id").
 		Join("JOIN dns_connections AS connection ON connection.id = zone.dns_connection_id").
 		Join("JOIN credentials AS credential ON credential.id = connection.credential_id").
-		Where("record.environment_dns_binding_id = ?", bindingID).Where("record.archived_at IS NULL").
+		Where("record.environment_dns_binding_id = ?", bindingID).
+		Where("record.archived_at IS NULL").
 		OrderExpr("record.id").Scan(ctx, &records)
 	if err != nil {
 		return err
@@ -802,11 +1094,20 @@ func (service *EnvironmentDNS) removeTracked(ctx context.Context, bindingID uuid
 		if remove != nil && !remove(record) {
 			continue
 		}
-		token, err := secretcrypto.DecryptForPurpose(record.CredentialPayload, service.config.App.SessionEncryptionKey, cloudflareTokenEncryptionPurpose)
+		token, err := secretcrypto.DecryptForPurpose(
+			record.CredentialPayload,
+			service.config.App.SessionEncryptionKey,
+			cloudflareTokenEncryptionPurpose,
+		)
 		if err != nil {
 			return errors.New("Cloudflare account-owned API token could not be decrypted")
 		}
-		if err := service.client.DeleteRecord(ctx, string(token), record.ZoneExternalID, record.ExternalID); err != nil {
+		if err := service.client.DeleteRecord(
+			ctx,
+			string(token),
+			record.ZoneExternalID,
+			record.ExternalID,
+		); err != nil {
 			return err
 		}
 	}

@@ -46,7 +46,18 @@ func NewSystem(
 	resources *services.ResourceManagement,
 	caddy services.CaddyRouteService,
 ) System {
-	return System{db: db, health: health, metric: metric, logs: logs, appTelemetry: appTelemetry, access: access, credentials: credentials, backups: backups, resources: resources, caddy: caddy}
+	return System{
+		db:           db,
+		health:       health,
+		metric:       metric,
+		logs:         logs,
+		appTelemetry: appTelemetry,
+		access:       access,
+		credentials:  credentials,
+		backups:      backups,
+		resources:    resources,
+		caddy:        caddy,
+	}
 }
 
 func (s System) RegisterRoutes(r *router.Router) error {
@@ -65,15 +76,48 @@ func (s System) RegisterRoutes(r *router.Router) error {
 		{method: http.MethodGet, route: routes.SystemResources, handler: s.Resources},
 		{method: http.MethodGet, route: routes.SystemResource, handler: s.Resource},
 		{method: http.MethodGet, route: routes.SystemResourceBackups, handler: s.ResourceBackups},
-		{method: http.MethodGet, route: routes.SystemResourceEndpoints, handler: s.ResourceEndpoints},
-		{method: http.MethodGet, route: routes.SystemResourceCredentials, handler: s.ResourceCredentials},
+		{
+			method:  http.MethodGet,
+			route:   routes.SystemResourceEndpoints,
+			handler: s.ResourceEndpoints,
+		},
+		{
+			method:  http.MethodGet,
+			route:   routes.SystemResourceCredentials,
+			handler: s.ResourceCredentials,
+		},
 		{method: http.MethodGet, route: routes.SystemResourceHealth, handler: s.ResourceHealth},
 		{method: http.MethodGet, route: routes.SystemResourceAccess, handler: s.ResourceAccess},
-		{method: http.MethodPost, route: routes.SystemResourceEndpointCreate, handler: s.CreateResourceEndpoint},
-		{method: http.MethodDelete, route: routes.SystemResourceEndpointDestroy, handler: s.DestroyResourceEndpoint},
-		{method: http.MethodPost, route: routes.SystemResourceCredentialReveal, handler: middleware.IPRateLimiter(5, routes.SystemResources)(s.RevealResourceCredential)},
-		{method: http.MethodPost, route: routes.SystemResourceWireGuardDeviceCreate, handler: s.CreateResourceWireGuardDevice},
-		{method: http.MethodDelete, route: routes.SystemResourceWireGuardDeviceDestroy, handler: s.DestroyResourceWireGuardDevice},
+		{
+			method:  http.MethodPost,
+			route:   routes.SystemResourceEndpointCreate,
+			handler: s.CreateResourceEndpoint,
+		},
+		{
+			method:  http.MethodDelete,
+			route:   routes.SystemResourceEndpointDestroy,
+			handler: s.DestroyResourceEndpoint,
+		},
+		{
+			method: http.MethodPost,
+			route:  routes.SystemResourceCredentialReveal,
+			handler: middleware.IPRateLimiter(
+				5,
+				routes.SystemResources,
+			)(
+				s.RevealResourceCredential,
+			),
+		},
+		{
+			method:  http.MethodPost,
+			route:   routes.SystemResourceWireGuardDeviceCreate,
+			handler: s.CreateResourceWireGuardDevice,
+		},
+		{
+			method:  http.MethodDelete,
+			route:   routes.SystemResourceWireGuardDeviceDestroy,
+			handler: s.DestroyResourceWireGuardDevice,
+		},
 	}
 
 	errList := make([]error, 0, len(routesToRegister))
@@ -137,7 +181,11 @@ func (s System) Telemetry(etx *echo.Context) error {
 	if err != nil {
 		return s.renderLoadError(etx, "telemetry", err)
 	}
-	metricData, err := s.metric.SystemTelemetry(etx.Request().Context(), overview.ServerID, telemetryRange)
+	metricData, err := s.metric.SystemTelemetry(
+		etx.Request().Context(),
+		overview.ServerID,
+		telemetryRange,
+	)
 	if err != nil {
 		slog.WarnContext(
 			etx.Request().Context(),
@@ -148,9 +196,18 @@ func (s System) Telemetry(etx *echo.Context) error {
 	}
 	applicationData, err := s.appTelemetry.Snapshot(etx.Request().Context(), telemetryRange)
 	if err != nil {
-		slog.WarnContext(etx.Request().Context(), "failed to load DeployCrate CE application telemetry", "error", err)
+		slog.WarnContext(
+			etx.Request().Context(),
+			"failed to load DeployCrate CE application telemetry",
+			"error",
+			err,
+		)
 	}
-	collectorEndpoint, err := models.ResourceEndpoint.FindSystemEnvironmentEndpoint(etx.Request().Context(), s.db.Executor(), "opentelemetry")
+	collectorEndpoint, err := models.ResourceEndpoint.FindSystemEnvironmentEndpoint(
+		etx.Request().Context(),
+		s.db.Executor(),
+		"opentelemetry",
+	)
 	if err != nil {
 		return s.renderLoadError(etx, "telemetry Resource endpoint", err)
 	}
@@ -171,7 +228,8 @@ func (s System) TelemetryLogs(etx *echo.Context) error {
 		services.ParseTelemetryRange(etx.QueryParam("range")),
 		etx.QueryParam("search"),
 	)
-	if errors.Is(err, services.ErrInvalidSystemLogCursor) || errors.Is(err, services.ErrInvalidSystemLogSearch) {
+	if errors.Is(err, services.ErrInvalidSystemLogCursor) ||
+		errors.Is(err, services.ErrInvalidSystemLogSearch) {
 		return etx.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 	if err != nil {
@@ -180,7 +238,10 @@ func (s System) TelemetryLogs(etx *echo.Context) error {
 			"failed to load DeployCrate CE logs",
 			"error", err,
 		)
-		return etx.JSON(http.StatusInternalServerError, map[string]string{"error": "DeployCrate CE logs could not be loaded"})
+		return etx.JSON(
+			http.StatusInternalServerError,
+			map[string]string{"error": "DeployCrate CE logs could not be loaded"},
+		)
 	}
 	etx.Response().Header().Set("Cache-Control", "no-store")
 	return etx.JSON(http.StatusOK, snapshot)
@@ -192,8 +253,16 @@ func (s System) TelemetryTrace(etx *echo.Context) error {
 		return etx.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 	if err != nil {
-		slog.ErrorContext(etx.Request().Context(), "failed to load OpenTelemetry trace", "error", err)
-		return etx.JSON(http.StatusInternalServerError, map[string]string{"error": "Trace could not be loaded"})
+		slog.ErrorContext(
+			etx.Request().Context(),
+			"failed to load OpenTelemetry trace",
+			"error",
+			err,
+		)
+		return etx.JSON(
+			http.StatusInternalServerError,
+			map[string]string{"error": "Trace could not be loaded"},
+		)
 	}
 	etx.Response().Header().Set("Cache-Control", "no-store")
 	return etx.JSON(http.StatusOK, map[string]any{"spans": spans})
@@ -253,13 +322,22 @@ func (s System) RevealResourceCredential(etx *echo.Context) error {
 	resourceID, resourceErr := uuid.Parse(etx.Param("resourceID"))
 	credentialID, credentialErr := uuid.Parse(etx.Param("credentialID"))
 	if errors.Join(resourceErr, credentialErr) != nil {
-		return etx.JSON(http.StatusNotFound, map[string]string{"error": "System Resource credential not found"})
+		return etx.JSON(
+			http.StatusNotFound,
+			map[string]string{"error": "System Resource credential not found"},
+		)
 	}
 	var payload struct {
 		Password string `json:"password"`
 	}
-	if err := etx.Bind(&payload); err != nil || payload.Password == "" || len(payload.Password) > 4096 {
-		return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "Current password is required"})
+	if err := etx.Bind(
+		&payload,
+	); err != nil || payload.Password == "" ||
+		len(payload.Password) > 4096 {
+		return etx.JSON(
+			http.StatusUnprocessableEntity,
+			map[string]string{"error": "Current password is required"},
+		)
 	}
 
 	credential, err := s.credentials.RevealSystem(
@@ -269,12 +347,30 @@ func (s System) RevealResourceCredential(etx *echo.Context) error {
 	if err != nil {
 		switch {
 		case errors.Is(err, services.ErrInvalidCredentials):
-			return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "Current password is incorrect"})
+			return etx.JSON(
+				http.StatusUnprocessableEntity,
+				map[string]string{"error": "Current password is incorrect"},
+			)
 		case errors.Is(err, services.ErrResourceCredentialUnavailable):
-			return etx.JSON(http.StatusNotFound, map[string]string{"error": "System Resource credential not found"})
+			return etx.JSON(
+				http.StatusNotFound,
+				map[string]string{"error": "System Resource credential not found"},
+			)
 		default:
-			slog.ErrorContext(etx.Request().Context(), "failed to reveal system Resource credential", "resource_id", resourceID, "credential_id", credentialID, "error", err)
-			return etx.JSON(http.StatusInternalServerError, map[string]string{"error": "System Resource credential could not be loaded"})
+			slog.ErrorContext(
+				etx.Request().Context(),
+				"failed to reveal system Resource credential",
+				"resource_id",
+				resourceID,
+				"credential_id",
+				credentialID,
+				"error",
+				err,
+			)
+			return etx.JSON(
+				http.StatusInternalServerError,
+				map[string]string{"error": "System Resource credential could not be loaded"},
+			)
 		}
 	}
 	return etx.JSON(http.StatusOK, credential)
@@ -311,7 +407,13 @@ func (s System) CreateResourceEndpoint(etx *echo.Context) error {
 		Settings: payload.Settings, PrivateNetworkID: networkID,
 	}
 	if err == nil {
-		endpointInput, err = s.caddy.PrepareResourcePublication(etx.Request().Context(), resourceID, uuid.Nil, endpointInput, payload.Publication)
+		endpointInput, err = s.caddy.PrepareResourcePublication(
+			etx.Request().Context(),
+			resourceID,
+			uuid.Nil,
+			endpointInput,
+			payload.Publication,
+		)
 	}
 	if err == nil {
 		var endpoint models.ResourceEndpointEntity
@@ -325,9 +427,15 @@ func (s System) CreateResourceEndpoint(etx *echo.Context) error {
 				etx.Request().Context(),
 				tx,
 				models.CreateResourceEndpointData{
-					Name: endpointInput.Name, Role: endpointInput.Role, Address: endpointInput.Address,
-					Port: endpointInput.Port, Protocol: endpointInput.Protocol, TlsMode: endpointInput.TLSMode,
-					Settings: endpointInput.Settings, ResourceID: resourceID, PrivateNetworkID: endpointInput.PrivateNetworkID,
+					Name:             endpointInput.Name,
+					Role:             endpointInput.Role,
+					Address:          endpointInput.Address,
+					Port:             endpointInput.Port,
+					Protocol:         endpointInput.Protocol,
+					TlsMode:          endpointInput.TLSMode,
+					Settings:         endpointInput.Settings,
+					ResourceID:       resourceID,
+					PrivateNetworkID: endpointInput.PrivateNetworkID,
 				},
 			); txErr != nil {
 				return txErr
@@ -335,17 +443,32 @@ func (s System) CreateResourceEndpoint(etx *echo.Context) error {
 			return tx.Commit()
 		}()
 		if err == nil && payload.Publication.Enabled {
-			err = s.caddy.SyncResourcePublication(etx.Request().Context(), resourceID, endpoint.ID, payload.Publication)
+			err = s.caddy.SyncResourcePublication(
+				etx.Request().Context(),
+				resourceID,
+				endpoint.ID,
+				payload.Publication,
+			)
 		}
 	}
 	if err != nil {
 		if validationErrors, ok := validation.As(err); ok {
-			return s.renderResource(etx, resourceID, "endpoints", nil, inertia.WithValidationErrors(validationErrors.ToMap()))
+			return s.renderResource(
+				etx,
+				resourceID,
+				"endpoints",
+				nil,
+				inertia.WithValidationErrors(validationErrors.ToMap()),
+			)
 		}
 		return s.redirectResourceError(etx, resourceID, "endpoints", err)
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Resource endpoint added")
-	return inertia.Redirect(etx, routes.SystemResourceEndpoints.URL(resourceID), http.StatusSeeOther)
+	return inertia.Redirect(
+		etx,
+		routes.SystemResourceEndpoints.URL(resourceID),
+		http.StatusSeeOther,
+	)
 }
 
 func (s System) DestroyResourceEndpoint(etx *echo.Context) error {
@@ -360,12 +483,22 @@ func (s System) DestroyResourceEndpoint(etx *echo.Context) error {
 	}
 	if err != nil {
 		if validationErrors, ok := validation.As(err); ok {
-			return s.renderResource(etx, resourceID, "endpoints", nil, inertia.WithValidationErrors(validationErrors.ToMap()))
+			return s.renderResource(
+				etx,
+				resourceID,
+				"endpoints",
+				nil,
+				inertia.WithValidationErrors(validationErrors.ToMap()),
+			)
 		}
 		return s.redirectResourceError(etx, resourceID, "endpoints", err)
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Resource endpoint removed")
-	return inertia.Redirect(etx, routes.SystemResourceEndpoints.URL(resourceID), http.StatusSeeOther)
+	return inertia.Redirect(
+		etx,
+		routes.SystemResourceEndpoints.URL(resourceID),
+		http.StatusSeeOther,
+	)
 }
 
 type systemResourceWireGuardPayload struct {
@@ -385,13 +518,25 @@ func (s System) CreateResourceWireGuardDevice(etx *echo.Context) error {
 	}
 	var result services.ResourcePrivateAccessResult
 	if err == nil {
-		result, err = s.access.Enroll(etx.Request().Context(), resourceID, services.ResourcePrivateAccessEnrollment{
-			DeviceID: deviceID, Name: payload.Name, UserID: cookies.ExtractFromCookieApp(etx).UserID,
-		})
+		result, err = s.access.Enroll(
+			etx.Request().Context(),
+			resourceID,
+			services.ResourcePrivateAccessEnrollment{
+				DeviceID: deviceID,
+				Name:     payload.Name,
+				UserID:   cookies.ExtractFromCookieApp(etx).UserID,
+			},
+		)
 	}
 	if err != nil {
 		if validationErrors, ok := validation.As(err); ok {
-			return s.renderResource(etx, resourceID, "access", nil, inertia.WithValidationErrors(validationErrors.ToMap()))
+			return s.renderResource(
+				etx,
+				resourceID,
+				"access",
+				nil,
+				inertia.WithValidationErrors(validationErrors.ToMap()),
+			)
 		}
 		return s.redirectResourceError(etx, resourceID, "access", err)
 	}
@@ -418,11 +563,29 @@ func (s System) DestroyResourceWireGuardDevice(etx *echo.Context) error {
 	return inertia.Redirect(etx, routes.SystemResourceAccess.URL(resourceID), http.StatusSeeOther)
 }
 
-func (s System) renderResource(etx *echo.Context, resourceID uuid.UUID, section string, enrollment inertia.Props, option inertia.PageOption) error {
+func (s System) renderResource(
+	etx *echo.Context,
+	resourceID uuid.UUID,
+	section string,
+	enrollment inertia.Props,
+	option inertia.PageOption,
+) error {
 	if err := s.access.ObserveResource(etx.Request().Context(), resourceID); err != nil {
-		slog.WarnContext(etx.Request().Context(), "failed to observe WireGuard device handshakes", "resource_id", resourceID, "error", err)
+		slog.WarnContext(
+			etx.Request().Context(),
+			"failed to observe WireGuard device handshakes",
+			"resource_id",
+			resourceID,
+			"error",
+			err,
+		)
 	}
-	detail, err := models.Application.FindSystemResourceDetail(etx.Request().Context(), s.db.Executor(), resourceID, cookies.ExtractFromCookieApp(etx).UserID)
+	detail, err := models.Application.FindSystemResourceDetail(
+		etx.Request().Context(),
+		s.db.Executor(),
+		resourceID,
+		cookies.ExtractFromCookieApp(etx).UserID,
+	)
 	if errors.Is(err, models.ErrNotFound) {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
@@ -458,7 +621,12 @@ func (s System) renderResource(etx *echo.Context, resourceID uuid.UUID, section 
 	return inertia.Page(etx, "System/Resources/Show", props)
 }
 
-func (s System) redirectResourceError(etx *echo.Context, resourceID uuid.UUID, section string, err error) error {
+func (s System) redirectResourceError(
+	etx *echo.Context,
+	resourceID uuid.UUID,
+	section string,
+	err error,
+) error {
 	message := "Resource operation failed"
 	if err != nil && strings.TrimSpace(err.Error()) != "" {
 		message = err.Error()

@@ -26,7 +26,10 @@ func (worker *MetricRollupWorker) Register(workers *river.Workers) error {
 	return river.AddWorkerSafely(workers, worker)
 }
 
-func (worker *MetricRollupWorker) Work(ctx context.Context, _ *river.Job[jobs.MetricRollupArgs]) error {
+func (worker *MetricRollupWorker) Work(
+	ctx context.Context,
+	_ *river.Job[jobs.MetricRollupArgs],
+) error {
 	return worker.service.Collect(ctx)
 }
 

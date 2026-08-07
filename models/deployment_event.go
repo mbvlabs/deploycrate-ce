@@ -193,8 +193,13 @@ func (de deploymentEvent) ForDeploymentAfter(
 		limit = 501
 	}
 	events := make([]DeploymentEventEntity, 0, limit)
-	err := db.NewSelect().Model(&events).Where("deployment_id = ?", deploymentID).Where("sequence > ?", after).
-		OrderExpr("sequence ASC").Limit(limit).Scan(ctx)
+	err := db.NewSelect().
+		Model(&events).
+		Where("deployment_id = ?", deploymentID).
+		Where("sequence > ?", after).
+		OrderExpr("sequence ASC").
+		Limit(limit).
+		Scan(ctx)
 	return events, err
 }
 
