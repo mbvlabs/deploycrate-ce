@@ -681,6 +681,119 @@ func (service *EnvironmentSetup) Overview(
 	}, nil
 }
 
+type EnvironmentServingContainer struct {
+	InstanceID   uuid.UUID `json:"instanceId"`
+	DeploymentID uuid.UUID `json:"deploymentId"`
+	TargetID     uuid.UUID `json:"targetId"`
+	ServerID     uuid.UUID `json:"serverId"`
+	Exists       bool      `json:"exists"`
+	Running      bool      `json:"running"`
+}
+
+func (service *EnvironmentSetup) ServingContainer(
+	ctx context.Context,
+	applicationID, environmentID uuid.UUID,
+) (EnvironmentServingContainer, error) {
+	container := EnvironmentServingContainer{}
+	if _, err := models.Environment.FindForApplication(
+		ctx,
+		service.db.Executor(),
+		applicationID,
+		environmentID,
+	); err != nil {
+		return container, err
+	}
+	var instance struct {
+		ID                  uuid.UUID `bun:"id"`
+		DeploymentID        uuid.UUID `bun:"deployment_id"`
+		EnvironmentTargetID uuid.UUID `bun:"environment_target_id"`
+	}
+	err := service.db.Executor().NewSelect().TableExpr("instances AS instance").
+		ColumnExpr("instance.id, instance.deployment_id, instance.environment_target_id").
+		Join("JOIN releases AS release ON release.id = instance.release_id").
+		Where("release.environment_id = ?", environmentID).
+		Where("release.registry_resource_id IS NOT NULL").
+		Where("instance.process_kind = 'web'").
+		Where("instance.state = 'serving'").
+		Where("instance.removed_at IS NULL").
+		OrderExpr("instance.created_at DESC").
+		Limit(1).
+		Scan(ctx, &instance)
+	if errors.Is(err, sql.ErrNoRows) {
+		return container, nil
+	}
+	if err != nil {
+		return container, err
+	}
+	target, err := models.EnvironmentTarget.Find(
+		ctx,
+		service.db.Executor(),
+		instance.EnvironmentTargetID,
+	)
+	if err != nil {
+		return container, err
+	}
+	container.InstanceID = instance.ID
+	container.DeploymentID = instance.DeploymentID
+	container.TargetID = instance.EnvironmentTargetID
+	container.ServerID = target.ServerID
+	state, err := service.workloads.Find(
+		ctx,
+		target.ServerID,
+		instance.DeploymentID,
+		instance.ID,
+	)
+	if err != nil {
+		return container, err
+	}
+	container.Exists = state.Exists
+	container.Running = state.Exists && state.Running
+	return container, nil
+}
+
+func (service *EnvironmentSetup) RestartServingContainer(
+	ctx context.Context,
+	applicationID, environmentID uuid.UUID,
+) error {
+	container, err := service.ServingContainer(ctx, applicationID, environmentID)
+	if err != nil {
+		return err
+	}
+	if container.InstanceID == uuid.Nil || !container.Exists {
+		return errors.New("no serving container is available to restart")
+	}
+	_, err = service.workloads.Restart(
+		ctx,
+		container.ServerID,
+		container.DeploymentID,
+		container.InstanceID,
+	)
+	return err
+}
+
+func (service *EnvironmentSetup) StartServingContainer(
+	ctx context.Context,
+	applicationID, environmentID uuid.UUID,
+) error {
+	container, err := service.ServingContainer(ctx, applicationID, environmentID)
+	if err != nil {
+		return err
+	}
+	if container.InstanceID == uuid.Nil || !container.Exists {
+		return errors.New("no serving container is available to start")
+	}
+	if container.Running {
+		return nil
+	}
+	_, err = service.workloads.Start(
+		ctx,
+		container.ServerID,
+		container.DeploymentID,
+		container.InstanceID,
+	)
+	return err
+}
+
 func (service *EnvironmentSetup) environmentSecretActivity(
 	ctx context.Context,
 	environmentID uuid.UUID,

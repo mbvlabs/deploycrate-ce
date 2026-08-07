@@ -5,24 +5,50 @@
     memoryAvailable: boolean;
   };
 
-  let { points }: { points: TelemetryPoint[] } = $props();
+  let {
+    points,
+    telemetryRange = "24h",
+  }: {
+    points: TelemetryPoint[];
+    telemetryRange: "1h" | "6h" | "24h" | "7d";
+  } = $props();
 
   let hoveredIndex = $state<number | null>(null);
   const left = 82;
   const right = 718;
   const top = 18;
   const bottom = 178;
-  const bucketCount = 24;
-  const hourMilliseconds = 60 * 60 * 1000;
-  const historyWindowMilliseconds = bucketCount * hourMilliseconds;
-  const bucketWidth = (right - left) / bucketCount;
-  const timeFormatter = new Intl.DateTimeFormat(undefined, { hour: "numeric" });
+  const bucketCount = 36;
+  const rangeSeconds = $derived(
+    { "1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800 }[telemetryRange] ??
+      86400,
+  );
+  const rangeLabel = $derived(
+    {
+      "1h": "last hour",
+      "6h": "last 6 hours",
+      "24h": "last 24 hours",
+      "7d": "last 7 days",
+    }[telemetryRange] ?? "last 24 hours",
+  );
+  const historyWindowMilliseconds = $derived(rangeSeconds * 1000);
+  const bucketMilliseconds = $derived(historyWindowMilliseconds / bucketCount);
   const rangeFormatter = new Intl.DateTimeFormat(undefined, {
     month: "short",
     day: "numeric",
     hour: "numeric",
     minute: "2-digit",
   });
+  const axisFormatter = $derived(
+    new Intl.DateTimeFormat(
+      undefined,
+      rangeSeconds === 604800
+        ? { month: "short", day: "numeric" }
+        : rangeSeconds <= 6 * 3600
+          ? { hour: "numeric", minute: "2-digit" }
+          : { hour: "numeric" },
+    ),
+  );
   const formatMemory = (value: number) =>
     `${(value / 1024 ** 2).toFixed(1)} MB`;
 
@@ -31,7 +57,7 @@
       .map((point) => new Date(point.observedAt).getTime())
       .filter((timestamp) => Number.isFinite(timestamp));
     const latest = timestamps.length ? Math.max(...timestamps) : Date.now();
-    const end = Math.ceil(latest / hourMilliseconds) * hourMilliseconds;
+    const end = Math.ceil(latest / bucketMilliseconds) * bucketMilliseconds;
     const start = end - historyWindowMilliseconds;
     const samples = points
       .map((point) => ({
@@ -47,8 +73,8 @@
       )
       .sort((a, b) => a.timestamp - b.timestamp);
     const buckets = Array.from({ length: bucketCount }, (_, index) => {
-      const bucketStart = start + index * hourMilliseconds;
-      const bucketEnd = bucketStart + hourMilliseconds;
+      const bucketStart = start + index * bucketMilliseconds;
+      const bucketEnd = bucketStart + bucketMilliseconds;
       const bucketSamples = samples.filter(
         (point) =>
           point.timestamp >= bucketStart &&
@@ -66,7 +92,7 @@
       return {
         start: bucketStart,
         end: bucketEnd,
-        x: left + (index + 0.5) * bucketWidth,
+        x: left + (index + 0.5) * ((right - left) / bucketCount),
         memory,
       };
     });
@@ -103,7 +129,7 @@
     const x = ((event.clientX - bounds.left) / bounds.width) * 800;
     hoveredIndex = Math.min(
       bucketCount - 1,
-      Math.max(0, Math.floor((x - left) / bucketWidth)),
+      Math.max(0, Math.floor(((x - left) / (right - left)) * bucketCount)),
     );
   };
 </script>
@@ -112,7 +138,7 @@
   <div>
     <h3 class="text-sm font-semibold">Memory usage</h3>
     <p class="mt-1 text-xs text-muted-foreground">
-      Average active container memory for each hour over the last 24 hours
+      Average active container memory over the {rangeLabel}
     </p>
   </div>
 
@@ -122,7 +148,7 @@
         viewBox="0 0 800 220"
         class="block h-auto w-full max-w-none touch-none"
         role="img"
-        aria-label="Hourly memory usage over the last 24 hours"
+        aria-label={`Memory usage over the ${rangeLabel}`}
         onpointerenter={hover}
         onpointermove={hover}
         onpointerleave={() => (hoveredIndex = null)}
@@ -185,14 +211,20 @@
             />{/if}
         {/if}
 
-        {#each chart.buckets as bucket}
-          <text
-            x={bucket.x}
-            y="210"
-            text-anchor="middle"
-            class="fill-muted-foreground text-[8px]"
-            >{timeFormatter.format(bucket.start)}</text
-          >
+        {#each chart.buckets as bucket, index}
+          {#if index === 0 || index === Math.floor((bucketCount - 1) / 2) || index === bucketCount - 1}
+            <text
+              x={bucket.x}
+              y="210"
+              text-anchor={index === 0
+                ? "start"
+                : index === bucketCount - 1
+                  ? "end"
+                  : "middle"}
+              class="fill-muted-foreground text-[8px]"
+              >{axisFormatter.format(bucket.end)}</text
+            >
+          {/if}
         {/each}
       </svg>
 

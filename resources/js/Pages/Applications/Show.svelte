@@ -57,31 +57,15 @@
     available: boolean;
     cpuCores: number;
     memoryBytes: number;
-    diskReadBytesPerSecond: number;
-    diskWriteBytesPerSecond: number;
-    networkReceiveBytesPerSecond: number;
-    networkTransmitBytesPerSecond: number;
     cpuAvailable: boolean;
     memoryAvailable: boolean;
-    diskReadAvailable: boolean;
-    diskWriteAvailable: boolean;
-    networkReceiveAvailable: boolean;
-    networkTransmitAvailable: boolean;
   };
 
   type TelemetrySummary = {
     cpuCores: number;
     memoryBytes: number;
-    diskReadBytesPerSecond: number;
-    diskWriteBytesPerSecond: number;
-    networkReceiveBytesPerSecond: number;
-    networkTransmitBytesPerSecond: number;
     cpuAvailable: boolean;
     memoryAvailable: boolean;
-    diskReadAvailable: boolean;
-    diskWriteAvailable: boolean;
-    networkReceiveAvailable: boolean;
-    networkTransmitAvailable: boolean;
   };
 
   let {
@@ -166,16 +150,8 @@
     const summary: TelemetrySummary = {
       cpuCores: 0,
       memoryBytes: 0,
-      diskReadBytesPerSecond: 0,
-      diskWriteBytesPerSecond: 0,
-      networkReceiveBytesPerSecond: 0,
-      networkTransmitBytesPerSecond: 0,
       cpuAvailable: false,
       memoryAvailable: false,
-      diskReadAvailable: false,
-      diskWriteAvailable: false,
-      networkReceiveAvailable: false,
-      networkTransmitAvailable: false,
     };
     for (const row of rows) {
       if (row.cpuAvailable) {
@@ -185,24 +161,6 @@
       if (row.memoryAvailable) {
         summary.memoryBytes += row.memoryBytes;
         summary.memoryAvailable = true;
-      }
-      if (row.diskReadAvailable) {
-        summary.diskReadBytesPerSecond += row.diskReadBytesPerSecond;
-        summary.diskReadAvailable = true;
-      }
-      if (row.diskWriteAvailable) {
-        summary.diskWriteBytesPerSecond += row.diskWriteBytesPerSecond;
-        summary.diskWriteAvailable = true;
-      }
-      if (row.networkReceiveAvailable) {
-        summary.networkReceiveBytesPerSecond +=
-          row.networkReceiveBytesPerSecond;
-        summary.networkReceiveAvailable = true;
-      }
-      if (row.networkTransmitAvailable) {
-        summary.networkTransmitBytesPerSecond +=
-          row.networkTransmitBytesPerSecond;
-        summary.networkTransmitAvailable = true;
       }
     }
     return summary;
@@ -219,7 +177,6 @@
     return `${(value / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
   }
 
-  const formatRate = (value: number) => `${formatBytes(value)}/s`;
   const formatCPU = (value: number) => `${value.toFixed(2)} cores`;
   const formatTimestamp = (value: string) =>
     value ? new Date(value).toLocaleString() : "Not recorded";
@@ -281,7 +238,10 @@
 
 <svelte:head><title>{application.name}</title></svelte:head>
 
-<DashboardLayout email={auth.email}>
+<DashboardLayout
+  email={auth.email}
+  applicationNavigation={{ id: application.id, name: application.name }}
+>
   <div class="space-y-10">
     <header class="flex flex-wrap items-end justify-between gap-4">
       <div>
@@ -549,7 +509,7 @@
           application environments.
         </p>
       </div>
-      <div class="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div class="grid gap-3 sm:grid-cols-2">
         <Card.Root size="sm"
           ><Card.Header
             ><Card.Description>CPU</Card.Description><Card.Title
@@ -568,39 +528,13 @@
             ></Card.Header
           ></Card.Root
         >
-        <Card.Root size="sm"
-          ><Card.Header
-            ><Card.Description>Disk read / write</Card.Description><Card.Title
-              class="text-base"
-              >{combinedTelemetry.diskReadAvailable
-                ? formatRate(combinedTelemetry.diskReadBytesPerSecond)
-                : "Unavailable"} / {combinedTelemetry.diskWriteAvailable
-                ? formatRate(combinedTelemetry.diskWriteBytesPerSecond)
-                : "Unavailable"}</Card.Title
-            ></Card.Header
-          ></Card.Root
-        >
-        <Card.Root size="sm"
-          ><Card.Header
-            ><Card.Description>Network receive / transmit</Card.Description
-            ><Card.Title class="text-base"
-              >{combinedTelemetry.networkReceiveAvailable
-                ? formatRate(combinedTelemetry.networkReceiveBytesPerSecond)
-                : "Unavailable"} / {combinedTelemetry.networkTransmitAvailable
-                ? formatRate(combinedTelemetry.networkTransmitBytesPerSecond)
-                : "Unavailable"}</Card.Title
-            ></Card.Header
-          ></Card.Root
-        >
       </div>
       <div class="border border-border">
         <Table.Root>
           <Table.Header
             ><Table.Row
               ><Table.Head>Environment</Table.Head><Table.Head>CPU</Table.Head
-              ><Table.Head>Memory</Table.Head><Table.Head
-                >Disk read / write</Table.Head
-              ><Table.Head>Network receive / transmit</Table.Head></Table.Row
+              ><Table.Head>Memory</Table.Head></Table.Row
             ></Table.Header
           >
           <Table.Body>
@@ -623,20 +557,6 @@
                 <Table.Cell
                   >{summary.memoryAvailable
                     ? formatBytes(summary.memoryBytes)
-                    : "Unavailable"}</Table.Cell
-                >
-                <Table.Cell
-                  >{summary.diskReadAvailable
-                    ? formatRate(summary.diskReadBytesPerSecond)
-                    : "Unavailable"} / {summary.diskWriteAvailable
-                    ? formatRate(summary.diskWriteBytesPerSecond)
-                    : "Unavailable"}</Table.Cell
-                >
-                <Table.Cell
-                  >{summary.networkReceiveAvailable
-                    ? formatRate(summary.networkReceiveBytesPerSecond)
-                    : "Unavailable"} / {summary.networkTransmitAvailable
-                    ? formatRate(summary.networkTransmitBytesPerSecond)
                     : "Unavailable"}</Table.Cell
                 >
               </Table.Row>

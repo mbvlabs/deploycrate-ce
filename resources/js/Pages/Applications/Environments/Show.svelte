@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Link, router } from "@inertiajs/svelte";
+  import { router } from "@inertiajs/svelte";
   import { untrack } from "svelte";
   import { Button } from "@/Components/ui/button";
   import * as Card from "@/Components/ui/card";
@@ -9,8 +9,9 @@
   import DataField from "@/Components/DataField.svelte";
   import EnvironmentDeleteDialog from "@/Components/EnvironmentDeleteDialog.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
-  import TelemetryDonut from "@/Components/Applications/Environments/TelemetryDonut.svelte";
   import TelemetryHistory from "@/Components/Applications/Environments/TelemetryHistory.svelte";
+  import UsageSummary from "@/Components/Applications/Environments/UsageSummary.svelte";
+  import UsageDonut from "@/Components/System/UsageDonut.svelte";
   import { Input } from "@/Components/ui/input";
   import { Spinner } from "@/Components/ui/spinner";
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
@@ -174,16 +175,8 @@
     observedAt: string;
     cpuCores: number;
     memoryBytes: number;
-    diskReadBytesPerSecond: number;
-    diskWriteBytesPerSecond: number;
-    networkReceiveBytesPerSecond: number;
-    networkTransmitBytesPerSecond: number;
     cpuAvailable: boolean;
     memoryAvailable: boolean;
-    diskReadAvailable: boolean;
-    diskWriteAvailable: boolean;
-    networkReceiveAvailable: boolean;
-    networkTransmitAvailable: boolean;
   };
   type TelemetryRow = {
     application: string;
@@ -196,20 +189,12 @@
     observedAt: string;
     cpuCores: number;
     memoryBytes: number;
-    diskReadBytesPerSecond: number;
-    diskWriteBytesPerSecond: number;
-    networkReceiveBytesPerSecond: number;
-    networkTransmitBytesPerSecond: number;
     oomEvents: number;
     cpuThrottlingRatio: number;
     tasks: number;
     history: TelemetryPoint[];
     cpuAvailable: boolean;
     memoryAvailable: boolean;
-    diskReadAvailable: boolean;
-    diskWriteAvailable: boolean;
-    networkReceiveAvailable: boolean;
-    networkTransmitAvailable: boolean;
     oomAvailable: boolean;
     cpuThrottlingAvailable: boolean;
     tasksAvailable: boolean;
@@ -245,14 +230,35 @@
     latestSuccessfulDeploymentId?: string;
     latestSuccessfulReleaseId?: string;
   };
+  type ServingContainer = {
+    instanceId: string;
+    deploymentId: string;
+    targetId: string;
+    serverId: string;
+    exists: boolean;
+    running: boolean;
+  };
+  type HostUsage = {
+    cpuCores: number;
+    memoryBytes: number;
+    available: boolean;
+  };
   let {
     auth,
     environment,
     telemetry,
+    container,
+    host = { cpuCores: 0, memoryBytes: 0, available: false },
+    telemetryRange = "24h",
+    section = "overview",
   }: {
     auth: { email: string };
     environment: Overview;
     telemetry: TelemetryRow[];
+    container: ServingContainer;
+    host: HostUsage;
+    telemetryRange: "1h" | "6h" | "24h" | "7d";
+    section: "overview" | "telemetry" | "deployments" | "builds" | "secrets";
   } = $props();
   let key = $state("");
   let value = $state("");
@@ -263,6 +269,7 @@
   let apiTokenConfirmOpen = $state(false);
   let apiTokenProcessing = $state(false);
   let deploymentCreationProcessing = $state(false);
+  let containerActionProcessing = $state(false);
   let dnsActionProcessing = $state(false);
   let secretCreationProcessing = $state(false);
   let deploymentRetrying = $state("");
@@ -283,7 +290,8 @@
   let environmentLogsPaused = $state(false);
   let followingEnvironmentLogs = $state(true);
   let workloadLogsOpen = $state(true);
-  let environmentLogViewport: HTMLDivElement;
+  let telemetryLive = $state(false);
+  let environmentLogViewport = $state<HTMLDivElement | undefined>(undefined);
   let activeReleaseDeployment = $state("");
   let promotionDialogOpen = $state(false);
   let promotionProcessing = $state(false);
@@ -341,6 +349,29 @@
         ) ?? null)
       : null,
   );
+  const usageChange = $derived.by(() => {
+    if (!activeTelemetry) return null;
+    const hourAgo = Date.now() - 60 * 60 * 1000;
+    const cpuSamples: number[] = [];
+    const memorySamples: number[] = [];
+    for (const point of activeTelemetry.history) {
+      const timestamp = new Date(point.observedAt).getTime();
+      if (!Number.isFinite(timestamp) || timestamp < hourAgo) continue;
+      if (point.cpuAvailable) cpuSamples.push(point.cpuCores);
+      if (point.memoryAvailable) memorySamples.push(point.memoryBytes);
+    }
+    const diff = (current: number, samples: number[]) => {
+      if (samples.length === 0) return null;
+      const average =
+        samples.reduce((total, value) => total + value, 0) / samples.length;
+      if (average <= 0) return null;
+      return ((current - average) / average) * 100;
+    };
+    return {
+      cpu: diff(activeTelemetry.cpuCores, cpuSamples),
+      memory: diff(activeTelemetry.memoryBytes, memorySamples),
+    };
+  });
   const activeBuildId = $derived(
     builds.find((build) => build.status === "running")?.id ??
       builds.find((build) => build.status === "pending")?.id ??
@@ -361,9 +392,14 @@
     );
     return `${(value / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
   };
-  const formatRate = (value: number) => `${formatBytes(value)}/s`;
+  const formatCPU = (value: number) => `${value.toFixed(2)} cores`;
   const stamp = (value: string) =>
     value ? new Date(value).toLocaleString() : "Pending";
+  const telemetryHref = (range: string) =>
+    `${routes.environmentTelemetry(
+      environment.applicationId,
+      environment.environment.id,
+    )}?range=${range}`;
   const stepLabel = (value: string) =>
     value ? value.replaceAll("_", " ") : "waiting for worker";
   const deploymentStep = (deployment: Deployment) =>
@@ -524,6 +560,36 @@
           expandedBuildId = "";
         },
         onFinish: () => (deploymentCreationProcessing = false),
+      },
+    );
+  }
+  function startContainer() {
+    if (containerActionProcessing) return;
+    containerActionProcessing = true;
+    router.post(
+      routes.environmentStart(
+        environment.applicationId,
+        environment.environment.id,
+      ),
+      {},
+      {
+        preserveScroll: true,
+        onFinish: () => (containerActionProcessing = false),
+      },
+    );
+  }
+  function restartContainer() {
+    if (containerActionProcessing) return;
+    containerActionProcessing = true;
+    router.post(
+      routes.environmentRestart(
+        environment.applicationId,
+        environment.environment.id,
+      ),
+      {},
+      {
+        preserveScroll: true,
+        onFinish: () => (containerActionProcessing = false),
       },
     );
   }
@@ -888,6 +954,7 @@
   }
 
   function updateEnvironmentLogFollow() {
+    if (!environmentLogViewport) return;
     followingEnvironmentLogs =
       environmentLogViewport.scrollHeight -
         environmentLogViewport.scrollTop -
@@ -896,6 +963,7 @@
   }
 
   $effect(() => {
+    if (section !== "telemetry") return;
     environmentLogs.length;
     if (!followingEnvironmentLogs) return;
     const frame = window.requestAnimationFrame(() => {
@@ -907,7 +975,7 @@
   });
 
   $effect(() => {
-    if (environmentLogsPaused) return;
+    if (section !== "telemetry" || environmentLogsPaused) return;
     const abortController = new AbortController();
     let timer: number | undefined;
     let retryDelay = 2000;
@@ -935,6 +1003,7 @@
   });
 
   $effect(() => {
+    if (section !== "builds") return;
     const buildId = activeBuildId;
     if (!buildId) return;
     if (!expandedBuildId) expandedBuildId = buildId;
@@ -978,6 +1047,7 @@
   });
 
   $effect(() => {
+    if (section !== "overview") return;
     const dnsState = environment.dns.state;
     if (!environment.dns.reconciliationQueued && dnsState !== "reconciling")
       return;
@@ -989,6 +1059,33 @@
   });
 
   $effect(() => {
+    if (section !== "overview") return;
+    const timer = window.setInterval(() => {
+      router.reload({ only: ["telemetry"], preserveScroll: true });
+    }, 30000);
+    return () => window.clearInterval(timer);
+  });
+
+  $effect(() => {
+    if (section !== "telemetry" || !telemetryLive) return;
+    let refreshing = false;
+    const refresh = () => {
+      if (refreshing || document.visibilityState !== "visible") return;
+      refreshing = true;
+      router.reload({
+        only: ["telemetry"],
+        preserveScroll: true,
+        preserveState: true,
+        onFinish: () => (refreshing = false),
+      });
+    };
+    refresh();
+    const timer = window.setInterval(refresh, 3000);
+    return () => window.clearInterval(timer);
+  });
+
+  $effect(() => {
+    if (section !== "deployments") return;
     const activeReleaseCommand = environment.releaseCommands.find(
       (execution) =>
         execution.status === "queued" || execution.status === "running",
@@ -1003,6 +1100,7 @@
   });
 
   $effect(() => {
+    if (section !== "deployments") return;
     const deploymentId = expandedDeploymentId;
     const deploymentStatus = expandedDeploymentStatus;
     if (
@@ -1055,7 +1153,15 @@
 </script>
 
 <svelte:head><title>{environment.environment.name}</title></svelte:head>
-<DashboardLayout email={auth.email}>
+<DashboardLayout
+  email={auth.email}
+  environmentNavigation={{
+    applicationId: environment.applicationId,
+    applicationName: environment.applicationName,
+    id: environment.environment.id,
+    name: environment.environment.name,
+  }}
+>
   <div class="space-y-8">
     <header
       class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"
@@ -1070,849 +1176,932 @@
           {environment.environment.name}
         </h1>
       </div>
-      <div class="flex flex-wrap gap-2">
-        <Button variant="outline"
-          >{#snippet child({ props })}<Link
-              {...props}
-              href={routes.environmentEdit(
-                environment.applicationId,
-                environment.environment.id,
-              )}>Edit environment</Link
-            >{/snippet}</Button
-        ><Button variant="outline"
-          >{#snippet child({ props })}<Link
-              {...props}
-              href={routes.environmentSourceEdit(
-                environment.applicationId,
-                environment.environment.id,
-              )}>Edit source</Link
-            >{/snippet}</Button
-        >{#if environment.sourceType === "buildpacks"}<Button
-            disabled={deploymentCreationProcessing || !deploymentRequestReady}
-            aria-busy={deploymentCreationProcessing}
-            onclick={buildAndDeploy}
-            >{#if deploymentCreationProcessing}<Spinner />{/if}Build & deploy</Button
-          >{/if}<EnvironmentDeleteDialog
-          applicationId={environment.applicationId}
-          environmentId={environment.environment.id}
-          environmentName={environment.environment.name}
-        />
-      </div>
+      {#if section === "overview"}
+        <div class="flex flex-wrap gap-2">
+          {#if environment.sourceType === "buildpacks"}<Button
+              disabled={deploymentCreationProcessing || !deploymentRequestReady}
+              aria-busy={deploymentCreationProcessing}
+              onclick={buildAndDeploy}
+              >{#if deploymentCreationProcessing}<Spinner />{/if}Build & deploy</Button
+            >{/if}<EnvironmentDeleteDialog
+            applicationId={environment.applicationId}
+            environmentId={environment.environment.id}
+            environmentName={environment.environment.name}
+          />
+        </div>
+      {/if}
     </header>
 
-    <Card.Root
-      ><Card.Header
-        ><Card.Action
-          ><StatusBadge
-            status={environment.deployability.deployable ? "ready" : "blocked"}
-          /></Card.Action
-        ><Card.Title>Desired state</Card.Title></Card.Header
-      ><Card.Content class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"
-        ><DataField
-          label="Repository"
-          value={environment.repository}
-        /><DataField
-          label="Reference"
-          value={environment.reference}
-        /><DataField
-          label="Build context"
-          value={environment.contextPath}
-        /><DataField label="Domain" value={environment.domain} /><DataField
-          label="Runtime Server targets"
-          value={environment.runtimeServers.join(", ")}
-        /><DataField
-          label="Registry"
-          value={environment.registryName}
-        /><DataField
-          label="Registry endpoint"
-          value={environment.registryEndpoint}
-        />{#if !environment.deployability.deployable}<DataField
-            label="Missing"
-            value={environment.deployability.missing.join(", ")}
-          />{/if}</Card.Content
-      ></Card.Root
-    >
+    {#if section === "overview"}
+      <UsageSummary
+        cpuCores={activeTelemetry?.cpuCores ?? 0}
+        memoryBytes={activeTelemetry?.memoryBytes ?? 0}
+        cpuChange={usageChange?.cpu ?? null}
+        memoryChange={usageChange?.memory ?? null}
+        cpuAvailable={Boolean(
+          activeTelemetry?.available && activeTelemetry.cpuAvailable,
+        )}
+        memoryAvailable={Boolean(
+          activeTelemetry?.available && activeTelemetry.memoryAvailable,
+        )}
+        observedAt={activeTelemetry?.observedAt ?? ""}
+        telemetryUrl={routes.environmentTelemetry(
+          environment.applicationId,
+          environment.environment.id,
+        )}
+      />
 
-    <Card.Root>
-      <Card.Header
-        ><Card.Title>Process formation</Card.Title><Card.Description
-          >The immutable process configuration used by the next Release rollout.</Card.Description
-        ></Card.Header
-      >
-      <Card.Content class="space-y-2">
-        {#each environment.processes as process}
-          <div
-            class="grid gap-2 border border-border p-3 text-sm sm:grid-cols-[8rem_8rem_minmax(0,1fr)_auto]"
-          >
-            <div>
-              <p class="font-mono font-medium">{process.name}</p>
-              <StatusBadge status={process.kind} />
-            </div>
-            <p>
-              {process.kind === "release"
-                ? "one-off"
-                : `${process.replicas} replica${process.replicas === 1 ? "" : "s"}`}
-            </p>
-            <p class="break-all font-mono text-xs text-muted-foreground">
-              {process.command
-                ? [process.command, ...process.arguments].join(" ")
-                : "OCI image default command"}
-            </p>
-            <p class="text-xs text-muted-foreground">
-              {process.kind === "web"
-                ? `Port ${process.container_port}${process.health_path ? ` · ${process.health_path}` : ""}`
-                : process.kind === "release"
-                  ? `${process.timeout_seconds}s timeout`
-                  : "Private"}
-            </p>
-          </div>
-        {/each}
-      </Card.Content>
-    </Card.Root>
-
-    <Card.Root>
-      <Card.Header
-        ><Card.Action
-          ><StatusBadge
-            status={environment.dns.state}
-            label={environment.dns.mode === "manual"
-              ? "Manual"
-              : environment.dns.state.replaceAll("_", " ")}
-          /></Card.Action
-        ><Card.Title>DNS</Card.Title><Card.Description
-          >{environment.dns.mode === "manual"
-            ? "DeployCrate does not change DNS records for this Environment."
-            : `${environment.dns.connectionName} · ${environment.dns.zoneName}`}</Card.Description
-        ></Card.Header
-      >
-      <Card.Content class="space-y-4">
-        {#if environment.dns.lastError}<p
-            class="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
-          >
-            {environment.dns.lastError}
-          </p>{/if}
-        {#if environment.dns.mode === "cloudflare" && !environment.dns.reconciliationQueued && ["pending", "removing"].includes(environment.dns.state)}<p
-            class="border border-border bg-muted/20 p-3 text-sm text-muted-foreground"
-          >
-            DNS changes are staged. Use the deployment action when you are ready
-            to apply DNS and deploy this desired state.
-          </p>{/if}
-        {#if environment.dns.records.length > 0}<div class="space-y-2">
-            {#each environment.dns.records as record}<div
-                class="grid gap-1 border border-border p-3 font-mono text-sm sm:grid-cols-[auto_1fr_1fr]"
-              >
-                <span>{record.type}</span><span>{record.name}</span><span
-                  >{record.content}</span
-                >
-              </div>{/each}
-          </div>{/if}
-        {#if environment.dns.state === "conflict"}<div
-            class="flex flex-wrap items-center justify-between gap-3"
-          >
-            <p class="text-sm text-muted-foreground">
-              Existing records are unmanaged. Confirm adoption to replace them
-              with this Environment's server addresses.
-            </p>
-            <Button disabled={dnsActionProcessing} onclick={adoptDNS}
-              >{#if dnsActionProcessing}<Spinner />{/if}Adopt and replace</Button
-            >
-          </div>{/if}
-        {#if environment.dns.state === "failed" || environment.dns.state === "removal_failed"}<div
-            class="flex flex-wrap items-center justify-between gap-3"
-          >
-            <p class="text-sm text-muted-foreground">
-              The Environment stays saved, but deployment remains blocked until
-              the DNS operation succeeds.
-            </p>
-            <Button
-              variant="outline"
-              disabled={dnsActionProcessing}
-              onclick={retryDNS}
-              >{#if dnsActionProcessing}<Spinner />{/if}Retry DNS</Button
-            >
-          </div>{/if}
-        {#if environment.dns.state === "applied" && !environment.dns.reconciliationQueued}<div
-            class="flex flex-wrap items-center justify-between gap-3"
-          >
-            <p class="text-sm text-muted-foreground">
-              The DNS records are up to date. Re-sync to re-verify the current
-              server addresses against Cloudflare.
-            </p>
-            <Button
-              variant="outline"
-              disabled={dnsActionProcessing}
-              onclick={refreshDNS}
-              >{#if dnsActionProcessing}<Spinner />{/if}Re-sync DNS</Button
-            >
-          </div>{/if}
-      </Card.Content>
-    </Card.Root>
-
-    {#if environment.sourceType === "image"}
-      <Card.Root
-        ><Card.Header
-          ><Card.Title>Deploy image version</Card.Title><Card.Description
-            >Use the configured reference or override it with another tag or
-            sha256 digest.</Card.Description
-          ></Card.Header
-        ><Card.Content class="flex flex-col gap-3 sm:flex-row"
-          ><Input bind:value={imageReference} placeholder="latest" /><Button
-            disabled={deploymentCreationProcessing ||
-              !imageReference.trim() ||
-              !deploymentRequestReady}
-            aria-busy={deploymentCreationProcessing}
-            onclick={buildAndDeploy}
-            >{#if deploymentCreationProcessing}<Spinner />{/if}Resolve & deploy</Button
-          ></Card.Content
-        ></Card.Root
-      >
-    {/if}
-
-    {#if environment.sourceType === "image"}
       <Card.Root
         ><Card.Header
           ><Card.Action
-            ><Button
-              size="sm"
-              variant="outline"
-              disabled={apiTokenProcessing}
-              onclick={() => (apiTokenConfirmOpen = true)}
-              >{#if apiTokenProcessing}<Spinner
-                />{/if}{environment.apiTokenPrefix
-                ? "Rotate token"
-                : "Create token"}</Button
-            ></Card.Action
-          ><Card.Title>Deployment API</Card.Title><Card.Description
-            >Environment-scoped bearer token for image deployments. A
-            replacement token invalidates the previous token immediately.</Card.Description
+            ><StatusBadge
+              status={environment.deployability.deployable
+                ? "ready"
+                : "blocked"}
+            /></Card.Action
+          ><Card.Title>Desired state</Card.Title></Card.Header
+        ><Card.Content class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"
+          ><DataField
+            label="Repository"
+            value={environment.repository}
+          /><DataField
+            label="Reference"
+            value={environment.reference}
+          /><DataField
+            label="Build context"
+            value={environment.contextPath}
+          /><DataField label="Domain" value={environment.domain} /><DataField
+            label="Runtime Server targets"
+            value={environment.runtimeServers.join(", ")}
+          /><DataField
+            label="Registry"
+            value={environment.registryName}
+          /><DataField
+            label="Registry endpoint"
+            value={environment.registryEndpoint}
+          />{#if !environment.deployability.deployable}<DataField
+              label="Missing"
+              value={environment.deployability.missing.join(", ")}
+            />{/if}</Card.Content
+        ></Card.Root
+      >
+
+      <Card.Root>
+        <Card.Header
+          ><Card.Title>Process formation</Card.Title><Card.Description
+            >The immutable process configuration used by the next Release
+            rollout.</Card.Description
           ></Card.Header
-        ><Card.Content class="space-y-2 text-sm"
-          ><p class="font-mono">
-            POST /api/environments/{environment.environment.id}/deployments
-          </p>
-          <p class="text-xs text-muted-foreground">
-            JSON: {`{"reference":"1.2.3"}`} · Token: {environment.apiTokenPrefix
-              ? `${environment.apiTokenPrefix}...`
-              : "Not configured"}
-          </p>
-          {#if apiTokenError}<p class="text-xs text-destructive">
-              {apiTokenError}
+        >
+        <Card.Content class="space-y-2">
+          {#each environment.processes as process}
+            <div
+              class="grid gap-2 border border-border p-3 text-sm sm:grid-cols-[8rem_8rem_minmax(0,1fr)_auto]"
+            >
+              <div>
+                <p class="font-mono font-medium">{process.name}</p>
+                <StatusBadge status={process.kind} />
+              </div>
+              <p>
+                {process.kind === "release"
+                  ? "one-off"
+                  : `${process.replicas} replica${process.replicas === 1 ? "" : "s"}`}
+              </p>
+              <p class="break-all font-mono text-xs text-muted-foreground">
+                {process.command
+                  ? [process.command, ...process.arguments].join(" ")
+                  : "OCI image default command"}
+              </p>
+              <p class="text-xs text-muted-foreground">
+                {process.kind === "web"
+                  ? `Port ${process.container_port}${process.health_path ? ` · ${process.health_path}` : ""}`
+                  : process.kind === "release"
+                    ? `${process.timeout_seconds}s timeout`
+                    : "Private"}
+              </p>
+            </div>
+          {/each}
+        </Card.Content>
+      </Card.Root>
+
+      <Card.Root>
+        <Card.Header
+          ><Card.Action
+            ><StatusBadge
+              status={environment.dns.state}
+              label={environment.dns.mode === "manual"
+                ? "Manual"
+                : environment.dns.state.replaceAll("_", " ")}
+            /></Card.Action
+          ><Card.Title>DNS</Card.Title><Card.Description
+            >{environment.dns.mode === "manual"
+              ? "DeployCrate does not change DNS records for this Environment."
+              : `${environment.dns.connectionName} · ${environment.dns.zoneName}`}</Card.Description
+          ></Card.Header
+        >
+        <Card.Content class="space-y-4">
+          {#if environment.dns.lastError}<p
+              class="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+            >
+              {environment.dns.lastError}
+            </p>{/if}
+          {#if environment.dns.mode === "cloudflare" && !environment.dns.reconciliationQueued && ["pending", "removing"].includes(environment.dns.state)}<p
+              class="border border-border bg-muted/20 p-3 text-sm text-muted-foreground"
+            >
+              DNS changes are staged. Use the deployment action when you are
+              ready to apply DNS and deploy this desired state.
+            </p>{/if}
+          {#if environment.dns.records.length > 0}<div class="space-y-2">
+              {#each environment.dns.records as record}<div
+                  class="grid gap-1 border border-border p-3 font-mono text-sm sm:grid-cols-[auto_1fr_1fr]"
+                >
+                  <span>{record.type}</span><span>{record.name}</span><span
+                    >{record.content}</span
+                  >
+                </div>{/each}
+            </div>{/if}
+          {#if environment.dns.state === "conflict"}<div
+              class="flex flex-wrap items-center justify-between gap-3"
+            >
+              <p class="text-sm text-muted-foreground">
+                Existing records are unmanaged. Confirm adoption to replace them
+                with this Environment's server addresses.
+              </p>
+              <Button disabled={dnsActionProcessing} onclick={adoptDNS}
+                >{#if dnsActionProcessing}<Spinner />{/if}Adopt and replace</Button
+              >
+            </div>{/if}
+          {#if environment.dns.state === "failed" || environment.dns.state === "removal_failed"}<div
+              class="flex flex-wrap items-center justify-between gap-3"
+            >
+              <p class="text-sm text-muted-foreground">
+                The Environment stays saved, but deployment remains blocked
+                until the DNS operation succeeds.
+              </p>
+              <Button
+                variant="outline"
+                disabled={dnsActionProcessing}
+                onclick={retryDNS}
+                >{#if dnsActionProcessing}<Spinner />{/if}Retry DNS</Button
+              >
+            </div>{/if}
+          {#if environment.dns.state === "applied" && !environment.dns.reconciliationQueued}<div
+              class="flex flex-wrap items-center justify-between gap-3"
+            >
+              <p class="text-sm text-muted-foreground">
+                The DNS records are up to date. Re-sync to re-verify the current
+                server addresses against Cloudflare.
+              </p>
+              <Button
+                variant="outline"
+                disabled={dnsActionProcessing}
+                onclick={refreshDNS}
+                >{#if dnsActionProcessing}<Spinner />{/if}Re-sync DNS</Button
+              >
+            </div>{/if}
+        </Card.Content>
+      </Card.Root>
+
+      {#if environment.sourceType === "image"}
+        <Card.Root
+          ><Card.Header
+            ><Card.Title>Deploy image version</Card.Title><Card.Description
+              >Use the configured reference or override it with another tag or
+              sha256 digest.</Card.Description
+            ></Card.Header
+          ><Card.Content class="flex flex-col gap-3 sm:flex-row"
+            ><Input bind:value={imageReference} placeholder="latest" /><Button
+              disabled={deploymentCreationProcessing ||
+                !imageReference.trim() ||
+                !deploymentRequestReady}
+              aria-busy={deploymentCreationProcessing}
+              onclick={buildAndDeploy}
+              >{#if deploymentCreationProcessing}<Spinner />{/if}Resolve &
+              deploy</Button
+            ></Card.Content
+          ></Card.Root
+        >
+      {/if}
+
+      {#if environment.sourceType === "image"}
+        <Card.Root
+          ><Card.Header
+            ><Card.Action
+              ><Button
+                size="sm"
+                variant="outline"
+                disabled={apiTokenProcessing}
+                onclick={() => (apiTokenConfirmOpen = true)}
+                >{#if apiTokenProcessing}<Spinner
+                  />{/if}{environment.apiTokenPrefix
+                  ? "Rotate token"
+                  : "Create token"}</Button
+              ></Card.Action
+            ><Card.Title>Deployment API</Card.Title><Card.Description
+              >Environment-scoped bearer token for image deployments. A
+              replacement token invalidates the previous token immediately.</Card.Description
+            ></Card.Header
+          ><Card.Content class="space-y-2 text-sm"
+            ><p class="font-mono">
+              POST /api/environments/{environment.environment.id}/deployments
+            </p>
+            <p class="text-xs text-muted-foreground">
+              JSON: {`{"reference":"1.2.3"}`} · Token: {environment.apiTokenPrefix
+                ? `${environment.apiTokenPrefix}...`
+                : "Not configured"}
+            </p>
+            {#if apiTokenError}<p class="text-xs text-destructive">
+                {apiTokenError}
+              </p>{/if}</Card.Content
+          ></Card.Root
+        >
+      {/if}
+
+      <Card.Root
+        ><Card.Header
+          ><Card.Action
+            >{#if container.exists}<div class="flex gap-2">
+                {#if container.running}<Button
+                    size="sm"
+                    variant="outline"
+                    disabled={containerActionProcessing}
+                    aria-busy={containerActionProcessing}
+                    onclick={restartContainer}
+                    >{#if containerActionProcessing}<Spinner
+                      />{/if}Restart</Button
+                  >{:else}<Button
+                    size="sm"
+                    variant="outline"
+                    disabled={containerActionProcessing}
+                    aria-busy={containerActionProcessing}
+                    onclick={startContainer}
+                    >{#if containerActionProcessing}<Spinner
+                      />{/if}Start</Button
+                  >{/if}
+              </div>{/if}</Card.Action
+          ><Card.Title>Container</Card.Title><Card.Description
+            >Runtime state and controls for the serving web container.</Card.Description
+          ></Card.Header
+        ><Card.Content
+          >{#if container.exists}<div class="flex flex-wrap items-center gap-2">
+              <StatusBadge
+                status={container.running ? "running" : "stopped"}
+                label={container.running ? "Running" : "Stopped"}
+              /><span class="font-mono text-xs text-muted-foreground"
+                >Instance {short(container.instanceId)} · Deployment {short(
+                  container.deploymentId,
+                )}</span
+              >
+            </div>{:else}<p class="text-sm text-muted-foreground">
+              No serving container is currently deployed.
             </p>{/if}</Card.Content
         ></Card.Root
       >
     {/if}
 
-    <section aria-labelledby="workload-telemetry-heading" class="space-y-4">
-      <div class="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h2
-            id="workload-telemetry-heading"
-            class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground"
+    {#if section === "telemetry"}
+      <section aria-labelledby="workload-telemetry-heading" class="space-y-4">
+        <div class="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h2
+              id="workload-telemetry-heading"
+              class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground"
+            >
+              Workload telemetry
+            </h2>
+            <p class="mt-1 text-xs text-muted-foreground">
+              Current rates and usage for the active container
+            </p>
+          </div>
+          {#if activeTelemetry}
+            <p
+              class="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-muted-foreground"
+            >
+              <span class="flex items-baseline gap-1.5">
+                <span
+                  class="font-sans text-[10px] font-medium uppercase tracking-[0.14em]"
+                  >Deployment</span
+                >
+                {short(activeTelemetry.deployment)}
+              </span>
+              <span class="flex items-baseline gap-1.5">
+                <span
+                  class="font-sans text-[10px] font-medium uppercase tracking-[0.14em]"
+                  >Release</span
+                >
+                {short(activeTelemetry.release)}
+              </span>
+            </p>
+          {/if}
+          <div
+            class="flex flex-wrap items-center gap-1"
+            aria-label="Telemetry time range"
           >
-            Workload telemetry
-          </h2>
-          <p class="mt-1 text-xs text-muted-foreground">
-            Current rates and 24-hour usage for the active container
-          </p>
+            {#each [{ value: "1h", label: "1h" }, { value: "6h", label: "6h" }, { value: "24h", label: "24h" }, { value: "7d", label: "7d" }] as option}
+              <Button
+                size="sm"
+                variant={telemetryRange === option.value
+                  ? "default"
+                  : "outline"}
+                aria-pressed={telemetryRange === option.value}
+                href={telemetryHref(option.value)}>{option.label}</Button
+              >
+            {/each}
+            <Button
+              size="sm"
+              variant={telemetryLive ? "default" : "outline"}
+              aria-pressed={telemetryLive}
+              onclick={() => (telemetryLive = !telemetryLive)}
+            >
+              <span
+                class={`size-1.5 rounded-full ${telemetryLive ? "bg-primary-foreground animate-pulse" : "bg-muted-foreground"}`}
+              ></span>
+              Live
+            </Button>
+          </div>
         </div>
+
         {#if activeTelemetry}
-          <div class="text-left text-xs sm:text-right">
-            <p class="font-medium">
-              Instance {short(activeTelemetry.instance)}
+          <div class="grid gap-3 lg:grid-cols-2">
+            <UsageDonut
+              label="CPU"
+              used={activeTelemetry.cpuCores}
+              total={host.cpuCores}
+              formatValue={formatCPU}
+              available={activeTelemetry.available &&
+                activeTelemetry.cpuAvailable &&
+                host.available}
+            />
+            <UsageDonut
+              label="Memory"
+              used={activeTelemetry.memoryBytes}
+              total={host.memoryBytes}
+              formatValue={formatBytes}
+              available={activeTelemetry.available &&
+                activeTelemetry.memoryAvailable &&
+                host.available}
+            />
+          </div>
+          <TelemetryHistory points={activeTelemetry.history} {telemetryRange} />
+        {:else}
+          <div class="border border-border bg-card/35 px-5 py-16 text-center">
+            <p class="text-sm text-muted-foreground">
+              No telemetry is available for the active container yet.
             </p>
-            <p class="mt-1 font-mono text-[11px] text-muted-foreground">
-              Deployment {short(activeTelemetry.deployment)} · Release {short(
-                activeTelemetry.release,
-              )}
-            </p>
-            <div class="mt-1">
-              <StatusBadge
-                status={activeTelemetry.available ? "healthy" : "stale"}
-                label={activeTelemetry.available
-                  ? `Observed ${stamp(activeTelemetry.observedAt)}`
-                  : "Stale"}
-              />
-            </div>
           </div>
         {/if}
-      </div>
+      </section>
 
-      {#if activeTelemetry}
-        <div class="grid gap-3 lg:grid-cols-2">
-          <TelemetryDonut
-            label="Disk throughput"
-            primaryLabel="Read"
-            secondaryLabel="Write"
-            primary={activeTelemetry.diskReadBytesPerSecond}
-            secondary={activeTelemetry.diskWriteBytesPerSecond}
-            centerValue={activeTelemetry.diskReadBytesPerSecond +
-              activeTelemetry.diskWriteBytesPerSecond}
-            centerLabel="total"
-            formatValue={formatRate}
-            available={activeTelemetry.available &&
-              activeTelemetry.diskReadAvailable &&
-              activeTelemetry.diskWriteAvailable}
-          />
-          <TelemetryDonut
-            label="Network throughput"
-            primaryLabel="Receive"
-            secondaryLabel="Transmit"
-            primary={activeTelemetry.networkReceiveBytesPerSecond}
-            secondary={activeTelemetry.networkTransmitBytesPerSecond}
-            centerValue={activeTelemetry.networkReceiveBytesPerSecond +
-              activeTelemetry.networkTransmitBytesPerSecond}
-            centerLabel="total"
-            formatValue={formatRate}
-            available={activeTelemetry.available &&
-              activeTelemetry.networkReceiveAvailable &&
-              activeTelemetry.networkTransmitAvailable}
-          />
-        </div>
-        <TelemetryHistory points={activeTelemetry.history} />
-      {:else}
-        <div class="border border-border bg-card/35 px-5 py-16 text-center">
-          <p class="text-sm text-muted-foreground">
-            No telemetry is available for the active container yet.
-          </p>
-        </div>
-      {/if}
-    </section>
-
-    <Collapsible.Root bind:open={workloadLogsOpen}>
-      <Card.Root>
-        <Card.Header>
-          <Card.Action
-            ><div class="flex gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                onclick={() => (workloadLogsOpen = !workloadLogsOpen)}
-                aria-expanded={workloadLogsOpen}
-                >{workloadLogsOpen ? "Hide logs" : "Show logs"}</Button
-              ><Button
-                size="sm"
-                variant="outline"
-                disabled={!workloadLogsOpen}
-                onclick={() => (environmentLogsPaused = !environmentLogsPaused)}
-                >{environmentLogsPaused ? "Resume" : "Pause"}</Button
-              >
-            </div></Card.Action
-          >
-          <Card.Title>Workload logs</Card.Title>
-          <Card.Description
-            >Live stdout and stderr from this Environment's containers.
-            ClickHouse retains logs for seven days.</Card.Description
-          >
-        </Card.Header>
-        <Collapsible.Content>
-          <Card.Content>
-            {#if environmentLogConnectionError}<p
-                class="mb-3 text-xs text-warning"
-              >
-                {environmentLogConnectionError}
-              </p>{/if}
-            <div
-              bind:this={environmentLogViewport}
-              onscroll={updateEnvironmentLogFollow}
-              class="max-h-[32rem] min-h-48 overflow-auto border border-border bg-black/35 p-3 font-mono text-[11px] leading-relaxed"
-            >
-              {#each environmentLogs as log (log.id)}
-                <div
-                  class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 py-1"
-                  class:text-destructive={log.stream === "stderr"}
-                >
-                  <span
-                    class="select-none whitespace-nowrap text-muted-foreground"
-                    >{stamp(log.occurredAt)}</span
-                  >
-                  <div class="min-w-0">
-                    <p class="select-none text-[10px] text-muted-foreground">
-                      {log.stream} · {log.processKind || "process"}
-                      {log.processName || "unknown"}{log.processReplica
-                        ? ` · ${log.processReplica}`
-                        : ""} · {log.container || "container"} · deployment {short(
-                        log.deployment,
-                      )} · instance {short(log.instance)}
-                    </p>
-                    <pre
-                      class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
-                  </div>
-                </div>
-              {:else}
-                <p class="text-muted-foreground">
-                  {environmentLogsLoaded
-                    ? "No workload logs have been collected yet."
-                    : "Loading workload logs..."}
-                </p>
-              {/each}
-            </div>
-          </Card.Content>
-        </Collapsible.Content>
-      </Card.Root>
-    </Collapsible.Root>
-
-    <Card.Root
-      ><Card.Header
-        ><Card.Title>Resources</Card.Title><Card.Description
-          >Explicit connections available to this Environment.</Card.Description
-        ></Card.Header
-      ><Card.Content class="space-y-2"
-        >{#each environment.resources as resource}<div
-            class="grid gap-1 border border-border p-3 sm:grid-cols-3"
-          >
-            <span class="font-mono text-sm">{resource.alias}</span><span
-              >{resource.name}</span
-            ><span class="text-muted-foreground">{resource.engine}</span>
-          </div>{:else}<p class="text-sm text-muted-foreground">
-            No Resources selected.
-          </p>{/each}</Card.Content
-      ></Card.Root
-    >
-
-    <Card.Root
-      ><Card.Header
-        ><Card.Title>Environment secrets</Card.Title><Card.Description
-          >Status compares each desired value fingerprint with the revision
-          running in the serving container. Resource-managed values are changed
-          only from their Resource.</Card.Description
-        ></Card.Header
-      ><Card.Content class="space-y-3"
-        >{#each environment.variables as variable}<div
-            class="grid gap-1 border border-border p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]"
-          >
-            <p class="font-mono text-sm">{variable.key}</p>
-            <p class="break-all font-mono text-sm">{variable.value}</p>
-            <p class="text-xs text-muted-foreground">{variable.source}</p>
-          </div>{/each}{#each environment.secrets as secret}<div
-            class="flex flex-col gap-4 border border-border p-3 sm:flex-row sm:items-center sm:justify-between"
-          >
-            <div>
-              <div class="flex flex-wrap items-center gap-2">
-                <p class="font-mono text-sm">{secret.key}</p>
-                <StatusBadge
-                  status={secret.status}
-                  label={secretStatusLabel(secret)}
-                />
-              </div>
-              <p class="font-mono text-sm">••••••••</p>
-              <p class="text-xs text-muted-foreground">
-                {secret.digestPrefix} · {secretSourceLabel(secret)}
-              </p>
-            </div>
-            {#if secret.desired && secret.sourceType === "user"}<div
-                class="flex gap-2"
-              >
+      <Collapsible.Root bind:open={workloadLogsOpen}>
+        <Card.Root>
+          <Card.Header>
+            <Card.Action
+              ><div class="flex gap-2">
                 <Button
                   size="sm"
                   variant="outline"
-                  disabled={secretActionProcessing}
-                  onclick={() => askToRotate(secret)}>Rotate</Button
+                  onclick={() => (workloadLogsOpen = !workloadLogsOpen)}
+                  aria-expanded={workloadLogsOpen}
+                  >{workloadLogsOpen ? "Hide logs" : "Show logs"}</Button
                 ><Button
                   size="sm"
-                  variant="destructive"
-                  disabled={secretActionProcessing}
-                  onclick={() => askToArchiveSecret(secret)}>Archive</Button
+                  variant="outline"
+                  disabled={!workloadLogsOpen}
+                  onclick={() =>
+                    (environmentLogsPaused = !environmentLogsPaused)}
+                  >{environmentLogsPaused ? "Resume" : "Pause"}</Button
                 >
-              </div>{/if}
-          </div>{/each}{#if environment.variables.length === 0 && environment.secrets.length === 0}<p
-            class="border border-dashed border-border p-4 text-sm text-muted-foreground"
-          >
-            No Environment secrets configured.
-          </p>{/if}
-        <div
-          class="grid gap-3 border-t border-border pt-4 sm:grid-cols-[1fr_2fr_auto]"
-        >
-          <Input
-            bind:value={key}
-            placeholder="SECRET_KEY"
-            autocomplete="off"
-          /><Input
-            type="password"
-            bind:value
-            placeholder="Write-only value"
-            autocomplete="new-password"
-          /><Button
-            disabled={!key.trim() || !value || secretCreationProcessing}
-            aria-busy={secretCreationProcessing}
-            onclick={createSecret}
-            >{#if secretCreationProcessing}<Spinner />{/if}Add secret</Button
-          >
-        </div></Card.Content
-      ></Card.Root
-    >
-
-    <div class="grid gap-8 xl:grid-cols-2">
-      <Card.Root>
-        <Card.Header
-          ><Card.Title>Builds</Card.Title><Card.Description
-            >Builds run in the background. Active output is loaded
-            automatically.</Card.Description
-          ></Card.Header
-        >
-        <Card.Content class="space-y-2">
-          {#if buildLogConnectionError}<p class="text-xs text-warning">
-              {buildLogConnectionError}
-            </p>{/if}
-          {#each builds as build}
-            <div class="border border-border text-sm">
-              <div class="flex items-start gap-2 p-3">
-                <Button
-                  type="button"
-                  variant="ghost"
-                  class="h-auto min-w-0 flex-1 flex-col items-stretch p-0 text-left whitespace-normal hover:bg-transparent"
-                  onclick={() => toggleBuildLogs(build.id)}
-                  aria-expanded={expandedBuildId === build.id}
+              </div></Card.Action
+            >
+            <Card.Title>Workload logs</Card.Title>
+            <Card.Description
+              >Live stdout and stderr from this Environment's containers.
+              ClickHouse retains logs for seven days.</Card.Description
+            >
+          </Card.Header>
+          <Collapsible.Content>
+            <Card.Content>
+              {#if environmentLogConnectionError}<p
+                  class="mb-3 text-xs text-warning"
                 >
-                  <div class="flex justify-between gap-3">
-                    <span class="font-mono">{short(build.sourceRevision)}</span
-                    ><StatusBadge status={build.status} />
-                  </div>
-                  <p class="mt-1 text-xs text-muted-foreground">
-                    {stamp(build.createdAt)} · {stepLabel(build.currentStep)}
-                  </p>
-                  <p
-                    class="mt-1 break-all font-mono text-[11px] text-muted-foreground"
-                  >
-                    {build.registryEndpoint ||
-                      "Registry unavailable"}{build.jobId
-                      ? ` · Job #${build.jobId} · ${build.jobState}`
-                      : ""}
-                  </p>
-                </Button>
-                <div class="flex shrink-0 flex-wrap justify-end gap-1">
-                  {#if build.status === "pending" || (build.status === "running" && ["scheduled", "retryable", "pending"].includes(build.jobState))}<Button
-                      size="xs"
-                      disabled={Boolean(activeBuildAction)}
-                      onclick={() => askForBuildAction("start", build)}
-                      >{#if activeBuildAction === `start:${build.id}`}<Spinner
-                        />{/if}Run now</Button
-                    >{/if}
-                  {#if build.status === "pending" || build.status === "running"}<Button
-                      size="xs"
-                      variant="outline"
-                      disabled={Boolean(activeBuildAction)}
-                      onclick={() => askForBuildAction("stop", build)}
-                      >{#if activeBuildAction === `stop:${build.id}`}<Spinner
-                        />{/if}Stop</Button
-                    >{/if}
-                  {#if build.status === "failed" || build.status === "cancelled"}<Button
-                      size="xs"
-                      variant="outline"
-                      disabled={Boolean(activeBuildAction)}
-                      onclick={() => askForBuildAction("retry", build)}
-                      >{#if activeBuildAction === `retry:${build.id}`}<Spinner
-                        />{/if}Retry</Button
-                    >{/if}
-                </div>
-              </div>
-              {#if expandedBuildId === build.id}
-                <div class="border-t border-border bg-black/30 p-3">
+                  {environmentLogConnectionError}
+                </p>{/if}
+              <div
+                bind:this={environmentLogViewport}
+                onscroll={updateEnvironmentLogFollow}
+                class="max-h-[32rem] min-h-48 overflow-auto border border-border bg-black/35 p-3 font-mono text-[11px] leading-relaxed"
+              >
+                {#each environmentLogs as log (log.id)}
                   <div
-                    class="max-h-96 space-y-2 overflow-auto font-mono text-[11px] leading-relaxed"
+                    class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 py-1"
+                    class:text-destructive={log.stream === "stderr"}
                   >
-                    {#each buildLogs[build.id] ?? [] as log (log.id)}
-                      <div class:text-primary={log.stream === "system"}>
-                        <span class="select-none text-muted-foreground"
-                          >{stamp(log.occurredAt)} · {log.stream}</span
-                        >
-                        <pre
-                          class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
-                      </div>
-                    {:else}
-                      <p class="text-muted-foreground">
-                        Waiting for Build output...
+                    <span
+                      class="select-none whitespace-nowrap text-muted-foreground"
+                      >{stamp(log.occurredAt)}</span
+                    >
+                    <div class="min-w-0">
+                      <p class="select-none text-[10px] text-muted-foreground">
+                        {log.stream} · {log.processKind || "process"}
+                        {log.processName || "unknown"}{log.processReplica
+                          ? ` · ${log.processReplica}`
+                          : ""} · {log.container || "container"} · deployment {short(
+                          log.deployment,
+                        )} · instance {short(log.instance)}
                       </p>
-                    {/each}
+                      <pre
+                        class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
+                    </div>
                   </div>
-                  {#if build.error}<pre
-                      class="mt-3 whitespace-pre-wrap break-words border-t border-destructive/30 pt-3 text-xs text-destructive">{build.error}</pre>{/if}
-                </div>
-              {/if}
-            </div>
-          {:else}<p class="text-sm text-muted-foreground">
-              No Builds yet.
-            </p>{/each}
-        </Card.Content>
-      </Card.Root>
-      <Card.Root>
-        <Card.Header
-          ><Card.Title>Releases</Card.Title><Card.Description
-            >Redeploy an existing image with the current Environment secrets and
-            configuration.</Card.Description
+                {:else}
+                  <p class="text-muted-foreground">
+                    {environmentLogsLoaded
+                      ? "No workload logs have been collected yet."
+                      : "Loading workload logs..."}
+                  </p>
+                {/each}
+              </div>
+            </Card.Content>
+          </Collapsible.Content>
+        </Card.Root>
+      </Collapsible.Root>
+    {/if}
+
+    {#if section === "overview"}
+      <Card.Root
+        ><Card.Header
+          ><Card.Title>Resources</Card.Title><Card.Description
+            >Explicit connections available to this Environment.</Card.Description
           ></Card.Header
-        >
-        <Card.Content class="space-y-2">
-          {#if environment.canPromoteToProduction}
-            <div
-              class="flex items-start justify-between gap-3 border border-primary/40 bg-primary/10 p-3 text-sm"
+        ><Card.Content class="space-y-2"
+          >{#each environment.resources as resource}<div
+              class="grid gap-1 border border-border p-3 sm:grid-cols-3"
+            >
+              <span class="font-mono text-sm">{resource.alias}</span><span
+                >{resource.name}</span
+              ><span class="text-muted-foreground">{resource.engine}</span>
+            </div>{:else}<p class="text-sm text-muted-foreground">
+              No Resources selected.
+            </p>{/each}</Card.Content
+        ></Card.Root
+      >
+    {/if}
+
+    {#if section === "secrets"}
+      <Card.Root
+        ><Card.Header
+          ><Card.Title>Environment secrets</Card.Title><Card.Description
+            >Status compares each desired value fingerprint with the revision
+            running in the serving container. Resource-managed values are
+            changed only from their Resource.</Card.Description
+          ></Card.Header
+        ><Card.Content class="space-y-3"
+          >{#each environment.variables as variable}<div
+              class="grid gap-1 border border-border p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]"
+            >
+              <p class="font-mono text-sm">{variable.key}</p>
+              <p class="break-all font-mono text-sm">{variable.value}</p>
+              <p class="text-xs text-muted-foreground">{variable.source}</p>
+            </div>{/each}{#each environment.secrets as secret}<div
+              class="flex flex-col gap-4 border border-border p-3 sm:flex-row sm:items-center sm:justify-between"
             >
               <div>
-                <p class="font-medium">Promote to production</p>
-                <p class="mt-1 text-xs text-muted-foreground">
-                  Promote the latest successful staging deployment (Release{" "}
-                  {short(environment.latestSuccessfulReleaseId ?? "")}) to{" "}
-                  {environment.promotionTargetName}, creating a new immutable
-                  production Release and queuing its deployment.
+                <div class="flex flex-wrap items-center gap-2">
+                  <p class="font-mono text-sm">{secret.key}</p>
+                  <StatusBadge
+                    status={secret.status}
+                    label={secretStatusLabel(secret)}
+                  />
+                </div>
+                <p class="font-mono text-sm">••••••••</p>
+                <p class="text-xs text-muted-foreground">
+                  {secret.digestPrefix} · {secretSourceLabel(secret)}
                 </p>
               </div>
-              <Button
-                size="sm"
-                disabled={promotionProcessing}
-                aria-busy={promotionProcessing}
-                onclick={askToPromote}
-                >{#if promotionProcessing}<Spinner />{/if}Promote</Button
-              >
-            </div>
-          {/if}
-          {#each environment.releases as release}
-            <div class="border border-border p-3 text-sm">
-              <div class="flex items-start justify-between gap-3">
-                <div class="min-w-0">
-                  <span class="flex justify-between">
-                    <p class="font-mono">ID {short(release.id)}</p>
-					<p class="font-mono mx-2">·</p>
-                    <p class="font-mono">
-                      Revision {short(release.sourceRevision)}
+              {#if secret.desired && secret.sourceType === "user"}<div
+                  class="flex gap-2"
+                >
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={secretActionProcessing}
+                    onclick={() => askToRotate(secret)}>Rotate</Button
+                  ><Button
+                    size="sm"
+                    variant="destructive"
+                    disabled={secretActionProcessing}
+                    onclick={() => askToArchiveSecret(secret)}>Archive</Button
+                  >
+                </div>{/if}
+            </div>{/each}{#if environment.variables.length === 0 && environment.secrets.length === 0}<p
+              class="border border-dashed border-border p-4 text-sm text-muted-foreground"
+            >
+              No Environment secrets configured.
+            </p>{/if}
+          <div
+            class="grid gap-3 border-t border-border pt-4 sm:grid-cols-[1fr_2fr_auto]"
+          >
+            <Input
+              bind:value={key}
+              placeholder="SECRET_KEY"
+              autocomplete="off"
+            /><Input
+              type="password"
+              bind:value
+              placeholder="Write-only value"
+              autocomplete="new-password"
+            /><Button
+              disabled={!key.trim() || !value || secretCreationProcessing}
+              aria-busy={secretCreationProcessing}
+              onclick={createSecret}
+              >{#if secretCreationProcessing}<Spinner />{/if}Add secret</Button
+            >
+          </div></Card.Content
+        ></Card.Root
+      >
+    {/if}
+
+    {#if section === "builds"}
+      <div class="grid gap-8 xl:grid-cols-2">
+        <Card.Root>
+          <Card.Header
+            ><Card.Title>Builds</Card.Title><Card.Description
+              >Builds run in the background. Active output is loaded
+              automatically.</Card.Description
+            ></Card.Header
+          >
+          <Card.Content class="space-y-2">
+            {#if buildLogConnectionError}<p class="text-xs text-warning">
+                {buildLogConnectionError}
+              </p>{/if}
+            {#each builds as build}
+              <div class="border border-border text-sm">
+                <div class="flex items-start gap-2 p-3">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    class="h-auto min-w-0 flex-1 flex-col items-stretch p-0 text-left whitespace-normal hover:bg-transparent"
+                    onclick={() => toggleBuildLogs(build.id)}
+                    aria-expanded={expandedBuildId === build.id}
+                  >
+                    <div class="flex justify-between gap-3">
+                      <span class="font-mono"
+                        >{short(build.sourceRevision)}</span
+                      ><StatusBadge status={build.status} />
+                    </div>
+                    <p class="mt-1 text-xs text-muted-foreground">
+                      {stamp(build.createdAt)} · {stepLabel(build.currentStep)}
                     </p>
-                  </span>
+                    <p
+                      class="mt-1 break-all font-mono text-[11px] text-muted-foreground"
+                    >
+                      {build.registryEndpoint ||
+                        "Registry unavailable"}{build.jobId
+                        ? ` · Job #${build.jobId} · ${build.jobState}`
+                        : ""}
+                    </p>
+                  </Button>
+                  <div class="flex shrink-0 flex-wrap justify-end gap-1">
+                    {#if build.status === "pending" || (build.status === "running" && ["scheduled", "retryable", "pending"].includes(build.jobState))}<Button
+                        size="xs"
+                        disabled={Boolean(activeBuildAction)}
+                        onclick={() => askForBuildAction("start", build)}
+                        >{#if activeBuildAction === `start:${build.id}`}<Spinner
+                          />{/if}Run now</Button
+                      >{/if}
+                    {#if build.status === "pending" || build.status === "running"}<Button
+                        size="xs"
+                        variant="outline"
+                        disabled={Boolean(activeBuildAction)}
+                        onclick={() => askForBuildAction("stop", build)}
+                        >{#if activeBuildAction === `stop:${build.id}`}<Spinner
+                          />{/if}Stop</Button
+                      >{/if}
+                    {#if build.status === "failed" || build.status === "cancelled"}<Button
+                        size="xs"
+                        variant="outline"
+                        disabled={Boolean(activeBuildAction)}
+                        onclick={() => askForBuildAction("retry", build)}
+                        >{#if activeBuildAction === `retry:${build.id}`}<Spinner
+                          />{/if}Retry</Button
+                      >{/if}
+                  </div>
+                </div>
+                {#if expandedBuildId === build.id}
+                  <div class="border-t border-border bg-black/30 p-3">
+                    <div
+                      class="max-h-96 space-y-2 overflow-auto font-mono text-[11px] leading-relaxed"
+                    >
+                      {#each buildLogs[build.id] ?? [] as log (log.id)}
+                        <div class:text-primary={log.stream === "system"}>
+                          <span class="select-none text-muted-foreground"
+                            >{stamp(log.occurredAt)} · {log.stream}</span
+                          >
+                          <pre
+                            class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
+                        </div>
+                      {:else}
+                        <p class="text-muted-foreground">
+                          Waiting for Build output...
+                        </p>
+                      {/each}
+                    </div>
+                    {#if build.error}<pre
+                        class="mt-3 whitespace-pre-wrap break-words border-t border-destructive/30 pt-3 text-xs text-destructive">{build.error}</pre>{/if}
+                  </div>
+                {/if}
+              </div>
+            {:else}<p class="text-sm text-muted-foreground">
+                No Builds yet.
+              </p>{/each}
+          </Card.Content>
+        </Card.Root>
+        <Card.Root>
+          <Card.Header
+            ><Card.Title>Releases</Card.Title><Card.Description
+              >Redeploy an existing image with the current Environment secrets
+              and configuration.</Card.Description
+            ></Card.Header
+          >
+          <Card.Content class="space-y-2">
+            {#if environment.canPromoteToProduction}
+              <div
+                class="flex items-start justify-between gap-3 border border-primary/40 bg-primary/10 p-3 text-sm"
+              >
+                <div>
+                  <p class="font-medium">Promote to production</p>
                   <p class="mt-1 text-xs text-muted-foreground">
-                    {stamp(release.createdAt)}
+                    Promote the latest successful staging deployment (Release{" "}
+                    {short(environment.latestSuccessfulReleaseId ?? "")}) to{" "}
+                    {environment.promotionTargetName}, creating a new immutable
+                    production Release and queuing its deployment.
                   </p>
                 </div>
                 <Button
                   size="sm"
-                  variant="outline"
-                  disabled={Boolean(activeReleaseDeployment)}
-                  aria-busy={activeReleaseDeployment === release.id}
-                  onclick={() => redeployRelease(release.id)}
-                  >{#if activeReleaseDeployment === release.id}<Spinner
-                    />{/if}Redeploy</Button
+                  disabled={promotionProcessing}
+                  aria-busy={promotionProcessing}
+                  onclick={askToPromote}
+                  >{#if promotionProcessing}<Spinner />{/if}Promote</Button
                 >
               </div>
-              <p class="mt-2 break-all font-mono text-xs text-muted-foreground">
-                {release.artifactReference}
-              </p>
-            </div>
-          {:else}<p class="text-sm text-muted-foreground">
-              No Releases yet.
-            </p>{/each}
-        </Card.Content>
-      </Card.Root>
-    </div>
-
-    <Card.Root>
-      <Card.Header
-        ><Card.Title>Release commands</Card.Title><Card.Description
-          >One-off commands gate target creation. Ambiguous outcomes are never
-          rerun automatically.</Card.Description
-        ></Card.Header
-      >
-      <Card.Content class="space-y-2">
-        {#each environment.releaseCommands as execution}
-          <div class="border border-border text-sm">
-            <div class="grid gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_auto]">
-              <button
-                type="button"
-                class="min-w-0 text-left"
-                onclick={() => toggleReleaseCommandLogs(execution.id)}
-                aria-expanded={expandedReleaseCommandId === execution.id}
-              >
-                <div class="flex flex-wrap items-center gap-2">
-                  <span class="font-mono">{short(execution.id)}</span
-                  ><StatusBadge status={execution.status} /><span
-                    class="text-xs text-muted-foreground"
-                    >Attempt {execution.attempt} · Release {short(
-                      execution.releaseId,
-                    )} · {execution.targetName}</span
+            {/if}
+            {#each environment.releases as release}
+              <div class="border border-border p-3 text-sm">
+                <div class="flex items-start justify-between gap-3">
+                  <div class="min-w-0">
+                    <span class="flex justify-between">
+                      <p class="font-mono">ID {short(release.id)}</p>
+                      <p class="font-mono mx-2">·</p>
+                      <p class="font-mono">
+                        Revision {short(release.sourceRevision)}
+                      </p>
+                    </span>
+                    <p class="mt-1 text-xs text-muted-foreground">
+                      {stamp(release.createdAt)}
+                    </p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={Boolean(activeReleaseDeployment)}
+                    aria-busy={activeReleaseDeployment === release.id}
+                    onclick={() => redeployRelease(release.id)}
+                    >{#if activeReleaseDeployment === release.id}<Spinner
+                      />{/if}Redeploy</Button
                   >
                 </div>
                 <p
                   class="mt-2 break-all font-mono text-xs text-muted-foreground"
                 >
-                  {[execution.command, ...execution.arguments].join(" ")}
+                  {release.artifactReference}
                 </p>
-                {#if execution.error}<p class="mt-2 text-xs text-destructive">
-                    {execution.error}
-                  </p>{/if}
-              </button>
-              {#if execution.status === "failed" || execution.status === "ambiguous"}
-                <div class="flex flex-wrap items-center gap-2">
-                  <select
-                    class="h-8 border border-input bg-background px-2 text-xs"
-                    value={releaseCommandRetryTarget(execution)}
-                    onchange={(event) =>
-                      (releaseCommandRetryTargets = {
-                        ...releaseCommandRetryTargets,
-                        [execution.id]: event.currentTarget.value,
-                      })}
-                    aria-label="Release command retry target"
+              </div>
+            {:else}<p class="text-sm text-muted-foreground">
+                No Releases yet.
+              </p>{/each}
+          </Card.Content>
+        </Card.Root>
+      </div>
+    {/if}
+
+    {#if section === "deployments"}
+      <Card.Root>
+        <Card.Header
+          ><Card.Title>Release commands</Card.Title><Card.Description
+            >One-off commands gate target creation. Ambiguous outcomes are never
+            rerun automatically.</Card.Description
+          ></Card.Header
+        >
+        <Card.Content class="space-y-2">
+          {#each environment.releaseCommands as execution}
+            <div class="border border-border text-sm">
+              <div class="grid gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_auto]">
+                <button
+                  type="button"
+                  class="min-w-0 text-left"
+                  onclick={() => toggleReleaseCommandLogs(execution.id)}
+                  aria-expanded={expandedReleaseCommandId === execution.id}
+                >
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="font-mono">{short(execution.id)}</span
+                    ><StatusBadge status={execution.status} /><span
+                      class="text-xs text-muted-foreground"
+                      >Attempt {execution.attempt} · Release {short(
+                        execution.releaseId,
+                      )} · {execution.targetName}</span
+                    >
+                  </div>
+                  <p
+                    class="mt-2 break-all font-mono text-xs text-muted-foreground"
                   >
-                    {#each environment.runtimeTargetIds as targetId, index}<option
-                        value={targetId}
-                        >{environment.runtimeServers[index]}</option
-                      >{/each}
-                  </select>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={Boolean(releaseCommandRetrying) ||
-                      environment.runtimeTargetIds.length === 0}
-                    onclick={() => askToRetryReleaseCommand(execution)}
-                    >Review retry</Button
-                  >
+                    {[execution.command, ...execution.arguments].join(" ")}
+                  </p>
+                  {#if execution.error}<p class="mt-2 text-xs text-destructive">
+                      {execution.error}
+                    </p>{/if}
+                </button>
+                {#if execution.status === "failed" || execution.status === "ambiguous"}
+                  <div class="flex flex-wrap items-center gap-2">
+                    <select
+                      class="h-8 border border-input bg-background px-2 text-xs"
+                      value={releaseCommandRetryTarget(execution)}
+                      onchange={(event) =>
+                        (releaseCommandRetryTargets = {
+                          ...releaseCommandRetryTargets,
+                          [execution.id]: event.currentTarget.value,
+                        })}
+                      aria-label="Release command retry target"
+                    >
+                      {#each environment.runtimeTargetIds as targetId, index}<option
+                          value={targetId}
+                          >{environment.runtimeServers[index]}</option
+                        >{/each}
+                    </select>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={Boolean(releaseCommandRetrying) ||
+                        environment.runtimeTargetIds.length === 0}
+                      onclick={() => askToRetryReleaseCommand(execution)}
+                      >Review retry</Button
+                    >
+                  </div>
+                {/if}
+              </div>
+              {#if expandedReleaseCommandId === execution.id}
+                <div
+                  class="max-h-96 overflow-auto border-t border-border bg-black/30 p-3 font-mono text-[11px] leading-relaxed"
+                >
+                  {#each releaseCommandLogs[execution.id] ?? [] as log (log.id)}<div
+                      class:text-destructive={log.stream === "stderr"}
+                      class:text-primary={log.stream === "system"}
+                    >
+                      <span class="text-muted-foreground"
+                        >{stamp(log.occurredAt)} · attempt {log.attempt} · {log.stream}</span
+                      >
+                      <pre
+                        class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
+                    </div>{:else}<p class="text-muted-foreground">
+                      {releaseCommandLoading === execution.id
+                        ? "Loading release command output..."
+                        : "No release command output was persisted."}
+                    </p>{/each}
                 </div>
               {/if}
             </div>
-            {#if expandedReleaseCommandId === execution.id}
-              <div
-                class="max-h-96 overflow-auto border-t border-border bg-black/30 p-3 font-mono text-[11px] leading-relaxed"
-              >
-                {#each releaseCommandLogs[execution.id] ?? [] as log (log.id)}<div
-                    class:text-destructive={log.stream === "stderr"}
-                    class:text-primary={log.stream === "system"}
-                  >
-                    <span class="text-muted-foreground"
-                      >{stamp(log.occurredAt)} · attempt {log.attempt} · {log.stream}</span
-                    >
-                    <pre
-                      class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
-                  </div>{:else}<p class="text-muted-foreground">
-                    {releaseCommandLoading === execution.id
-                      ? "Loading release command output..."
-                      : "No release command output was persisted."}
-                  </p>{/each}
-              </div>
-            {/if}
-          </div>
-        {:else}<p
-            class="border border-dashed border-border p-4 text-sm text-muted-foreground"
-          >
-            No Release has required a release command yet.
-          </p>{/each}
-      </Card.Content>
-    </Card.Root>
-
-    <Card.Root>
-      <Card.Header
-        ><Card.Title>Deployments</Card.Title><Card.Description
-          >Durable blue-green rollout attempts and recovery actions.</Card.Description
-        ></Card.Header
-      >
-      <Card.Content class="space-y-2">
-        {#if deploymentEventConnectionError}<p class="text-xs text-warning">
-            {deploymentEventConnectionError}
-          </p>{/if}
-        {#each deployments as deployment}
-          <div class="border border-border text-sm">
-            <div class="flex items-start justify-between gap-4 p-3">
-              <Button
-                type="button"
-                variant="ghost"
-                class="h-auto min-w-0 flex-1 flex-col items-stretch p-0 text-left whitespace-normal hover:bg-transparent"
-                onclick={() => toggleDeploymentEvents(deployment.id)}
-                aria-expanded={expandedDeploymentId === deployment.id}
-              >
-                <div class="flex flex-wrap items-center gap-2">
-                  <span class="font-mono">{short(deployment.id)}</span
-                  ><StatusBadge status={deployment.status} /><StatusBadge
-                    status={deploymentStep(deployment)}
-                  />
-                </div>
-                <p class="mt-1 text-xs text-muted-foreground">
-                  {stamp(deployment.createdAt)} · Release {short(
-                    deployment.releaseId,
-                  )} · {expandedDeploymentId === deployment.id
-                    ? "Hide timeline"
-                    : "Show timeline"}
-                </p>
-                {#if deployment.error}<p class="mt-2 text-xs text-destructive">
-                    {deployment.error}
-                  </p>{/if}
-              </Button>
-              {#if deployment.status === "failed"}<Button
-                  size="sm"
-                  variant="outline"
-                  disabled={Boolean(deploymentRetrying)}
-                  aria-busy={deploymentRetrying === deployment.id}
-                  onclick={() => retryDeployment(deployment.id)}
-                  >{#if deploymentRetrying === deployment.id}<Spinner
-                    />{/if}Retry</Button
-                >{/if}
-            </div>
-            {#if expandedDeploymentId === deployment.id}
-              <div class="border-t border-border bg-muted/20 p-3">
-                <div
-                  class="max-h-80 space-y-3 overflow-auto font-mono text-[11px] leading-relaxed"
-                >
-                  {#each deploymentEvents[deployment.id] ?? [] as event (event.id)}
-                    <div
-                      class:text-destructive={event.status === "failed"}
-                      class:text-warning={event.status === "warning"}
-                      class:text-success={event.status === "succeeded"}
-                    >
-                      <p class="select-none text-muted-foreground">
-                        {stamp(event.occurredAt)} · {event.step ||
-                          event.eventType} · {event.status}
-                      </p>
-                      <pre
-                        class="whitespace-pre-wrap break-words font-mono">{event.message}</pre>
-                      {#if event.error && event.error !== event.message}<pre
-                          class="whitespace-pre-wrap break-words font-mono text-destructive">{event.error}</pre>{/if}
-                    </div>
-                  {:else}
-                    <p class="text-muted-foreground">
-                      Waiting for Deployment events...
-                    </p>
-                  {/each}
-                </div>
-              </div>
-            {/if}
-          </div>
-        {:else}
-          <p class="text-sm text-muted-foreground">No Deployments yet.</p>
-        {/each}
-      </Card.Content>
-    </Card.Root>
-
-    <Card.Root
-      ><Card.Header
-        ><Card.Title>Process instances</Card.Title><Card.Description
-          >Current and candidate formation grouped by target, process, and
-          stable replica identity.</Card.Description
-        ></Card.Header
-      ><Card.Content class="space-y-4"
-        >{#each environment.runtimeTargetIds as targetId, targetIndex}<div
-            class="space-y-2"
-          >
-            <p
-              class="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+          {:else}<p
+              class="border border-dashed border-border p-4 text-sm text-muted-foreground"
             >
-              {environment.runtimeServers[targetIndex]}
-            </p>
-            {#each environment.instances.filter((instance) => instance.targetId === targetId) as instance}<div
-                class="grid items-center gap-2 border border-border p-3 text-sm sm:grid-cols-[minmax(0,1fr)_8rem_8rem_minmax(0,1fr)]"
-              >
-                <div>
-                  <p class="font-mono">{instance.processName}</p>
-                  <p class="text-xs text-muted-foreground">
-                    {instance.replicaKey}
-                  </p>
-                </div>
-                <StatusBadge status={instance.processKind} /><StatusBadge
-                  status={instance.state}
-                /><span class="text-muted-foreground"
-                  >{instance.processKind === "web" && instance.ports?.http
-                    ? `${instance.ports.host || "127.0.0.1"}:${instance.ports.http}`
-                    : "No public port"}</span
+              No Release has required a release command yet.
+            </p>{/each}
+        </Card.Content>
+      </Card.Root>
+
+      <Card.Root>
+        <Card.Header
+          ><Card.Title>Deployments</Card.Title><Card.Description
+            >Durable blue-green rollout attempts and recovery actions.</Card.Description
+          ></Card.Header
+        >
+        <Card.Content class="space-y-2">
+          {#if deploymentEventConnectionError}<p class="text-xs text-warning">
+              {deploymentEventConnectionError}
+            </p>{/if}
+          {#each deployments as deployment}
+            <div class="border border-border text-sm">
+              <div class="flex items-start justify-between gap-4 p-3">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  class="h-auto min-w-0 flex-1 flex-col items-stretch p-0 text-left whitespace-normal hover:bg-transparent"
+                  onclick={() => toggleDeploymentEvents(deployment.id)}
+                  aria-expanded={expandedDeploymentId === deployment.id}
                 >
-              </div>{:else}<p
-                class="border border-dashed border-border p-3 text-sm text-muted-foreground"
+                  <div class="flex flex-wrap items-center gap-2">
+                    <span class="font-mono">{short(deployment.id)}</span
+                    ><StatusBadge status={deployment.status} /><StatusBadge
+                      status={deploymentStep(deployment)}
+                    />
+                  </div>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    {stamp(deployment.createdAt)} · Release {short(
+                      deployment.releaseId,
+                    )} · {expandedDeploymentId === deployment.id
+                      ? "Hide timeline"
+                      : "Show timeline"}
+                  </p>
+                  {#if deployment.error}<p
+                      class="mt-2 text-xs text-destructive"
+                    >
+                      {deployment.error}
+                    </p>{/if}
+                </Button>
+                {#if deployment.status === "failed"}<Button
+                    size="sm"
+                    variant="outline"
+                    disabled={Boolean(deploymentRetrying)}
+                    aria-busy={deploymentRetrying === deployment.id}
+                    onclick={() => retryDeployment(deployment.id)}
+                    >{#if deploymentRetrying === deployment.id}<Spinner
+                      />{/if}Retry</Button
+                  >{/if}
+              </div>
+              {#if expandedDeploymentId === deployment.id}
+                <div class="border-t border-border bg-muted/20 p-3">
+                  <div
+                    class="max-h-80 space-y-3 overflow-auto font-mono text-[11px] leading-relaxed"
+                  >
+                    {#each deploymentEvents[deployment.id] ?? [] as event (event.id)}
+                      <div
+                        class:text-destructive={event.status === "failed"}
+                        class:text-warning={event.status === "warning"}
+                        class:text-success={event.status === "succeeded"}
+                      >
+                        <p class="select-none text-muted-foreground">
+                          {stamp(event.occurredAt)} · {event.step ||
+                            event.eventType} · {event.status}
+                        </p>
+                        <pre
+                          class="whitespace-pre-wrap break-words font-mono">{event.message}</pre>
+                        {#if event.error && event.error !== event.message}<pre
+                            class="whitespace-pre-wrap break-words font-mono text-destructive">{event.error}</pre>{/if}
+                      </div>
+                    {:else}
+                      <p class="text-muted-foreground">
+                        Waiting for Deployment events...
+                      </p>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+            </div>
+          {:else}
+            <p class="text-sm text-muted-foreground">No Deployments yet.</p>
+          {/each}
+        </Card.Content>
+      </Card.Root>
+
+      <Card.Root
+        ><Card.Header
+          ><Card.Title>Process instances</Card.Title><Card.Description
+            >Current and candidate formation grouped by target, process, and
+            stable replica identity.</Card.Description
+          ></Card.Header
+        ><Card.Content class="space-y-4"
+          >{#each environment.runtimeTargetIds as targetId, targetIndex}<div
+              class="space-y-2"
+            >
+              <p
+                class="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
               >
-                No Instances on this target.
-              </p>{/each}
-          </div>{/each}</Card.Content
-      ></Card.Root
-    >
+                {environment.runtimeServers[targetIndex]}
+              </p>
+              {#each environment.instances.filter((instance) => instance.targetId === targetId) as instance}<div
+                  class="grid items-center gap-2 border border-border p-3 text-sm sm:grid-cols-[minmax(0,1fr)_8rem_8rem_minmax(0,1fr)]"
+                >
+                  <div>
+                    <p class="font-mono">{instance.processName}</p>
+                    <p class="text-xs text-muted-foreground">
+                      {instance.replicaKey}
+                    </p>
+                  </div>
+                  <StatusBadge status={instance.processKind} /><StatusBadge
+                    status={instance.state}
+                  /><span class="text-muted-foreground"
+                    >{instance.processKind === "web" && instance.ports?.http
+                      ? `${instance.ports.host || "127.0.0.1"}:${instance.ports.http}`
+                      : "No public port"}</span
+                  >
+                </div>{:else}<p
+                  class="border border-dashed border-border p-3 text-sm text-muted-foreground"
+                >
+                  No Instances on this target.
+                </p>{/each}
+            </div>{/each}</Card.Content
+        ></Card.Root
+      >
+    {/if}
   </div>
 
   <ConfirmActionDialog

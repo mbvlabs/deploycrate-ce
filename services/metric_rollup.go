@@ -615,27 +615,73 @@ func freshSystemMetric(
 	return value.Value, true
 }
 
-func (service MetricRollupService) EnvironmentTelemetry(ctx context.Context, environmentID uuid.UUID) ([]AttributedTelemetryRow, error) {
+type EnvironmentHostUsage struct {
+	CPUCores    float64 `json:"cpuCores"`
+	MemoryBytes float64 `json:"memoryBytes"`
+	Available   bool    `json:"available"`
+}
+
+type EnvironmentTelemetryResult struct {
+	Rows      []AttributedTelemetryRow `json:"rows"`
+	HostUsage EnvironmentHostUsage     `json:"hostUsage"`
+}
+
+func (service MetricRollupService) EnvironmentTelemetry(ctx context.Context, environmentID uuid.UUID, telemetryRange TelemetryRange) (EnvironmentTelemetryResult, error) {
+	result := EnvironmentTelemetryResult{Rows: []AttributedTelemetryRow{}}
 	if !service.enabled || environmentID == uuid.Nil {
-		return []AttributedTelemetryRow{}, nil
+		return result, nil
 	}
 	target, err := models.EnvironmentTarget.ActiveForEnvironment(ctx, service.db.Executor(), environmentID)
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 	client, err := service.clickhouse.Client(ctx)
 	if err != nil {
-		return nil, err
+		return result, err
 	}
 	current, err := client.LatestAttributedMetricValues(ctx, "container", target.ServerID.String(), environmentID.String())
 	if err != nil {
-		return nil, err
+		return result, err
 	}
-	history, err := client.AttributedMetricHistory(ctx, "container", target.ServerID.String(), environmentID.String(), service.now().UTC().Add(-systemTelemetryHistoryWindow), 15*time.Minute)
+	history, err := client.AttributedMetricHistory(ctx, "container", target.ServerID.String(), environmentID.String(), service.now().UTC().Add(-telemetryRange.Duration()), telemetryRange.Bucket())
 	if err != nil {
-		return nil, err
+		return result, err
 	}
-	return attributedTelemetryRows(current, history, service.now().UTC()), nil
+	result.Rows = attributedTelemetryRows(current, history, service.now().UTC())
+	result.HostUsage = service.environmentHostUsage(ctx, client, target.ServerID)
+	return result, nil
+}
+
+func (service MetricRollupService) environmentHostUsage(
+	ctx context.Context,
+	client clickhouseclient.Client,
+	serverID uuid.UUID,
+) EnvironmentHostUsage {
+	usage := EnvironmentHostUsage{}
+	if serverID == uuid.Nil {
+		return usage
+	}
+	values, err := client.LatestSystemMetricValues(ctx, serverID.String())
+	if err != nil {
+		return usage
+	}
+	metrics := make(map[string]clickhouseclient.MetricValue, len(values))
+	for _, value := range values {
+		metrics[value.Metric] = value
+	}
+	now := service.now().UTC()
+	cpuCores, ok := freshSystemMetric(metrics, "cpu_cores_total", now)
+	if !ok || cpuCores <= 0 {
+		return usage
+	}
+	memoryBytes, ok := freshSystemMetric(metrics, "memory_total_bytes", now)
+	if !ok || memoryBytes <= 0 {
+		return usage
+	}
+	usage.CPUCores = cpuCores
+	usage.MemoryBytes = memoryBytes
+	usage.Available = true
+	return usage
 }
 
 func attributedTelemetryRows(current, history []clickhouseclient.AttributedMetricValue, now time.Time) []AttributedTelemetryRow {

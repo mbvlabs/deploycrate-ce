@@ -67,6 +67,12 @@ func (c Environments) RegisterRoutes(router *router.Router) error {
 		{http.MethodGet, routes.EnvironmentNew, c.New},
 		{http.MethodPost, routes.EnvironmentCreate, c.Create},
 		{http.MethodGet, routes.EnvironmentShow, c.Show},
+		{http.MethodGet, routes.EnvironmentTelemetry, c.Telemetry},
+		{http.MethodGet, routes.EnvironmentDeployments, c.Deployments},
+		{http.MethodGet, routes.EnvironmentBuilds, c.Builds},
+		{http.MethodGet, routes.EnvironmentSecrets, c.Secrets},
+		{http.MethodPost, routes.EnvironmentRestart, c.Restart},
+		{http.MethodPost, routes.EnvironmentStart, c.Start},
 		{http.MethodGet, routes.EnvironmentLogs, c.Logs},
 		{http.MethodGet, routes.EnvironmentEdit, c.Edit},
 		{http.MethodPatch, routes.EnvironmentUpdate, c.Update},
@@ -689,6 +695,26 @@ func environmentPathParams(etx *echo.Context) (environmentPathIDs, error) {
 }
 
 func (c Environments) Show(etx *echo.Context) error {
+	return c.showSection(etx, "overview")
+}
+
+func (c Environments) Telemetry(etx *echo.Context) error {
+	return c.showSection(etx, "telemetry")
+}
+
+func (c Environments) Deployments(etx *echo.Context) error {
+	return c.showSection(etx, "deployments")
+}
+
+func (c Environments) Builds(etx *echo.Context) error {
+	return c.showSection(etx, "builds")
+}
+
+func (c Environments) Secrets(etx *echo.Context) error {
+	return c.showSection(etx, "secrets")
+}
+
+func (c Environments) showSection(etx *echo.Context, section string) error {
 	params, err := environmentPathParams(etx)
 	if err != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
@@ -704,9 +730,11 @@ func (c Environments) Show(etx *echo.Context) error {
 	if !overview.SetupComplete {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
-	telemetryRows, telemetryErr := c.metricsSvc.EnvironmentTelemetry(
+	telemetryRange := services.ParseTelemetryRange(etx.QueryParam("range"))
+	telemetry, telemetryErr := c.metricsSvc.EnvironmentTelemetry(
 		etx.Request().Context(),
 		params.EnvironmentID,
+		telemetryRange,
 	)
 	if telemetryErr != nil {
 		slog.ErrorContext(
@@ -715,12 +743,70 @@ func (c Environments) Show(etx *echo.Context) error {
 			"environment_id", params.EnvironmentID,
 			"error", telemetryErr,
 		)
-		telemetryRows = []services.AttributedTelemetryRow{}
+		telemetry = services.EnvironmentTelemetryResult{Rows: []services.AttributedTelemetryRow{}}
+	}
+	container, containerErr := c.envSetupSvc.ServingContainer(
+		etx.Request().Context(),
+		params.ApplicationID,
+		params.EnvironmentID,
+	)
+	if containerErr != nil {
+		slog.ErrorContext(
+			etx.Request().Context(),
+			"failed to inspect Environment serving container",
+			"environment_id", params.EnvironmentID,
+			"error", containerErr,
+		)
+		container = services.EnvironmentServingContainer{}
 	}
 	return inertia.Page(etx, "Applications/Environments/Show", inertia.Props{
 		"auth": authProps(etx), "environment": environmentOverviewProps(overview),
-		"telemetry": telemetryRows, "flash": environmentFlashProps(etx),
+		"telemetry": telemetry.Rows, "container": container,
+		"host": telemetry.HostUsage, "telemetryRange": telemetryRange,
+		"section": section, "flash": environmentFlashProps(etx),
 	})
+}
+
+func (c Environments) Restart(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	if err == nil {
+		err = c.envSetupSvc.RestartServingContainer(
+			etx.Request().Context(),
+			params.ApplicationID,
+			params.EnvironmentID,
+		)
+	}
+	if err != nil {
+		_ = cookies.AddFlash(etx, cookies.FlashError, err.Error())
+	} else {
+		_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Container restarted")
+	}
+	return inertia.Redirect(
+		etx,
+		routes.EnvironmentShow.URL(params.routeParams()),
+		http.StatusSeeOther,
+	)
+}
+
+func (c Environments) Start(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	if err == nil {
+		err = c.envSetupSvc.StartServingContainer(
+			etx.Request().Context(),
+			params.ApplicationID,
+			params.EnvironmentID,
+		)
+	}
+	if err != nil {
+		_ = cookies.AddFlash(etx, cookies.FlashError, err.Error())
+	} else {
+		_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Container started")
+	}
+	return inertia.Redirect(
+		etx,
+		routes.EnvironmentShow.URL(params.routeParams()),
+		http.StatusSeeOther,
+	)
 }
 
 func (c Environments) Edit(etx *echo.Context) error {
@@ -930,6 +1016,7 @@ func (c Environments) EditSource(etx *echo.Context) error {
 		"options":     applicationSetupOptionsProps(options),
 		"updateUrl":   routes.EnvironmentSourceUpdate.URL(params.routeParams()),
 		"returnUrl":   returnURL,
+		"navigation":  "environment",
 	})
 }
 
@@ -1002,7 +1089,7 @@ func (c Environments) Destroy(etx *echo.Context) error {
 		_ = cookies.AddFlash(etx, cookies.FlashError, err.Error())
 		return inertia.Redirect(
 			etx,
-			routes.EnvironmentShow.URL(params.routeParams()),
+			routes.EnvironmentSecrets.URL(params.routeParams()),
 			http.StatusSeeOther,
 		)
 	}

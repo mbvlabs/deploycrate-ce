@@ -205,6 +205,35 @@ func (service *WorkloadExecution) Start(ctx context.Context, serverID, deploymen
 	return state, validateWorkloadTargetState(target, state, nil)
 }
 
+func (service *WorkloadExecution) Restart(ctx context.Context, serverID, deploymentID, instanceID uuid.UUID) (containerclient.WorkloadState, error) {
+	target, err := service.target(ctx, serverID)
+	if err != nil {
+		return containerclient.WorkloadState{}, err
+	}
+	if !target.remote {
+		state, restartErr := service.local.Restart(ctx, deploymentID, instanceID)
+		return state, validateWorkloadTargetState(target, state, restartErr)
+	}
+	state, err := service.findRemote(ctx, target, deploymentID, instanceID)
+	if err != nil || !state.Exists {
+		return state, err
+	}
+	if _, err := service.remoteDocker(ctx, target, "restart", state.ID); err != nil {
+		return containerclient.WorkloadState{}, err
+	}
+	state, err = service.findRemote(ctx, target, deploymentID, instanceID)
+	if err != nil {
+		return containerclient.WorkloadState{}, err
+	}
+	if err := validateWorkloadTargetState(target, state, nil); err != nil {
+		return containerclient.WorkloadState{}, err
+	}
+	if err := service.updateRemoteFirewall(ctx, target, state, true); err != nil {
+		return containerclient.WorkloadState{}, err
+	}
+	return state, validateWorkloadTargetState(target, state, nil)
+}
+
 func (service *WorkloadExecution) DeleteEnvironment(ctx context.Context, serverID, environmentID uuid.UUID) error {
 	target, err := service.target(ctx, serverID)
 	if err != nil {

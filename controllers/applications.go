@@ -401,6 +401,7 @@ func (c Applications) Show(etx *echo.Context) error {
 		rows, telemetryErr := c.metricSrv.EnvironmentTelemetry(
 			etx.Request().Context(),
 			environment.EnvironmentID,
+			services.TelemetryRangeOneDay,
 		)
 		if telemetryErr != nil {
 			slog.ErrorContext(
@@ -412,7 +413,7 @@ func (c Applications) Show(etx *echo.Context) error {
 			)
 			continue
 		}
-		telemetryRows = append(telemetryRows, rows...)
+		telemetryRows = append(telemetryRows, rows.Rows...)
 	}
 	return inertia.Page(etx, "Applications/Show", inertia.Props{
 		"auth": authProps(etx), "application": details, "telemetry": telemetryRows,
@@ -478,7 +479,8 @@ func (c Applications) EditSource(etx *echo.Context) error {
 		"updateUrl": routes.ApplicationSourceUpdate.URL(
 			id,
 		),
-		"returnUrl": routes.ApplicationShow.URL(id),
+		"returnUrl":  routes.ApplicationShow.URL(id),
+		"navigation": "application",
 	})
 }
 
