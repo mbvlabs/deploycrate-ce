@@ -1,12 +1,11 @@
 <script lang="ts">
   import CloudIcon from "@lucide/svelte/icons/cloud";
-  import { Link, useForm } from "@inertiajs/svelte";
+  import { router, useForm } from "@inertiajs/svelte";
 
   import FormField from "@/Components/FormField.svelte";
   import PageHeader from "@/Components/PageHeader.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import { Button } from "@/Components/ui/button";
-  import * as Card from "@/Components/ui/card";
   import * as Dialog from "@/Components/ui/dialog";
   import * as Empty from "@/Components/ui/empty";
   import { Input } from "@/Components/ui/input";
@@ -99,60 +98,35 @@
         >
       </Empty.Root>
     {:else}
-      <Card.Root>
-        <Card.Header
-          ><Card.Title>Backup destinations</Card.Title><Card.Description
-            >{destinations.length} verified destination{destinations.length ===
-            1
-              ? ""
-              : "s"} available to backup policies.</Card.Description
-          ></Card.Header
-        >
-        <Card.Content>
-          <div class="overflow-hidden border border-border">
-            <Table.Root class="min-w-[640px]">
-              <Table.Header
-                ><Table.Row
-                  ><Table.Head>Destination</Table.Head><Table.Head
-                    >Provider</Table.Head
-                  ><Table.Head>Bucket</Table.Head><Table.Head>Status</Table.Head
-                  ><Table.Head class="text-right">Actions</Table.Head
-                  ></Table.Row
-                ></Table.Header
+      <div class="overflow-x-auto border border-border">
+        <Table.Root>
+          <Table.Header
+            ><Table.Row
+              ><Table.Head>Destination</Table.Head><Table.Head
+                >Provider</Table.Head
+              ><Table.Head>Bucket</Table.Head><Table.Head>Status</Table.Head
+              ></Table.Row
+            ></Table.Header
+          >
+          <Table.Body>
+            {#each destinations as destination (destination.id)}
+              <Table.Row
+                class="cursor-pointer"
+                onclick={() =>
+                  router.visit(routes.objectStorageShow(destination.id))}
               >
-              <Table.Body>
-                {#each destinations as destination (destination.id)}
-                  <Table.Row>
-                    <Table.Cell
-                      ><Link
-                        class="font-medium text-primary hover:underline"
-                        href={routes.objectStorageShow(destination.id)}
-                        >{destination.name}</Link
-                      ></Table.Cell
-                    >
-                    <Table.Cell class="uppercase"
-                      >{destination.provider}</Table.Cell
-                    >
-                    <Table.Cell class="font-mono text-xs"
-                      >{destination.bucket}</Table.Cell
-                    >
-                    <Table.Cell><StatusBadge status="verified" /></Table.Cell>
-                    <Table.Cell class="text-right"
-                      ><Button size="sm" variant="outline"
-                        >{#snippet child({ props })}<Link
-                            {...props}
-                            href={routes.objectStorageShow(destination.id)}
-                            >View</Link
-                          >{/snippet}</Button
-                      ></Table.Cell
-                    >
-                  </Table.Row>
-                {/each}
-              </Table.Body>
-            </Table.Root>
-          </div>
-        </Card.Content>
-      </Card.Root>
+                <Table.Cell class="font-medium">{destination.name}</Table.Cell>
+                <Table.Cell class="uppercase">{destination.provider}</Table.Cell
+                >
+                <Table.Cell class="font-mono text-xs"
+                  >{destination.bucket}</Table.Cell
+                >
+                <Table.Cell><StatusBadge status="verified" /></Table.Cell>
+              </Table.Row>
+            {/each}
+          </Table.Body>
+        </Table.Root>
+      </div>
     {/if}
   </div>
 

@@ -2,6 +2,7 @@
   import { Link, router } from "@inertiajs/svelte";
   import { toast } from "svelte-sonner";
 
+  import ConfirmActionDialog from "@/Components/ConfirmActionDialog.svelte";
   import FormField from "@/Components/FormField.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import { Button } from "@/Components/ui/button";
@@ -48,6 +49,27 @@
   let credentialError = $state("");
   let revealedCredentials = $state<RegistryCredentials | null>(null);
   let inventoryRefreshing = $state(false);
+  let archiveDialogOpen = $state(false);
+  let archiveProcessing = $state(false);
+  let archiveError = $state("");
+
+  function askToArchive() {
+    archiveError = "";
+    archiveDialogOpen = true;
+  }
+
+  function archive() {
+    if (archiveProcessing) return;
+    archiveProcessing = true;
+    archiveError = "";
+    router.delete(routes.registryResourceDestroy(registry.id), {
+      onError: (errors) =>
+        (archiveError =
+          Object.values(errors).map(String).join("\n") ||
+          "The registry could not be archived."),
+      onFinish: () => (archiveProcessing = false),
+    });
+  }
 
   function askForCredentials() {
     currentPassword = "";
@@ -291,6 +313,24 @@
           ></Card.Footer
         >{/if}
     </Card.Root>
+
+    {#if !registry.managed}
+      <Card.Root class="max-w-4xl">
+        <Card.Header
+          ><Card.Title>Archive registry</Card.Title><Card.Description
+            >This registry will no longer be available for new builds or
+            deployments.</Card.Description
+          ></Card.Header
+        >
+        <Card.Footer class="border-t border-border"
+          ><Button
+            variant="destructive"
+            disabled={archiveProcessing}
+            onclick={askToArchive}>Archive registry</Button
+          ></Card.Footer
+        >
+      </Card.Root>
+    {/if}
   </div>
 
   <Dialog.Root
@@ -428,4 +468,14 @@
       >
     </Dialog.Content>
   </Dialog.Root>
+  <ConfirmActionDialog
+    bind:open={archiveDialogOpen}
+    title={`Archive ${registry.name}?`}
+    description="This registry will no longer be available for new builds or deployments."
+    confirmLabel="Archive registry"
+    destructive
+    processing={archiveProcessing}
+    error={archiveError}
+    onconfirm={archive}
+  />
 </DashboardLayout>

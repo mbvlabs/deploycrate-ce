@@ -1,11 +1,11 @@
 <script lang="ts">
   import DatabaseIcon from "@lucide/svelte/icons/database";
-  import { Link } from "@inertiajs/svelte";
+  import { Link, router } from "@inertiajs/svelte";
   import PageHeader from "@/Components/PageHeader.svelte";
   import { Button } from "@/Components/ui/button";
   import { Badge } from "@/Components/ui/badge";
-  import * as Card from "@/Components/ui/card";
   import * as Empty from "@/Components/ui/empty";
+  import * as Table from "@/Components/ui/table";
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
   import { routes } from "@/routes";
@@ -54,65 +54,42 @@
         ></Empty.Root
       >
     {:else}
-      <div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {#each resources as resource (resource.id)}
-          <Card.Root class="h-full">
-            <Card.Header
-              ><Card.Action
-                ><StatusBadge
-                  status={resource.health || "unknown"}
-                /></Card.Action
-              >
-              <div class="flex flex-wrap items-center gap-2">
-                <Card.Title>{resource.name}</Card.Title
-                >{#if resource.systemManaged}<Badge variant="secondary"
-                    >System Resource</Badge
-                  >{/if}{#if !resource.environmentAttachable}<Badge
-                    variant="outline">Not attachable</Badge
-                  >{/if}
-              </div>
-              <Card.Description
-                >{resource.resourceType === "database"
-                  ? `${resource.databaseCount} ${resource.databaseCount === 1 ? "database" : "databases"} · `
-                  : ""}{resource.connectionCount === 0
-                  ? "Unattached"
-                  : `${resource.connectionCount} attached ${resource.connectionCount === 1 ? "environment" : "environments"}`}</Card.Description
-              ></Card.Header
-            >
-            <Card.Content>
-              <dl class="grid grid-cols-2 gap-x-6 gap-y-4 text-xs">
-                <div>
-                  <dt class="text-muted-foreground">Engine</dt>
-                  <dd class="mt-1 font-medium capitalize">{resource.engine}</dd>
-                </div>
-                <div>
-                  <dt class="text-muted-foreground">Type</dt>
-                  <dd class="mt-1 font-medium capitalize">
-                    {resource.resourceType}
-                  </dd>
-                </div>
-                <div>
-                  <dt class="text-muted-foreground">Installations</dt>
-                  <dd class="mt-1 font-medium">{resource.installationCount}</dd>
-                </div>
-                <div>
-                  <dt class="text-muted-foreground">Endpoints</dt>
-                  <dd class="mt-1 font-medium">{resource.endpointCount}</dd>
-                </div>
-              </dl>
-            </Card.Content>
-            <Card.Footer class="mt-auto justify-end"
-              ><Button class="w-full sm:w-auto" size="sm" variant="outline"
-                >{#snippet child({ props })}<Link
-                    {...props}
-                    href={resource.systemManaged
+      <div class="overflow-x-auto border border-border">
+        <Table.Root>
+          <Table.Header
+            ><Table.Row
+              ><Table.Head>Name</Table.Head><Table.Head>Engine</Table.Head
+              ><Table.Head>Status</Table.Head></Table.Row
+            ></Table.Header
+          >
+          <Table.Body>
+            {#each resources as resource (resource.id)}
+              <Table.Row
+                class="cursor-pointer"
+                onclick={() =>
+                  router.visit(
+                    resource.systemManaged
                       ? routes.systemResource(resource.id)
-                      : routes.resourceShow(resource.id)}>Open resource</Link
-                  >{/snippet}</Button
-              ></Card.Footer
-            >
-          </Card.Root>
-        {/each}
+                      : routes.resourceShow(resource.id),
+                  )}
+              >
+                <Table.Cell
+                  ><span class="font-medium">{resource.name}</span
+                  >{#if resource.systemManaged}
+                    <Badge variant="secondary" class="ml-2"
+                      >System Resource</Badge
+                    >{/if}</Table.Cell
+                >
+                <Table.Cell class="capitalize">{resource.engine}</Table.Cell>
+                <Table.Cell
+                  ><StatusBadge
+                    status={resource.health || "unknown"}
+                  /></Table.Cell
+                >
+              </Table.Row>
+            {/each}
+          </Table.Body>
+        </Table.Root>
       </div>
     {/if}
   </div>

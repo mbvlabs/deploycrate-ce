@@ -1,13 +1,11 @@
 <script lang="ts">
   import BoxesIcon from "@lucide/svelte/icons/boxes";
-  import { Link, router, useForm } from "@inertiajs/svelte";
+  import { router, useForm } from "@inertiajs/svelte";
 
-  import ConfirmActionDialog from "@/Components/ConfirmActionDialog.svelte";
   import FormField from "@/Components/FormField.svelte";
   import PageHeader from "@/Components/PageHeader.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import { Button } from "@/Components/ui/button";
-  import * as Card from "@/Components/ui/card";
   import * as Dialog from "@/Components/ui/dialog";
   import * as Empty from "@/Components/ui/empty";
   import { Input } from "@/Components/ui/input";
@@ -33,10 +31,6 @@
   }: { auth: { email: string }; registries: Registry[] } = $props();
   let createDialogOpen = $state(false);
   let preset = $state("docker_hub");
-  let archiveTarget = $state<Registry | null>(null);
-  let archiveDialogOpen = $state(false);
-  let archiveProcessing = $state(false);
-  let archiveError = $state("");
   const form = useForm(() => ({
     name: "Docker Hub",
     endpoint: "docker.io",
@@ -72,29 +66,6 @@
       onError: () => (createDialogOpen = true),
     });
   }
-
-  function askToArchive(registry: Registry) {
-    archiveTarget = registry;
-    archiveError = "";
-    archiveDialogOpen = true;
-  }
-
-  function archive() {
-    if (!archiveTarget || archiveProcessing) return;
-    archiveProcessing = true;
-    archiveError = "";
-    router.delete(routes.registryResourceDestroy(archiveTarget.id), {
-      onSuccess: () => {
-        archiveDialogOpen = false;
-        archiveTarget = null;
-      },
-      onError: (errors) =>
-        (archiveError =
-          Object.values(errors).map(String).join("\n") ||
-          "The registry could not be archived."),
-      onFinish: () => (archiveProcessing = false),
-    });
-  }
 </script>
 
 <svelte:head><title>Image Registry</title></svelte:head>
@@ -123,73 +94,35 @@
         >
       </Empty.Root>
     {:else}
-      <Card.Root>
-        <Card.Header
-          ><Card.Title>Image registries</Card.Title><Card.Description
-            >{registries.length} destination{registries.length === 1 ? "" : "s"} available
-            to Application sources.</Card.Description
-          ></Card.Header
-        >
-        <Card.Content>
-          <div class="overflow-hidden border border-border">
-            <Table.Root class="min-w-[760px]">
-              <Table.Header
-                ><Table.Row
-                  ><Table.Head>Registry</Table.Head><Table.Head
-                    >Endpoint</Table.Head
-                  ><Table.Head>Username</Table.Head><Table.Head
-                    >Status</Table.Head
-                  ><Table.Head class="text-right">Actions</Table.Head
-                  ></Table.Row
-                ></Table.Header
+      <div class="overflow-x-auto border border-border">
+        <Table.Root>
+          <Table.Header
+            ><Table.Row
+              ><Table.Head>Registry</Table.Head><Table.Head>Endpoint</Table.Head
+              ><Table.Head>Status</Table.Head></Table.Row
+            ></Table.Header
+          >
+          <Table.Body>
+            {#each registries as registry (registry.id)}
+              <Table.Row
+                class="cursor-pointer"
+                onclick={() =>
+                  router.visit(routes.registryResourceShow(registry.id))}
               >
-              <Table.Body>
-                {#each registries as registry (registry.id)}
-                  <Table.Row>
-                    <Table.Cell
-                      ><Link
-                        class="font-medium text-primary hover:underline"
-                        href={routes.registryResourceShow(registry.id)}
-                        >{registry.name}</Link
-                      >
-                      <p class="mt-1 text-[11px] text-muted-foreground">
-                        OCI Distribution
-                      </p></Table.Cell
-                    >
-                    <Table.Cell class="font-mono text-xs"
-                      >{registry.endpoint}</Table.Cell
-                    >
-                    <Table.Cell class="font-mono text-xs"
-                      >{registry.username}</Table.Cell
-                    >
-                    <Table.Cell
-                      ><StatusBadge
-                        status={registry.managed ? "managed" : "external"}
-                      /></Table.Cell
-                    >
-                    <Table.Cell
-                      ><div class="flex justify-end gap-2">
-                        <Button size="sm" variant="outline"
-                          >{#snippet child({ props })}<Link
-                              {...props}
-                              href={routes.registryResourceShow(registry.id)}
-                              >View</Link
-                            >{/snippet}</Button
-                        >{#if !registry.managed}<Button
-                            size="sm"
-                            variant="destructive"
-                            onclick={() => askToArchive(registry)}
-                            >Archive</Button
-                          >{/if}
-                      </div></Table.Cell
-                    >
-                  </Table.Row>
-                {/each}
-              </Table.Body>
-            </Table.Root>
-          </div>
-        </Card.Content>
-      </Card.Root>
+                <Table.Cell class="font-medium">{registry.name}</Table.Cell>
+                <Table.Cell class="font-mono text-xs"
+                  >{registry.endpoint}</Table.Cell
+                >
+                <Table.Cell
+                  ><StatusBadge
+                    status={registry.managed ? "managed" : "external"}
+                  /></Table.Cell
+                >
+              </Table.Row>
+            {/each}
+          </Table.Body>
+        </Table.Root>
+      </div>
     {/if}
   </div>
 
@@ -266,15 +199,4 @@
       </form>
     </Dialog.Content>
   </Dialog.Root>
-
-  <ConfirmActionDialog
-    bind:open={archiveDialogOpen}
-    title={`Archive ${archiveTarget?.name ?? "registry"}?`}
-    description="This registry will no longer be available for new builds or deployments."
-    confirmLabel="Archive registry"
-    destructive
-    processing={archiveProcessing}
-    error={archiveError}
-    onconfirm={archive}
-  />
 </DashboardLayout>

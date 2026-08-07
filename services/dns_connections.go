@@ -46,6 +46,12 @@ type DNSConnectionSummary struct {
 	BindingCount int          `json:"bindingCount" bun:"binding_count"`
 }
 
+type DNSZoneSummary struct {
+	ID     uuid.UUID `json:"id" bun:"id"`
+	Name   string    `json:"name" bun:"name"`
+	Status string    `json:"status" bun:"status"`
+}
+
 func NewDNSConnections(db storage.Pool, client CloudflareDNSClient, cfg config.Config) *DNSConnections {
 	return &DNSConnections{db: db, client: client, config: cfg}
 }
@@ -60,6 +66,27 @@ func (service *DNSConnections) List(ctx context.Context) ([]DNSConnectionSummary
 		Join("LEFT JOIN environment_dns_bindings AS binding ON binding.dns_zone_id = zone.id").
 		Where("connection.archived_at IS NULL").Group("connection.id").OrderExpr("lower(connection.name)").Scan(ctx, &items)
 	return items, err
+}
+
+func (service *DNSConnections) Find(ctx context.Context, id uuid.UUID) (DNSConnectionSummary, error) {
+	var item DNSConnectionSummary
+	err := service.db.Executor().NewSelect().TableExpr("dns_connections AS connection").
+		ColumnExpr("connection.id, connection.name, connection.provider, connection.account_external_id, connection.verified_at, connection.last_synced_at, connection.archived_at").
+		ColumnExpr("COUNT(DISTINCT zone.id) FILTER (WHERE zone.archived_at IS NULL AND zone.status = 'active') AS active_zones").
+		ColumnExpr("COUNT(DISTINCT binding.id) FILTER (WHERE binding.archived_at IS NULL) AS binding_count").
+		Join("LEFT JOIN dns_zones AS zone ON zone.dns_connection_id = connection.id").
+		Join("LEFT JOIN environment_dns_bindings AS binding ON binding.dns_zone_id = zone.id").
+		Where("connection.archived_at IS NULL").Where("connection.id = ?", id).Group("connection.id").Scan(ctx, &item)
+	return item, err
+}
+
+func (service *DNSConnections) Zones(ctx context.Context, connectionID uuid.UUID) ([]DNSZoneSummary, error) {
+	zones := make([]DNSZoneSummary, 0)
+	err := service.db.Executor().NewSelect().TableExpr("dns_zones AS zone").
+		ColumnExpr("zone.id, zone.name, zone.status").
+		Where("zone.dns_connection_id = ?", connectionID).
+		Where("zone.archived_at IS NULL").OrderExpr("zone.name").Scan(ctx, &zones)
+	return zones, err
 }
 
 func (service *DNSConnections) Create(ctx context.Context, name, accountID, token string) (models.DNSConnectionEntity, error) {

@@ -1,10 +1,10 @@
 <script lang="ts">
   import ServerIcon from "@lucide/svelte/icons/server";
-  import { Link } from "@inertiajs/svelte";
+  import { Link, router } from "@inertiajs/svelte";
   import PageHeader from "@/Components/PageHeader.svelte";
   import { Button } from "@/Components/ui/button";
-  import * as Card from "@/Components/ui/card";
   import * as Empty from "@/Components/ui/empty";
+  import * as Table from "@/Components/ui/table";
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
   import { routes } from "@/routes";
@@ -39,46 +39,7 @@
         >{/snippet}
     </PageHeader>
 
-    {#if nodes.length}
-      <Card.Root>
-        <Card.Header
-          ><Card.Title>Managed nodes</Card.Title><Card.Description
-            >{nodes.length} worker node{nodes.length === 1 ? "" : "s"} registered.</Card.Description
-          ></Card.Header
-        >
-        <Card.Content>
-          <div class="divide-y divide-border border border-border">
-            {#each nodes as node (node.id)}
-              <Link
-                href={routes.nodeShow(node.id)}
-                class="flex flex-col gap-3 p-4 hover:bg-muted/20 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div>
-                  <p class="font-medium">{node.name}</p>
-                  <p class="mt-1 font-mono text-xs text-muted-foreground">
-                    {node.address} · {node.wireGuardAddress}
-                  </p>
-                  <p class="mt-2 text-xs capitalize text-muted-foreground">
-                    {Object.entries(node.capabilities)
-                      .filter(
-                        ([key, enabled]) => key !== "telemetry" && enabled,
-                      )
-                      .map(([key]) => key)
-                      .join(" · ")}
-                  </p>
-                </div>
-                <div class="text-left sm:text-right">
-                  <StatusBadge status={node.state} />
-                  <p class="mt-1 text-xs text-muted-foreground">
-                    {node.currentStep.replaceAll("_", " ")}
-                  </p>
-                </div>
-              </Link>
-            {/each}
-          </div>
-        </Card.Content>
-      </Card.Root>
-    {:else}
+    {#if nodes.length === 0}
       <Empty.Root class="border border-dashed border-border py-14">
         <Empty.Header
           ><Empty.Media variant="icon"><ServerIcon /></Empty.Media><Empty.Title
@@ -89,6 +50,30 @@
           ></Empty.Header
         >
       </Empty.Root>
+    {:else}
+      <div class="overflow-x-auto border border-border">
+        <Table.Root>
+          <Table.Header
+            ><Table.Row
+              ><Table.Head>Name</Table.Head><Table.Head>Address</Table.Head
+              ><Table.Head>State</Table.Head></Table.Row
+            ></Table.Header
+          >
+          <Table.Body>
+            {#each nodes as node (node.id)}
+              <Table.Row
+                class="cursor-pointer"
+                onclick={() => router.visit(routes.nodeShow(node.id))}
+              >
+                <Table.Cell class="font-medium">{node.name}</Table.Cell>
+                <Table.Cell class="font-mono text-xs">{node.address}</Table.Cell
+                >
+                <Table.Cell><StatusBadge status={node.state} /></Table.Cell>
+              </Table.Row>
+            {/each}
+          </Table.Body>
+        </Table.Root>
+      </div>
     {/if}
   </div>
 </DashboardLayout>

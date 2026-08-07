@@ -1,7 +1,7 @@
 <script lang="ts">
   import RouteIcon from "@lucide/svelte/icons/route";
   import PlusIcon from "@lucide/svelte/icons/plus";
-  import { Link, useForm } from "@inertiajs/svelte";
+  import { router, useForm } from "@inertiajs/svelte";
 
   import FormField from "@/Components/FormField.svelte";
   import { Button } from "@/Components/ui/button";
@@ -266,46 +266,36 @@
               ><Table.Head>Hostname</Table.Head><Table.Head
                 >Managed for</Table.Head
               ><Table.Head>Type</Table.Head><Table.Head>State</Table.Head
-              ><Table.Head class="text-right">Actions</Table.Head></Table.Row
+              ></Table.Row
             ></Table.Header
           >
           <Table.Body>
             {#each caddyRoutes as route (route.externalId)}
-              <Table.Row>
+              <Table.Row
+                class="cursor-pointer"
+                onclick={() =>
+                  router.visit(routes.caddyRouteShow(route.externalId))}
+              >
                 <Table.Cell class="font-medium">{route.hostname}</Table.Cell>
                 <Table.Cell
                   >{route.applicationName} / {route.environmentName}</Table.Cell
                 >
                 <Table.Cell>Environment</Table.Cell>
                 <Table.Cell><StatusBadge status={route.state} /></Table.Cell>
-                <Table.Cell class="text-right"
-                  ><Button size="sm" variant="outline"
-                    >{#snippet child({ props })}<Link
-                        {...props}
-                        href={routes.caddyRouteShow(route.externalId)}
-                        >View</Link
-                      >{/snippet}</Button
-                  ></Table.Cell
-                >
               </Table.Row>
             {/each}
             {#each resourceRoutes as route (route.externalId)}
-              <Table.Row>
+              <Table.Row
+                class="cursor-pointer"
+                onclick={() =>
+                  router.visit(routes.caddyRouteShow(route.externalId))}
+              >
                 <Table.Cell class="font-medium">{route.hostname}</Table.Cell>
                 <Table.Cell
                   >{route.resourceName} / {route.endpointName}</Table.Cell
                 >
                 <Table.Cell>Resource</Table.Cell>
                 <Table.Cell><StatusBadge status={route.state} /></Table.Cell>
-                <Table.Cell class="text-right"
-                  ><Button size="sm" variant="outline"
-                    >{#snippet child({ props })}<Link
-                        {...props}
-                        href={routes.caddyRouteShow(route.externalId)}
-                        >View</Link
-                      >{/snippet}</Button
-                  ></Table.Cell
-                >
               </Table.Row>
             {/each}
           </Table.Body>

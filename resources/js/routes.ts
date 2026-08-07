@@ -20,6 +20,7 @@ export const routes = {
   confirmationNew: () => '/users/confirmation/new',
   dnsConnectionCreate: () => '/connections/dns',
   dnsConnectionDestroy: (id: string) => `/connections/dns/${id}`,
+  dnsConnectionShow: (id: string) => `/connections/dns/${id}`,
   dnsConnectionSync: (id: string) => `/connections/dns/${id}/sync`,
   dnsConnectionTokenUpdate: (id: string) => `/connections/dns/${id}/token`,
   dnsConnections: () => '/connections/dns',

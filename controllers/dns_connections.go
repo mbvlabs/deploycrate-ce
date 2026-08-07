@@ -35,8 +35,9 @@ func (controller DNSConnections) RegisterRoutes(r *router.Router) error {
 		}
 		handler echo.HandlerFunc
 	}{
-		{http.MethodGet, routes.DnsConnections, controller.Show},
+		{http.MethodGet, routes.DnsConnections, controller.Index},
 		{http.MethodPost, routes.DnsConnectionCreate, controller.Create},
+		{http.MethodGet, routes.DnsConnectionShow, controller.Show},
 		{http.MethodPost, routes.DnsConnectionSync, controller.Sync},
 		{http.MethodPatch, routes.DnsConnectionTokenUpdate, controller.RotateToken},
 		{http.MethodDelete, routes.DnsConnectionDestroy, controller.Destroy},
@@ -51,13 +52,31 @@ func (controller DNSConnections) RegisterRoutes(r *router.Router) error {
 	return errors.Join(errList...)
 }
 
-func (controller DNSConnections) Show(etx *echo.Context) error {
+func (controller DNSConnections) Index(etx *echo.Context) error {
 	connections, err := controller.service.List(etx.Request().Context())
 	if err != nil {
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 	return inertia.Page(etx, "Connections/DNS", inertia.Props{
 		"auth": authProps(etx), "connections": connections, "flash": environmentFlashProps(etx),
+	})
+}
+
+func (controller DNSConnections) Show(etx *echo.Context) error {
+	id, err := uuid.Parse(etx.Param("id"))
+	if err != nil {
+		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
+	}
+	connection, err := controller.service.Find(etx.Request().Context(), id)
+	if err != nil {
+		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
+	}
+	zones, err := controller.service.Zones(etx.Request().Context(), id)
+	if err != nil {
+		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
+	}
+	return inertia.Page(etx, "Connections/DNS/Show", inertia.Props{
+		"auth": authProps(etx), "connection": connection, "zones": zones, "flash": environmentFlashProps(etx),
 	})
 }
 
@@ -89,7 +108,7 @@ func (controller DNSConnections) Sync(etx *echo.Context) error {
 		return controller.redirectError(etx, err)
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Cloudflare zones synchronized")
-	return inertia.Redirect(etx, routes.DnsConnections.URL(), http.StatusSeeOther)
+	return inertia.Redirect(etx, routes.DnsConnectionShow.URL(id), http.StatusSeeOther)
 }
 
 func (controller DNSConnections) RotateToken(etx *echo.Context) error {
@@ -104,13 +123,13 @@ func (controller DNSConnections) RotateToken(etx *echo.Context) error {
 		err = controller.service.RotateToken(etx.Request().Context(), id, payload.Token)
 	}
 	if err != nil {
-		if handled, response := controller.validationResponse(etx, err); handled {
+		if handled, response := controller.showValidationResponse(etx, id, err); handled {
 			return response
 		}
 		return controller.redirectError(etx, err)
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Cloudflare account-owned API token rotated")
-	return inertia.Redirect(etx, routes.DnsConnections.URL(), http.StatusSeeOther)
+	return inertia.Redirect(etx, routes.DnsConnectionShow.URL(id), http.StatusSeeOther)
 }
 
 func (controller DNSConnections) Destroy(etx *echo.Context) error {
@@ -136,6 +155,24 @@ func (controller DNSConnections) validationResponse(etx *echo.Context, operation
 	}
 	return true, inertia.Page(etx, "Connections/DNS", inertia.Props{
 		"auth": authProps(etx), "connections": connections, "flash": environmentFlashProps(etx),
+	}, inertia.WithValidationErrors(validationErrors.ToMap()))
+}
+
+func (controller DNSConnections) showValidationResponse(etx *echo.Context, id uuid.UUID, operationErr error) (bool, error) {
+	validationErrors, ok := validation.As(operationErr)
+	if !ok {
+		return false, nil
+	}
+	connection, err := controller.service.Find(etx.Request().Context(), id)
+	if err != nil {
+		return true, inertia.Page(etx, "Errors/InternalError", inertia.Props{})
+	}
+	zones, err := controller.service.Zones(etx.Request().Context(), id)
+	if err != nil {
+		return true, inertia.Page(etx, "Errors/InternalError", inertia.Props{})
+	}
+	return true, inertia.Page(etx, "Connections/DNS/Show", inertia.Props{
+		"auth": authProps(etx), "connection": connection, "zones": zones, "flash": environmentFlashProps(etx),
 	}, inertia.WithValidationErrors(validationErrors.ToMap()))
 }
 

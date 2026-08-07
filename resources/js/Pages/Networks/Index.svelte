@@ -1,10 +1,12 @@
 <script lang="ts">
+  import LaptopIcon from "@lucide/svelte/icons/laptop";
   import { router } from "@inertiajs/svelte";
   import * as Accordion from "@/Components/ui/accordion";
   import * as Alert from "@/Components/ui/alert";
   import { Button } from "@/Components/ui/button";
   import * as Card from "@/Components/ui/card";
   import * as Empty from "@/Components/ui/empty";
+  import * as Table from "@/Components/ui/table";
   import ConfirmActionDialog from "@/Components/ConfirmActionDialog.svelte";
   import JsonCode from "@/Components/JsonCode.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
@@ -460,46 +462,48 @@
       </Card.Header>
       <Card.Content>
         {#if devices.length === 0}
-          <Empty.Root class="py-8"
+          <Empty.Root class="border border-dashed border-border py-8"
             ><Empty.Header
+              ><Empty.Media variant="icon"><LaptopIcon /></Empty.Media
               ><Empty.Title>No developer devices</Empty.Title><Empty.Description
                 >Devices enrolled for private Resource access will appear here.</Empty.Description
               ></Empty.Header
             ></Empty.Root
           >
         {:else}
-          <div class="space-y-3">
-            {#each devices as device (device.id)}
-              <div
-                class="flex flex-col justify-between gap-3 border border-border p-4 sm:flex-row sm:items-center"
+          <div class="overflow-x-auto border border-border">
+            <Table.Root>
+              <Table.Header
+                ><Table.Row
+                  ><Table.Head>Device</Table.Head><Table.Head
+                    >Private address</Table.Head
+                  ><Table.Head>State</Table.Head><Table.Head class="text-right"
+                    >Actions</Table.Head
+                  ></Table.Row
+                ></Table.Header
               >
-                <div>
-                  <p class="font-medium">{device.name}</p>
-                  <p class="mt-1 font-mono text-xs">
-                    {device.privateAddress} · {device.grantCount} active grant{device.grantCount ===
-                    1
-                      ? ""
-                      : "s"}
-                  </p>
-                  <p class="mt-1 text-xs text-muted-foreground">
-                    Owned by {device.ownerEmail}
-                  </p>
-                  <div class="mt-2 flex flex-wrap items-center gap-2">
-                    <StatusBadge status={device.state} /><span
-                      class="text-xs text-muted-foreground"
-                      >Latest handshake {timestamp(
-                        device.latestHandshakeAt,
-                      )}</span
+              <Table.Body>
+                {#each devices as device (device.id)}
+                  <Table.Row>
+                    <Table.Cell class="font-medium">{device.name}</Table.Cell>
+                    <Table.Cell class="font-mono text-xs"
+                      >{device.privateAddress}</Table.Cell
                     >
-                  </div>
-                </div>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onclick={() => askToRevoke(device)}>Revoke device</Button
-                >
-              </div>
-            {/each}
+                    <Table.Cell
+                      ><StatusBadge status={device.state} /></Table.Cell
+                    >
+                    <Table.Cell class="text-right"
+                      ><Button
+                        variant="destructive"
+                        size="sm"
+                        onclick={() => askToRevoke(device)}
+                        >Revoke device</Button
+                      ></Table.Cell
+                    >
+                  </Table.Row>
+                {/each}
+              </Table.Body>
+            </Table.Root>
           </div>
         {/if}
       </Card.Content>
