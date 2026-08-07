@@ -1,4 +1,13 @@
 <script lang="ts">
+  import { PieChart } from "layerchart";
+
+  type DonutDatum = {
+    key: string;
+    label: string;
+    value: number;
+    color: string;
+  };
+
   let {
     label,
     used,
@@ -18,9 +27,33 @@
       ? Math.min(100, Math.max(0, (used / total) * 100))
       : 0,
   );
-  const remainingPercent = $derived(
-    available && total > 0 ? 100 - usedPercent : 0,
-  );
+  const chartData = $derived.by<DonutDatum[]>(() => {
+    if (!available || total <= 0) {
+      return [
+        {
+          key: "unavailable",
+          label: "Unavailable",
+          value: 1,
+          color: "var(--muted)",
+        },
+      ];
+    }
+
+    return [
+      {
+        key: "used",
+        label: "Used",
+        value: Math.min(total, Math.max(0, used)),
+        color: "var(--primary)",
+      },
+      {
+        key: "remaining",
+        label: "Remaining",
+        value: Math.max(0, total - used),
+        color: "var(--muted)",
+      },
+    ];
+  });
 </script>
 
 <article class="border border-border bg-card/35 p-5">
@@ -35,44 +68,34 @@
 
   <div class="mt-5 grid grid-cols-[8.5rem_1fr] items-center gap-6">
     <div class="relative size-[8.5rem]">
-      <svg
-        viewBox="0 0 120 120"
-        class="size-full -rotate-90"
-        role="img"
-        aria-label={`${label}: ${usedPercent.toFixed(0)} percent used`}
-      >
-        <circle
-          cx="60"
-          cy="60"
-          r="46"
-          pathLength="100"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="12"
-          class="text-muted"
-        />
-        {#if available}
-          <circle
-            cx="60"
-            cy="60"
-            r="46"
-            pathLength="100"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="12"
-            stroke-linecap="butt"
-            stroke-dasharray={`${usedPercent} ${remainingPercent}`}
-            class="text-primary"
-          />
-        {/if}
-      </svg>
+      <PieChart
+        data={chartData}
+        key="key"
+        label="label"
+        value="value"
+        c="color"
+        innerRadius={46}
+        outerRadius={58}
+        width={136}
+        height={136}
+        padding={0}
+        tooltipContext={false}
+        motion={false}
+        aria-label={`${label}: ${available ? `${usedPercent.toFixed(0)} percent used` : "Unavailable"}`}
+        props={{
+          arc: { strokeWidth: 0 },
+          svg: {
+            title: `${label}: ${available ? `${usedPercent.toFixed(0)} percent used` : "Unavailable"}`,
+          },
+        }}
+      />
       <div
-        class="absolute inset-0 flex flex-col items-center justify-center text-center"
+        class="pointer-events-none absolute inset-0 flex flex-col items-center justify-center text-center"
       >
         {#if available}
-          <span class="text-2xl font-semibold tracking-tight"
-            >{usedPercent.toFixed(0)}%</span
-          >
+          <span class="text-2xl font-semibold tracking-tight">
+            {usedPercent.toFixed(0)}%
+          </span>
           <span
             class="mt-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground"
             >used</span

@@ -1,4 +1,13 @@
 <script lang="ts">
+  import { PieChart } from "layerchart";
+
+  type DonutDatum = {
+    key: string;
+    label: string;
+    value: number;
+    color: string;
+  };
+
   let {
     label,
     primaryLabel,
@@ -22,14 +31,33 @@
   } = $props();
 
   const total = $derived(primary + secondary);
-  const primaryPercent = $derived(
-    available && total > 0
-      ? Math.min(100, Math.max(0, (primary / total) * 100))
-      : 0,
-  );
-  const secondaryPercent = $derived(
-    available && total > 0 ? 100 - primaryPercent : 0,
-  );
+  const chartData = $derived.by<DonutDatum[]>(() => {
+    if (!available || total <= 0) {
+      return [
+        {
+          key: "unavailable",
+          label: "Unavailable",
+          value: 1,
+          color: "var(--muted)",
+        },
+      ];
+    }
+
+    return [
+      {
+        key: "primary",
+        label: primaryLabel,
+        value: Math.max(0, primary),
+        color: "var(--chart-1)",
+      },
+      {
+        key: "secondary",
+        label: secondaryLabel,
+        value: Math.max(0, secondary),
+        color: "var(--chart-2)",
+      },
+    ];
+  });
 </script>
 
 <article class="border border-border bg-card/35 p-5">
@@ -44,53 +72,34 @@
 
   <div class="mt-5 grid grid-cols-[8.5rem_1fr] items-center gap-6">
     <div class="relative size-[8.5rem]">
-      <svg
-        viewBox="0 0 120 120"
-        class="size-full -rotate-90"
-        role="img"
+      <PieChart
+        data={chartData}
+        key="key"
+        label="label"
+        value="value"
+        c="color"
+        innerRadius={46}
+        outerRadius={58}
+        width={136}
+        height={136}
+        padding={0}
+        tooltipContext={false}
+        motion={false}
         aria-label={`${label}: ${available ? formatValue(centerValue) : "Unavailable"}`}
-      >
-        <circle
-          cx="60"
-          cy="60"
-          r="46"
-          pathLength="100"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="12"
-          class="text-muted"
-        />
-        {#if available && total > 0}
-          <circle
-            cx="60"
-            cy="60"
-            r="46"
-            pathLength="100"
-            fill="none"
-            stroke="var(--chart-1)"
-            stroke-width="12"
-            stroke-dasharray={`${primaryPercent} ${secondaryPercent}`}
-          />
-          <circle
-            cx="60"
-            cy="60"
-            r="46"
-            pathLength="100"
-            fill="none"
-            stroke="var(--chart-2)"
-            stroke-width="12"
-            stroke-dasharray={`${secondaryPercent} ${primaryPercent}`}
-            stroke-dashoffset={-primaryPercent}
-          />
-        {/if}
-      </svg>
+        props={{
+          arc: { strokeWidth: 0 },
+          svg: {
+            title: `${label}: ${available ? formatValue(centerValue) : "Unavailable"}`,
+          },
+        }}
+      />
       <div
-        class="absolute inset-0 flex flex-col items-center justify-center px-3 text-center"
+        class="pointer-events-none absolute inset-0 flex flex-col items-center justify-center px-3 text-center"
       >
         {#if available}
-          <span class="text-base font-semibold tracking-tight"
-            >{formatValue(centerValue)}</span
-          >
+          <span class="text-base font-semibold tracking-tight">
+            {formatValue(centerValue)}
+          </span>
           <span
             class="mt-1 text-[10px] uppercase tracking-[0.14em] text-muted-foreground"
             >{centerLabel}</span

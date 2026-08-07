@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { LineChart, Tooltip } from "layerchart";
+  import { curveStepAfter } from "d3-shape";
+
   type TelemetryPoint = {
     observedAt: string;
     value: number;
@@ -8,6 +11,13 @@
     label: string;
     points: TelemetryPoint[];
     comparison?: boolean;
+  };
+
+  type ChartPoint = {
+    bucketStart: number;
+    bucketEnd: number;
+    timestamp: number;
+    values: number[];
   };
 
   let {
@@ -26,12 +36,8 @@
     maximum?: number;
   } = $props();
 
-  let hoveredIndex = $state<number | null>(null);
-  let chartWidth = $state(800);
-  const left = 84;
-  const top = 22;
-  const bottom = 190;
   const bucketCount = 36;
+  const yAxisWidth = 76;
   const colors = [
     "var(--chart-1)",
     "var(--chart-2)",
@@ -48,8 +54,6 @@
   });
 
   const chart = $derived.by(() => {
-    const width = Math.max(chartWidth, 320);
-    const right = width - 8;
     const timestamps = series
       .flatMap((item) => item.points)
       .map((point) => new Date(point.observedAt).getTime())
@@ -59,13 +63,11 @@
     const start = end - historyWindowMilliseconds;
     const duration = historyWindowMilliseconds / bucketCount;
     const buckets = Array.from({ length: bucketCount }, (_, index) => ({
-      start: start + index * duration,
-      end: start + (index + 1) * duration,
-      xStart: left + (index / bucketCount) * (right - left),
-      x: left + ((index + 0.5) / bucketCount) * (right - left),
-      xEnd: left + ((index + 1) / bucketCount) * (right - left),
+      bucketStart: start + index * duration,
+      bucketEnd: start + (index + 1) * duration,
+      timestamp: start + (index + 0.5) * duration,
     }));
-    const chartSeries = series.map((item, seriesIndex) => {
+    const preparedSeries = series.map((item, seriesIndex) => {
       const samples = item.points
         .map((point) => ({
           timestamp: new Date(point.observedAt).getTime(),
@@ -83,68 +85,52 @@
         (bucket, index) =>
           samples.findLast(
             (point) =>
-              point.timestamp >= bucket.start &&
+              point.timestamp >= bucket.bucketStart &&
               (index === bucketCount - 1
-                ? point.timestamp <= bucket.end
-                : point.timestamp < bucket.end),
-          )?.value ?? null,
+                ? point.timestamp <= bucket.bucketEnd
+                : point.timestamp < bucket.bucketEnd),
+          )?.value,
       );
+
       return {
+        key: `series-${seriesIndex}`,
         label: item.label,
         color: colors[seriesIndex % colors.length],
         comparison: item.comparison === true,
-        hasSamples: bucketValues.some((value) => value !== null),
+        hasSamples: bucketValues.some((value) => value !== undefined),
         values: bucketValues.map((value) => value ?? 0),
       };
     });
-    const values = chartSeries.flatMap((item) => item.values);
+    const values = preparedSeries.flatMap((item) => item.values);
     const chartMaximum = maximum ?? Math.max(1, ...values) * 1.1;
+    const data: ChartPoint[] = buckets.map((bucket, index) => ({
+      ...bucket,
+      values: preparedSeries.map((item) => item.values[index]),
+    }));
+    const lineSeries = preparedSeries.map((item, index) => ({
+      key: item.key,
+      label: item.label,
+      color: item.comparison ? "var(--muted-foreground)" : item.color,
+      value: (point: ChartPoint) => point.values[index],
+      props: {
+        fill: "none",
+        strokeWidth: item.comparison ? 2 : 3.5,
+        dashArray: item.comparison ? "7 6" : undefined,
+        curve: curveStepAfter,
+      },
+    }));
+
     return {
-      width,
-      right,
-      buckets,
-      series: chartSeries,
+      data,
+      series: preparedSeries,
+      lineSeries,
       maximum: chartMaximum,
-      available: chartSeries.some((item) => item.hasSamples),
+      available: preparedSeries.some((item) => item.hasSamples),
     };
   });
 
-  const yFor = (value: number) =>
-    bottom - (Math.max(0, value) / chart.maximum) * (bottom - top);
-  const pathFor = (values: Array<number | null>) => {
-    const commands: string[] = [];
-    let previousAvailable = false;
-    values.forEach((value, index) => {
-      if (value === null) {
-        previousAvailable = false;
-        return;
-      }
-      const bucket = chart.buckets[index];
-      const y = yFor(value).toFixed(1);
-      commands.push(
-        `${previousAvailable ? "L" : "M"} ${bucket.xStart.toFixed(1)} ${y}`,
-      );
-      commands.push(`L ${bucket.xEnd.toFixed(1)} ${y}`);
-      previousAvailable = true;
-    });
-    return commands.join(" ");
-  };
-  const bucketLabel = (index: number) =>
-    `${rangeFormatter.format(chart.buckets[index].start)} to ${rangeFormatter.format(chart.buckets[index].end)}`;
-
-  const hover = (event: PointerEvent) => {
-    const bounds = (
-      event.currentTarget as SVGSVGElement
-    ).getBoundingClientRect();
-    const x = ((event.clientX - bounds.left) / bounds.width) * chart.width;
-    hoveredIndex = Math.min(
-      bucketCount - 1,
-      Math.max(
-        0,
-        Math.floor(((x - left) / (chart.right - left)) * bucketCount),
-      ),
-    );
-  };
+  const bucketLabel = (point: ChartPoint) =>
+    `${rangeFormatter.format(point.bucketStart)} to ${rangeFormatter.format(point.bucketEnd)}`;
 </script>
 
 <article class="w-full min-w-0 border border-border bg-card/35 p-6">
@@ -158,141 +144,95 @@
     <div
       class="flex min-w-0 flex-wrap justify-end gap-x-5 gap-y-2 text-sm text-muted-foreground sm:flex-1"
     >
-      {#each chart.series as item}
-        <span class="flex items-center gap-2"
-          ><span
-            class="h-0.5 w-5"
-            style:background={item.comparison
-              ? "var(--muted-foreground)"
-              : item.color}
-          ></span>{item.label}</span
-        >
+      {#each chart.series as item (item.key)}
+        <span class="flex items-center gap-2">
+          <span class="h-0.5 w-5" style:background={item.color}></span>
+          {item.label}
+        </span>
       {/each}
     </div>
   </div>
 
   {#if chart.available}
-    <div class="relative mt-4 w-full min-w-0" bind:clientWidth={chartWidth}>
-      <svg
-        viewBox={`0 0 ${chart.width} 240`}
-        class="block h-64 w-full max-w-none touch-none"
-        role="img"
+    <div class="mt-4 h-64 w-full min-w-0">
+      <LineChart
+        data={chart.data}
+        x="timestamp"
+        series={chart.lineSeries}
+        xDomain={[chart.data[0]?.timestamp, chart.data.at(-1)?.timestamp]}
+        yDomain={[0, chart.maximum]}
+        height={256}
+        padding={{ top: 14, right: 12, bottom: 30, left: yAxisWidth }}
+        axis={true}
+        rule={false}
+        highlight={{
+          lines: { stroke: "var(--foreground)", opacity: 0.35 },
+          points: { r: 4.5, stroke: "var(--background)", strokeWidth: 2 },
+          motion: false,
+        }}
+        tooltipContext={{ mode: "bisect-x" }}
+        motion={false}
         aria-label={`${label} over the selected telemetry range`}
-        onpointerenter={hover}
-        onpointermove={hover}
-        onpointerleave={() => (hoveredIndex = null)}
+        props={{
+          xAxis: {
+            ticks: 3,
+            tickMarks: false,
+            rule: false,
+            format: (value: number) => timeFormatter.format(value),
+            classes: { tickLabel: "fill-muted-foreground font-medium" },
+          },
+          yAxis: {
+            ticks: [0, chart.maximum / 2, chart.maximum],
+            tickMarks: false,
+            rule: false,
+            grid: { stroke: "var(--border)" },
+            format: (value: number) => formatValue(value),
+            tickLabelProps: { x: -yAxisWidth, dx: 0, textAnchor: "start" },
+            classes: { tickLabel: "fill-muted-foreground font-medium" },
+          },
+          svg: { title: `${label} over the selected telemetry range` },
+        }}
       >
-        {#each [0, 0.5, 1] as ratio}
-          {@const y = bottom - ratio * (bottom - top)}
-          <line
-            x1={left}
-            x2={chart.right}
-            y1={y}
-            y2={y}
-            stroke="currentColor"
-            stroke-width="1"
-            class="text-border"
-          />
-          <text
-            x="0"
-            y={y + 4}
-            text-anchor="start"
-            class="fill-muted-foreground text-[12px] font-medium"
-            >{formatValue(chart.maximum * ratio)}</text
+        {#snippet tooltip({ context })}
+          <Tooltip.Root
+            {context}
+            x="pointer"
+            y="pointer"
+            portal={false}
+            motion={false}
+            fadeDuration={0}
+            variant="none"
           >
-        {/each}
-
-        {#each chart.series as item}
-          <path
-            d={pathFor(item.values)}
-            fill="none"
-            stroke={item.comparison ? "var(--muted-foreground)" : item.color}
-            stroke-width={item.comparison ? 2 : 3.5}
-            stroke-dasharray={item.comparison ? "7 6" : undefined}
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            vector-effect="non-scaling-stroke"
-          />
-          {#if !item.comparison}
-            {#each item.values as value, index}
-              {#if value !== null}
-                <circle
-                  cx={chart.buckets[index].x}
-                  cy={yFor(value)}
-                  r="3.5"
-                  fill={item.color}
-                />
-              {/if}
-            {/each}
-          {/if}
-        {/each}
-
-        {#if hoveredIndex !== null}
-          <line
-            x1={chart.buckets[hoveredIndex].x}
-            x2={chart.buckets[hoveredIndex].x}
-            y1={top}
-            y2={bottom}
-            stroke="currentColor"
-            stroke-width="1"
-            class="text-foreground/40"
-          />
-          {#each chart.series as item}
-            {@const value = item.values[hoveredIndex]}
-            {#if value !== null}
-              <circle
-                cx={chart.buckets[hoveredIndex].x}
-                cy={yFor(value)}
-                r="4.5"
-                fill={item.comparison ? "var(--muted-foreground)" : item.color}
-              />
-            {/if}
-          {/each}
-        {/if}
-
-        {#each chart.buckets as bucket, index}
-          {#if index === 0 || index === Math.floor((bucketCount - 1) / 2) || index === bucketCount - 1}
-            <text
-              x={bucket.x}
-              y="226"
-              text-anchor={index === 0
-                ? "start"
-                : index === bucketCount - 1
-                  ? "end"
-                  : "middle"}
-              class="fill-muted-foreground text-[12px] font-medium"
-              >{timeFormatter.format(bucket.end)}</text
-            >
-          {/if}
-        {/each}
-      </svg>
-
-      {#if hoveredIndex !== null}
-        <div
-          class="pointer-events-none absolute right-2 top-2 z-20 min-w-60 border border-border bg-background/95 px-4 py-3 text-sm shadow-xl"
-        >
-          <p class="font-medium">{bucketLabel(hoveredIndex)}</p>
-          <div class="mt-3 space-y-2">
-            {#each chart.series as item}
-              <div class="flex items-center justify-between gap-6">
-                <span class="flex items-center gap-2 text-muted-foreground"
-                  ><span
-                    class="h-0.5 w-5"
-                    style:background={item.comparison
-                      ? "var(--muted-foreground)"
-                      : item.color}
-                  ></span>{item.label}</span
-                >
-                <span class="font-mono tabular-nums"
-                  >{item.values[hoveredIndex] === null
-                    ? "Unavailable"
-                    : formatValue(item.values[hoveredIndex])}</span
-                >
+            {#snippet children({ data }: { data: ChartPoint })}
+              <div
+                class="min-w-60 border border-border bg-background/95 px-4 py-3 text-sm shadow-xl"
+              >
+                <p class="font-medium">{bucketLabel(data)}</p>
+                <div class="mt-3 space-y-2">
+                  {#each chart.series as item, index (item.key)}
+                    <div class="flex items-center justify-between gap-6">
+                      <span
+                        class="flex items-center gap-2 text-muted-foreground"
+                      >
+                        <span
+                          class="h-0.5 w-5"
+                          style:background={item.comparison
+                            ? "var(--muted-foreground)"
+                            : item.color}
+                        ></span>
+                        {item.label}
+                      </span>
+                      <span class="font-mono tabular-nums">
+                        {formatValue(data.values[index])}
+                      </span>
+                    </div>
+                  {/each}
+                </div>
               </div>
-            {/each}
-          </div>
-        </div>
-      {/if}
+            {/snippet}
+          </Tooltip.Root>
+        {/snippet}
+      </LineChart>
     </div>
   {:else}
     <p class="mt-6 py-16 text-center text-sm text-muted-foreground">

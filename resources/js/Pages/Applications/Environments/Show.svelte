@@ -15,234 +15,27 @@
   import { Input } from "@/Components/ui/input";
   import { Spinner } from "@/Components/ui/spinner";
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
+  import { cn } from "@/lib/utils";
   import { routes } from "@/routes";
+  import {
+    BuildLogStream,
+    DeploymentEventStream,
+    EnvironmentLogStream,
+  } from "./show-streams.svelte";
+  import type {
+    Build,
+    Deployment,
+    EnvironmentSection,
+    HostUsage,
+    Overview,
+    ReleaseCommand,
+    ReleaseCommandLog,
+    Secret,
+    ServingContainer,
+    TelemetryRange,
+    TelemetryRow,
+  } from "./show.types";
 
-  type Secret = {
-    id: string;
-    key: string;
-    digestPrefix: string;
-    sourceType: string;
-    sourceId: string;
-    createdAt: string;
-    status: "deployed" | "deploying" | "pending" | "failed" | "pending_removal";
-    desired: boolean;
-  };
-  type Variable = {
-    key: string;
-    value: string;
-    source: string;
-    sourceId: string;
-  };
-  type Resource = { id: string; alias: string; name: string; engine: string };
-  type Build = {
-    id: string;
-    sourceRevision: string;
-    status: string;
-    currentStep: string;
-    error: string;
-    createdAt: string;
-    startedAt?: string;
-    finishedAt?: string;
-    registryEndpoint: string;
-    jobId: number | null;
-    jobState: string;
-  };
-  type BuildLog = {
-    id: string;
-    sequence: number;
-    stream: "system" | "pack";
-    message: string;
-    occurredAt: string;
-  };
-  type BuildLogSnapshot = {
-    build: Build;
-    logs: BuildLog[];
-    nextSequence: number;
-    hasMore: boolean;
-  };
-  type Release = {
-    id: string;
-    sourceRevision: string;
-    artifactReference: string;
-    createdAt: string;
-  };
-  type Deployment = {
-    id: string;
-    status: string;
-    currentStep: string;
-    error: string;
-    releaseId: string;
-    createdAt: string;
-    active: boolean;
-  };
-  type DeploymentEvent = {
-    id: string;
-    sequence: number;
-    eventType: string;
-    status: string;
-    step: string;
-    message: string;
-    error: string;
-    occurredAt: string;
-  };
-  type DeploymentEventSnapshot = {
-    deployment: Deployment;
-    events: DeploymentEvent[];
-    nextSequence: number;
-    hasMore: boolean;
-  };
-  type EnvironmentLog = {
-    id: string;
-    message: string;
-    stream: string;
-    container: string;
-    deployment: string;
-    instance: string;
-    release: string;
-    processName: string;
-    processKind: string;
-    processReplica: string;
-    occurredAt: string;
-  };
-  type EnvironmentLogSnapshot = {
-    logs: EnvironmentLog[];
-    nextCursor: string;
-    hasMore: boolean;
-  };
-  type Process = {
-    name: string;
-    kind: "web" | "worker" | "release";
-    command?: string | null;
-    arguments: string[];
-    replicas: number;
-    container_port?: number;
-    health_path?: string;
-    timeout_seconds?: number;
-  };
-  type Instance = {
-    id: string;
-    state: string;
-    slot: string;
-    processName: string;
-    processKind: "web" | "worker";
-    replicaKey: string;
-    ports: { host?: string; http?: number };
-    releaseId: string;
-    deploymentId: string;
-    targetId: string;
-    targetName: string;
-    observedAt: string;
-  };
-  type ReleaseCommand = {
-    id: string;
-    status: "queued" | "running" | "succeeded" | "failed" | "ambiguous";
-    attempt: number;
-    externalId: string;
-    exitCode?: number;
-    startedAt?: string;
-    finishedAt?: string;
-    error: string;
-    releaseId: string;
-    targetId: string;
-    targetName: string;
-    command: string;
-    arguments: string[];
-    timeoutSeconds: number;
-    createdAt: string;
-  };
-  type ReleaseCommandLog = {
-    id: string;
-    attempt: number;
-    sequence: number;
-    stream: "system" | "stdout" | "stderr";
-    message: string;
-    occurredAt: string;
-  };
-  type DNSStatus = {
-    mode: "manual" | "cloudflare";
-    bindingId?: string;
-    zoneId?: string;
-    zoneName: string;
-    connectionName: string;
-    state: string;
-    generation: number;
-    appliedGeneration: number;
-    lastError: string;
-    reconciliationQueued: boolean;
-    records: { type: string; name: string; content: string }[];
-  };
-  type TelemetryPoint = {
-    observedAt: string;
-    cpuCores: number;
-    memoryBytes: number;
-    cpuAvailable: boolean;
-    memoryAvailable: boolean;
-  };
-  type TelemetryRow = {
-    application: string;
-    environment: string;
-    release: string;
-    deployment: string;
-    target: string;
-    instance: string;
-    available: boolean;
-    observedAt: string;
-    cpuCores: number;
-    memoryBytes: number;
-    oomEvents: number;
-    cpuThrottlingRatio: number;
-    tasks: number;
-    history: TelemetryPoint[];
-    cpuAvailable: boolean;
-    memoryAvailable: boolean;
-    oomAvailable: boolean;
-    cpuThrottlingAvailable: boolean;
-    tasksAvailable: boolean;
-  };
-  type Overview = {
-    applicationId: string;
-    applicationName: string;
-    sourceType: "buildpacks" | "image";
-    environment: { id: string; name: string; kind: string };
-    repository: string;
-    reference: string;
-    contextPath: string;
-    registryName: string;
-    registryEndpoint: string;
-    runtimeServerIds: string[];
-    runtimeTargetIds: string[];
-    runtimeServers: string[];
-    domain: string;
-    deployability: { deployable: boolean; missing: string[] };
-    secrets: Secret[];
-    variables: Variable[];
-    resources: Resource[];
-    builds: Build[];
-    releases: Release[];
-    deployments: Deployment[];
-    instances: Instance[];
-    processes: Process[];
-    releaseCommands: ReleaseCommand[];
-    apiTokenPrefix: string;
-    dns: DNSStatus;
-    canPromoteToProduction: boolean;
-    promotionTargetName: string;
-    latestSuccessfulDeploymentId?: string;
-    latestSuccessfulReleaseId?: string;
-  };
-  type ServingContainer = {
-    instanceId: string;
-    deploymentId: string;
-    targetId: string;
-    serverId: string;
-    exists: boolean;
-    running: boolean;
-  };
-  type HostUsage = {
-    cpuCores: number;
-    memoryBytes: number;
-    available: boolean;
-  };
   let {
     auth,
     environment,
@@ -257,8 +50,8 @@
     telemetry: TelemetryRow[];
     container: ServingContainer;
     host: HostUsage;
-    telemetryRange: "1h" | "6h" | "24h" | "7d";
-    section: "overview" | "telemetry" | "deployments" | "builds" | "secrets";
+    telemetryRange: TelemetryRange;
+    section: EnvironmentSection;
   } = $props();
   let key = $state("");
   let value = $state("");
@@ -273,20 +66,8 @@
   let dnsActionProcessing = $state(false);
   let secretCreationProcessing = $state(false);
   let deploymentRetrying = $state("");
-  let liveBuilds = $state<Build[] | null>(null);
-  let liveDeployments = $state<Deployment[] | null>(null);
-  let buildLogs = $state<Record<string, BuildLog[]>>({});
-  let buildLogCursors = $state<Record<string, number>>({});
   let expandedBuildId = $state("");
-  let buildLogConnectionError = $state("");
-  let deploymentEvents = $state<Record<string, DeploymentEvent[]>>({});
-  let deploymentEventCursors = $state<Record<string, number>>({});
   let expandedDeploymentId = $state("");
-  let deploymentEventConnectionError = $state("");
-  let environmentLogs = $state<EnvironmentLog[]>([]);
-  let environmentLogCursor = $state("");
-  let environmentLogsLoaded = $state(false);
-  let environmentLogConnectionError = $state("");
   let environmentLogsPaused = $state(false);
   let followingEnvironmentLogs = $state(true);
   let workloadLogsOpen = $state(true);
@@ -317,10 +98,22 @@
   let releaseCommandRetryDialogOpen = $state(false);
   let pendingReleaseCommandRetry = $state<ReleaseCommand | null>(null);
   let releaseCommandRetryError = $state("");
-  const loadingBuilds = new Set<string>();
-  const loadingDeployments = new Set<string>();
-  const builds = $derived(liveBuilds ?? environment.builds);
-  const deployments = $derived(liveDeployments ?? environment.deployments);
+  // Route ids are fixed for the lifetime of this page.
+  const applicationId = untrack(() => environment.applicationId);
+  const environmentId = untrack(() => environment.environment.id);
+  const buildStream = new BuildLogStream(
+    environmentId,
+    () => environment.builds,
+  );
+  const deploymentStream = new DeploymentEventStream(
+    environmentId,
+    () => environment.deployments,
+  );
+  const logStream = new EnvironmentLogStream(applicationId, environmentId);
+  const builds = $derived(buildStream.live ?? environment.builds);
+  const deployments = $derived(
+    deploymentStream.live ?? environment.deployments,
+  );
   const activeDeployment = $derived(
     deployments.find((deployment) => deployment.active) ?? null,
   );
@@ -349,23 +142,40 @@
         ) ?? null)
       : null,
   );
-  const memorySeries = $derived(
-    telemetry
-      .filter((row) =>
-        row.history.some(
-          (point) =>
-            point.memoryAvailable &&
-            Number.isFinite(new Date(point.observedAt).getTime()),
-        ),
-      )
-      .map((row) => ({
-        id: row.instance,
-        label: short(row.instance),
-        active: row === activeTelemetry,
-        points: row.history,
-      }))
-      .sort((a, b) => Number(b.active) - Number(a.active)),
-  );
+  const environmentMemorySeries = $derived.by(() => {
+    const totals: Record<
+      string,
+      { observedAt: string; memoryBytes: number; memoryAvailable: true }
+    > = {};
+
+    for (const row of telemetry) {
+      for (const point of row.history) {
+        if (!point.memoryAvailable) continue;
+        const timestamp = new Date(point.observedAt).getTime();
+        if (!Number.isFinite(timestamp)) continue;
+
+        const key = String(timestamp);
+        const total = totals[key];
+        if (total) {
+          total.memoryBytes += point.memoryBytes;
+        } else {
+          totals[key] = {
+            observedAt: point.observedAt,
+            memoryBytes: point.memoryBytes,
+            memoryAvailable: true,
+          };
+        }
+      }
+    }
+
+    const points = Object.entries(totals)
+      .sort(([left], [right]) => Number(left) - Number(right))
+      .map(([, point]) => point);
+
+    return points.length > 0
+      ? [{ id: "environment", label: "Environment", points }]
+      : [];
+  });
   const usageChange = $derived.by(() => {
     if (!activeTelemetry) return null;
     const hourAgo = Date.now() - 60 * 60 * 1000;
@@ -571,9 +381,7 @@
       environment.sourceType === "image" ? { reference: imageReference } : {},
       {
         onSuccess: () => {
-          liveBuilds = null;
-          buildLogs = {};
-          buildLogCursors = {};
+          buildStream.reset();
           expandedBuildId = "";
         },
         onFinish: () => (deploymentCreationProcessing = false),
@@ -701,9 +509,7 @@
       {
         preserveScroll: true,
         onSuccess: () => {
-          liveDeployments = null;
-          deploymentEvents = {};
-          deploymentEventCursors = {};
+          deploymentStream.reset();
           expandedDeploymentId = "";
         },
         onFinish: () => (activeReleaseDeployment = ""),
@@ -728,9 +534,7 @@
         preserveScroll: true,
         onSuccess: () => {
           promotionDialogOpen = false;
-          liveDeployments = null;
-          deploymentEvents = {};
-          deploymentEventCursors = {};
+          deploymentStream.reset();
           expandedDeploymentId = "";
         },
         onError: (errors) =>
@@ -819,105 +623,19 @@
       },
     );
   }
-  async function loadBuildLogs(buildId: string, signal?: AbortSignal) {
-    if (loadingBuilds.has(buildId)) return null;
-    loadingBuilds.add(buildId);
-    try {
-      const after = buildLogCursors[buildId] ?? 0;
-      const response = await window.fetch(
-        `${routes.environmentBuildLogs(environment.environment.id, buildId)}?after=${after}`,
-        {
-          cache: "no-store",
-          credentials: "same-origin",
-          headers: { Accept: "application/json" },
-          signal,
-        },
-      );
-      if (!response.ok)
-        throw new Error(`Build logs returned ${response.status}`);
-      const snapshot = (await response.json()) as BuildLogSnapshot;
-      liveBuilds = builds.map((build) =>
-        build.id === snapshot.build.id ? snapshot.build : build,
-      );
-      if (snapshot.logs.length > 0) {
-        buildLogs = {
-          ...buildLogs,
-          [buildId]: [...(buildLogs[buildId] ?? []), ...snapshot.logs],
-        };
-      } else if (!(buildId in buildLogs)) {
-        buildLogs = { ...buildLogs, [buildId]: [] };
-      }
-      buildLogCursors = {
-        ...buildLogCursors,
-        [buildId]: snapshot.nextSequence,
-      };
-      buildLogConnectionError = "";
-      return snapshot;
-    } finally {
-      loadingBuilds.delete(buildId);
-    }
-  }
   async function toggleBuildLogs(buildId: string) {
     if (expandedBuildId === buildId) {
       expandedBuildId = "";
       return;
     }
     expandedBuildId = buildId;
-    if (!(buildId in buildLogs)) {
+    if (!(buildId in buildStream.logs)) {
       try {
-        let snapshot = await loadBuildLogs(buildId);
-        while (snapshot?.hasMore) snapshot = await loadBuildLogs(buildId);
+        let snapshot = await buildStream.load(buildId);
+        while (snapshot?.hasMore) snapshot = await buildStream.load(buildId);
       } catch {
-        buildLogConnectionError = "Build logs are temporarily unavailable.";
+        buildStream.connectionError = "Build logs are temporarily unavailable.";
       }
-    }
-  }
-
-  async function loadDeploymentEvents(
-    deploymentId: string,
-    signal?: AbortSignal,
-  ) {
-    if (loadingDeployments.has(deploymentId)) return null;
-    loadingDeployments.add(deploymentId);
-    try {
-      const after = deploymentEventCursors[deploymentId] ?? 0;
-      const response = await window.fetch(
-        `${routes.environmentDeploymentEvents(environment.environment.id, deploymentId)}?after=${after}`,
-        {
-          cache: "no-store",
-          credentials: "same-origin",
-          headers: { Accept: "application/json" },
-          signal,
-        },
-      );
-      if (!response.ok)
-        throw new Error(`Deployment events returned ${response.status}`);
-      const snapshot = (await response.json()) as DeploymentEventSnapshot;
-      liveDeployments = deployments.map((deployment) => {
-        if (deployment.id === snapshot.deployment.id)
-          return snapshot.deployment;
-        if (snapshot.deployment.active) return { ...deployment, active: false };
-        return deployment;
-      });
-      if (snapshot.events.length > 0) {
-        deploymentEvents = {
-          ...deploymentEvents,
-          [deploymentId]: [
-            ...(deploymentEvents[deploymentId] ?? []),
-            ...snapshot.events,
-          ],
-        };
-      } else if (!(deploymentId in deploymentEvents)) {
-        deploymentEvents = { ...deploymentEvents, [deploymentId]: [] };
-      }
-      deploymentEventCursors = {
-        ...deploymentEventCursors,
-        [deploymentId]: snapshot.nextSequence,
-      };
-      deploymentEventConnectionError = "";
-      return snapshot;
-    } finally {
-      loadingDeployments.delete(deploymentId);
     }
   }
 
@@ -930,44 +648,16 @@
     const deployment = deployments.find((item) => item.id === deploymentId);
     if (deployment?.status === "queued" || deployment?.status === "running")
       return;
-    if (!(deploymentId in deploymentEvents)) {
+    if (!(deploymentId in deploymentStream.events)) {
       try {
-        let snapshot = await loadDeploymentEvents(deploymentId);
+        let snapshot = await deploymentStream.load(deploymentId);
         while (snapshot?.hasMore)
-          snapshot = await loadDeploymentEvents(deploymentId);
+          snapshot = await deploymentStream.load(deploymentId);
       } catch {
-        deploymentEventConnectionError =
+        deploymentStream.connectionError =
           "Deployment events are temporarily unavailable.";
       }
     }
-  }
-
-  async function loadEnvironmentLogs(signal?: AbortSignal) {
-    const endpoint = new URL(
-      routes.environmentLogs(
-        environment.applicationId,
-        environment.environment.id,
-      ),
-      window.location.origin,
-    );
-    if (environmentLogCursor)
-      endpoint.searchParams.set("after", environmentLogCursor);
-    const response = await window.fetch(endpoint, {
-      cache: "no-store",
-      credentials: "same-origin",
-      headers: { Accept: "application/json" },
-      signal,
-    });
-    if (!response.ok)
-      throw new Error(`Environment logs returned ${response.status}`);
-    const snapshot = (await response.json()) as EnvironmentLogSnapshot;
-    if (snapshot.logs.length > 0) {
-      environmentLogs = [...environmentLogs, ...snapshot.logs].slice(-2000);
-    }
-    environmentLogCursor = snapshot.nextCursor;
-    environmentLogsLoaded = true;
-    environmentLogConnectionError = "";
-    return snapshot;
   }
 
   function updateEnvironmentLogFollow() {
@@ -981,7 +671,7 @@
 
   $effect(() => {
     if (section !== "telemetry") return;
-    environmentLogs.length;
+    logStream.logs.length;
     if (!followingEnvironmentLogs) return;
     const frame = window.requestAnimationFrame(() => {
       environmentLogViewport?.scrollTo({
@@ -993,30 +683,7 @@
 
   $effect(() => {
     if (section !== "telemetry" || environmentLogsPaused) return;
-    const abortController = new AbortController();
-    let timer: number | undefined;
-    let retryDelay = 2000;
-
-    async function poll() {
-      try {
-        const snapshot = await loadEnvironmentLogs(abortController.signal);
-        if (abortController.signal.aborted) return;
-        retryDelay = 2000;
-        timer = window.setTimeout(poll, snapshot.hasMore ? 0 : retryDelay);
-      } catch {
-        if (abortController.signal.aborted) return;
-        environmentLogConnectionError =
-          "Reconnecting to the workload log stream...";
-        retryDelay = Math.min(retryDelay * 2, 10000);
-        timer = window.setTimeout(poll, retryDelay);
-      }
-    }
-
-    timer = window.setTimeout(poll, 0);
-    return () => {
-      abortController.abort();
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
+    return logStream.poll();
   });
 
   $effect(() => {
@@ -1024,43 +691,7 @@
     const buildId = activeBuildId;
     if (!buildId) return;
     if (!expandedBuildId) expandedBuildId = buildId;
-
-    const abortController = new AbortController();
-    let timer: number | undefined;
-    let retryDelay = 1000;
-
-    async function poll() {
-      try {
-        const snapshot = await loadBuildLogs(buildId, abortController.signal);
-        if (!snapshot || abortController.signal.aborted) return;
-        retryDelay = 1000;
-        if (snapshot.hasMore) {
-          timer = window.setTimeout(poll, 0);
-          return;
-        }
-        if (
-          snapshot.build.status !== "pending" &&
-          snapshot.build.status !== "running"
-        ) {
-          router.reload({
-            only: ["environment", "telemetry"],
-            preserveScroll: true,
-          });
-          return;
-        }
-      } catch {
-        if (abortController.signal.aborted) return;
-        buildLogConnectionError = "Reconnecting to the Build log...";
-        retryDelay = Math.min(retryDelay * 2, 5000);
-      }
-      timer = window.setTimeout(poll, retryDelay);
-    }
-
-    timer = window.setTimeout(poll, 0);
-    return () => {
-      abortController.abort();
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
+    return buildStream.poll(buildId);
   });
 
   $effect(() => {
@@ -1125,47 +756,7 @@
       (deploymentStatus !== "queued" && deploymentStatus !== "running")
     )
       return;
-
-    const abortController = new AbortController();
-    let timer: number | undefined;
-    let retryDelay = 1000;
-
-    async function poll() {
-      try {
-        const snapshot = await loadDeploymentEvents(
-          deploymentId,
-          abortController.signal,
-        );
-        if (!snapshot || abortController.signal.aborted) return;
-        retryDelay = 1000;
-        if (snapshot.hasMore) {
-          timer = window.setTimeout(poll, 0);
-          return;
-        }
-        if (
-          snapshot.deployment.status !== "queued" &&
-          snapshot.deployment.status !== "running"
-        ) {
-          router.reload({
-            only: ["environment", "telemetry"],
-            preserveScroll: true,
-          });
-          return;
-        }
-      } catch {
-        if (abortController.signal.aborted) return;
-        deploymentEventConnectionError =
-          "Reconnecting to the Deployment timeline...";
-        retryDelay = Math.min(retryDelay * 2, 5000);
-      }
-      timer = window.setTimeout(poll, retryDelay);
-    }
-
-    timer = window.setTimeout(poll, 0);
-    return () => {
-      abortController.abort();
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
+    return deploymentStream.poll(deploymentId);
   });
 </script>
 
@@ -1560,8 +1151,8 @@
             />
           </div>
         {/if}
-        {#if activeTelemetry || memorySeries.length > 0}
-          <TelemetryHistory series={memorySeries} {telemetryRange} />
+        {#if activeTelemetry || environmentMemorySeries.length > 0}
+          <TelemetryHistory series={environmentMemorySeries} {telemetryRange} />
         {:else}
           <div class="border border-border bg-card/35 px-5 py-16 text-center">
             <p class="text-sm text-muted-foreground">
@@ -1600,20 +1191,22 @@
           </Card.Header>
           <Collapsible.Content>
             <Card.Content>
-              {#if environmentLogConnectionError}<p
+              {#if logStream.connectionError}<p
                   class="mb-3 text-xs text-warning"
                 >
-                  {environmentLogConnectionError}
+                  {logStream.connectionError}
                 </p>{/if}
               <div
                 bind:this={environmentLogViewport}
                 onscroll={updateEnvironmentLogFollow}
                 class="max-h-[32rem] min-h-48 overflow-auto border border-border bg-black/35 p-3 font-mono text-[11px] leading-relaxed"
               >
-                {#each environmentLogs as log (log.id)}
+                {#each logStream.logs as log (log.id)}
                   <div
-                    class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 py-1"
-                    class:text-destructive={log.stream === "stderr"}
+                    class={cn(
+                      "grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 py-1",
+                      { "text-destructive": log.stream === "stderr" },
+                    )}
                   >
                     <span
                       class="select-none whitespace-nowrap text-muted-foreground"
@@ -1634,7 +1227,7 @@
                   </div>
                 {:else}
                   <p class="text-muted-foreground">
-                    {environmentLogsLoaded
+                    {logStream.loaded
                       ? "No workload logs have been collected yet."
                       : "Loading workload logs..."}
                   </p>
@@ -1750,8 +1343,8 @@
             ></Card.Header
           >
           <Card.Content class="space-y-2">
-            {#if buildLogConnectionError}<p class="text-xs text-warning">
-                {buildLogConnectionError}
+            {#if buildStream.connectionError}<p class="text-xs text-warning">
+                {buildStream.connectionError}
               </p>{/if}
             {#each builds as build}
               <div class="border border-border text-sm">
@@ -1811,8 +1404,12 @@
                     <div
                       class="max-h-96 space-y-2 overflow-auto font-mono text-[11px] leading-relaxed"
                     >
-                      {#each buildLogs[build.id] ?? [] as log (log.id)}
-                        <div class:text-primary={log.stream === "system"}>
+                      {#each buildStream.logs[build.id] ?? [] as log (log.id)}
+                        <div
+                          class={cn({
+                            "text-primary": log.stream === "system",
+                          })}
+                        >
                           <span class="select-none text-muted-foreground"
                             >{stamp(log.occurredAt)} · {log.stream}</span
                           >
@@ -1973,8 +1570,10 @@
                   class="max-h-96 overflow-auto border-t border-border bg-black/30 p-3 font-mono text-[11px] leading-relaxed"
                 >
                   {#each releaseCommandLogs[execution.id] ?? [] as log (log.id)}<div
-                      class:text-destructive={log.stream === "stderr"}
-                      class:text-primary={log.stream === "system"}
+                      class={cn({
+                        "text-destructive": log.stream === "stderr",
+                        "text-primary": log.stream === "system",
+                      })}
                     >
                       <span class="text-muted-foreground"
                         >{stamp(log.occurredAt)} · attempt {log.attempt} · {log.stream}</span
@@ -2004,8 +1603,8 @@
           ></Card.Header
         >
         <Card.Content class="space-y-2">
-          {#if deploymentEventConnectionError}<p class="text-xs text-warning">
-              {deploymentEventConnectionError}
+          {#if deploymentStream.connectionError}<p class="text-xs text-warning">
+              {deploymentStream.connectionError}
             </p>{/if}
           {#each deployments as deployment}
             <div class="border border-border text-sm">
@@ -2051,11 +1650,13 @@
                   <div
                     class="max-h-80 space-y-3 overflow-auto font-mono text-[11px] leading-relaxed"
                   >
-                    {#each deploymentEvents[deployment.id] ?? [] as event (event.id)}
+                    {#each deploymentStream.events[deployment.id] ?? [] as event (event.id)}
                       <div
-                        class:text-destructive={event.status === "failed"}
-                        class:text-warning={event.status === "warning"}
-                        class:text-success={event.status === "succeeded"}
+                        class={cn({
+                          "text-destructive": event.status === "failed",
+                          "text-warning": event.status === "warning",
+                          "text-success": event.status === "succeeded",
+                        })}
                       >
                         <p class="select-none text-muted-foreground">
                           {stamp(event.occurredAt)} · {event.step ||

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { LineChart, Tooltip } from "layerchart";
+
   type TelemetryPoint = {
     observedAt: string;
     memoryBytes: number;
@@ -12,6 +14,13 @@
     points: TelemetryPoint[];
   };
 
+  type ChartPoint = {
+    bucketStart: number;
+    bucketEnd: number;
+    timestamp: number;
+    values: number[];
+  };
+
   let {
     series,
     telemetryRange = "24h",
@@ -20,12 +29,8 @@
     telemetryRange: "1h" | "6h" | "24h" | "7d";
   } = $props();
 
-  let hoveredIndex = $state<number | null>(null);
-  const left = 82;
-  const right = 718;
-  const top = 18;
-  const bottom = 178;
   const bucketCount = 36;
+  const yAxisWidth = 76;
   const activeColor = "var(--chart-2)";
   const containerColors = [
     "var(--chart-1)",
@@ -75,12 +80,12 @@
     const end = Math.ceil(latest / bucketMilliseconds) * bucketMilliseconds;
     const start = end - historyWindowMilliseconds;
     const buckets = Array.from({ length: bucketCount }, (_, index) => ({
-      start: start + index * bucketMilliseconds,
-      end: start + (index + 1) * bucketMilliseconds,
-      x: left + (index + 0.5) * ((right - left) / bucketCount),
+      bucketStart: start + index * bucketMilliseconds,
+      bucketEnd: start + (index + 1) * bucketMilliseconds,
+      timestamp: start + (index + 0.5) * bucketMilliseconds,
     }));
     let colorIndex = 0;
-    const chartSeries = series.map((item) => {
+    const preparedSeries = series.map((item) => {
       const active = item.active === true || series.length === 1;
       const color = active
         ? activeColor
@@ -98,59 +103,62 @@
             point.timestamp <= end,
         )
         .sort((a, b) => a.timestamp - b.timestamp);
-      const memory = buckets.map((bucket, index) => {
+      let hasSamples = false;
+      const values = buckets.map((bucket, index) => {
         const bucketSamples = samples.filter(
           (point) =>
-            point.timestamp >= bucket.start &&
+            point.timestamp >= bucket.bucketStart &&
             (index === bucketCount - 1
-              ? point.timestamp <= bucket.end
-              : point.timestamp < bucket.end),
+              ? point.timestamp <= bucket.bucketEnd
+              : point.timestamp < bucket.bucketEnd),
         );
-        return bucketSamples.length === 0
-          ? null
-          : bucketSamples.reduce(
-              (total, point) => total + point.memoryBytes,
-              0,
-            ) / bucketSamples.length;
+        if (bucketSamples.length === 0) return 0;
+
+        hasSamples = true;
+        return (
+          bucketSamples.reduce((total, point) => total + point.memoryBytes, 0) /
+          bucketSamples.length
+        );
       });
-      return { id: item.id, label: item.label, active, color, memory };
+
+      return {
+        id: item.id,
+        key: item.id,
+        label: item.label,
+        active,
+        color,
+        hasSamples,
+        values,
+      };
     });
-    const memoryValues = chartSeries.flatMap((item) =>
-      item.memory.flatMap((value) => (value === null ? [] : [value])),
-    );
+    const memoryValues = preparedSeries.flatMap((item) => item.values);
+    const data: ChartPoint[] = buckets.map((bucket, index) => ({
+      ...bucket,
+      values: preparedSeries.map((item) => item.values[index]),
+    }));
+    const lineSeries = preparedSeries.map((item, index) => ({
+      key: item.key,
+      label: item.label,
+      color: item.color,
+      value: (point: ChartPoint) => point.values[index],
+      props: {
+        fill: "none",
+        strokeWidth: item.active ? 3 : 2.5,
+      },
+    }));
+
     return {
-      buckets,
-      series: chartSeries,
-      multiple: chartSeries.length > 1,
+      data,
+      series: preparedSeries,
+      lineSeries,
+      multiple: preparedSeries.length > 1,
       memoryMaximum: Math.max(1, ...memoryValues) * 1.1,
-      available: memoryValues.length > 0,
+      available: preparedSeries.some((item) => item.hasSamples),
     };
   });
 
-  const yFor = (value: number) =>
-    bottom - (Math.max(0, value) / chart.memoryMaximum) * (bottom - top);
-  const pathFor = (memory: Array<number | null>) =>
-    memory
-      .map((value, index) => {
-        if (value === null) return "";
-        const command = index === 0 || memory[index - 1] === null ? "M" : "L";
-        return `${command} ${chart.buckets[index].x.toFixed(1)} ${yFor(value).toFixed(1)}`;
-      })
-      .filter(Boolean)
-      .join(" ");
-  const bucketLabel = (index: number) =>
-    `${rangeFormatter.format(chart.buckets[index].start)} to ${rangeFormatter.format(chart.buckets[index].end)}`;
-
-  const hover = (event: PointerEvent) => {
-    const bounds = (
-      event.currentTarget as SVGSVGElement
-    ).getBoundingClientRect();
-    const x = ((event.clientX - bounds.left) / bounds.width) * 800;
-    hoveredIndex = Math.min(
-      bucketCount - 1,
-      Math.max(0, Math.floor(((x - left) / (right - left)) * bucketCount)),
-    );
-  };
+  const bucketLabel = (point: ChartPoint) =>
+    `${rangeFormatter.format(point.bucketStart)} to ${rangeFormatter.format(point.bucketEnd)}`;
 </script>
 
 <article class="w-full min-w-0 border border-border bg-card/35 p-5">
@@ -160,7 +168,7 @@
     <div class="sm:shrink-0">
       <h3 class="text-sm font-semibold">Memory usage</h3>
       <p class="mt-1 text-xs text-muted-foreground">
-        Average container memory over the {rangeLabel}
+        Total memory used by live environment containers over the {rangeLabel}
       </p>
     </div>
     {#if chart.multiple}
@@ -168,124 +176,93 @@
         class="flex min-w-0 flex-wrap justify-end gap-x-4 gap-y-1 text-xs text-muted-foreground sm:flex-1"
       >
         {#each chart.series as item (item.id)}
-          <span class="flex items-center gap-2"
-            ><span class="size-2" style:background={item.color}
-            ></span>{item.label}{item.active ? " (active)" : ""}</span
-          >
+          <span class="flex items-center gap-2">
+            <span class="size-2" style:background={item.color}></span>
+            {item.label}{item.active ? " (active)" : ""}
+          </span>
         {/each}
       </div>
     {/if}
   </div>
 
   {#if chart.available}
-    <div class="relative mt-4 w-full min-w-0">
-      <svg
-        viewBox="0 0 800 220"
-        class="block h-auto w-full max-w-none touch-none"
-        role="img"
+    <div class="mt-4 h-[13.75rem] w-full min-w-0">
+      <LineChart
+        data={chart.data}
+        x="timestamp"
+        series={chart.lineSeries}
+        xDomain={[chart.data[0]?.timestamp, chart.data.at(-1)?.timestamp]}
+        yDomain={[0, chart.memoryMaximum]}
+        height={220}
+        padding={{ top: 12, right: 10, bottom: 28, left: yAxisWidth }}
+        axis={true}
+        rule={false}
+        highlight={{
+          lines: { stroke: "var(--foreground)", opacity: 0.35 },
+          points: { r: 4, stroke: "var(--background)", strokeWidth: 2 },
+          motion: false,
+        }}
+        tooltipContext={{ mode: "bisect-x" }}
+        motion={false}
         aria-label={`Memory usage over the ${rangeLabel}`}
-        onpointerenter={hover}
-        onpointermove={hover}
-        onpointerleave={() => (hoveredIndex = null)}
+        props={{
+          xAxis: {
+            ticks: 3,
+            tickMarks: false,
+            rule: false,
+            format: (value: number) => axisFormatter.format(value),
+            classes: { tickLabel: "fill-muted-foreground" },
+          },
+          yAxis: {
+            ticks: [0, chart.memoryMaximum / 2, chart.memoryMaximum],
+            tickMarks: false,
+            rule: false,
+            grid: { stroke: "var(--border)" },
+            format: (value: number) => formatMemory(value),
+            tickLabelProps: { x: -yAxisWidth, dx: 0, textAnchor: "start" },
+            classes: { tickLabel: "fill-muted-foreground" },
+          },
+          svg: { title: `Memory usage over the ${rangeLabel}` },
+        }}
       >
-        {#each [0, 0.5, 1] as ratio}
-          {@const y = bottom - ratio * (bottom - top)}
-          <line
-            x1={left}
-            x2={right}
-            y1={y}
-            y2={y}
-            stroke="currentColor"
-            stroke-width="1"
-            class="text-border"
-          />
-          <text
-            x="0"
-            y={y + 4}
-            text-anchor="start"
-            class="fill-muted-foreground text-[11px]"
-            >{formatMemory(chart.memoryMaximum * ratio)}</text
+        {#snippet tooltip({ context })}
+          <Tooltip.Root
+            {context}
+            x="pointer"
+            y="pointer"
+            portal={false}
+            motion={false}
+            fadeDuration={0}
+            variant="none"
           >
-        {/each}
-
-        {#each chart.series as item (item.id)}
-          <path
-            d={pathFor(item.memory)}
-            fill="none"
-            stroke={item.color}
-            stroke-width="2.5"
-            vector-effect="non-scaling-stroke"
-          />
-          {#each item.memory as value, index}
-            {#if value !== null}
-              <circle
-                cx={chart.buckets[index].x}
-                cy={yFor(value)}
-                r="2.5"
-                fill={item.color}
-              />
-            {/if}
-          {/each}
-        {/each}
-
-        {#if hoveredIndex !== null}
-          {@const bucket = chart.buckets[hoveredIndex]}
-          <line
-            x1={bucket.x}
-            x2={bucket.x}
-            y1={top}
-            y2={bottom}
-            stroke="currentColor"
-            stroke-width="1"
-            class="text-foreground/40"
-          />
-          {#each chart.series as item (item.id)}
-            {@const value = item.memory[hoveredIndex]}
-            {#if value !== null}
-              <circle cx={bucket.x} cy={yFor(value)} r="4" fill={item.color} />
-            {/if}
-          {/each}
-        {/if}
-
-        {#each chart.buckets as bucket, index}
-          {#if index === 0 || index === Math.floor((bucketCount - 1) / 2) || index === bucketCount - 1}
-            <text
-              x={bucket.x}
-              y="210"
-              text-anchor={index === 0
-                ? "start"
-                : index === bucketCount - 1
-                  ? "end"
-                  : "middle"}
-              class="fill-muted-foreground text-[8px]"
-              >{axisFormatter.format(bucket.end)}</text
-            >
-          {/if}
-        {/each}
-      </svg>
-
-      {#if hoveredIndex !== null}
-        <div
-          class="pointer-events-none absolute right-2 top-2 z-20 min-w-52 border border-border bg-background/95 px-3 py-2 text-xs shadow-xl"
-        >
-          <p class="font-medium">{bucketLabel(hoveredIndex)}</p>
-          <div class="mt-2 space-y-1.5">
-            {#each chart.series as item (item.id)}
-              {@const value = item.memory[hoveredIndex]}
-              <div class="flex items-center justify-between gap-5">
-                <span class="flex items-center gap-2 text-muted-foreground"
-                  ><span class="size-2" style:background={item.color}
-                  ></span>{chart.multiple
-                    ? `${item.label}${item.active ? " (active)" : ""}`
-                    : "Average memory"}</span
-                ><span class="font-mono tabular-nums"
-                  >{value === null ? "Unavailable" : formatMemory(value)}</span
-                >
+            {#snippet children({ data }: { data: ChartPoint })}
+              <div
+                class="min-w-52 border border-border bg-background/95 px-3 py-2 text-xs shadow-xl"
+              >
+                <p class="font-medium">{bucketLabel(data)}</p>
+                <div class="mt-2 space-y-1.5">
+                  {#each chart.series as item, index (item.id)}
+                    <div class="flex items-center justify-between gap-5">
+                      <span
+                        class="flex items-center gap-2 text-muted-foreground"
+                      >
+                        <span class="size-2" style:background={item.color}
+                        ></span>
+                        {chart.multiple
+                          ? `${item.label}${item.active ? " (active)" : ""}`
+                          : "Environment memory"}
+                      </span>
+                      <span class="font-mono tabular-nums">
+                        {formatMemory(data.values[index])}
+                      </span>
+                    </div>
+                  {/each}
+                </div>
               </div>
-            {/each}
-          </div>
-        </div>
-      {/if}
+            {/snippet}
+          </Tooltip.Root>
+        {/snippet}
+      </LineChart>
     </div>
   {:else}
     <p class="mt-6 py-16 text-center text-sm text-muted-foreground">

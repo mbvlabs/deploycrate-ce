@@ -9,6 +9,7 @@
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import TelemetryHistory from "@/Components/System/TelemetryHistory.svelte";
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
+  import { cn } from "@/lib/utils";
   import { routes } from "@/routes";
   import { page, router } from "@inertiajs/svelte";
   import SearchIcon from "@lucide/svelte/icons/search";
@@ -1484,11 +1485,14 @@
                   </header>
                   <div class="mt-2 min-w-0">
                     <pre
-                      class="whitespace-pre-wrap break-words pl-3 font-mono text-xs leading-5 text-foreground"
-                      class:border-warning={log.severityNumber >= 13 &&
-                        log.severityNumber < 17}
-                      class:border-destructive={log.severityNumber >=
-                        17}>{systemLogMessage(log)}</pre>
+                      class={cn(
+                        "whitespace-pre-wrap break-words pl-3 font-mono text-xs leading-5 text-foreground",
+                        {
+                          "border-warning":
+                            log.severityNumber >= 13 && log.severityNumber < 17,
+                          "border-destructive": log.severityNumber >= 17,
+                        },
+                      )}>{systemLogMessage(log)}</pre>
                     {#if systemLogContext(log).length > 0}
                       <dl
                         class="mt-3 grid gap-x-5 gap-y-1 border-t border-border/70 pt-2 text-[10px] sm:grid-cols-2 xl:grid-cols-3"
