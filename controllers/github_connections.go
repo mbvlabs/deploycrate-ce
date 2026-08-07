@@ -117,7 +117,14 @@ func (controller GitHubConnections) CompleteAppSetup(etx *echo.Context) error {
 }
 
 func (controller GitHubConnections) StartInstallation(etx *echo.Context) error {
-	location, err := controller.connection.StartInstallation(etx.Request().Context(), cookies.ExtractFromCookieApp(etx).UserID)
+	var payload struct {
+		OwnerType  string `json:"ownerType"`
+		OwnerLogin string `json:"ownerLogin"`
+	}
+	if err := etx.Bind(&payload); err != nil {
+		return inertia.Page(etx, "Errors/BadRequest", inertia.Props{})
+	}
+	location, err := controller.connection.StartInstallation(etx.Request().Context(), cookies.ExtractFromCookieApp(etx).UserID, payload.OwnerType, payload.OwnerLogin)
 	if err != nil {
 		return controller.redirectWithError(etx, routes.GitHubConnection.URL(), err)
 	}

@@ -21,6 +21,7 @@ import (
 	"io"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -144,7 +145,7 @@ func (service *GitHubConnection) StartManifest(ctx context.Context, userID uuid.
 		"redirect_url":        routes.GitHubAppCallback.FullURL(config.BaseURL),
 		"setup_url":           routes.GitHubInstallCallback.FullURL(config.BaseURL),
 		"setup_on_update":     true,
-		"public":              false,
+		"public":              true,
 		"hook_attributes":     map[string]any{"url": routes.GitHubWebhook.FullURL(config.BaseURL), "active": true},
 		"default_permissions": map[string]string{"contents": "read", "metadata": "read"},
 		"default_events":      []string{"push"},
@@ -230,7 +231,7 @@ func (service *GitHubConnection) CompleteManifest(ctx context.Context, userID uu
 	return app, nil
 }
 
-func (service *GitHubConnection) StartInstallation(ctx context.Context, userID uuid.UUID) (string, error) {
+func (service *GitHubConnection) StartInstallation(ctx context.Context, userID uuid.UUID, ownerType, ownerLogin string) (string, error) {
 	instanceID, err := service.instanceID()
 	if err != nil {
 		return "", err
@@ -239,15 +240,50 @@ func (service *GitHubConnection) StartInstallation(ctx context.Context, userID u
 	if err != nil {
 		return "", ErrGitHubNotConfigured
 	}
+	targetType, targetLogin, suggestedTargetID, err := service.installationTarget(ctx, app, ownerType, ownerLogin)
+	if err != nil {
+		return "", err
+	}
 	state, digest, err := service.newState()
 	if err != nil {
 		return "", err
 	}
-	_, err = models.GitHubAppSetupAttempt.Create(ctx, service.db.Executor(), models.CreateGitHubAppSetupAttemptData{InstanceID: instanceID, UserID: userID, Purpose: models.GitHubSetupInstallation, StatePrefix: state[:8], StateDigest: digest, ExpiresAt: time.Now().UTC().Add(15 * time.Minute)})
+	_, err = models.GitHubAppSetupAttempt.Create(ctx, service.db.Executor(), models.CreateGitHubAppSetupAttemptData{InstanceID: instanceID, UserID: userID, Purpose: models.GitHubSetupInstallation, StatePrefix: state[:8], StateDigest: digest, OwnerType: targetType, OwnerLogin: targetLogin, ExpiresAt: time.Now().UTC().Add(15 * time.Minute)})
 	if err != nil {
 		return "", err
 	}
-	return "https://github.com/apps/" + url.PathEscape(app.Slug) + "/installations/new?state=" + url.QueryEscape(state), nil
+	installURL := "https://github.com/apps/" + url.PathEscape(app.Slug) + "/installations/new"
+	if suggestedTargetID > 0 {
+		installURL += "/permissions?suggested_target_id=" + strconv.FormatInt(suggestedTargetID, 10)
+	}
+	return installURL + "?state=" + url.QueryEscape(state), nil
+}
+
+func (service *GitHubConnection) installationTarget(ctx context.Context, app models.GitHubAppEntity, ownerType, ownerLogin string) (sql.NullString, sql.NullString, int64, error) {
+	ownerType = strings.ToLower(strings.TrimSpace(ownerType))
+	ownerLogin = strings.TrimSpace(ownerLogin)
+	switch ownerType {
+	case "personal", "user", "":
+		return sql.NullString{String: "User", Valid: true}, sql.NullString{}, 0, nil
+	case "organization":
+		if ownerLogin == "" || strings.ContainsAny(ownerLogin, "/?#") {
+			return sql.NullString{}, sql.NullString{}, 0, errors.Join(models.ErrDomainValidation, errors.New("organization login is required"))
+		}
+		auth, err := service.authentication(ctx, app)
+		if err != nil {
+			return sql.NullString{}, sql.NullString{}, 0, err
+		}
+		account, err := service.client.LookupAccount(ctx, auth, ownerLogin)
+		if err != nil {
+			return sql.NullString{}, sql.NullString{}, 0, errors.Join(models.ErrDomainValidation, fmt.Errorf("GitHub could not be found for the organization login: %w", err))
+		}
+		if account.Type != "Organization" {
+			return sql.NullString{}, sql.NullString{}, 0, errors.Join(models.ErrDomainValidation, errors.New("the selected login is not a GitHub organization"))
+		}
+		return sql.NullString{String: "Organization", Valid: true}, sql.NullString{String: account.Login, Valid: true}, account.ID, nil
+	default:
+		return sql.NullString{}, sql.NullString{}, 0, errors.Join(models.ErrDomainValidation, errors.New("owner type must be personal or organization"))
+	}
 }
 
 func (service *GitHubConnection) CompleteInstallation(ctx context.Context, userID uuid.UUID, state string, externalID int64) (models.GitHubInstallationEntity, error) {
@@ -259,19 +295,23 @@ func (service *GitHubConnection) CompleteInstallation(ctx context.Context, userI
 	if err != nil {
 		return models.GitHubInstallationEntity{}, ErrGitHubSetupState
 	}
-	if _, err := models.GitHubAppSetupAttempt.LockUsable(ctx, service.db.Executor(), digest, models.GitHubSetupInstallation, instanceID, userID); err != nil {
+	attempt, err := models.GitHubAppSetupAttempt.LockUsable(ctx, service.db.Executor(), digest, models.GitHubSetupInstallation, instanceID, userID)
+	if err != nil {
 		return models.GitHubInstallationEntity{}, ErrGitHubSetupState
 	}
 	installation, err := service.synchronizeExternal(ctx, externalID)
 	if err != nil {
 		return models.GitHubInstallationEntity{}, err
 	}
+	if !matchesGitHubOwner(attempt, installation.AccountType, installation.AccountLogin) {
+		return models.GitHubInstallationEntity{}, errors.New("GitHub installed the App on a different account than the one selected")
+	}
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return models.GitHubInstallationEntity{}, err
 	}
 	defer tx.Rollback()
-	attempt, err := models.GitHubAppSetupAttempt.LockUsable(ctx, tx, digest, models.GitHubSetupInstallation, instanceID, userID)
+	attempt, err = models.GitHubAppSetupAttempt.LockUsable(ctx, tx, digest, models.GitHubSetupInstallation, instanceID, userID)
 	if err != nil {
 		return models.GitHubInstallationEntity{}, ErrGitHubSetupState
 	}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import GithubIcon from "@lucide/svelte/icons/git-fork";
-  import { Link, router, useForm } from "@inertiajs/svelte";
+  import { Link, useForm } from "@inertiajs/svelte";
 
   import ConfirmActionDialog from "@/Components/ConfirmActionDialog.svelte";
   import FormField from "@/Components/FormField.svelte";
@@ -48,7 +48,9 @@
     connection,
   }: { auth: { email: string }; connection: Connection } = $props();
   const setup = useForm({ ownerType: "personal", ownerLogin: "" });
+  const install = useForm({ ownerType: "personal", ownerLogin: "" });
   let setupDialogOpen = $state(false);
+  let installDialogOpen = $state(false);
   let activeAction = $state("");
   let archiveDialogOpen = $state(false);
   let archiveError = $state("");
@@ -62,6 +64,18 @@
     event.preventDefault();
     $setup.post(routes.gitHubAppSetup(), {
       onError: () => (setupDialogOpen = true),
+    });
+  }
+
+  function openInstallDialog() {
+    $install.reset();
+    installDialogOpen = true;
+  }
+
+  function startInstall(event: SubmitEvent) {
+    event.preventDefault();
+    $install.post(routes.gitHubInstall(), {
+      onError: () => (installDialogOpen = true),
     });
   }
 
@@ -87,13 +101,7 @@
   }
 
   function installAccount() {
-    if (activeAction) return;
-    activeAction = "install";
-    router.post(
-      routes.gitHubInstall(),
-      {},
-      { preserveScroll: true, onFinish: () => (activeAction = "") },
-    );
+    openInstallDialog();
   }
 
   function archiveApp() {
@@ -126,8 +134,7 @@
           <Button
             type="button"
             disabled={Boolean(activeAction)}
-            onclick={installAccount}
-            >{#if activeAction === "install"}<Spinner />{/if}Install account</Button
+            onclick={installAccount}>Install account</Button
           >
         {:else}
           <Button type="button" onclick={openSetupDialog}>Add GitHub App</Button
@@ -287,7 +294,9 @@
         <Dialog.Header
           ><Dialog.Title>Add GitHub App</Dialog.Title><Dialog.Description
             >GitHub returns the private key and webhook secret directly to
-            DeployCrate. Secret values are encrypted before persistence.</Dialog.Description
+            DeployCrate. The App is created as installable by any account so
+            personal and organization installations can share one connection.
+            Secret values are encrypted before persistence.</Dialog.Description
           ></Dialog.Header
         >
         <FormField label="App owner" error={$setup.errors.ownerType}>
@@ -323,6 +332,55 @@
             disabled={$setup.processing}
             aria-busy={$setup.processing}
             >{#if $setup.processing}<Spinner />{/if}Continue to GitHub</Button
+          ></Dialog.Footer
+        >
+      </form>
+    </Dialog.Content>
+  </Dialog.Root>
+
+  <Dialog.Root bind:open={installDialogOpen}>
+    <Dialog.Content class="sm:max-w-xl" showCloseButton={!$install.processing}>
+      <form class="grid gap-5" onsubmit={startInstall}>
+        <Dialog.Header
+          ><Dialog.Title>Install GitHub account</Dialog.Title
+          ><Dialog.Description
+            >Choose which GitHub account to install the App on. Installing on an
+            organization makes its repositories available to Applications.</Dialog.Description
+          ></Dialog.Header
+        >
+        <FormField label="Account type" error={$install.errors.ownerType}>
+          <NativeSelect.Root
+            bind:value={$install.ownerType}
+            class="w-full"
+            disabled={$install.processing}
+            ><NativeSelect.Option value="personal"
+              >Personal account</NativeSelect.Option
+            ><NativeSelect.Option value="organization"
+              >Organization</NativeSelect.Option
+            ></NativeSelect.Root
+          >
+        </FormField>
+        {#if $install.ownerType === "organization"}<FormField
+            label="Organization login"
+            error={$install.errors.ownerLogin}
+            ><Input
+              bind:value={$install.ownerLogin}
+              placeholder="acme"
+              required
+              disabled={$install.processing}
+            /></FormField
+          >{/if}
+        <Dialog.Footer
+          ><Button
+            type="button"
+            variant="outline"
+            disabled={$install.processing}
+            onclick={() => (installDialogOpen = false)}>Cancel</Button
+          ><Button
+            type="submit"
+            disabled={$install.processing}
+            aria-busy={$install.processing}
+            >{#if $install.processing}<Spinner />{/if}Continue to GitHub</Button
           ></Dialog.Footer
         >
       </form>

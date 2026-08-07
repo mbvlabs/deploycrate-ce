@@ -173,6 +173,26 @@ func (c *Client) ExchangeManifestCode(ctx context.Context, code string) (Manifes
 	return app, nil
 }
 
+func (c *Client) LookupAccount(ctx context.Context, auth AppAuthentication, login string) (Account, error) {
+	var account Account
+	login = strings.TrimSpace(login)
+	if login == "" || strings.ContainsAny(login, "/?#") {
+		return account, errors.New("GitHub account login is required")
+	}
+	jwt, err := appJWT(auth)
+	if err != nil {
+		return account, err
+	}
+	path := "/users/" + url.PathEscape(login)
+	if err := c.request(ctx, http.MethodGet, path, "Bearer "+jwt, nil, &account); err != nil {
+		return account, fmt.Errorf("look up GitHub account: %w", err)
+	}
+	if account.ID <= 0 || account.Login == "" || account.Type == "" {
+		return account, errors.New("GitHub returned an invalid account")
+	}
+	return account, nil
+}
+
 func (c *Client) GetInstallation(ctx context.Context, auth AppAuthentication, installationID int64) (Installation, error) {
 	var installation Installation
 	jwt, err := appJWT(auth)
