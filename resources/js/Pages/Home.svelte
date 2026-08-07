@@ -156,21 +156,21 @@
         <UsageDonut
           label="CPU"
           used={telemetry.cpu.used}
-          free={telemetry.cpu.free}
+          total={telemetry.cpu.used + telemetry.cpu.free}
           formatValue={formatPercent}
           available={telemetry.available}
         />
         <UsageDonut
           label="Memory"
           used={telemetry.memory.used}
-          free={telemetry.memory.free}
+          total={telemetry.memory.used + telemetry.memory.free}
           formatValue={formatBytes}
           available={telemetry.available}
         />
         <UsageDonut
           label="Storage"
           used={telemetry.storage.used}
-          free={telemetry.storage.free}
+          total={telemetry.storage.used + telemetry.storage.free}
           formatValue={formatBytes}
           available={telemetry.available}
         />

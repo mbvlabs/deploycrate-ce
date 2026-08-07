@@ -2,24 +2,25 @@
   let {
     label,
     used,
-    free,
+    total,
     formatValue,
     available = true,
   }: {
     label: string;
     used: number;
-    free: number;
+    total: number;
     formatValue: (value: number) => string;
     available?: boolean;
   } = $props();
 
-  const total = $derived(used + free);
   const usedPercent = $derived(
     available && total > 0
       ? Math.min(100, Math.max(0, (used / total) * 100))
       : 0,
   );
-  const freePercent = $derived(available && total > 0 ? 100 - usedPercent : 0);
+  const remainingPercent = $derived(
+    available && total > 0 ? 100 - usedPercent : 0,
+  );
 </script>
 
 <article class="border border-border bg-card/35 p-5">
@@ -28,7 +29,7 @@
     <span
       class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground"
     >
-      {available ? "Used / free" : "Unavailable"}
+      {available ? "Used / total" : "Unavailable"}
     </span>
   </div>
 
@@ -60,7 +61,7 @@
             stroke="currentColor"
             stroke-width="12"
             stroke-linecap="butt"
-            stroke-dasharray={`${usedPercent} ${freePercent}`}
+            stroke-dasharray={`${usedPercent} ${remainingPercent}`}
             class="text-primary"
           />
         {/if}
@@ -95,10 +96,10 @@
       <div>
         <dt class="flex items-center gap-2 text-xs text-muted-foreground">
           <span class="size-2 bg-muted"></span>
-          Free
+          Total
         </dt>
         <dd class="mt-1 text-sm font-medium">
-          {available ? formatValue(free) : "Unavailable"}
+          {available ? formatValue(total) : "Unavailable"}
         </dd>
       </div>
     </dl>
