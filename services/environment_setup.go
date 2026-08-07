@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"database/sql"
@@ -2626,7 +2627,35 @@ func promotionOverview(
 	if err != nil {
 		return false, "", nil, nil, err
 	}
-	return true, production.Name, &deployment.ID, &deployment.ReleaseID, nil
+	sourceRelease, err := models.Release.Find(ctx, exec, deployment.ReleaseID)
+	if err != nil {
+		return false, "", nil, nil, err
+	}
+	productionDeployment, err := models.Deployment.LatestSucceededForEnvironment(
+		ctx,
+		exec,
+		production.ID,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true, production.Name, &deployment.ID, &deployment.ReleaseID, nil
+	}
+	if err != nil {
+		return false, "", nil, nil, err
+	}
+	productionRelease, err := models.Release.Find(ctx, exec, productionDeployment.ReleaseID)
+	if err != nil {
+		return false, "", nil, nil, err
+	}
+	return !sameArtifact(sourceRelease, productionRelease), production.Name, &deployment.ID, &deployment.ReleaseID, nil
+}
+
+func sameArtifact(a, b models.ReleaseEntity) bool {
+	if len(a.ArtifactDigest) > 0 && len(b.ArtifactDigest) > 0 {
+		return bytes.Equal(a.ArtifactDigest, b.ArtifactDigest)
+	}
+	referenceA := strings.TrimSpace(a.ArtifactReference)
+	referenceB := strings.TrimSpace(b.ArtifactReference)
+	return referenceA != "" && referenceA == referenceB
 }
 
 func (service *EnvironmentSetup) StartBuild(

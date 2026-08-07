@@ -313,30 +313,17 @@
     </header>
 
     <section aria-labelledby="featured-environments-heading" class="space-y-4">
-      <div class="flex flex-wrap items-start justify-between gap-4">
-        <div>
-          <h2
-            id="featured-environments-heading"
-            class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground"
-          >
-            Primary environments
-          </h2>
-          <p class="mt-1 text-sm text-muted-foreground">
-            Open staging or production to deploy, inspect logs, and manage
-            configuration.
-          </p>
-        </div>
-        {#if staging?.canPromoteToProduction}
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={promotionProcessing}
-            aria-busy={promotionProcessing}
-            onclick={askToPromote}
-            >{#if promotionProcessing}<Spinner />{/if}Promote staging to
-            production</Button
-          >
-        {/if}
+      <div>
+        <h2
+          id="featured-environments-heading"
+          class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground"
+        >
+          Primary environments
+        </h2>
+        <p class="mt-1 text-sm text-muted-foreground">
+          Open staging or production to deploy, inspect logs, and manage
+          configuration.
+        </p>
       </div>
       <div class="grid gap-4 lg:grid-cols-2">
         {#each [{ kind: "staging", environment: staging }, { kind: "production", environment: production }] as featured (featured.kind)}
@@ -413,19 +400,29 @@
                   </div>
                 </Card.Content>
                 <Card.Footer
-                  class="flex items-center justify-between border-t border-border text-xs text-muted-foreground"
+                  class="flex items-center justify-between gap-3 border-t border-border text-xs text-muted-foreground"
                 >
                   <span
                     >{deployment
                       ? `${deployment.active ? "Serving" : label(deployment.status)} · ${short(deployment.sourceRevision || deployment.releaseId)}`
                       : "No deployments yet"}</span
                   >
-                  <StatusBadge
-                    status={healthy(environment) ? "ready" : "degraded"}
-                    label={healthy(environment)
-                      ? "Source ready"
-                      : "Source degraded"}
-                  />
+                  {#if environment.environmentKind === "staging"}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={!environment.canPromoteToProduction ||
+                        promotionProcessing}
+                      aria-busy={promotionProcessing}
+                      onclick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        askToPromote();
+                      }}
+                      >{#if promotionProcessing}<Spinner />{/if}Promote to
+                      production</Button
+                    >
+                  {/if}
                 </Card.Footer>
               </Card.Root>
             </Link>
@@ -745,8 +742,9 @@
     title="Promote staging to production?"
     description={`Create a new immutable production Release from the latest successful staging deployment (Release ${short(
       staging?.latestSuccessfulReleaseId ?? "",
-    )}) and queue its deployment to ${staging?.promotionTargetName ??
-      "production"}. The staging deployment is left unchanged.`}
+    )}) and queue its deployment to ${
+      staging?.promotionTargetName ?? "production"
+    }. The staging deployment is left unchanged.`}
     confirmLabel="Promote to production"
     processing={promotionProcessing}
     error={promotionError}
