@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -51,8 +52,20 @@ type DeploymentExecution struct {
 	workloads *WorkloadExecution
 }
 
-func NewDeploymentExecution(db storage.Pool, secrets *EnvironmentSecrets, builds *BuildExecution, caddy CaddyRouteService, workloads *WorkloadExecution) *DeploymentExecution {
-	return &DeploymentExecution{db: db, secrets: secrets, builds: builds, caddy: caddy, workloads: workloads}
+func NewDeploymentExecution(
+	db storage.Pool,
+	secrets *EnvironmentSecrets,
+	builds *BuildExecution,
+	caddy CaddyRouteService,
+	workloads *WorkloadExecution,
+) *DeploymentExecution {
+	return &DeploymentExecution{
+		db:        db,
+		secrets:   secrets,
+		builds:    builds,
+		caddy:     caddy,
+		workloads: workloads,
+	}
 }
 
 func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uuid.UUID) error {
@@ -67,32 +80,72 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
 		now := time.Now().UTC()
-		_ = models.Deployment.MarkFailed(persistCtx, service.db.Executor(), deploymentID, operationErr, now)
-		_ = models.Change.MarkFailed(persistCtx, service.db.Executor(), deployment.ChangeID, operationErr, now)
-		_, _ = service.db.Executor().NewUpdate().TableExpr("environment_target_states AS state").Set("state = 'failed'").
-			Set("applying_revision_id = NULL").Set("updated_at = ?", now).
-			Where("EXISTS (SELECT 1 FROM deployments deployment WHERE deployment.id = ? AND deployment.environment_target_id = state.environment_target_id)", deploymentID).Exec(persistCtx)
-		_, _ = service.db.Executor().NewUpdate().TableExpr("instances").Set("state = 'failed'").Set("updated_at = ?", now).
-			Where("deployment_id = ?", deploymentID).Where("state <> 'serving'").Exec(persistCtx)
-		_ = service.recordEvent(persistCtx, deploymentID, "failed", "failed", operationErr.Error(), operationErr)
+		_ = models.Deployment.MarkFailed(
+			persistCtx,
+			service.db.Executor(),
+			deploymentID,
+			operationErr,
+			now,
+		)
+		_ = models.Change.MarkFailed(
+			persistCtx,
+			service.db.Executor(),
+			deployment.ChangeID,
+			operationErr,
+			now,
+		)
+		_, _ = service.db.Executor().
+			NewUpdate().
+			TableExpr("environment_target_states AS state").
+			Set("state = 'failed'").
+			Set("applying_revision_id = NULL").
+			Set("updated_at = ?", now).
+			Where("EXISTS (SELECT 1 FROM deployments deployment WHERE deployment.id = ? AND deployment.environment_target_id = state.environment_target_id)", deploymentID).
+			Exec(persistCtx)
+		_, _ = service.db.Executor().
+			NewUpdate().
+			TableExpr("instances").
+			Set("state = 'failed'").
+			Set("updated_at = ?", now).
+			Where("deployment_id = ?", deploymentID).
+			Where("state <> 'serving'").
+			Exec(persistCtx)
+		_ = service.recordEvent(
+			persistCtx,
+			deploymentID,
+			"failed",
+			"failed",
+			operationErr.Error(),
+			operationErr,
+		)
 		return &PermanentDeploymentError{Err: operationErr}
 	}
 	scope, err := service.loadScope(ctx, deployment)
 	if err != nil {
 		return fail(err)
 	}
-	deployability, err := models.Environment.Deployability(ctx, service.db.Executor(), scope.Environment.ID)
+	deployability, err := models.Environment.Deployability(
+		ctx,
+		service.db.Executor(),
+		scope.Environment.ID,
+	)
 	if err != nil {
 		return err
 	}
 	if !deployability.Deployable {
-		return fail(fmt.Errorf("Environment is not deployable: %s", strings.Join(deployability.Missing, ", ")))
+		return fail(
+			fmt.Errorf(
+				"Environment is not deployable: %s",
+				strings.Join(deployability.Missing, ", "),
+			),
+		)
 	}
 	if err := service.advance(ctx, deploymentID, "resolving_secrets"); err != nil {
 		return err
 	}
 	if _, err := service.db.Executor().NewUpdate().TableExpr("environment_target_states").
-		Set("state = 'applying'").Set("applying_revision_id = ?", scope.Revision.ID).Set("updated_at = ?", time.Now().UTC()).
+		Set("state = 'applying'").
+		Set("applying_revision_id = ?", scope.Revision.ID).Set("updated_at = ?", time.Now().UTC()).
 		Where("environment_target_id = ?", scope.Target.ID).Exec(ctx); err != nil {
 		return err
 	}
@@ -100,7 +153,11 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	if err != nil {
 		return fail(fmt.Errorf("resolve exact Environment revision secrets: %w", err))
 	}
-	networkName, err := service.workloads.ReconcileNetwork(ctx, scope.Target.ServerID, scope.Environment.ID)
+	networkName, err := service.workloads.ReconcileNetwork(
+		ctx,
+		scope.Target.ServerID,
+		scope.Environment.ID,
+	)
 	if err != nil {
 		return err
 	}
@@ -109,14 +166,24 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		return fail(err)
 	}
 	for _, attachment := range resourceAttachments {
-		if err := service.workloads.ConnectResourceContainer(ctx, scope.Target.ServerID, scope.Environment.ID, attachment); err != nil {
+		if err := service.workloads.ConnectResourceContainer(
+			ctx,
+			scope.Target.ServerID,
+			scope.Environment.ID,
+			attachment,
+		); err != nil {
 			return fail(err)
 		}
 	}
 	if err := service.advance(ctx, deploymentID, "docker_candidate"); err != nil {
 		return err
 	}
-	credentials, err := service.builds.RegistryCredentials(ctx, scope.RegistryID, scope.RegistryCredentialID, scope.RegistryEndpoint)
+	credentials, err := service.builds.RegistryCredentials(
+		ctx,
+		scope.RegistryID,
+		scope.RegistryCredentialID,
+		scope.RegistryEndpoint,
+	)
 	if err != nil {
 		return err
 	}
@@ -135,7 +202,12 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		if err != nil {
 			return err
 		}
-		candidate, err := service.workloads.Find(ctx, scope.Target.ServerID, scope.Deployment.ID, instance.ID)
+		candidate, err := service.workloads.Find(
+			ctx,
+			scope.Target.ServerID,
+			scope.Deployment.ID,
+			instance.ID,
+		)
 		if err != nil {
 			return err
 		}
@@ -149,13 +221,33 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 				command = append(command, *process.Command)
 			}
 			command = append(command, process.Arguments...)
-			candidate, err = service.workloads.Run(ctx, scope.Target.ServerID, containerclient.WorkloadRunSpec{
-				ApplicationID: scope.ApplicationID, EnvironmentID: scope.Environment.ID, TargetID: scope.Target.ID, DeploymentID: scope.Deployment.ID,
-				InstanceID: instance.ID, ReleaseID: scope.Release.ID, ProcessName: instance.ProcessName, ProcessKind: instance.ProcessKind, ProcessReplica: instance.ReplicaKey,
-				ContainerName:  "dc-app-" + scope.Environment.ID.String() + "-" + scope.Deployment.ID.String() + "-" + instance.ProcessName + "-" + strings.ReplaceAll(instance.ReplicaKey, "/", "-"),
-				ImageReference: scope.Release.ArtifactReference, NetworkName: networkName, RestartPolicy: "unless-stopped",
-				ContainerPort: process.ContainerPort, Environment: environment, Command: command,
-			}, credentials)
+			candidate, err = service.workloads.Run(
+				ctx,
+				scope.Target.ServerID,
+				containerclient.WorkloadRunSpec{
+					ApplicationID:  scope.ApplicationID,
+					EnvironmentID:  scope.Environment.ID,
+					TargetID:       scope.Target.ID,
+					DeploymentID:   scope.Deployment.ID,
+					InstanceID:     instance.ID,
+					ReleaseID:      scope.Release.ID,
+					ProcessName:    instance.ProcessName,
+					ProcessKind:    instance.ProcessKind,
+					ProcessReplica: instance.ReplicaKey,
+					ContainerName: "dc-app-" + scope.Environment.ID.String() + "-" + scope.Deployment.ID.String() + "-" + instance.ProcessName + "-" + strings.ReplaceAll(
+						instance.ReplicaKey,
+						"/",
+						"-",
+					),
+					ImageReference: scope.Release.ArtifactReference,
+					NetworkName:    networkName,
+					RestartPolicy:  "unless-stopped",
+					ContainerPort:  process.ContainerPort,
+					Environment:    environment,
+					Command:        command,
+				},
+				credentials,
+			)
 			if err != nil {
 				return err
 			}
@@ -163,9 +255,13 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		ports := json.RawMessage(`{}`)
 		if includePort {
 			if candidate.HostAddress == "" || candidate.HostPort == 0 {
-				return errors.New("candidate web workload did not publish its target address and port")
+				return errors.New(
+					"candidate web workload did not publish its target address and port",
+				)
 			}
-			encoded, _ := json.Marshal(map[string]any{"host": candidate.HostAddress, "http": candidate.HostPort})
+			encoded, _ := json.Marshal(
+				map[string]any{"host": candidate.HostAddress, "http": candidate.HostPort},
+			)
 			ports = encoded
 		}
 		instanceState := "running"
@@ -173,11 +269,24 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 			instanceState = "failed"
 		}
 		now := time.Now().UTC()
-		if _, err := service.db.Executor().NewUpdate().TableExpr("instances").Set("external_id = ?", candidate.ID).Set("state = ?", instanceState).Set("ports = ?", ports).Set("observed_at = ?", now).Set("updated_at = ?", now).Where("id = ?", instance.ID).Exec(ctx); err != nil {
+		if _, err := service.db.Executor().
+			NewUpdate().
+			TableExpr("instances").
+			Set("external_id = ?", candidate.ID).
+			Set("state = ?", instanceState).
+			Set("ports = ?", ports).
+			Set("observed_at = ?", now).
+			Set("updated_at = ?", now).
+			Where("id = ?", instance.ID).
+			Exec(ctx); err != nil {
 			return err
 		}
 		if !candidate.Running {
-			return fmt.Errorf("candidate %s process %s exited during startup", process.Kind, process.Name)
+			return fmt.Errorf(
+				"candidate %s process %s exited during startup",
+				process.Kind,
+				process.Name,
+			)
 		}
 		candidates[instance.ID] = candidate
 		return nil
@@ -188,7 +297,12 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	}
 	webProcess, _ := scope.State.WebProcess()
 	webCandidate := candidates[scope.Instance.ID]
-	if err := waitForWorkloadHealth(ctx, webCandidate.HostAddress, webCandidate.HostPort, webProcess.HealthPath); err != nil {
+	if err := waitForWorkloadHealth(
+		ctx,
+		webCandidate.HostAddress,
+		webCandidate.HostPort,
+		webProcess.HealthPath,
+	); err != nil {
 		service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
 		return fail(err)
 	}
@@ -226,14 +340,24 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		for _, old := range previous {
 			weights[old.ID] = 0
 		}
-		if err := service.caddy.SwitchTraffic(ctx, route.ID, scope.Release.ID, weights); err != nil {
+		if err := service.caddy.SwitchTraffic(
+			ctx,
+			route.ID,
+			scope.Release.ID,
+			weights,
+		); err != nil {
 			return err
 		}
 	}
 	if err := service.caddy.Verify(ctx, route.ExternalID); err != nil {
 		return err
 	}
-	if err := waitForWorkloadHealth(ctx, webCandidate.HostAddress, webCandidate.HostPort, webProcess.HealthPath); err != nil {
+	if err := waitForWorkloadHealth(
+		ctx,
+		webCandidate.HostAddress,
+		webCandidate.HostPort,
+		webProcess.HealthPath,
+	); err != nil {
 		if !first && len(previous) > 0 {
 			rollback := map[uuid.UUID]int32{scope.Instance.ID: 0}
 			fallback := uuid.Nil
@@ -245,15 +369,26 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 			}
 			if fallback != uuid.Nil {
 				rollback[fallback] = 100
-				_ = service.caddy.SwitchTraffic(context.WithoutCancel(ctx), route.ID, previousRelease(previous, fallback), rollback)
+				_ = service.caddy.SwitchTraffic(
+					context.WithoutCancel(ctx),
+					route.ID,
+					previousRelease(previous, fallback),
+					rollback,
+				)
 				service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
-				_ = service.caddy.RemoveBackend(context.WithoutCancel(ctx), route.ID, scope.Instance.ID)
+				_ = service.caddy.RemoveBackend(
+					context.WithoutCancel(ctx),
+					route.ID,
+					scope.Instance.ID,
+				)
 			}
 		} else if first {
 			_ = service.caddy.DestroyManaged(context.WithoutCancel(ctx), route.ID)
 			service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
 		}
-		return fail(fmt.Errorf("workload health verification after route configuration failed: %w", err))
+		return fail(
+			fmt.Errorf("workload health verification after route configuration failed: %w", err),
+		)
 	}
 	if err := service.markSucceeded(ctx, scope, candidates); err != nil {
 		return err
@@ -263,32 +398,92 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		return err
 	}
 	for _, old := range previousFormation {
-		if err := service.workloads.Remove(ctx, scope.Target.ServerID, old.DeploymentID, old.ID); err != nil {
-			_ = service.recordEvent(ctx, deploymentID, "cleanup", "warning", "previous container cleanup will be retried", err)
+		if err := service.workloads.Remove(
+			ctx,
+			scope.Target.ServerID,
+			old.DeploymentID,
+			old.ID,
+		); err != nil {
+			_ = service.recordEvent(
+				ctx,
+				deploymentID,
+				"cleanup",
+				"warning",
+				"previous container cleanup will be retried",
+				err,
+			)
 			continue
 		}
 		if old.ProcessKind == models.EnvironmentProcessWeb {
 			if err := service.caddy.RemoveBackend(ctx, route.ID, old.ID); err != nil {
-				_ = service.recordEvent(ctx, deploymentID, "cleanup", "warning", "previous backend cleanup will be retried", err)
+				_ = service.recordEvent(
+					ctx,
+					deploymentID,
+					"cleanup",
+					"warning",
+					"previous backend cleanup will be retried",
+					err,
+				)
 				continue
 			}
 		}
 		now := time.Now().UTC()
-		_, _ = service.db.Executor().NewUpdate().TableExpr("instances").Set("state = 'removed'").Set("removed_at = ?", now).Set("updated_at = ?", now).Where("id = ?", old.ID).Exec(ctx)
+		_, _ = service.db.Executor().
+			NewUpdate().
+			TableExpr("instances").
+			Set("state = 'removed'").
+			Set("removed_at = ?", now).
+			Set("updated_at = ?", now).
+			Where("id = ?", old.ID).
+			Exec(ctx)
 	}
-	if err := cleanupUnroutedWorkloadInstances(ctx, service.db, service.workloads, scope.Target.ID); err != nil {
-		_ = service.recordEvent(ctx, deploymentID, "cleanup", "warning", "stale candidate cleanup will be retried", err)
+	if err := cleanupUnroutedWorkloadInstances(
+		ctx,
+		service.db,
+		service.workloads,
+		scope.Target.ID,
+	); err != nil {
+		_ = service.recordEvent(
+			ctx,
+			deploymentID,
+			"cleanup",
+			"warning",
+			"stale candidate cleanup will be retried",
+			err,
+		)
 	}
-	if err := service.workloads.PruneResourceContainers(ctx, scope.Target.ServerID, scope.Environment.ID, resourceAttachments); err != nil {
-		_ = service.recordEvent(ctx, deploymentID, "cleanup", "warning", "stale Resource network access cleanup will be retried", err)
+	if err := service.workloads.PruneResourceContainers(
+		ctx,
+		scope.Target.ServerID,
+		scope.Environment.ID,
+		resourceAttachments,
+	); err != nil {
+		_ = service.recordEvent(
+			ctx,
+			deploymentID,
+			"cleanup",
+			"warning",
+			"stale Resource network access cleanup will be retried",
+			err,
+		)
 	}
 	return nil
 }
 
-func (service *DeploymentExecution) advance(ctx context.Context, deploymentID uuid.UUID, step string) error {
+func (service *DeploymentExecution) advance(
+	ctx context.Context,
+	deploymentID uuid.UUID,
+	step string,
+) error {
 	now := time.Now().UTC()
-	if _, err := service.db.Executor().NewUpdate().TableExpr("deployments").Set("current_step = ?", step).
-		Set("updated_at = ?", now).Where("id = ?", deploymentID).Where("status = 'running'").Exec(ctx); err != nil {
+	if _, err := service.db.Executor().
+		NewUpdate().
+		TableExpr("deployments").
+		Set("current_step = ?", step).
+		Set("updated_at = ?", now).
+		Where("id = ?", deploymentID).
+		Where("status = 'running'").
+		Exec(ctx); err != nil {
 		return err
 	}
 	return service.recordEvent(ctx, deploymentID, "progress", "running", step, nil)
@@ -303,21 +498,46 @@ func previousRelease(instances []models.InstanceEntity, id uuid.UUID) uuid.UUID 
 	return uuid.Nil
 }
 
-func (service *DeploymentExecution) Fail(ctx context.Context, deploymentID uuid.UUID, operationErr error) error {
+func (service *DeploymentExecution) Fail(
+	ctx context.Context,
+	deploymentID uuid.UUID,
+	operationErr error,
+) error {
 	deployment, err := models.Deployment.Find(ctx, service.db.Executor(), deploymentID)
 	if err != nil || deployment.Status == "succeeded" || deployment.Status == "failed" {
 		return err
 	}
 	now := time.Now().UTC()
-	if err := models.Deployment.MarkFailed(ctx, service.db.Executor(), deployment.ID, operationErr, now); err != nil {
+	if err := models.Deployment.MarkFailed(
+		ctx,
+		service.db.Executor(),
+		deployment.ID,
+		operationErr,
+		now,
+	); err != nil {
 		return err
 	}
-	_, _ = service.db.Executor().NewUpdate().TableExpr("environment_target_states").Set("state = 'failed'").
-		Set("applying_revision_id = NULL").Set("updated_at = ?", now).Where("environment_target_id = ?", deployment.EnvironmentTargetID).Exec(ctx)
-	return models.Change.MarkFailed(ctx, service.db.Executor(), deployment.ChangeID, operationErr, now)
+	_, _ = service.db.Executor().
+		NewUpdate().
+		TableExpr("environment_target_states").
+		Set("state = 'failed'").
+		Set("applying_revision_id = NULL").
+		Set("updated_at = ?", now).
+		Where("environment_target_id = ?", deployment.EnvironmentTargetID).
+		Exec(ctx)
+	return models.Change.MarkFailed(
+		ctx,
+		service.db.Executor(),
+		deployment.ChangeID,
+		operationErr,
+		now,
+	)
 }
 
-func (service *DeploymentExecution) claim(ctx context.Context, id uuid.UUID) (models.DeploymentEntity, error) {
+func (service *DeploymentExecution) claim(
+	ctx context.Context,
+	id uuid.UUID,
+) (models.DeploymentEntity, error) {
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return models.DeploymentEntity{}, err
@@ -340,32 +560,50 @@ func (service *DeploymentExecution) claim(ctx context.Context, id uuid.UUID) (mo
 	return deployment, tx.Commit()
 }
 
-func (service *DeploymentExecution) loadScope(ctx context.Context, deployment models.DeploymentEntity) (deploymentScope, error) {
+func (service *DeploymentExecution) loadScope(
+	ctx context.Context,
+	deployment models.DeploymentEntity,
+) (deploymentScope, error) {
 	scope := deploymentScope{Deployment: deployment}
 	var err error
 	scope.Release, err = models.Release.Find(ctx, service.db.Executor(), deployment.ReleaseID)
 	if err != nil {
 		return scope, err
 	}
-	scope.Target, err = models.EnvironmentTarget.Find(ctx, service.db.Executor(), deployment.EnvironmentTargetID)
+	scope.Target, err = models.EnvironmentTarget.Find(
+		ctx,
+		service.db.Executor(),
+		deployment.EnvironmentTargetID,
+	)
 	if err != nil {
 		return scope, err
 	}
 	if scope.Target.DetachedAt.Valid || scope.Release.EnvironmentID != scope.Target.EnvironmentID {
-		return scope, errors.New("Deployment Release and target do not belong to the same active Environment")
+		return scope, errors.New(
+			"Deployment Release and target do not belong to the same active Environment",
+		)
 	}
-	scope.Environment, err = models.Environment.Find(ctx, service.db.Executor(), scope.Target.EnvironmentID)
+	scope.Environment, err = models.Environment.Find(
+		ctx,
+		service.db.Executor(),
+		scope.Target.EnvironmentID,
+	)
 	if err != nil || scope.Environment.ArchivedAt.Valid {
 		return scope, errors.New("Deployment Environment is unavailable")
 	}
-	setupComplete, err := models.Environment.SetupComplete(ctx, service.db.Executor(), scope.Environment.ID)
+	setupComplete, err := models.Environment.SetupComplete(
+		ctx,
+		service.db.Executor(),
+		scope.Environment.ID,
+	)
 	if err != nil || !setupComplete {
 		return scope, errors.New("Deployment Environment setup is incomplete")
 	}
 	scope.ApplicationID = scope.Environment.ApplicationID
 	err = service.db.Executor().NewSelect().Model(&scope.Revision).
 		Join("JOIN change_state_revisions AS association ON association.environment_state_revision_id = environment_state_revisions.id").
-		Where("association.change_id = ?", deployment.ChangeID).Where("association.role = 'result'").Limit(1).Scan(ctx)
+		Where("association.change_id = ?", deployment.ChangeID).
+		Where("association.role = 'result'").Limit(1).Scan(ctx)
 	if err != nil || scope.Revision.EnvironmentID != scope.Environment.ID {
 		return scope, errors.New("Deployment state revision is unavailable or mismatched")
 	}
@@ -374,12 +612,20 @@ func (service *DeploymentExecution) loadScope(ctx context.Context, deployment mo
 		return scope, err
 	}
 	var processSnapshot []models.EnvironmentProcessState
-	if json.Unmarshal(deployment.ProcessConfiguration, &processSnapshot) != nil || len(processSnapshot) == 0 {
+	if json.Unmarshal(deployment.ProcessConfiguration, &processSnapshot) != nil ||
+		len(processSnapshot) == 0 {
 		return scope, errors.New("Deployment process configuration snapshot is invalid")
 	}
 	processInputs := make([]models.EnvironmentProcessInput, 0, len(processSnapshot))
 	for _, process := range processSnapshot {
-		input := models.EnvironmentProcessInput{Name: process.Name, Kind: process.Kind, Command: process.Command, Arguments: process.Arguments, Replicas: process.Replicas, HealthPath: process.HealthPath}
+		input := models.EnvironmentProcessInput{
+			Name:       process.Name,
+			Kind:       process.Kind,
+			Command:    process.Command,
+			Arguments:  process.Arguments,
+			Replicas:   process.Replicas,
+			HealthPath: process.HealthPath,
+		}
 		if process.Kind == models.EnvironmentProcessWeb {
 			port := process.ContainerPort
 			input.ContainerPort = &port
@@ -394,13 +640,20 @@ func (service *DeploymentExecution) loadScope(ctx context.Context, deployment mo
 		return scope, errors.New("Deployment process configuration snapshot is invalid")
 	}
 	scope.State.Processes = processSnapshot
-	err = service.db.Executor().NewSelect().Model(&scope.Instances).Where("deployment_id = ?", deployment.ID).Where("removed_at IS NULL").OrderExpr("process_kind, process_name, replica_key").Scan(ctx)
+	err = service.db.Executor().
+		NewSelect().
+		Model(&scope.Instances).
+		Where("deployment_id = ?", deployment.ID).
+		Where("removed_at IS NULL").
+		OrderExpr("process_kind, process_name, replica_key").
+		Scan(ctx)
 	if err != nil || len(scope.Instances) == 0 {
 		return scope, errors.New("Deployment candidate formation is unavailable")
 	}
 	expectedInstances := make(map[string]string)
 	for _, process := range processSnapshot {
-		if process.Kind != models.EnvironmentProcessWeb && process.Kind != models.EnvironmentProcessWorker {
+		if process.Kind != models.EnvironmentProcessWeb &&
+			process.Kind != models.EnvironmentProcessWorker {
 			continue
 		}
 		for replica := int32(1); replica <= process.Replicas; replica++ {
@@ -412,15 +665,21 @@ func (service *DeploymentExecution) loadScope(ctx context.Context, deployment mo
 		}
 	}
 	if len(expectedInstances) != len(scope.Instances) {
-		return scope, errors.New("Deployment candidate formation does not match its process snapshot")
+		return scope, errors.New(
+			"Deployment candidate formation does not match its process snapshot",
+		)
 	}
 	for _, instance := range scope.Instances {
-		if instance.ReleaseID != scope.Release.ID || instance.EnvironmentTargetID != scope.Target.ID {
+		if instance.ReleaseID != scope.Release.ID ||
+			instance.EnvironmentTargetID != scope.Target.ID {
 			return scope, errors.New("Deployment candidate Instance is mismatched")
 		}
 		key := instance.ProcessName + "\x00" + instance.ReplicaKey
-		if expectedKind, exists := expectedInstances[key]; !exists || expectedKind != instance.ProcessKind {
-			return scope, errors.New("Deployment candidate formation does not match its process snapshot")
+		if expectedKind, exists := expectedInstances[key]; !exists ||
+			expectedKind != instance.ProcessKind {
+			return scope, errors.New(
+				"Deployment candidate formation does not match its process snapshot",
+			)
 		}
 		delete(expectedInstances, key)
 		if instance.ProcessKind == models.EnvironmentProcessWeb {
@@ -436,15 +695,29 @@ func (service *DeploymentExecution) loadScope(ctx context.Context, deployment mo
 	if len(expectedInstances) != 0 {
 		return scope, errors.New("Deployment candidate formation is incomplete")
 	}
-	scope.Domain, err = models.EnvironmentDomain.Find(ctx, service.db.Executor(), scope.State.Domain.ID)
-	if err != nil || scope.Domain.EnvironmentID != scope.Environment.ID || scope.Domain.ArchivedAt.Valid || !scope.Domain.IsPrimary || scope.Domain.Hostname != scope.State.Domain.Hostname {
+	scope.Domain, err = models.EnvironmentDomain.Find(
+		ctx,
+		service.db.Executor(),
+		scope.State.Domain.ID,
+	)
+	if err != nil || scope.Domain.EnvironmentID != scope.Environment.ID ||
+		scope.Domain.ArchivedAt.Valid ||
+		!scope.Domain.IsPrimary ||
+		scope.Domain.Hostname != scope.State.Domain.Hostname {
 		return scope, errors.New("Deployment primary domain is unavailable or mismatched")
 	}
-	err = service.db.Executor().NewSelect().Model(&scope.Runtime).Where("environment_id = ?", scope.Environment.ID).Limit(1).Scan(ctx)
-	if err != nil || scope.Runtime.Runtime != "go" || scope.Runtime.RestartPolicy != "unless-stopped" {
+	err = service.db.Executor().
+		NewSelect().
+		Model(&scope.Runtime).
+		Where("environment_id = ?", scope.Environment.ID).
+		Limit(1).
+		Scan(ctx)
+	if err != nil || scope.Runtime.Runtime != "go" ||
+		scope.Runtime.RestartPolicy != "unless-stopped" {
 		return scope, errors.New("Deployment Go runtime configuration is unavailable")
 	}
-	if scope.Release.RegistryResourceID != nil && scope.Release.RegistryCredentialID != nil && scope.Release.RegistryEndpoint.Valid {
+	if scope.Release.RegistryResourceID != nil && scope.Release.RegistryCredentialID != nil &&
+		scope.Release.RegistryEndpoint.Valid {
 		scope.RegistryID = *scope.Release.RegistryResourceID
 		scope.RegistryCredentialID = *scope.Release.RegistryCredentialID
 		scope.RegistryEndpoint = scope.Release.RegistryEndpoint.String
@@ -465,7 +738,12 @@ func (service *DeploymentExecution) loadScope(ctx context.Context, deployment mo
 	return scope, nil
 }
 
-func (service *DeploymentExecution) composeEnvironment(ctx context.Context, scope deploymentScope, secrets []ResolvedEnvironmentSecret, includePort bool) (map[string]string, []containerclient.ResourceContainerAttachment, error) {
+func (service *DeploymentExecution) composeEnvironment(
+	ctx context.Context,
+	scope deploymentScope,
+	secrets []ResolvedEnvironmentSecret,
+	includePort bool,
+) (map[string]string, []containerclient.ResourceContainerAttachment, error) {
 	values := map[string]string{
 		"DEPLOYCRATE_APPLICATION_ID": scope.ApplicationID.String(),
 		"DEPLOYCRATE_ENVIRONMENT_ID": scope.Environment.ID.String(),
@@ -480,7 +758,10 @@ func (service *DeploymentExecution) composeEnvironment(ctx context.Context, scop
 	}
 	put := func(key, value string) error {
 		if _, exists := values[key]; exists {
-			return fmt.Errorf("runtime variable %s conflicts with a platform or Resource value", key)
+			return fmt.Errorf(
+				"runtime variable %s conflicts with a platform or Resource value",
+				key,
+			)
 		}
 		values[key] = value
 		return nil
@@ -489,7 +770,11 @@ func (service *DeploymentExecution) composeEnvironment(ctx context.Context, scop
 		host string
 		port int32
 	}
-	attachments := make([]containerclient.ResourceContainerAttachment, 0, len(scope.State.Resources))
+	attachments := make(
+		[]containerclient.ResourceContainerAttachment,
+		0,
+		len(scope.State.Resources),
+	)
 	dockerURLs := make(map[string]dockerEndpoint)
 	dockerSecretValues := make(map[string]string)
 	resourceSecretKeys := make(map[uuid.UUID]map[string]struct{})
@@ -505,25 +790,47 @@ func (service *DeploymentExecution) composeEnvironment(ctx context.Context, scop
 		keys[descriptor.Key] = struct{}{}
 	}
 	for _, resourceState := range scope.State.Resources {
-		connection, err := models.EnvironmentResource.Find(ctx, service.db.Executor(), resourceState.EnvironmentResourceID)
-		if err != nil || connection.EnvironmentID != scope.Environment.ID || connection.ResourceID != resourceState.ResourceID || connection.ResourceEndpointID != resourceState.EndpointID || connection.ArchivedAt.Valid {
-			return nil, nil, errors.New("Environment Resource connection is unavailable or mismatched")
+		connection, err := models.EnvironmentResource.Find(
+			ctx,
+			service.db.Executor(),
+			resourceState.EnvironmentResourceID,
+		)
+		if err != nil || connection.EnvironmentID != scope.Environment.ID ||
+			connection.ResourceID != resourceState.ResourceID ||
+			connection.ResourceEndpointID != resourceState.EndpointID ||
+			connection.ArchivedAt.Valid {
+			return nil, nil, errors.New(
+				"Environment Resource connection is unavailable or mismatched",
+			)
 		}
 		resource, err := models.Resource.Find(ctx, service.db.Executor(), connection.ResourceID)
 		if err != nil || resource.ArchivedAt.Valid || resource.Engine() != resourceState.Kind {
 			return nil, nil, errors.New("Environment Resource is unavailable or mismatched")
 		}
-		endpoint, err := models.ResourceEndpoint.Find(ctx, service.db.Executor(), connection.ResourceEndpointID)
+		endpoint, err := models.ResourceEndpoint.Find(
+			ctx,
+			service.db.Executor(),
+			connection.ResourceEndpointID,
+		)
 		if err != nil || endpoint.ArchivedAt.Valid || endpoint.ResourceID != resource.ID {
-			return nil, nil, errors.New("Environment Resource endpoint is unavailable or mismatched")
+			return nil, nil, errors.New(
+				"Environment Resource endpoint is unavailable or mismatched",
+			)
 		}
-		if (connection.ResourceCredentialID == nil) != (resourceState.CredentialID == nil) || (connection.ResourceCredentialID != nil && *connection.ResourceCredentialID != *resourceState.CredentialID) {
+		if (connection.ResourceCredentialID == nil) != (resourceState.CredentialID == nil) ||
+			(connection.ResourceCredentialID != nil && *connection.ResourceCredentialID != *resourceState.CredentialID) {
 			return nil, nil, errors.New("Environment Resource credential projection is mismatched")
 		}
 		if connection.ResourceCredentialID != nil {
-			credential, err := models.ResourceCredential.Find(ctx, service.db.Executor(), *connection.ResourceCredentialID)
+			credential, err := models.ResourceCredential.Find(
+				ctx,
+				service.db.Executor(),
+				*connection.ResourceCredentialID,
+			)
 			if err != nil || credential.ArchivedAt.Valid || credential.ResourceID != resource.ID {
-				return nil, nil, errors.New("Environment Resource credential is unavailable or mismatched")
+				return nil, nil, errors.New(
+					"Environment Resource credential is unavailable or mismatched",
+				)
 			}
 		}
 		var projected *dockerEndpoint
@@ -534,22 +841,36 @@ func (service *DeploymentExecution) composeEnvironment(ctx context.Context, scop
 			OrderExpr("created_at").Limit(1).Scan(ctx)
 		if installationErr == nil {
 			if installation.ServerID != scope.Target.ServerID {
-				return nil, nil, errors.New("managed Resource is not installed on the Environment runtime Server")
+				return nil, nil, errors.New(
+					"managed Resource is not installed on the Environment runtime Server",
+				)
 			}
 			var configuration struct {
 				PortMappings []models.ResourceInstallationPortMapping `json:"portMappings"`
 			}
 			definition, supported := models.FindResourceEngine(resource.Engine())
-			if json.Unmarshal(installation.Configuration, &configuration) != nil || len(configuration.PortMappings) != 1 || !supported {
+			if json.Unmarshal(installation.Configuration, &configuration) != nil ||
+				len(configuration.PortMappings) != 1 ||
+				!supported {
 				return nil, nil, errors.New("Docker Resource installation port mapping is invalid")
 			}
 			mapping := configuration.PortMappings[0]
-			if mapping.HostPort != endpoint.Port || mapping.ContainerPort != definition.DefaultPort || mapping.Protocol != "tcp" {
-				return nil, nil, errors.New("Docker Resource endpoint does not match its container port mapping")
+			if mapping.HostPort != endpoint.Port ||
+				mapping.ContainerPort != definition.DefaultPort ||
+				mapping.Protocol != "tcp" {
+				return nil, nil, errors.New(
+					"Docker Resource endpoint does not match its container port mapping",
+				)
 			}
-			attachment := containerclient.ResourceContainerAttachment{InstallationID: installation.ID, ContainerName: installation.ContainerName}
+			attachment := containerclient.ResourceContainerAttachment{
+				InstallationID: installation.ID,
+				ContainerName:  installation.ContainerName,
+			}
 			attachments = append(attachments, attachment)
-			projected = &dockerEndpoint{host: installation.ContainerName, port: mapping.ContainerPort}
+			projected = &dockerEndpoint{
+				host: installation.ContainerName,
+				port: mapping.ContainerPort,
+			}
 			if len(resourceState.EnvironmentKeys) > 0 {
 				projectedSecretKeys := resourceSecretKeys[resourceState.EnvironmentResourceID]
 				if key := strings.TrimSpace(resourceState.EnvironmentKeys["host"]); key != "" {
@@ -579,7 +900,9 @@ func (service *DeploymentExecution) composeEnvironment(ctx context.Context, scop
 					dockerURLs[resourceState.Alias+"_URL"] = *projected
 				case resourceCredentialProjectionIndividualParts:
 				default:
-					return nil, nil, errors.New("Docker Resource credential projection is unsupported")
+					return nil, nil, errors.New(
+						"Docker Resource credential projection is unsupported",
+					)
 				}
 			}
 		} else if !errors.Is(installationErr, sql.ErrNoRows) {
@@ -607,7 +930,10 @@ func (service *DeploymentExecution) composeEnvironment(ctx context.Context, scop
 		if endpoint, exists := dockerURLs[secret.Key]; exists {
 			connectionURL, err := url.Parse(value)
 			if err != nil || connectionURL.Scheme == "" || connectionURL.User == nil {
-				return nil, nil, fmt.Errorf("Docker Resource connection URL %s is invalid", secret.Key)
+				return nil, nil, fmt.Errorf(
+					"Docker Resource connection URL %s is invalid",
+					secret.Key,
+				)
 			}
 			connectionURL.Host = net.JoinHostPort(endpoint.host, strconv.Itoa(int(endpoint.port)))
 			value = connectionURL.String()
@@ -619,11 +945,17 @@ func (service *DeploymentExecution) composeEnvironment(ctx context.Context, scop
 	return values, attachments, nil
 }
 
-func validateCandidateOwnership(candidate containerclient.WorkloadState, scope deploymentScope, instance models.InstanceEntity) error {
+func validateCandidateOwnership(
+	candidate containerclient.WorkloadState,
+	scope deploymentScope,
+	instance models.InstanceEntity,
+) error {
 	expected := map[string]string{
-		"com.deploycrate.application": scope.ApplicationID.String(), "com.deploycrate.environment": scope.Environment.ID.String(),
-		"com.deploycrate.target":     scope.Target.ID.String(),
-		"com.deploycrate.deployment": scope.Deployment.ID.String(), "com.deploycrate.instance": instance.ID.String(),
+		"com.deploycrate.application":               scope.ApplicationID.String(),
+		"com.deploycrate.environment":               scope.Environment.ID.String(),
+		"com.deploycrate.target":                    scope.Target.ID.String(),
+		"com.deploycrate.deployment":                scope.Deployment.ID.String(),
+		"com.deploycrate.instance":                  instance.ID.String(),
 		"com.deploycrate.release":                   scope.Release.ID.String(),
 		containerclient.WorkloadLabelProcessName:    instance.ProcessName,
 		containerclient.WorkloadLabelProcessKind:    instance.ProcessKind,
@@ -643,30 +975,59 @@ func validateCandidateOwnership(candidate containerclient.WorkloadState, scope d
 func waitForWorkloadHealth(ctx context.Context, host string, port int32, healthPath string) error {
 	deadline := time.NewTimer(90 * time.Second)
 	defer deadline.Stop()
+
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
+
 	check := func() bool {
 		address := net.JoinHostPort(host, strconv.Itoa(int(port)))
+
+		slog.InfoContext(
+			ctx,
+			"waitForWorkloadHealth",
+			"address",
+			address,
+			"health_path",
+			healthPath,
+			"port",
+			port,
+		)
+
 		if healthPath == "" {
 			connection, err := net.DialTimeout("tcp", address, time.Second)
 			if err == nil {
 				_ = connection.Close()
 				return true
 			}
+
 			return false
 		}
-		request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+address+healthPath, nil)
+
+		request, err := http.NewRequestWithContext(
+			ctx,
+			http.MethodGet,
+			"http://"+address+healthPath,
+			nil,
+		)
+		if err != nil {
+			return false
+		}
+
 		response, err := telemetry.NewHTTPClient(2 * time.Second).Do(request)
 		if err != nil {
 			return false
 		}
+
 		_ = response.Body.Close()
+
 		return response.StatusCode >= 200 && response.StatusCode < 400
 	}
+
 	for {
 		if check() {
 			return nil
 		}
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -677,19 +1038,48 @@ func waitForWorkloadHealth(ctx context.Context, host string, port int32, healthP
 	}
 }
 
-func (service *DeploymentExecution) prepareCaddy(ctx context.Context, scope deploymentScope) (models.CaddyRouteEntity, []models.InstanceEntity, bool, error) {
+func (service *DeploymentExecution) prepareCaddy(
+	ctx context.Context,
+	scope deploymentScope,
+) (models.CaddyRouteEntity, []models.InstanceEntity, bool, error) {
 	var route models.CaddyRouteEntity
-	err := service.db.Executor().NewSelect().Model(&route).Where("environment_target_id = ?", scope.Target.ID).
-		Where("environment_domain_id = ?", scope.Domain.ID).Where("removed_at IS NULL").OrderExpr("created_at").Limit(1).Scan(ctx)
+	err := service.db.Executor().
+		NewSelect().
+		Model(&route).
+		Where("environment_target_id = ?", scope.Target.ID).
+		Where("environment_domain_id = ?", scope.Domain.ID).
+		Where("removed_at IS NULL").
+		OrderExpr("created_at").
+		Limit(1).
+		Scan(ctx)
 	if errors.Is(err, sql.ErrNoRows) {
-		route, err = models.CaddyRoute.Create(ctx, service.db.Executor(), models.CreateCaddyRouteData{
-			ExternalID: "deploycrate_environment_" + strings.ReplaceAll(scope.Environment.ID.String(), "-", ""), State: "pending",
-			EnvironmentTargetID: scope.Target.ID, EnvironmentDomainID: scope.Domain.ID, ReleaseID: scope.Release.ID,
-		})
+		route, err = models.CaddyRoute.Create(
+			ctx,
+			service.db.Executor(),
+			models.CreateCaddyRouteData{
+				ExternalID: "deploycrate_environment_" + strings.ReplaceAll(
+					scope.Environment.ID.String(),
+					"-",
+					"",
+				),
+				State:               "pending",
+				EnvironmentTargetID: scope.Target.ID,
+				EnvironmentDomainID: scope.Domain.ID,
+				ReleaseID:           scope.Release.ID,
+			},
+		)
 		if err != nil {
 			return route, nil, false, err
 		}
-		_, err = models.CaddyRouteBackend.Create(ctx, service.db.Executor(), models.CreateCaddyRouteBackendData{Weight: 100, CaddyRouteID: route.ID, InstanceID: scope.Instance.ID})
+		_, err = models.CaddyRouteBackend.Create(
+			ctx,
+			service.db.Executor(),
+			models.CreateCaddyRouteBackendData{
+				Weight:       100,
+				CaddyRouteID: route.ID,
+				InstanceID:   scope.Instance.ID,
+			},
+		)
 		return route, nil, true, err
 	}
 	if err != nil {
@@ -698,12 +1088,19 @@ func (service *DeploymentExecution) prepareCaddy(ctx context.Context, scope depl
 	previous := make([]models.InstanceEntity, 0)
 	if err := service.db.Executor().NewSelect().Model(&previous).
 		Join("JOIN caddy_route_backends AS backend ON backend.instance_id = instances.id").
-		Where("backend.caddy_route_id = ?", route.ID).Where("backend.removed_at IS NULL").Where("instances.id <> ?", scope.Instance.ID).
-		Where("instances.removed_at IS NULL").OrderExpr("instances.created_at DESC").Scan(ctx); err != nil {
+		Where("backend.caddy_route_id = ?", route.ID).
+		Where("backend.removed_at IS NULL").Where("instances.id <> ?", scope.Instance.ID).
+		Where("instances.removed_at IS NULL").
+		OrderExpr("instances.created_at DESC").Scan(ctx); err != nil {
 		return route, nil, false, err
 	}
-	count, err := service.db.Executor().NewSelect().Model((*models.CaddyRouteBackendEntity)(nil)).Where("caddy_route_id = ?", route.ID).
-		Where("instance_id = ?", scope.Instance.ID).Where("removed_at IS NULL").Count(ctx)
+	count, err := service.db.Executor().
+		NewSelect().
+		Model((*models.CaddyRouteBackendEntity)(nil)).
+		Where("caddy_route_id = ?", route.ID).
+		Where("instance_id = ?", scope.Instance.ID).
+		Where("removed_at IS NULL").
+		Count(ctx)
 	if err != nil {
 		return route, nil, false, err
 	}
@@ -715,7 +1112,11 @@ func (service *DeploymentExecution) prepareCaddy(ctx context.Context, scope depl
 	return route, previous, false, nil
 }
 
-func (service *DeploymentExecution) markSucceeded(ctx context.Context, scope deploymentScope, candidates map[uuid.UUID]containerclient.WorkloadState) error {
+func (service *DeploymentExecution) markSucceeded(
+	ctx context.Context,
+	scope deploymentScope,
+	candidates map[uuid.UUID]containerclient.WorkloadState,
+) error {
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -740,26 +1141,67 @@ func (service *DeploymentExecution) markSucceeded(ctx context.Context, scope dep
 		}
 		ports := json.RawMessage(`{}`)
 		if instance.ProcessKind == models.EnvironmentProcessWeb {
-			encoded, _ := json.Marshal(map[string]any{"host": candidate.HostAddress, "http": candidate.HostPort})
+			encoded, _ := json.Marshal(
+				map[string]any{"host": candidate.HostAddress, "http": candidate.HostPort},
+			)
 			ports = encoded
 		}
-		if _, err := tx.NewUpdate().TableExpr("instances").Set("external_id = ?", candidate.ID).Set("state = 'serving'").Set("ports = ?", ports).Set("observed_at = ?", now).Set("updated_at = ?", now).Where("id = ?", instance.ID).Exec(ctx); err != nil {
+		if _, err := tx.NewUpdate().
+			TableExpr("instances").
+			Set("external_id = ?", candidate.ID).
+			Set("state = 'serving'").
+			Set("ports = ?", ports).
+			Set("observed_at = ?", now).
+			Set("updated_at = ?", now).
+			Where("id = ?", instance.ID).
+			Exec(ctx); err != nil {
 			return err
 		}
-		observedProcesses = append(observedProcesses, map[string]any{"instance_id": instance.ID, "container_id": candidate.ID, "image_id": candidate.ImageID, "process_name": instance.ProcessName, "process_kind": instance.ProcessKind, "replica_key": instance.ReplicaKey})
+		observedProcesses = append(
+			observedProcesses,
+			map[string]any{
+				"instance_id":  instance.ID,
+				"container_id": candidate.ID,
+				"image_id":     candidate.ImageID,
+				"process_name": instance.ProcessName,
+				"process_kind": instance.ProcessKind,
+				"replica_key":  instance.ReplicaKey,
+			},
+		)
 	}
-	encodedObserved, _ := json.Marshal(map[string]any{"schema_version": 2, "processes": observedProcesses})
+	encodedObserved, _ := json.Marshal(
+		map[string]any{"schema_version": 2, "processes": observedProcesses},
+	)
 	observed := json.RawMessage(encodedObserved)
-	if _, err := tx.NewUpdate().TableExpr("environment_target_states").Set("state = 'applied'").Set("observed_state = ?", observed).
-		Set("applying_revision_id = NULL").Set("applied_revision_id = ?", scope.Revision.ID).Set("observed_at = ?", now).Set("updated_at = ?", now).
-		Where("environment_target_id = ?", scope.Target.ID).Exec(ctx); err != nil {
+	if _, err := tx.NewUpdate().
+		TableExpr("environment_target_states").
+		Set("state = 'applied'").
+		Set("observed_state = ?", observed).
+		Set("applying_revision_id = NULL").
+		Set("applied_revision_id = ?", scope.Revision.ID).
+		Set("observed_at = ?", now).
+		Set("updated_at = ?", now).
+		Where("environment_target_id = ?", scope.Target.ID).
+		Exec(ctx); err != nil {
 		return err
 	}
-	if _, err := tx.NewUpdate().TableExpr("deployments").Set("status = 'succeeded'").Set("current_step = 'serving'").Set("finished_at = ?", now).
-		Set("error = NULL").Set("updated_at = ?", now).Where("id = ?", scope.Deployment.ID).Where("status = 'running'").Exec(ctx); err != nil {
+	if _, err := tx.NewUpdate().
+		TableExpr("deployments").
+		Set("status = 'succeeded'").
+		Set("current_step = 'serving'").
+		Set("finished_at = ?", now).
+		Set("error = NULL").
+		Set("updated_at = ?", now).
+		Where("id = ?", scope.Deployment.ID).
+		Where("status = 'running'").
+		Exec(ctx); err != nil {
 		return err
 	}
-	remaining, err := tx.NewSelect().TableExpr("deployments").Where("change_id = ?", scope.Deployment.ChangeID).Where("status <> 'succeeded'").Count(ctx)
+	remaining, err := tx.NewSelect().
+		TableExpr("deployments").
+		Where("change_id = ?", scope.Deployment.ChangeID).
+		Where("status <> 'succeeded'").
+		Count(ctx)
 	if err != nil {
 		return err
 	}
@@ -771,16 +1213,30 @@ func (service *DeploymentExecution) markSucceeded(ctx context.Context, scope dep
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return service.recordEvent(ctx, scope.Deployment.ID, "serving", "succeeded", "candidate is serving public traffic", nil)
+	return service.recordEvent(
+		ctx,
+		scope.Deployment.ID,
+		"serving",
+		"succeeded",
+		"candidate is serving public traffic",
+		nil,
+	)
 }
 
-func (service *DeploymentExecution) removeCandidateFormation(ctx context.Context, scope deploymentScope) {
+func (service *DeploymentExecution) removeCandidateFormation(
+	ctx context.Context,
+	scope deploymentScope,
+) {
 	for _, instance := range scope.Instances {
 		_ = service.workloads.Remove(ctx, scope.Target.ServerID, scope.Deployment.ID, instance.ID)
 	}
 }
 
-func (service *DeploymentExecution) stabilizeWorkers(ctx context.Context, scope deploymentScope, candidates map[uuid.UUID]containerclient.WorkloadState) error {
+func (service *DeploymentExecution) stabilizeWorkers(
+	ctx context.Context,
+	scope deploymentScope,
+	candidates map[uuid.UUID]containerclient.WorkloadState,
+) error {
 	timer := time.NewTimer(5 * time.Second)
 	defer timer.Stop()
 	select {
@@ -792,19 +1248,31 @@ func (service *DeploymentExecution) stabilizeWorkers(ctx context.Context, scope 
 		if instance.ProcessKind != models.EnvironmentProcessWorker {
 			continue
 		}
-		state, err := service.workloads.Find(ctx, scope.Target.ServerID, scope.Deployment.ID, instance.ID)
+		state, err := service.workloads.Find(
+			ctx,
+			scope.Target.ServerID,
+			scope.Deployment.ID,
+			instance.ID,
+		)
 		if err != nil {
 			return err
 		}
 		if !state.Exists || !state.Running {
-			return fmt.Errorf("worker process %s replica %s exited during stabilization", instance.ProcessName, instance.ReplicaKey)
+			return fmt.Errorf(
+				"worker process %s replica %s exited during stabilization",
+				instance.ProcessName,
+				instance.ReplicaKey,
+			)
 		}
 		candidates[instance.ID] = state
 	}
 	return nil
 }
 
-func (service *DeploymentExecution) previousFormation(ctx context.Context, previousWeb []models.InstanceEntity) ([]models.InstanceEntity, error) {
+func (service *DeploymentExecution) previousFormation(
+	ctx context.Context,
+	previousWeb []models.InstanceEntity,
+) ([]models.InstanceEntity, error) {
 	deploymentIDs := make([]uuid.UUID, 0, len(previousWeb))
 	seen := make(map[uuid.UUID]struct{})
 	for _, instance := range previousWeb {
@@ -817,13 +1285,29 @@ func (service *DeploymentExecution) previousFormation(ctx context.Context, previ
 		return []models.InstanceEntity{}, nil
 	}
 	instances := make([]models.InstanceEntity, 0)
-	err := service.db.Executor().NewSelect().Model(&instances).Where("deployment_id IN (?)", bun.In(deploymentIDs)).Where("removed_at IS NULL").OrderExpr("created_at, process_kind, process_name, replica_key").Scan(ctx)
+	err := service.db.Executor().
+		NewSelect().
+		Model(&instances).
+		Where("deployment_id IN (?)", bun.In(deploymentIDs)).
+		Where("removed_at IS NULL").
+		OrderExpr("created_at, process_kind, process_name, replica_key").
+		Scan(ctx)
 	return instances, err
 }
 
-func (service *DeploymentExecution) recordEvent(ctx context.Context, deploymentID uuid.UUID, eventType, status, message string, operationErr error) error {
+func (service *DeploymentExecution) recordEvent(
+	ctx context.Context,
+	deploymentID uuid.UUID,
+	eventType, status, message string,
+	operationErr error,
+) error {
 	var sequence int64
-	if err := service.db.Executor().NewSelect().TableExpr("deployment_events").ColumnExpr("COALESCE(MAX(sequence), 0) + 1").Where("deployment_id = ?", deploymentID).Scan(ctx, &sequence); err != nil {
+	if err := service.db.Executor().
+		NewSelect().
+		TableExpr("deployment_events").
+		ColumnExpr("COALESCE(MAX(sequence), 0) + 1").
+		Where("deployment_id = ?", deploymentID).
+		Scan(ctx, &sequence); err != nil {
 		return err
 	}
 	failure := sql.NullString{}
@@ -834,9 +1318,19 @@ func (service *DeploymentExecution) recordEvent(ctx context.Context, deploymentI
 		}
 		failure = sql.NullString{String: value, Valid: true}
 	}
-	_, err := models.DeploymentEvent.Create(ctx, service.db.Executor(), models.CreateDeploymentEventData{
-		Sequence: sequence, EventType: eventType, Status: sql.NullString{String: status, Valid: status != ""},
-		Message: message, Metadata: json.RawMessage(`{}`), Error: failure, OccurredAt: time.Now().UTC(), DeploymentID: deploymentID,
-	})
+	_, err := models.DeploymentEvent.Create(
+		ctx,
+		service.db.Executor(),
+		models.CreateDeploymentEventData{
+			Sequence:     sequence,
+			EventType:    eventType,
+			Status:       sql.NullString{String: status, Valid: status != ""},
+			Message:      message,
+			Metadata:     json.RawMessage(`{}`),
+			Error:        failure,
+			OccurredAt:   time.Now().UTC(),
+			DeploymentID: deploymentID,
+		},
+	)
 	return err
 }
