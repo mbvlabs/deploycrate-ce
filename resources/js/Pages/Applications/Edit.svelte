@@ -25,7 +25,9 @@
 </script>
 
 <svelte:head><title>Edit {application.name}</title></svelte:head>
-<DashboardLayout email={auth.email}
+<DashboardLayout
+  email={auth.email}
+  applicationNavigation={{ id: application.id, name: application.name }}
   ><form class="mx-auto max-w-2xl" onsubmit={submit}>
     <Card.Root
       ><Card.Header

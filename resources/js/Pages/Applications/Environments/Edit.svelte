@@ -172,7 +172,15 @@
 
 <svelte:head><title>Edit {environment.environment.name}</title></svelte:head>
 
-<DashboardLayout email={auth.email}>
+<DashboardLayout
+  email={auth.email}
+  environmentNavigation={{
+    applicationId: environment.applicationId,
+    applicationName: environment.applicationName,
+    id: environment.environment.id,
+    name: environment.environment.name,
+  }}
+>
   <form class="mx-auto max-w-4xl space-y-8" onsubmit={submit}>
     <header
       class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"

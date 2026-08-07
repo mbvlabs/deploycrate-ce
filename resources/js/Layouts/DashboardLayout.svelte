@@ -34,16 +34,32 @@
     systemManaged?: boolean;
   };
 
+  type ApplicationNavigation = {
+    id: string;
+    name: string;
+  };
+
+  type EnvironmentNavigation = {
+    applicationId: string;
+    applicationName: string;
+    id: string;
+    name: string;
+  };
+
   let {
     children,
     email,
     version,
     resourceNavigation = null,
+    applicationNavigation = null,
+    environmentNavigation = null,
   }: {
     children: Snippet;
     email: string;
     version?: string;
     resourceNavigation?: ResourceNavigation | null;
+    applicationNavigation?: ApplicationNavigation | null;
+    environmentNavigation?: EnvironmentNavigation | null;
   } = $props();
   const appVersion = $derived(
     version ?? String($page.props.appVersion ?? "dev"),
@@ -79,6 +95,100 @@
   function contextualResourceURL(section: string) {
     return contextualResourceRoutes?.[section] ?? routes.resources();
   }
+  const contextualApplicationRoutes = $derived.by(
+    (): Record<string, string> | null => {
+      if (!applicationNavigation) return null;
+      return {
+        overview: routes.applicationShow(applicationNavigation.id),
+        settings: routes.applicationEdit(applicationNavigation.id),
+        source: routes.applicationSourceEdit(applicationNavigation.id),
+      };
+    },
+  );
+  const sidebarApplication = $derived.by((): ApplicationNavigation | null => {
+    if (applicationNavigation) return applicationNavigation;
+    if (environmentNavigation)
+      return {
+        id: environmentNavigation.applicationId,
+        name: environmentNavigation.applicationName,
+      };
+    return null;
+  });
+  const sidebarApplicationRoutes = $derived.by(
+    (): Record<string, string> | null => {
+      if (!sidebarApplication) return null;
+      return {
+        overview: routes.applicationShow(sidebarApplication.id),
+        settings: routes.applicationEdit(sidebarApplication.id),
+        source: routes.applicationSourceEdit(sidebarApplication.id),
+      };
+    },
+  );
+  const contextualEnvironmentRoutes = $derived.by(
+    (): Record<string, string> | null => {
+      if (!environmentNavigation) return null;
+      return {
+        overview: routes.environmentShow(
+          environmentNavigation.applicationId,
+          environmentNavigation.id,
+        ),
+        telemetry: routes.environmentTelemetry(
+          environmentNavigation.applicationId,
+          environmentNavigation.id,
+        ),
+        deployments: routes.environmentDeployments(
+          environmentNavigation.applicationId,
+          environmentNavigation.id,
+        ),
+        builds: routes.environmentBuilds(
+          environmentNavigation.applicationId,
+          environmentNavigation.id,
+        ),
+        secrets: routes.environmentSecrets(
+          environmentNavigation.applicationId,
+          environmentNavigation.id,
+        ),
+        settings: routes.environmentEdit(
+          environmentNavigation.applicationId,
+          environmentNavigation.id,
+        ),
+        source: routes.environmentSourceEdit(
+          environmentNavigation.applicationId,
+          environmentNavigation.id,
+        ),
+      };
+    },
+  );
+  const contextualNavigation = $derived.by(() => {
+    if (resourceNavigation)
+      return { kind: "resource" as const, ...resourceNavigation };
+    if (environmentNavigation)
+      return { kind: "environment" as const, ...environmentNavigation };
+    if (applicationNavigation)
+      return { kind: "application" as const, ...applicationNavigation };
+    return null;
+  });
+  const contextualBack = $derived.by(() => {
+    if (resourceNavigation)
+      return {
+        label: "All resources",
+        href: routes.resources(),
+        ariaLabel: "Back to all resources",
+      };
+    if (applicationNavigation)
+      return {
+        label: "All applications",
+        href: routes.applications(),
+        ariaLabel: "Back to all applications",
+      };
+    if (environmentNavigation)
+      return {
+        label: "All applications",
+        href: routes.applications(),
+        ariaLabel: "Back to all applications",
+      };
+    return null;
+  });
   const breadcrumbs = $derived.by(() => {
     const path = $page.url.split("?")[0];
     const leaf = path.endsWith("/new")
@@ -90,6 +200,52 @@
           : "Details";
 
     if (path === routes.homePage()) return [];
+    if (
+      applicationNavigation &&
+      contextualApplicationRoutes &&
+      Object.values(contextualApplicationRoutes).includes(path)
+    ) {
+      const sections: Record<string, string> = {
+        [contextualApplicationRoutes.overview]: "Overview",
+        [contextualApplicationRoutes.source]: "Source",
+        [contextualApplicationRoutes.settings]: "Settings",
+      };
+      return [
+        { label: "Applications", href: routes.applications() },
+        {
+          label: applicationNavigation.name,
+          href: contextualApplicationRoutes.overview,
+        },
+        { label: sections[path] },
+      ];
+    }
+    if (
+      environmentNavigation &&
+      contextualEnvironmentRoutes &&
+      Object.values(contextualEnvironmentRoutes).includes(path)
+    ) {
+      const sections: Record<string, string> = {
+        [contextualEnvironmentRoutes.overview]: "Overview",
+        [contextualEnvironmentRoutes.telemetry]: "Telemetry",
+        [contextualEnvironmentRoutes.deployments]: "Deployments",
+        [contextualEnvironmentRoutes.builds]: "Builds",
+        [contextualEnvironmentRoutes.secrets]: "Secrets",
+        [contextualEnvironmentRoutes.source]: "Source",
+        [contextualEnvironmentRoutes.settings]: "Settings",
+      };
+      return [
+        { label: "Applications", href: routes.applications() },
+        {
+          label: environmentNavigation.applicationName,
+          href: routes.applicationShow(environmentNavigation.applicationId),
+        },
+        {
+          label: environmentNavigation.name,
+          href: contextualEnvironmentRoutes.overview,
+        },
+        { label: sections[path] },
+      ];
+    }
     if (environmentPage)
       return [
         { label: "Applications", href: routes.applications() },
@@ -220,15 +376,15 @@
     <Sidebar.Header
       class="h-14 justify-center border-b border-sidebar-border p-1"
     >
-      {#if resourceNavigation}
+      {#if contextualBack}
         <Link
-          href={routes.resources()}
+          href={contextualBack.href}
           class="flex h-12 w-full items-center gap-2 px-3 text-sm font-medium group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
-          aria-label="Back to all resources"
+          aria-label={contextualBack.ariaLabel}
         >
           <ArrowLeftIcon class="size-4 shrink-0" />
           <span class="truncate group-data-[collapsible=icon]:hidden"
-            >All resources</span
+            >{contextualBack.label}</span
           >
         </Link>
       {:else}
@@ -245,127 +401,289 @@
     </Sidebar.Header>
 
     <Sidebar.Content>
-      {#if resourceNavigation}
-        <Sidebar.Group>
-          <Sidebar.GroupLabel class="truncate" title={resourceNavigation.name}
-            >{resourceNavigation.name}</Sidebar.GroupLabel
-          >
-          <Sidebar.GroupContent>
-            <Sidebar.Menu>
-              <Sidebar.MenuItem>
-                <Sidebar.MenuButton
-                  isActive={$page.url.split("?")[0] ===
-                    contextualResourceURL("overview")}
-                  tooltipContent="Overview"
-                >
-                  {#snippet child({ props })}<Link
-                      {...props}
-                      href={contextualResourceURL("overview")}
-                      ><LayoutDashboardIcon /><span>Overview</span></Link
-                    >{/snippet}
-                </Sidebar.MenuButton>
-              </Sidebar.MenuItem>
-              {#if resourceNavigation.resourceType === "database" && !resourceNavigation.systemManaged}
+      {#if contextualNavigation}
+        {#if contextualNavigation.kind === "resource"}
+          <Sidebar.Group>
+            <Sidebar.GroupLabel
+              class="truncate"
+              title={resourceNavigation?.name}
+              >{resourceNavigation?.name}</Sidebar.GroupLabel
+            >
+            <Sidebar.GroupContent>
+              <Sidebar.Menu>
                 <Sidebar.MenuItem>
                   <Sidebar.MenuButton
                     isActive={$page.url.split("?")[0] ===
-                      contextualResourceURL("databases")}
-                    tooltipContent="Databases"
+                      contextualResourceURL("overview")}
+                    tooltipContent="Overview"
                   >
                     {#snippet child({ props })}<Link
                         {...props}
-                        href={contextualResourceURL("databases")}
-                        ><DatabaseIcon /><span>Databases</span></Link
+                        href={contextualResourceURL("overview")}
+                        ><LayoutDashboardIcon /><span>Overview</span></Link
                       >{/snippet}
                   </Sidebar.MenuButton>
                 </Sidebar.MenuItem>
-              {/if}
-              {#if resourceNavigation.resourceType === "database"}
+                {#if resourceNavigation.resourceType === "database" && !resourceNavigation.systemManaged}
+                  <Sidebar.MenuItem>
+                    <Sidebar.MenuButton
+                      isActive={$page.url.split("?")[0] ===
+                        contextualResourceURL("databases")}
+                      tooltipContent="Databases"
+                    >
+                      {#snippet child({ props })}<Link
+                          {...props}
+                          href={contextualResourceURL("databases")}
+                          ><DatabaseIcon /><span>Databases</span></Link
+                        >{/snippet}
+                    </Sidebar.MenuButton>
+                  </Sidebar.MenuItem>
+                {/if}
+                {#if resourceNavigation.resourceType === "database"}
+                  <Sidebar.MenuItem>
+                    <Sidebar.MenuButton
+                      isActive={$page.url.split("?")[0] ===
+                        contextualResourceURL("backups")}
+                      tooltipContent="Backups"
+                    >
+                      {#snippet child({ props })}<Link
+                          {...props}
+                          href={contextualResourceURL("backups")}
+                          ><CloudIcon /><span>Backups</span></Link
+                        >{/snippet}
+                    </Sidebar.MenuButton>
+                  </Sidebar.MenuItem>
+                {/if}
                 <Sidebar.MenuItem>
                   <Sidebar.MenuButton
                     isActive={$page.url.split("?")[0] ===
-                      contextualResourceURL("backups")}
-                    tooltipContent="Backups"
+                      contextualResourceURL("endpoints")}
+                    tooltipContent="Endpoints"
                   >
                     {#snippet child({ props })}<Link
                         {...props}
-                        href={contextualResourceURL("backups")}
-                        ><CloudIcon /><span>Backups</span></Link
+                        href={contextualResourceURL("endpoints")}
+                        ><NetworkIcon /><span>Endpoints</span></Link
                       >{/snippet}
                   </Sidebar.MenuButton>
                 </Sidebar.MenuItem>
-              {/if}
-              <Sidebar.MenuItem>
-                <Sidebar.MenuButton
-                  isActive={$page.url.split("?")[0] ===
-                    contextualResourceURL("endpoints")}
-                  tooltipContent="Endpoints"
-                >
-                  {#snippet child({ props })}<Link
-                      {...props}
-                      href={contextualResourceURL("endpoints")}
-                      ><NetworkIcon /><span>Endpoints</span></Link
-                    >{/snippet}
-                </Sidebar.MenuButton>
-              </Sidebar.MenuItem>
-              <Sidebar.MenuItem>
-                <Sidebar.MenuButton
-                  isActive={$page.url.split("?")[0] ===
-                    contextualResourceURL("credentials")}
-                  tooltipContent="Credentials"
-                >
-                  {#snippet child({ props })}<Link
-                      {...props}
-                      href={contextualResourceURL("credentials")}
-                      ><KeyRoundIcon /><span>Credentials</span></Link
-                    >{/snippet}
-                </Sidebar.MenuButton>
-              </Sidebar.MenuItem>
-              <Sidebar.MenuItem>
-                <Sidebar.MenuButton
-                  isActive={$page.url.split("?")[0] ===
-                    contextualResourceURL("health")}
-                  tooltipContent="Health checks"
-                >
-                  {#snippet child({ props })}<Link
-                      {...props}
-                      href={contextualResourceURL("health")}
-                      ><ActivityIcon /><span>Health checks</span></Link
-                    >{/snippet}
-                </Sidebar.MenuButton>
-              </Sidebar.MenuItem>
-              {#if resourceNavigation.systemManaged}
                 <Sidebar.MenuItem>
                   <Sidebar.MenuButton
                     isActive={$page.url.split("?")[0] ===
-                      contextualResourceURL("access")}
-                    tooltipContent="Access"
+                      contextualResourceURL("credentials")}
+                    tooltipContent="Credentials"
                   >
                     {#snippet child({ props })}<Link
                         {...props}
-                        href={contextualResourceURL("access")}
-                        ><ShieldCheckIcon /><span>Access</span></Link
+                        href={contextualResourceURL("credentials")}
+                        ><KeyRoundIcon /><span>Credentials</span></Link
                       >{/snippet}
                   </Sidebar.MenuButton>
                 </Sidebar.MenuItem>
-              {:else}
                 <Sidebar.MenuItem>
                   <Sidebar.MenuButton
                     isActive={$page.url.split("?")[0] ===
-                      contextualResourceURL("settings")}
-                    tooltipContent="Settings"
+                      contextualResourceURL("health")}
+                    tooltipContent="Health checks"
                   >
                     {#snippet child({ props })}<Link
                         {...props}
-                        href={contextualResourceURL("settings")}
-                        ><SettingsIcon /><span>Settings</span></Link
+                        href={contextualResourceURL("health")}
+                        ><ActivityIcon /><span>Health checks</span></Link
                       >{/snippet}
                   </Sidebar.MenuButton>
                 </Sidebar.MenuItem>
-              {/if}
-            </Sidebar.Menu>
-          </Sidebar.GroupContent>
-        </Sidebar.Group>
+                {#if resourceNavigation.systemManaged}
+                  <Sidebar.MenuItem>
+                    <Sidebar.MenuButton
+                      isActive={$page.url.split("?")[0] ===
+                        contextualResourceURL("access")}
+                      tooltipContent="Access"
+                    >
+                      {#snippet child({ props })}<Link
+                          {...props}
+                          href={contextualResourceURL("access")}
+                          ><ShieldCheckIcon /><span>Access</span></Link
+                        >{/snippet}
+                    </Sidebar.MenuButton>
+                  </Sidebar.MenuItem>
+                {:else}
+                  <Sidebar.MenuItem>
+                    <Sidebar.MenuButton
+                      isActive={$page.url.split("?")[0] ===
+                        contextualResourceURL("settings")}
+                      tooltipContent="Settings"
+                    >
+                      {#snippet child({ props })}<Link
+                          {...props}
+                          href={contextualResourceURL("settings")}
+                          ><SettingsIcon /><span>Settings</span></Link
+                        >{/snippet}
+                    </Sidebar.MenuButton>
+                  </Sidebar.MenuItem>
+                {/if}
+              </Sidebar.Menu>
+            </Sidebar.GroupContent>
+          </Sidebar.Group>
+        {:else}
+          {#if sidebarApplication && sidebarApplicationRoutes}
+            <Sidebar.Group>
+              <Sidebar.GroupLabel
+                class="truncate"
+                title={sidebarApplication.name}
+                >{sidebarApplication.name}</Sidebar.GroupLabel
+              >
+              <Sidebar.GroupContent>
+                <Sidebar.Menu>
+                  <Sidebar.MenuItem>
+                    <Sidebar.MenuButton
+                      isActive={$page.url.split("?")[0] ===
+                        sidebarApplicationRoutes.overview}
+                      tooltipContent="Overview"
+                    >
+                      {#snippet child({ props })}<Link
+                          {...props}
+                          href={sidebarApplicationRoutes.overview}
+                          ><LayoutDashboardIcon /><span>Overview</span></Link
+                        >{/snippet}
+                    </Sidebar.MenuButton>
+                  </Sidebar.MenuItem>
+                  <Sidebar.MenuItem>
+                    <Sidebar.MenuButton
+                      isActive={$page.url.split("?")[0] ===
+                        sidebarApplicationRoutes.source}
+                      tooltipContent="Source"
+                    >
+                      {#snippet child({ props })}<Link
+                          {...props}
+                          href={sidebarApplicationRoutes.source}
+                          ><GithubIcon /><span>Source</span></Link
+                        >{/snippet}
+                    </Sidebar.MenuButton>
+                  </Sidebar.MenuItem>
+                  <Sidebar.MenuItem>
+                    <Sidebar.MenuButton
+                      isActive={$page.url.split("?")[0] ===
+                        sidebarApplicationRoutes.settings}
+                      tooltipContent="Settings"
+                    >
+                      {#snippet child({ props })}<Link
+                          {...props}
+                          href={sidebarApplicationRoutes.settings}
+                          ><SettingsIcon /><span>Settings</span></Link
+                        >{/snippet}
+                    </Sidebar.MenuButton>
+                  </Sidebar.MenuItem>
+                </Sidebar.Menu>
+              </Sidebar.GroupContent>
+            </Sidebar.Group>
+          {/if}
+
+          {#if environmentNavigation && contextualEnvironmentRoutes}
+            <Sidebar.Group>
+              <Sidebar.GroupLabel
+                class="truncate"
+                title={environmentNavigation.name}
+                >{environmentNavigation.name}</Sidebar.GroupLabel
+              >
+              <Sidebar.GroupContent>
+                <Sidebar.Menu>
+                  <Sidebar.MenuItem>
+                    <Sidebar.MenuButton
+                      isActive={$page.url.split("?")[0] ===
+                        contextualEnvironmentRoutes.overview}
+                      tooltipContent="Overview"
+                    >
+                      {#snippet child({ props })}<Link
+                          {...props}
+                          href={contextualEnvironmentRoutes.overview}
+                          ><LayoutDashboardIcon /><span>Overview</span></Link
+                        >{/snippet}
+                    </Sidebar.MenuButton>
+                  </Sidebar.MenuItem>
+                  <Sidebar.MenuItem>
+                    <Sidebar.MenuButton
+                      isActive={$page.url.split("?")[0] ===
+                        contextualEnvironmentRoutes.telemetry}
+                      tooltipContent="Telemetry"
+                    >
+                      {#snippet child({ props })}<Link
+                          {...props}
+                          href={contextualEnvironmentRoutes.telemetry}
+                          ><ActivityIcon /><span>Telemetry</span></Link
+                        >{/snippet}
+                    </Sidebar.MenuButton>
+                  </Sidebar.MenuItem>
+                  <Sidebar.MenuItem>
+                    <Sidebar.MenuButton
+                      isActive={$page.url.split("?")[0] ===
+                        contextualEnvironmentRoutes.deployments}
+                      tooltipContent="Deployments"
+                    >
+                      {#snippet child({ props })}<Link
+                          {...props}
+                          href={contextualEnvironmentRoutes.deployments}
+                          ><RouteIcon /><span>Deployments</span></Link
+                        >{/snippet}
+                    </Sidebar.MenuButton>
+                  </Sidebar.MenuItem>
+                  <Sidebar.MenuItem>
+                    <Sidebar.MenuButton
+                      isActive={$page.url.split("?")[0] ===
+                        contextualEnvironmentRoutes.builds}
+                      tooltipContent="Builds"
+                    >
+                      {#snippet child({ props })}<Link
+                          {...props}
+                          href={contextualEnvironmentRoutes.builds}
+                          ><ListTodoIcon /><span>Builds</span></Link
+                        >{/snippet}
+                    </Sidebar.MenuButton>
+                  </Sidebar.MenuItem>
+                  <Sidebar.MenuItem>
+                    <Sidebar.MenuButton
+                      isActive={$page.url.split("?")[0] ===
+                        contextualEnvironmentRoutes.secrets}
+                      tooltipContent="Secrets"
+                    >
+                      {#snippet child({ props })}<Link
+                          {...props}
+                          href={contextualEnvironmentRoutes.secrets}
+                          ><KeyRoundIcon /><span>Secrets</span></Link
+                        >{/snippet}
+                    </Sidebar.MenuButton>
+                  </Sidebar.MenuItem>
+                  <Sidebar.MenuItem>
+                    <Sidebar.MenuButton
+                      isActive={$page.url.split("?")[0] ===
+                        contextualEnvironmentRoutes.source}
+                      tooltipContent="Source"
+                    >
+                      {#snippet child({ props })}<Link
+                          {...props}
+                          href={contextualEnvironmentRoutes.source}
+                          ><GithubIcon /><span>Source</span></Link
+                        >{/snippet}
+                    </Sidebar.MenuButton>
+                  </Sidebar.MenuItem>
+                  <Sidebar.MenuItem>
+                    <Sidebar.MenuButton
+                      isActive={$page.url.split("?")[0] ===
+                        contextualEnvironmentRoutes.settings}
+                      tooltipContent="Settings"
+                    >
+                      {#snippet child({ props })}<Link
+                          {...props}
+                          href={contextualEnvironmentRoutes.settings}
+                          ><SettingsIcon /><span>Settings</span></Link
+                        >{/snippet}
+                    </Sidebar.MenuButton>
+                  </Sidebar.MenuItem>
+                </Sidebar.Menu>
+              </Sidebar.GroupContent>
+            </Sidebar.Group>
+          {/if}
+        {/if}
       {:else}
         <Sidebar.Group>
           <Sidebar.GroupLabel>Dashboard</Sidebar.GroupLabel>

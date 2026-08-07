@@ -28,6 +28,7 @@
     options,
     updateUrl,
     returnUrl,
+    navigation = "application",
   }: {
     auth: { email: string };
     application: any;
@@ -39,7 +40,23 @@
     };
     updateUrl: string;
     returnUrl: string;
+    navigation?: string;
   } = $props();
+  const applicationNavigation = $derived(
+    navigation === "application"
+      ? { id: application.id, name: application.name }
+      : null,
+  );
+  const environmentNavigation = $derived(
+    navigation === "environment"
+      ? {
+          applicationId: application.id,
+          applicationName: application.name,
+          id: application.environmentId,
+          name: application.environmentName,
+        }
+      : null,
+  );
   let buildFrontendAssets = $state(
     untrack(() => Boolean(application.buildpackSettings?.frontend)),
   );
@@ -88,7 +105,11 @@
 </script>
 
 <svelte:head><title>Edit source · {application.name}</title></svelte:head>
-<DashboardLayout email={auth.email}>
+<DashboardLayout
+  email={auth.email}
+  {applicationNavigation}
+  {environmentNavigation}
+>
   <form class="mx-auto max-w-3xl" onsubmit={submit}>
     <Card.Root
       ><Card.Header
