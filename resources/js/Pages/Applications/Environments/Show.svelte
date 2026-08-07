@@ -240,6 +240,10 @@
     releaseCommands: ReleaseCommand[];
     apiTokenPrefix: string;
     dns: DNSStatus;
+    canPromoteToProduction: boolean;
+    promotionTargetName: string;
+    latestSuccessfulDeploymentId?: string;
+    latestSuccessfulReleaseId?: string;
   };
   let {
     auth,
@@ -281,6 +285,9 @@
   let workloadLogsOpen = $state(true);
   let environmentLogViewport: HTMLDivElement;
   let activeReleaseDeployment = $state("");
+  let promotionDialogOpen = $state(false);
+  let promotionProcessing = $state(false);
+  let promotionError = $state("");
   let activeBuildAction = $state("");
   let buildActionDialogOpen = $state(false);
   let pendingBuildAction = $state<{
@@ -617,6 +624,37 @@
           expandedDeploymentId = "";
         },
         onFinish: () => (activeReleaseDeployment = ""),
+      },
+    );
+  }
+  function askToPromote() {
+    promotionError = "";
+    promotionDialogOpen = true;
+  }
+  function promoteToProduction() {
+    if (promotionProcessing) return;
+    promotionProcessing = true;
+    promotionError = "";
+    router.post(
+      routes.environmentPromoteToProduction(
+        environment.applicationId,
+        environment.environment.id,
+      ),
+      {},
+      {
+        preserveScroll: true,
+        onSuccess: () => {
+          promotionDialogOpen = false;
+          liveDeployments = null;
+          deploymentEvents = {};
+          deploymentEventCursors = {};
+          expandedDeploymentId = "";
+        },
+        onError: (errors) =>
+          (promotionError =
+            Object.values(errors).map(String).join("\n") ||
+            "The release could not be promoted to production."),
+        onFinish: () => (promotionProcessing = false),
       },
     );
   }
@@ -1604,6 +1642,28 @@
           ></Card.Header
         >
         <Card.Content class="space-y-2">
+          {#if environment.canPromoteToProduction}
+            <div
+              class="flex items-start justify-between gap-3 border border-primary/40 bg-primary/10 p-3 text-sm"
+            >
+              <div>
+                <p class="font-medium">Promote to production</p>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Promote the latest successful staging deployment (Release{" "}
+                  {short(environment.latestSuccessfulReleaseId ?? "")}) to{" "}
+                  {environment.promotionTargetName}, creating a new immutable
+                  production Release and queuing its deployment.
+                </p>
+              </div>
+              <Button
+                size="sm"
+                disabled={promotionProcessing}
+                aria-busy={promotionProcessing}
+                onclick={askToPromote}
+                >{#if promotionProcessing}<Spinner />{/if}Promote</Button
+              >
+            </div>
+          {/if}
           {#each environment.releases as release}
             <div class="border border-border p-3 text-sm">
               <div class="flex items-start justify-between gap-3">
@@ -1912,6 +1972,18 @@
     processing={apiTokenProcessing}
     error={apiTokenError}
     onconfirm={rotateAPIToken}
+  />
+
+  <ConfirmActionDialog
+    bind:open={promotionDialogOpen}
+    title="Promote to production?"
+    description={`Create a new immutable production Release from the latest successful staging deployment (Release ${short(
+      environment.latestSuccessfulReleaseId ?? "",
+    )}) and queue its deployment to ${environment.promotionTargetName}. The staging deployment is left unchanged.`}
+    confirmLabel="Promote to production"
+    processing={promotionProcessing}
+    error={promotionError}
+    onconfirm={promoteToProduction}
   />
 
   <Dialog.Root bind:open={rotateDialogOpen}>

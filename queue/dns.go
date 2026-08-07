@@ -51,6 +51,19 @@ func (worker *DNSReconciliationWorker) Work(ctx context.Context, job *river.Job[
 		); err != nil {
 			return err
 		}
+	} else if intent.TriggerType == services.ReleasePromoteTriggerType {
+		if intent.ActorID == nil {
+			return errors.New("promotion dispatch requires a user actor")
+		}
+		stagingEnvironmentID, err := uuid.Parse(intent.Reference)
+		if err != nil {
+			return err
+		}
+		if _, err := worker.environments.PromoteToProduction(
+			ctx, intent.ApplicationID, stagingEnvironmentID, *intent.ActorID,
+		); err != nil {
+			return err
+		}
 	} else {
 		if _, err := worker.environments.QueueSourceDeployment(
 			ctx, intent.ApplicationID, intent.EnvironmentID, intent.ActorID, intent.TriggerType, intent.Reference,

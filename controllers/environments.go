@@ -81,6 +81,7 @@ func (c Environments) RegisterRoutes(router *router.Router) error {
 		{http.MethodGet, routes.EnvironmentReleaseCommandLogs, c.ReleaseCommandLogs},
 		{http.MethodPost, routes.EnvironmentReleaseCommandRetry, c.RetryReleaseCommand},
 		{http.MethodPost, routes.EnvironmentDeploymentsCreate, c.Deploy},
+		{http.MethodPost, routes.EnvironmentPromoteToProduction, c.PromoteToProduction},
 		{http.MethodPost, routes.EnvironmentReleaseDeploymentsCreate, c.RedeployRelease},
 		{http.MethodPost, routes.EnvironmentDeploymentRetry, c.RetryDeployment},
 		{http.MethodPost, routes.EnvironmentAPITokenRotate, c.RotateAPIToken},
@@ -395,6 +396,39 @@ func (c Environments) RetryDeployment(etx *echo.Context) error {
 	)
 }
 
+func (c Environments) PromoteToProduction(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	var result services.PromotionResult
+	if err == nil {
+		result, err = c.envSetupSvc.PromoteToProduction(
+			etx.Request().Context(),
+			params.ApplicationID,
+			params.EnvironmentID,
+			cookies.ExtractFromCookieApp(etx).UserID,
+		)
+	}
+	if err != nil {
+		_ = cookies.AddFlash(etx, cookies.FlashError, err.Error())
+	} else if result.Deferred {
+		_ = cookies.AddFlash(
+			etx,
+			cookies.FlashSuccess,
+			"DNS reconciliation queued; promotion will complete when DNS is ready",
+		)
+	} else {
+		_ = cookies.AddFlash(
+			etx,
+			cookies.FlashSuccess,
+			"Staging release promoted to production; deployment queued",
+		)
+	}
+	return inertia.Redirect(
+		etx,
+		routes.EnvironmentShow.URL(params.routeParams()),
+		http.StatusSeeOther,
+	)
+}
+
 func (c Environments) Deploy(etx *echo.Context) error {
 	params, err := environmentPathParams(etx)
 	deferred := false
@@ -531,28 +565,32 @@ func environmentOverviewProps(overview services.EnvironmentOverview) map[string]
 			Name: overview.Environment.Name,
 			Kind: overview.Environment.Kind,
 		},
-		"setupComplete":    overview.SetupComplete,
-		"repository":       overview.Repository,
-		"reference":        overview.Reference,
-		"contextPath":      overview.ContextPath,
-		"registryName":     overview.RegistryName,
-		"registryEndpoint": overview.RegistryEndpoint,
-		"runtimeServerIds": overview.RuntimeServerIDs,
-		"runtimeTargetIds": overview.RuntimeTargetIDs,
-		"runtimeServers":   overview.RuntimeServers,
-		"deployability":    overview.Deployability,
-		"secrets":          overview.Secrets,
-		"variables":        overview.Variables,
-		"domain":           overview.Domain,
-		"resources":        overview.Resources,
-		"builds":           overview.Builds,
-		"releases":         overview.Releases,
-		"deployments":      overview.Deployments,
-		"instances":        overview.Instances,
-		"processes":        overview.Processes,
-		"releaseCommands":  overview.ReleaseCommands,
-		"apiTokenPrefix":   overview.APITokenPrefix,
-		"dns":              overview.DNS,
+		"setupComplete":                overview.SetupComplete,
+		"repository":                   overview.Repository,
+		"reference":                    overview.Reference,
+		"contextPath":                  overview.ContextPath,
+		"registryName":                 overview.RegistryName,
+		"registryEndpoint":             overview.RegistryEndpoint,
+		"runtimeServerIds":             overview.RuntimeServerIDs,
+		"runtimeTargetIds":             overview.RuntimeTargetIDs,
+		"runtimeServers":               overview.RuntimeServers,
+		"deployability":                overview.Deployability,
+		"secrets":                      overview.Secrets,
+		"variables":                    overview.Variables,
+		"domain":                       overview.Domain,
+		"resources":                    overview.Resources,
+		"builds":                       overview.Builds,
+		"releases":                     overview.Releases,
+		"deployments":                  overview.Deployments,
+		"instances":                    overview.Instances,
+		"processes":                    overview.Processes,
+		"releaseCommands":              overview.ReleaseCommands,
+		"apiTokenPrefix":               overview.APITokenPrefix,
+		"dns":                          overview.DNS,
+		"canPromoteToProduction":       overview.CanPromoteToProduction,
+		"promotionTargetName":          overview.PromotionTargetName,
+		"latestSuccessfulDeploymentId": overview.LatestSuccessfulDeploymentID,
+		"latestSuccessfulReleaseId":    overview.LatestSuccessfulReleaseID,
 	}
 }
 

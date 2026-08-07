@@ -29,6 +29,7 @@ const (
 	DNSModeCloudflare = "cloudflare"
 
 	ReleaseRedeployTriggerType = "release_redeploy"
+	ReleasePromoteTriggerType  = "release_promote"
 )
 
 type EnvironmentDNS struct {

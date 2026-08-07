@@ -39,6 +39,7 @@ export const routes = {
   environmentEdit: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/edit`,
   environmentLogs: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/logs`,
   environmentNew: (applicationID: string) => `/applications/${applicationID}/environments/new`,
+  environmentPromoteToProduction: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/promote-to-production`,
   environmentReleaseCommandLogs: (applicationID: string, environmentID: string, executionID: string) => `/applications/${applicationID}/environments/${environmentID}/release-commands/${executionID}/logs`,
   environmentReleaseCommandRetry: (applicationID: string, environmentID: string, executionID: string) => `/applications/${applicationID}/environments/${environmentID}/release-commands/${executionID}/retry`,
   environmentReleaseDeploymentsCreate: (applicationID: string, environmentID: string, releaseID: string) => `/applications/${applicationID}/environments/${environmentID}/releases/${releaseID}/deployments`,

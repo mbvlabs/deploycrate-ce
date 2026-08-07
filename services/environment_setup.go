@@ -238,32 +238,36 @@ type EnvironmentEditInput struct {
 }
 
 type EnvironmentOverview struct {
-	ApplicationID    uuid.UUID                           `json:"applicationId"`
-	ApplicationName  string                              `json:"applicationName"`
-	SourceType       string                              `json:"sourceType"`
-	Environment      models.EnvironmentEntity            `json:"environment"`
-	SetupComplete    bool                                `json:"setupComplete"`
-	Repository       string                              `json:"repository"`
-	Reference        string                              `json:"reference"`
-	ContextPath      string                              `json:"contextPath"`
-	RegistryName     string                              `json:"registryName"`
-	RegistryEndpoint string                              `json:"registryEndpoint"`
-	RuntimeServerIDs []uuid.UUID                         `json:"runtimeServerIds"`
-	RuntimeTargetIDs []uuid.UUID                         `json:"runtimeTargetIds"`
-	RuntimeServers   []string                            `json:"runtimeServers"`
-	Deployability    models.EnvironmentDeployability     `json:"deployability"`
-	Secrets          []EnvironmentSecretActivity         `json:"secrets"`
-	Variables        []EnvironmentVariableActivity       `json:"variables"`
-	Domain           string                              `json:"domain"`
-	Resources        []EnvironmentResourceActivity       `json:"resources"`
-	Builds           []EnvironmentBuildActivity          `json:"builds"`
-	Releases         []EnvironmentReleaseActivity        `json:"releases"`
-	Deployments      []EnvironmentDeploymentActivity     `json:"deployments"`
-	Instances        []EnvironmentInstanceActivity       `json:"instances"`
-	Processes        []models.EnvironmentProcessState    `json:"processes"`
-	ReleaseCommands  []EnvironmentReleaseCommandActivity `json:"releaseCommands"`
-	APITokenPrefix   string                              `json:"apiTokenPrefix"`
-	DNS              EnvironmentDNSStatus                `json:"dns"`
+	ApplicationID                uuid.UUID                           `json:"applicationId"`
+	ApplicationName              string                              `json:"applicationName"`
+	SourceType                   string                              `json:"sourceType"`
+	Environment                  models.EnvironmentEntity            `json:"environment"`
+	SetupComplete                bool                                `json:"setupComplete"`
+	Repository                   string                              `json:"repository"`
+	Reference                    string                              `json:"reference"`
+	ContextPath                  string                              `json:"contextPath"`
+	RegistryName                 string                              `json:"registryName"`
+	RegistryEndpoint             string                              `json:"registryEndpoint"`
+	RuntimeServerIDs             []uuid.UUID                         `json:"runtimeServerIds"`
+	RuntimeTargetIDs             []uuid.UUID                         `json:"runtimeTargetIds"`
+	RuntimeServers               []string                            `json:"runtimeServers"`
+	Deployability                models.EnvironmentDeployability     `json:"deployability"`
+	Secrets                      []EnvironmentSecretActivity         `json:"secrets"`
+	Variables                    []EnvironmentVariableActivity       `json:"variables"`
+	Domain                       string                              `json:"domain"`
+	Resources                    []EnvironmentResourceActivity       `json:"resources"`
+	Builds                       []EnvironmentBuildActivity          `json:"builds"`
+	Releases                     []EnvironmentReleaseActivity        `json:"releases"`
+	Deployments                  []EnvironmentDeploymentActivity     `json:"deployments"`
+	Instances                    []EnvironmentInstanceActivity       `json:"instances"`
+	Processes                    []models.EnvironmentProcessState    `json:"processes"`
+	ReleaseCommands              []EnvironmentReleaseCommandActivity `json:"releaseCommands"`
+	APITokenPrefix               string                              `json:"apiTokenPrefix"`
+	DNS                          EnvironmentDNSStatus                `json:"dns"`
+	CanPromoteToProduction       bool                                `json:"canPromoteToProduction"`
+	PromotionTargetName          string                              `json:"promotionTargetName"`
+	LatestSuccessfulDeploymentID *uuid.UUID                          `json:"latestSuccessfulDeploymentId,omitempty"`
+	LatestSuccessfulReleaseID    *uuid.UUID                          `json:"latestSuccessfulReleaseId,omitempty"`
 }
 
 type EnvironmentListItem struct {
@@ -630,6 +634,16 @@ func (service *EnvironmentSetup) Overview(
 		Scan(ctx, &releaseCommands); err != nil {
 		return EnvironmentOverview{}, err
 	}
+	canPromote, promotionTargetName, latestSuccessfulDeploymentID, latestSuccessfulReleaseID, err := service.promotionOverview(
+		ctx,
+		applicationID,
+		environmentID,
+		environment.Kind,
+		setupComplete,
+	)
+	if err != nil {
+		return EnvironmentOverview{}, err
+	}
 	return EnvironmentOverview{
 		ApplicationID:    applicationID,
 		ApplicationName:  source.ApplicationName,
@@ -657,6 +671,11 @@ func (service *EnvironmentSetup) Overview(
 		ReleaseCommands:  releaseCommands,
 		APITokenPrefix:   environment.APITokenPrefix.String,
 		DNS:              dnsStatus,
+
+		CanPromoteToProduction:       canPromote,
+		PromotionTargetName:          promotionTargetName,
+		LatestSuccessfulDeploymentID: latestSuccessfulDeploymentID,
+		LatestSuccessfulReleaseID:    latestSuccessfulReleaseID,
 	}, nil
 }
 
@@ -1642,6 +1661,14 @@ type ReleaseDeploymentResult struct {
 	DeploymentDeferred bool
 }
 
+type PromotionResult struct {
+	SourceDeployment models.DeploymentEntity
+	SourceRelease    models.ReleaseEntity
+	Release          models.ReleaseEntity
+	Deployment       models.DeploymentEntity
+	Deferred         bool
+}
+
 type resolvedImageArtifact struct {
 	Version              string
 	Reference            string
@@ -2311,6 +2338,292 @@ func (service *EnvironmentSetup) QueueReleaseDeployment(
 		return ReleaseDeploymentResult{}, err
 	}
 	return ReleaseDeploymentResult{Deployment: result.Deployment}, nil
+}
+
+func (service *EnvironmentSetup) PromoteToProduction(
+	ctx context.Context,
+	applicationID, stagingEnvironmentID, userID uuid.UUID,
+) (PromotionResult, error) {
+	staging, err := models.Environment.FindForApplication(
+		ctx,
+		service.db.Executor(),
+		applicationID,
+		stagingEnvironmentID,
+	)
+	if err != nil || staging.ArchivedAt.Valid {
+		return PromotionResult{}, errors.New("Environment is unavailable")
+	}
+	if !strings.EqualFold(strings.TrimSpace(staging.Kind), "staging") {
+		return PromotionResult{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("Only a staging Environment can be promoted to production"),
+		)
+	}
+	production, err := service.productionEnvironmentForApplication(ctx, applicationID)
+	if err != nil {
+		return PromotionResult{}, err
+	}
+	sourceDeployment, err := models.Deployment.LatestSucceededForEnvironment(
+		ctx,
+		service.db.Executor(),
+		staging.ID,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return PromotionResult{}, errors.Join(
+				models.ErrDomainValidation,
+				errors.New("No successful staging deployment is available to promote"),
+			)
+		}
+		return PromotionResult{}, err
+	}
+	sourceRelease, err := models.Release.Find(ctx, service.db.Executor(), sourceDeployment.ReleaseID)
+	if err != nil {
+		return PromotionResult{}, err
+	}
+	if !promotableRelease(sourceRelease, staging.ID) {
+		return PromotionResult{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("Latest successful staging deployment has no complete immutable artifact"),
+		)
+	}
+	deployability, err := models.Environment.Deployability(
+		ctx,
+		service.db.Executor(),
+		production.ID,
+	)
+	if err != nil {
+		return PromotionResult{}, err
+	}
+	blocking := make([]string, 0, len(deployability.Missing))
+	dnsPending := false
+	for _, missing := range deployability.Missing {
+		if missing == "managed_dns" {
+			dnsPending = true
+		} else {
+			blocking = append(blocking, missing)
+		}
+	}
+	if len(blocking) > 0 {
+		return PromotionResult{}, errors.Join(
+			models.ErrDomainValidation,
+			fmt.Errorf(
+				"Production environment is not deployable: %s",
+				strings.Join(blocking, ", "),
+			),
+		)
+	}
+	if dnsPending {
+		deferred, err := service.dns.PrepareDeployment(
+			ctx,
+			production.ID,
+			&userID,
+			ReleasePromoteTriggerType,
+			staging.ID.String(),
+		)
+		if err != nil {
+			return PromotionResult{}, err
+		}
+		if deferred {
+			return PromotionResult{Deferred: true}, nil
+		}
+	}
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return PromotionResult{}, err
+	}
+	defer tx.Rollback()
+	staging, err = models.Environment.Lock(ctx, tx, staging.ID)
+	if err != nil || staging.ApplicationID != applicationID || staging.ArchivedAt.Valid {
+		return PromotionResult{}, errors.New("Environment is unavailable")
+	}
+	if !strings.EqualFold(strings.TrimSpace(staging.Kind), "staging") {
+		return PromotionResult{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("Only a staging Environment can be promoted to production"),
+		)
+	}
+	production, err = models.Environment.Lock(ctx, tx, production.ID)
+	if err != nil || production.ApplicationID != applicationID || production.ArchivedAt.Valid {
+		return PromotionResult{}, errors.New("Production environment is unavailable")
+	}
+	sourceDeployment, err = models.Deployment.LatestSucceededForEnvironment(
+		ctx,
+		tx,
+		staging.ID,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return PromotionResult{}, errors.Join(
+				models.ErrDomainValidation,
+				errors.New("No successful staging deployment is available to promote"),
+			)
+		}
+		return PromotionResult{}, err
+	}
+	sourceRelease, err = models.Release.Find(ctx, tx, sourceDeployment.ReleaseID)
+	if err != nil {
+		return PromotionResult{}, err
+	}
+	if !promotableRelease(sourceRelease, staging.ID) {
+		return PromotionResult{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("Latest successful staging deployment has no complete immutable artifact"),
+		)
+	}
+	revision, err := models.EnvironmentStateRevision.LatestCommitted(ctx, tx, production.ID)
+	if err != nil {
+		return PromotionResult{}, err
+	}
+	var productionSourceID *uuid.UUID
+	var sourceID uuid.UUID
+	if err := tx.NewSelect().TableExpr("environment_sources").
+		ColumnExpr("id").
+		Where("environment_id = ?", production.ID).
+		Where("archived_at IS NULL").
+		OrderExpr("created_at DESC").
+		Limit(1).
+		Scan(ctx, &sourceID); err == nil {
+		productionSourceID = &sourceID
+	}
+	now := time.Now().UTC()
+	sequence, err := models.Change.NextSequence(ctx, tx, production.ID)
+	if err != nil {
+		return PromotionResult{}, err
+	}
+	change, err := models.Change.Create(ctx, tx, models.CreateChangeData{
+		Sequence:    sequence,
+		Kind:        "deploy",
+		TriggerType: "user",
+		ActorType:   "user",
+		ActorID:     &userID,
+		CauseSystem: sql.NullString{
+			String: "promotion",
+			Valid:  true,
+		},
+		CauseReference:    sql.NullString{String: sourceRelease.ID.String(), Valid: true},
+		CorrelationID:     uuid.New(),
+		CorrectionContext: json.RawMessage(`{}`),
+		Summary:           "Promote staging release to production",
+		Status:            "committed",
+		RequestedAt:       now,
+		CommittedAt:       sql.NullTime{Time: now, Valid: true},
+		EnvironmentID:     production.ID,
+	})
+	if err != nil {
+		return PromotionResult{}, err
+	}
+	release, err := models.Release.Create(ctx, tx, models.CreateReleaseData{
+		Version:              sourceRelease.Version,
+		SourceRevision:       sourceRelease.SourceRevision,
+		ArtifactReference:    sourceRelease.ArtifactReference,
+		ArtifactDigest:       sourceRelease.ArtifactDigest,
+		EnvironmentID:        production.ID,
+		EnvironmentSourceID:  productionSourceID,
+		BuildID:              sourceRelease.BuildID,
+		CreatedByChangeID:    change.ID,
+		RegistryResourceID:   sourceRelease.RegistryResourceID,
+		RegistryCredentialID: sourceRelease.RegistryCredentialID,
+		RegistryEndpoint:     sourceRelease.RegistryEndpoint,
+	})
+	if err != nil {
+		return PromotionResult{}, err
+	}
+	if _, err := models.ChangeRelease.Create(
+		ctx,
+		tx,
+		models.CreateChangeReleaseData{ChangeID: change.ID, ReleaseID: release.ID},
+	); err != nil {
+		return PromotionResult{}, err
+	}
+	if _, err := models.ChangeStateRevision.Create(
+		ctx,
+		tx,
+		models.CreateChangeStateRevisionData{
+			Role:                       "result",
+			ChangeID:                   change.ID,
+			EnvironmentStateRevisionID: revision.ID,
+		},
+	); err != nil {
+		return PromotionResult{}, err
+	}
+	result, err := service.releases.OrchestrateTx(ctx, tx, release, change, revision)
+	if err != nil {
+		return PromotionResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return PromotionResult{}, err
+	}
+	return PromotionResult{
+		SourceDeployment: sourceDeployment,
+		SourceRelease:    sourceRelease,
+		Release:          release,
+		Deployment:       result.Deployment,
+	}, nil
+}
+
+func promotableRelease(release models.ReleaseEntity, environmentID uuid.UUID) bool {
+	return release.EnvironmentID == environmentID &&
+		strings.TrimSpace(release.ArtifactReference) != "" &&
+		len(release.ArtifactDigest) > 0 &&
+		release.RegistryResourceID != nil &&
+		release.RegistryCredentialID != nil &&
+		release.RegistryEndpoint.Valid
+}
+
+func (service *EnvironmentSetup) productionEnvironmentForApplication(
+	ctx context.Context,
+	applicationID uuid.UUID,
+) (models.EnvironmentEntity, error) {
+	environments := make([]models.EnvironmentEntity, 0)
+	if err := service.db.Executor().NewSelect().Model(&environments).
+		Where("application_id = ?", applicationID).
+		Where("kind = ?", "production").
+		Where("archived_at IS NULL").
+		OrderExpr("created_at").
+		Scan(ctx); err != nil {
+		return models.EnvironmentEntity{}, err
+	}
+	if len(environments) == 0 {
+		return models.EnvironmentEntity{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("No production Environment is available to promote to"),
+		)
+	}
+	if len(environments) > 1 {
+		return models.EnvironmentEntity{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("Multiple production Environments exist; promotion target selection is not supported"),
+		)
+	}
+	return environments[0], nil
+}
+
+func (service *EnvironmentSetup) promotionOverview(
+	ctx context.Context,
+	applicationID, environmentID uuid.UUID,
+	kind string,
+	setupComplete bool,
+) (canPromote bool, targetName string, latestDeploymentID, latestReleaseID *uuid.UUID, err error) {
+	if !strings.EqualFold(strings.TrimSpace(kind), "staging") || !setupComplete {
+		return false, "", nil, nil, nil
+	}
+	production, err := service.productionEnvironmentForApplication(ctx, applicationID)
+	if err != nil {
+		return false, "", nil, nil, nil
+	}
+	deployment, err := models.Deployment.LatestSucceededForEnvironment(
+		ctx,
+		service.db.Executor(),
+		environmentID,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, production.Name, nil, nil, nil
+	}
+	if err != nil {
+		return false, "", nil, nil, err
+	}
+	return true, production.Name, &deployment.ID, &deployment.ReleaseID, nil
 }
 
 func (service *EnvironmentSetup) StartBuild(

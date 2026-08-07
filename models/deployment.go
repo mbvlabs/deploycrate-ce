@@ -74,6 +74,26 @@ func (d deployment) Lock(ctx context.Context, db storage.Executor, id uuid.UUID)
 	return entity, err
 }
 
+func (d deployment) LatestSucceededForEnvironment(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) (DeploymentEntity, error) {
+	var entity DeploymentEntity
+	if err := db.NewSelect().
+		Model(&entity).
+		Join("JOIN releases AS release ON release.id = deployments.release_id").
+		Where("release.environment_id = ?", environmentID).
+		Where("deployments.status = 'succeeded'").
+		OrderExpr("deployments.finished_at DESC NULLS LAST, deployments.created_at DESC").
+		Limit(1).
+		Scan(ctx); err != nil {
+		return DeploymentEntity{}, err
+	}
+	entity.RuntimeConfiguration = entity.ProcessConfiguration
+	return entity, nil
+}
+
 func (d deployment) MarkRunning(ctx context.Context, db storage.Executor, id uuid.UUID, step string, at time.Time) error {
 	_, err := db.NewUpdate().TableExpr("deployments").Set("status = 'running'").Set("current_step = ?", step).
 		Set("started_at = COALESCE(started_at, ?)", at).Set("finished_at = NULL").Set("error = NULL").
