@@ -818,6 +818,7 @@ func (c Environments) showSection(etx *echo.Context, section string) error {
 		Database:     clickhouseclient.DatabaseTelemetry{History: []clickhouseclient.DatabaseTelemetryPoint{}},
 		RecentTraces: []clickhouseclient.TraceSummary{},
 		Routes:       []clickhouseclient.RouteTelemetry{},
+		Queries:      []clickhouseclient.QueryTelemetry{},
 	}
 	if section == "telemetry" && openTelemetryAvailable {
 		applicationTelemetry, err = c.appTelemetrySvc.Snapshot(

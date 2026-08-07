@@ -32,6 +32,7 @@ type ApplicationTelemetry struct {
 	Database              DatabaseTelemetry           `json:"database"`
 	RecentTraces          []TraceSummary              `json:"recentTraces"`
 	Routes                []RouteTelemetry            `json:"routes"`
+	Queries               []QueryTelemetry            `json:"queries"`
 }
 
 type RouteTelemetry struct {
@@ -40,6 +41,14 @@ type RouteTelemetry struct {
 	RequestsPerSecond float64 `json:"requestsPerSecond"`
 	ErrorRate         float64 `json:"errorRate"`
 	P95DurationMS     float64 `json:"p95DurationMs"`
+}
+
+type QueryTelemetry struct {
+	Query          string  `json:"query"`
+	DatabaseSystem string  `json:"databaseSystem"`
+	Operation      string  `json:"operation"`
+	Executions     uint64  `json:"executions"`
+	P95DurationMS  float64 `json:"p95DurationMs"`
 }
 
 type ApplicationTelemetryPoint struct {
@@ -223,6 +232,7 @@ FORMAT JSONEachRow`, scope)
 		Database:     DatabaseTelemetry{History: []DatabaseTelemetryPoint{}},
 		RecentTraces: []TraceSummary{},
 		Routes:       []RouteTelemetry{},
+		Queries:      []QueryTelemetry{},
 	}
 	if len(requestRows) == 1 && requestRows[0].WindowSeconds > 0 {
 		row := requestRows[0]
@@ -270,6 +280,10 @@ FORMAT JSONEachRow`, scope)
 	result.Database = database
 	result.Routes = routes
 	result.RecentTraces, err = client.recentTraces(ctx, scope, since)
+	if err != nil {
+		return ApplicationTelemetry{}, err
+	}
+	result.Queries, err = client.slowQueries(ctx, scope, since)
 	if err != nil {
 		return ApplicationTelemetry{}, err
 	}
@@ -325,6 +339,7 @@ FROM
     AND MetricName IN ('http.server.request.duration', 'db.client.operation.duration')
     AND TimeUnix >= toDateTime({since_seconds:UInt32})
     AND (MetricName != 'http.server.request.duration' OR Attributes['http.route'] != '/api/health')
+	AND (MetricName != 'db.client.operation.duration' OR Attributes['pgx.operation.type'] IN ('query', 'batch'))
   GROUP BY bucket_start, metric, ResourceAttributes['service.instance.id'], cityHash64(Attributes), status, operation, route, method
   HAVING max(TimeUnix) > min(TimeUnix)
 )
@@ -395,6 +410,7 @@ FROM
   WHERE {{scope}}
     AND MetricName = 'db.client.operation.errors'
     AND TimeUnix >= toDateTime({since_seconds:UInt32})
+	AND Attributes['pgx.operation.type'] IN ('query', 'batch')
   GROUP BY bucket_start, ResourceAttributes['service.instance.id'], cityHash64(Attributes)
   HAVING max(TimeUnix) > min(TimeUnix)
 )
@@ -641,6 +657,69 @@ FORMAT JSONEachRow`, scope)
 		})
 	}
 	return result, nil
+}
+
+func (client Client) slowQueries(
+	ctx context.Context,
+	scope applicationTelemetryScope,
+	since time.Time,
+) ([]QueryTelemetry, error) {
+	query := telemetryQuery(`
+SELECT query, database_system, operation, toString(count()) AS executions,
+  quantile(0.95)(Duration) / 1000000.0 AS p95_duration_milliseconds
+FROM
+(
+  SELECT
+    if(
+      SpanAttributes['db.query.text'] != '',
+      SpanAttributes['db.query.text'],
+      SpanAttributes['db.statement']
+    ) AS query,
+    if(
+      SpanAttributes['db.system.name'] != '',
+      SpanAttributes['db.system.name'],
+      SpanAttributes['db.system']
+    ) AS database_system,
+    if(
+      SpanAttributes['db.operation.name'] != '',
+      SpanAttributes['db.operation.name'],
+      SpanAttributes['pgx.operation.type']
+    ) AS operation,
+    Duration
+  FROM otel_traces
+  WHERE {{scope}}
+    AND Timestamp >= toDateTime({since_seconds:UInt32})
+)
+WHERE query != ''
+GROUP BY query, database_system, operation
+ORDER BY p95_duration_milliseconds DESC, executions DESC, query
+LIMIT 20
+FORMAT JSONEachRow`, scope)
+	type slowQueryRow struct {
+		Query          string  `json:"query"`
+		DatabaseSystem string  `json:"database_system"`
+		Operation      string  `json:"operation"`
+		Executions     string  `json:"executions"`
+		P95DurationMS  float64 `json:"p95_duration_milliseconds"`
+	}
+	rows, err := queryJSONRows[slowQueryRow](ctx, client, query, scope.params(map[string]string{
+		"since_seconds": strconv.FormatInt(since.Unix(), 10),
+	}))
+	if err != nil {
+		return nil, err
+	}
+	queries := make([]QueryTelemetry, 0, len(rows))
+	for _, row := range rows {
+		executions, parseErr := strconv.ParseUint(row.Executions, 10, 64)
+		if parseErr != nil {
+			return nil, fmt.Errorf("decode ClickHouse slow query executions: %w", parseErr)
+		}
+		queries = append(queries, QueryTelemetry{
+			Query: row.Query, DatabaseSystem: row.DatabaseSystem, Operation: row.Operation,
+			Executions: executions, P95DurationMS: row.P95DurationMS,
+		})
+	}
+	return queries, nil
 }
 
 func (client Client) Trace(ctx context.Context, traceID string) ([]TraceSpan, error) {

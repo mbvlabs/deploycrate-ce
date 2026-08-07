@@ -134,15 +134,13 @@
 </script>
 
 <article class="w-full min-w-0 border border-border bg-card/35 p-6">
-  <div
-    class="flex w-full flex-col gap-3 sm:flex-row sm:items-start sm:justify-between"
-  >
-    <div class="sm:shrink-0">
+  <div class="flex w-full flex-col gap-3">
+    <div>
       <h3 class="text-base font-semibold sm:whitespace-nowrap">{label}</h3>
       <p class="mt-1 text-sm leading-5 text-muted-foreground">{description}</p>
     </div>
     <div
-      class="flex min-w-0 flex-wrap justify-end gap-x-5 gap-y-2 text-sm text-muted-foreground sm:flex-1"
+      class="flex min-w-0 flex-wrap gap-x-5 gap-y-2 text-sm text-muted-foreground"
     >
       {#each chart.series as item (item.key)}
         <span class="flex items-center gap-2">

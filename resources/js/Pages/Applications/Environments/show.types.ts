@@ -308,6 +308,14 @@ export type RouteTelemetry = {
   p95DurationMs: number;
 };
 
+export type QueryTelemetry = {
+  query: string;
+  databaseSystem: string;
+  operation: string;
+  executions: number;
+  p95DurationMs: number;
+};
+
 export type ApplicationTelemetry = {
   available: boolean;
   observedAt: string;
@@ -332,6 +340,7 @@ export type ApplicationTelemetry = {
   };
   recentTraces: TraceSummary[];
   routes: RouteTelemetry[];
+  queries: QueryTelemetry[];
 };
 
 export type OpenTelemetryLog = {

@@ -1,11 +1,10 @@
 <script lang="ts">
-  import { page } from "@inertiajs/svelte";
+  import { page, router } from "@inertiajs/svelte";
   import SearchIcon from "@lucide/svelte/icons/search";
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import TelemetryHistory from "@/Components/System/TelemetryHistory.svelte";
   import { Button } from "@/Components/ui/button";
   import * as Card from "@/Components/ui/card";
-  import * as Dialog from "@/Components/ui/dialog";
   import * as Empty from "@/Components/ui/empty";
   import { Input } from "@/Components/ui/input";
   import * as Table from "@/Components/ui/table";
@@ -19,7 +18,7 @@
     TraceSpan,
   } from "@/Pages/Applications/Environments/show.types";
 
-  type OpenTelemetryView = "insights" | "logs" | "traces";
+  type OpenTelemetryView = "insights" | "logs" | "traces" | "database";
   type ChartSeries = {
     label: string;
     points: Array<{ observedAt: string; value: number }>;
@@ -48,22 +47,26 @@
   let logQueryKey = $state("");
   let followingLogs = $state(true);
   let logViewport = $state<HTMLDivElement>();
-  let traceDialogOpen = $state(false);
-  let selectedTraceId = $state("");
   let traceSpans = $state<TraceSpan[]>([]);
   let traceLoading = $state(false);
   let traceError = $state("");
 
   const activeView = $derived.by<OpenTelemetryView>(() => {
     const view = new URLSearchParams($page.url.split("?")[1] ?? "").get("view");
-    return view === "logs" || view === "traces" ? view : "insights";
+    return view === "logs" || view === "traces" || view === "database"
+      ? view
+      : "insights";
   });
-  const telemetryHref = (view: OpenTelemetryView) => {
+  const focusedTraceId = $derived.by(
+    () => new URLSearchParams($page.url.split("?")[1] ?? "").get("trace") ?? "",
+  );
+  const telemetryHref = (view: OpenTelemetryView, traceId = "") => {
     const query = new URLSearchParams({
       source: "opentelemetry",
       view,
       range: telemetryRange,
     });
+    if (view === "traces" && traceId) query.set("trace", traceId);
     return `${routes.environmentTelemetry(applicationId, environmentId)}?${query.toString()}`;
   };
   const rangeLabel = $derived(
@@ -81,6 +84,7 @@
   const databaseHistory = $derived(telemetry.database?.history ?? []);
   const recentTraces = $derived(telemetry.recentTraces ?? []);
   const slowRoutes = $derived((telemetry.routes ?? []).slice(0, 20));
+  const slowQueries = $derived((telemetry.queries ?? []).slice(0, 20));
   const trafficSeries = $derived<ChartSeries[]>([
     {
       label: "Requests",
@@ -143,6 +147,34 @@
       })),
     },
   ]);
+  const databaseLatencySeries = $derived<ChartSeries[]>([
+    {
+      label: "p50",
+      points: databaseHistory.map((point) => ({
+        observedAt: point.observedAt,
+        value: point.p50DurationMs,
+      })),
+    },
+    {
+      label: "p95",
+      points: databaseHistory.map((point) => ({
+        observedAt: point.observedAt,
+        value: point.p95DurationMs,
+      })),
+    },
+    {
+      label: "p99",
+      points: databaseHistory.map((point) => ({
+        observedAt: point.observedAt,
+        value: point.p99DurationMs,
+      })),
+    },
+  ]);
+  const databaseSpans = $derived(
+    traceSpans.filter(
+      (span) => databaseSystem(span) !== "" || databaseQueryText(span) !== "",
+    ),
+  );
 
   const formatPerSecond = (value: number) =>
     `${value.toFixed(value < 1 ? 2 : 1)}/s`;
@@ -156,6 +188,20 @@
   const short = (value: string) => (value ? value.slice(0, 8) : "Unknown");
   const stamp = (value: string) =>
     value ? new Date(value).toLocaleString() : "Unknown";
+  function databaseSystem(span: TraceSpan) {
+    return (
+      span.spanAttributes?.["db.system.name"] ??
+      span.spanAttributes?.["db.system"] ??
+      ""
+    );
+  }
+  function databaseQueryText(span: TraceSpan) {
+    return (
+      span.spanAttributes?.["db.query.text"] ??
+      span.spanAttributes?.["db.statement"] ??
+      ""
+    );
+  }
   const logLevel = (log: OpenTelemetryLog) => {
     if (log.severity) return log.severity.toUpperCase();
     if (log.severityNumber >= 17) return "ERROR";
@@ -220,12 +266,7 @@
     return snapshot;
   }
 
-  async function loadTrace(traceId: string) {
-    selectedTraceId = traceId;
-    traceDialogOpen = true;
-    traceSpans = [];
-    traceError = "";
-    traceLoading = true;
+  async function loadTrace(traceId: string, signal: AbortSignal) {
     try {
       const response = await window.fetch(
         routes.environmentTelemetryTrace(applicationId, environmentId, traceId),
@@ -233,21 +274,19 @@
           cache: "no-store",
           credentials: "same-origin",
           headers: { Accept: "application/json" },
+          signal,
         },
       );
       if (!response.ok) throw new Error(`Trace returned ${response.status}`);
-      traceSpans = ((await response.json()) as { spans: TraceSpan[] }).spans;
+      const snapshot = (await response.json()) as { spans: TraceSpan[] };
+      if (signal.aborted) return;
+      traceSpans = snapshot.spans;
     } catch {
+      if (signal.aborted) return;
       traceError = "This trace could not be loaded.";
     } finally {
-      traceLoading = false;
+      if (!signal.aborted) traceLoading = false;
     }
-  }
-
-  function closeTrace() {
-    selectedTraceId = "";
-    traceSpans = [];
-    traceError = "";
   }
 
   function updateLogFollow() {
@@ -259,6 +298,20 @@
       48;
   }
 
+  function focusTrace(traceId: string) {
+    router.visit(telemetryHref("traces", traceId), {
+      preserveScroll: true,
+      preserveState: true,
+    });
+  }
+
+  function clearTraceFocus() {
+    router.visit(telemetryHref("traces"), {
+      preserveScroll: true,
+      preserveState: true,
+    });
+  }
+
   $effect(() => {
     const search = logSearchInput.trim();
     const timer = window.setTimeout(() => (logSearch = search), 300);
@@ -266,8 +319,8 @@
   });
 
   $effect(() => {
-    const nextQueryKey =
-      activeView === "logs" ? `${telemetryRange}:${logSearch}` : "";
+    if (activeView !== "logs") return;
+    const nextQueryKey = `${telemetryRange}:${logSearch}`;
     if (nextQueryKey === logQueryKey) return;
     logQueryKey = nextQueryKey;
     logs = [];
@@ -275,6 +328,19 @@
     logsLoaded = false;
     logConnectionError = "";
     followingLogs = true;
+  });
+
+  $effect(() => {
+    const traceId = focusedTraceId;
+    traceSpans = [];
+    traceError = "";
+    traceLoading = false;
+    if (!traceId) return;
+
+    traceLoading = true;
+    const abortController = new AbortController();
+    void loadTrace(traceId, abortController.signal);
+    return () => abortController.abort();
   });
 
   $effect(() => {
@@ -339,6 +405,11 @@
     size="sm"
     variant={activeView === "traces" ? "default" : "ghost"}
     href={telemetryHref("traces")}>Traces</Button
+  >
+  <Button
+    size="sm"
+    variant={activeView === "database" ? "default" : "ghost"}
+    href={telemetryHref("database")}>Database</Button
   >
 </nav>
 
@@ -479,16 +550,6 @@
         {/if}
       </Card.Content>
     </Card.Root>
-
-    {#if telemetry.database?.available || databaseHistory.length}
-      <TelemetryHistory
-        label="Database activity"
-        description="Instrumented database operations and errors"
-        series={databaseActivitySeries}
-        formatValue={formatPerSecond}
-        windowSeconds={rangeSeconds}
-      />
-    {/if}
   </div>
 {/if}
 
@@ -566,7 +627,7 @@
                   variant="link"
                   size="xs"
                   class="h-auto p-0 font-mono text-[10px]"
-                  onclick={() => loadTrace(log.traceId)}
+                  onclick={() => focusTrace(log.traceId)}
                   >{short(log.traceId)}</Button
                 >
               {/if}
@@ -622,137 +683,329 @@
 {/if}
 
 {#if activeView === "traces"}
-  <Card.Root>
-    <Card.Header>
-      <Card.Title>Recent traces</Card.Title>
-      <Card.Description
-        >Up to 100 environment traces from {rangeLabel}. Select a trace to
-        inspect all correlated spans.</Card.Description
-      >
-    </Card.Header>
-    <Card.Content>
-      {#if recentTraces.length}
-        <div class="overflow-x-auto border border-border">
-          <Table.Root class="min-w-[780px] text-xs">
-            <Table.Header>
-              <Table.Row>
-                <Table.Head>Started</Table.Head><Table.Head
-                  >Root span</Table.Head
-                >
-                <Table.Head>Duration</Table.Head><Table.Head>Spans</Table.Head>
-                <Table.Head>Errors</Table.Head><Table.Head>Trace</Table.Head>
-              </Table.Row>
-            </Table.Header>
-            <Table.Body>
-              {#each recentTraces as trace (trace.traceId)}
+  {#if focusedTraceId}
+    <Card.Root>
+      <Card.Header class="border-b border-border">
+        <Card.Action>
+          <Button variant="outline" size="sm" onclick={clearTraceFocus}
+            >Back to traces</Button
+          >
+        </Card.Action>
+        <Card.Title>Trace {focusedTraceId}</Card.Title>
+        <Card.Description
+          >Correlated spans across every service that contributed to this
+          environment trace.</Card.Description
+        >
+      </Card.Header>
+      <Card.Content>
+        {#if traceLoading}
+          <p class="py-6 text-sm text-muted-foreground">Loading trace...</p>
+        {:else if traceError}
+          <p class="py-6 text-sm text-destructive">{traceError}</p>
+        {:else if traceSpans.length}
+          <div class="overflow-x-auto border border-border">
+            <Table.Root class="min-w-[920px] text-xs">
+              <Table.Header>
                 <Table.Row>
-                  <Table.Cell class="whitespace-nowrap"
-                    >{stamp(trace.startedAt)}</Table.Cell
+                  <Table.Head>Started</Table.Head><Table.Head
+                    >Service</Table.Head
                   >
-                  <Table.Cell class="font-medium"
-                    >{trace.rootSpanName || "Unknown root span"}</Table.Cell
+                  <Table.Head>Span</Table.Head><Table.Head
+                    >Span ID / parent</Table.Head
                   >
-                  <Table.Cell>{formatSpanDuration(trace.durationNs)}</Table.Cell
+                  <Table.Head>Duration</Table.Head><Table.Head
+                    >Status</Table.Head
                   >
-                  <Table.Cell>{trace.spanCount}</Table.Cell>
-                  <Table.Cell
-                    class={trace.errorCount > 0
-                      ? "text-destructive"
-                      : undefined}>{trace.errorCount}</Table.Cell
-                  >
-                  <Table.Cell>
-                    <Button
-                      variant="link"
-                      size="xs"
-                      class="h-auto p-0 font-mono"
-                      onclick={() => loadTrace(trace.traceId)}
-                      >{short(trace.traceId)}</Button
-                    >
-                  </Table.Cell>
                 </Table.Row>
-              {/each}
-            </Table.Body>
-          </Table.Root>
-        </div>
-      {:else}
-        <Empty.Root class="py-12">
-          <Empty.Header>
-            <Empty.Title>No traces in this range</Empty.Title>
-            <Empty.Description
-              >Traces will appear after instrumented requests are sampled.</Empty.Description
+              </Table.Header>
+              <Table.Body>
+                {#each traceSpans as span (span.spanId)}
+                  <Table.Row>
+                    <Table.Cell class="whitespace-nowrap"
+                      >{stamp(span.startedAt)}</Table.Cell
+                    >
+                    <Table.Cell>
+                      <p class="font-medium">{span.serviceName}</p>
+                      <p class="mt-1 text-muted-foreground">
+                        {span.kind || span.scope}
+                      </p>
+                    </Table.Cell>
+                    <Table.Cell class="font-medium">{span.name}</Table.Cell>
+                    <Table.Cell class="font-mono">
+                      <p>{span.spanId}</p>
+                      <p class="mt-1 text-muted-foreground">
+                        {span.parentSpanId || "root"}
+                      </p>
+                    </Table.Cell>
+                    <Table.Cell
+                      >{formatSpanDuration(span.durationNs)}</Table.Cell
+                    >
+                    <Table.Cell>
+                      <StatusBadge status={span.statusCode || "unset"} />
+                      {#if span.statusMessage}<p
+                          class="mt-1 text-muted-foreground"
+                        >
+                          {span.statusMessage}
+                        </p>{/if}
+                    </Table.Cell>
+                  </Table.Row>
+                {/each}
+              </Table.Body>
+            </Table.Root>
+          </div>
+          {#if databaseSpans.length}
+            <section
+              class="mt-6 space-y-3"
+              aria-labelledby="trace-database-spans"
             >
-          </Empty.Header>
-        </Empty.Root>
-      {/if}
-    </Card.Content>
-  </Card.Root>
+              <div>
+                <h3 id="trace-database-spans" class="text-sm font-semibold">
+                  Database spans
+                </h3>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  Query text is shown only when emitted by application
+                  instrumentation.
+                </p>
+              </div>
+              {#each databaseSpans as span (span.spanId)}
+                <article class="border border-border bg-muted/10 p-3">
+                  <header
+                    class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"
+                  >
+                    <span class="font-medium">
+                      {databaseSystem(span) || "database"}
+                    </span>
+                    <span class="text-muted-foreground">{span.name}</span>
+                    <span class="font-mono text-muted-foreground">
+                      {formatSpanDuration(span.durationNs)}
+                    </span>
+                    <StatusBadge status={span.statusCode || "unset"} />
+                  </header>
+                  {#if databaseQueryText(span)}
+                    <pre
+                      class="mt-3 max-h-48 overflow-auto whitespace-pre-wrap break-words border-l-2 border-primary/40 bg-background/60 p-3 font-mono text-xs leading-5">{databaseQueryText(
+                        span,
+                      )}</pre>
+                  {:else}
+                    <p class="mt-3 text-xs text-muted-foreground">
+                      Query text was not emitted with this span.
+                    </p>
+                  {/if}
+                </article>
+              {/each}
+            </section>
+          {/if}
+        {:else}
+          <p class="py-6 text-sm text-muted-foreground">
+            No spans were retained for this trace.
+          </p>
+        {/if}
+      </Card.Content>
+    </Card.Root>
+  {:else}
+    <Card.Root>
+      <Card.Header>
+        <Card.Title>Recent traces</Card.Title>
+        <Card.Description
+          >Up to 100 environment traces from {rangeLabel}. Select a trace to
+          inspect all correlated spans.</Card.Description
+        >
+      </Card.Header>
+      <Card.Content>
+        {#if recentTraces.length}
+          <div class="overflow-x-auto border border-border">
+            <Table.Root class="min-w-[780px] text-xs">
+              <Table.Header>
+                <Table.Row>
+                  <Table.Head>Started</Table.Head><Table.Head
+                    >Root span</Table.Head
+                  >
+                  <Table.Head>Duration</Table.Head><Table.Head>Spans</Table.Head
+                  >
+                  <Table.Head>Errors</Table.Head><Table.Head>Trace</Table.Head>
+                </Table.Row>
+              </Table.Header>
+              <Table.Body>
+                {#each recentTraces as trace (trace.traceId)}
+                  <Table.Row>
+                    <Table.Cell class="whitespace-nowrap"
+                      >{stamp(trace.startedAt)}</Table.Cell
+                    >
+                    <Table.Cell class="font-medium"
+                      >{trace.rootSpanName || "Unknown root span"}</Table.Cell
+                    >
+                    <Table.Cell
+                      >{formatSpanDuration(trace.durationNs)}</Table.Cell
+                    >
+                    <Table.Cell>{trace.spanCount}</Table.Cell>
+                    <Table.Cell
+                      class={trace.errorCount > 0
+                        ? "text-destructive"
+                        : undefined}>{trace.errorCount}</Table.Cell
+                    >
+                    <Table.Cell>
+                      <Button
+                        variant="link"
+                        size="xs"
+                        class="h-auto p-0 font-mono"
+                        onclick={() => focusTrace(trace.traceId)}
+                        >{short(trace.traceId)}</Button
+                      >
+                    </Table.Cell>
+                  </Table.Row>
+                {/each}
+              </Table.Body>
+            </Table.Root>
+          </div>
+        {:else}
+          <Empty.Root class="py-12">
+            <Empty.Header>
+              <Empty.Title>No traces in this range</Empty.Title>
+              <Empty.Description
+                >Traces will appear after instrumented requests are sampled.</Empty.Description
+              >
+            </Empty.Header>
+          </Empty.Root>
+        {/if}
+      </Card.Content>
+    </Card.Root>
+  {/if}
 {/if}
 
-<Dialog.Root
-  bind:open={traceDialogOpen}
-  onOpenChange={(open) => {
-    if (!open) closeTrace();
-  }}
->
-  <Dialog.Content class="sm:max-w-6xl">
-    <Dialog.Header>
-      <Dialog.Title>Trace {selectedTraceId}</Dialog.Title>
-      <Dialog.Description
-        >Correlated OpenTelemetry spans across every service that contributed to
-        this environment trace.</Dialog.Description
-      >
-    </Dialog.Header>
-    {#if traceLoading}
-      <p class="py-6 text-sm text-muted-foreground">Loading trace...</p>
-    {:else if traceError}
-      <p class="py-6 text-sm text-destructive">{traceError}</p>
-    {:else if traceSpans.length}
-      <div class="overflow-x-auto border border-border">
-        <Table.Root class="min-w-[920px] text-xs">
-          <Table.Header>
-            <Table.Row>
-              <Table.Head>Started</Table.Head><Table.Head>Service</Table.Head>
-              <Table.Head>Span</Table.Head><Table.Head
-                >Span ID / parent</Table.Head
-              >
-              <Table.Head>Duration</Table.Head><Table.Head>Status</Table.Head>
-            </Table.Row>
-          </Table.Header>
-          <Table.Body>
-            {#each traceSpans as span (span.spanId)}
-              <Table.Row>
-                <Table.Cell class="whitespace-nowrap"
-                  >{stamp(span.startedAt)}</Table.Cell
-                >
-                <Table.Cell>
-                  <p class="font-medium">{span.serviceName}</p>
-                  <p class="mt-1 text-muted-foreground">
-                    {span.kind || span.scope}
-                  </p>
-                </Table.Cell>
-                <Table.Cell class="font-medium">{span.name}</Table.Cell>
-                <Table.Cell class="font-mono">
-                  <p>{span.spanId}</p>
-                  <p class="mt-1 text-muted-foreground">
-                    {span.parentSpanId || "root"}
-                  </p>
-                </Table.Cell>
-                <Table.Cell>{formatSpanDuration(span.durationNs)}</Table.Cell>
-                <Table.Cell>
-                  <StatusBadge status={span.statusCode || "unset"} />
-                  {#if span.statusMessage}<p class="mt-1 text-muted-foreground">
-                      {span.statusMessage}
-                    </p>{/if}
-                </Table.Cell>
-              </Table.Row>
-            {/each}
-          </Table.Body>
-        </Table.Root>
+{#if activeView === "database"}
+  {#if telemetry.database?.available || databaseHistory.length}
+    <div class="space-y-6">
+      <div class="grid gap-3 sm:grid-cols-3">
+        <Card.Root>
+          <Card.Header
+            ><Card.Title class="text-sm">Operations</Card.Title></Card.Header
+          >
+          <Card.Content>
+            <p class="text-2xl font-semibold">
+              {telemetry.database?.available
+                ? formatPerSecond(telemetry.database.operationsPerSecond)
+                : "Unavailable"}
+            </p>
+            <p class="mt-1 text-xs text-muted-foreground">
+              Current database operation rate
+            </p>
+          </Card.Content>
+        </Card.Root>
+        <Card.Root>
+          <Card.Header
+            ><Card.Title class="text-sm">Errors</Card.Title></Card.Header
+          >
+          <Card.Content>
+            <p
+              class={cn("text-2xl font-semibold", {
+                "text-destructive":
+                  (telemetry.database?.errorsPerSecond ?? 0) > 0,
+              })}
+            >
+              {telemetry.database?.available
+                ? formatPerSecond(telemetry.database.errorsPerSecond)
+                : "Unavailable"}
+            </p>
+            <p class="mt-1 text-xs text-muted-foreground">
+              Instrumented operation failures
+            </p>
+          </Card.Content>
+        </Card.Root>
+        <Card.Root>
+          <Card.Header
+            ><Card.Title class="text-sm">p95 latency</Card.Title></Card.Header
+          >
+          <Card.Content>
+            <p class="text-2xl font-semibold">
+              {telemetry.database?.available
+                ? formatDuration(telemetry.database.p95DurationMs)
+                : "Unavailable"}
+            </p>
+            <p class="mt-1 text-xs text-muted-foreground">
+              Tail latency for database operations
+            </p>
+          </Card.Content>
+        </Card.Root>
       </div>
-    {:else}
-      <p class="py-6 text-sm text-muted-foreground">
-        No spans were retained for this trace.
-      </p>
-    {/if}
-  </Dialog.Content>
-</Dialog.Root>
+
+      <div class="grid gap-4 xl:grid-cols-2">
+        <TelemetryHistory
+          label="Operation rate"
+          description={`Instrumented database operations and errors from ${rangeLabel}`}
+          series={databaseActivitySeries}
+          formatValue={formatPerSecond}
+          windowSeconds={rangeSeconds}
+        />
+        <TelemetryHistory
+          label="Operation latency"
+          description="Median and tail latency by time window"
+          series={databaseLatencySeries}
+          formatValue={formatDuration}
+          windowSeconds={rangeSeconds}
+        />
+      </div>
+
+      <Card.Root>
+        <Card.Header>
+          <Card.Title>Slow queries</Card.Title>
+          <Card.Description
+            >Queries ranked by p95 operation time across {rangeLabel}.</Card.Description
+          >
+        </Card.Header>
+        <Card.Content>
+          {#if slowQueries.length}
+            <div class="overflow-x-auto border border-border">
+              <Table.Root class="min-w-[780px] text-xs">
+                <Table.Header>
+                  <Table.Row>
+                    <Table.Head>Database</Table.Head>
+                    <Table.Head>Query</Table.Head>
+                    <Table.Head>Executions</Table.Head>
+                    <Table.Head>p95 latency</Table.Head>
+                  </Table.Row>
+                </Table.Header>
+                <Table.Body>
+                  {#each slowQueries as query (`${query.databaseSystem}:${query.operation}:${query.query}`)}
+                    <Table.Row>
+                      <Table.Cell class="font-mono">
+                        {query.databaseSystem || "—"}{query.operation
+                          ? ` · ${query.operation}`
+                          : ""}
+                      </Table.Cell>
+                      <Table.Cell class="max-w-[42rem] whitespace-pre-wrap break-words font-mono font-medium">
+                        {query.query}
+                      </Table.Cell>
+                      <Table.Cell>{query.executions}</Table.Cell>
+                      <Table.Cell>{formatDuration(query.p95DurationMs)}</Table.Cell>
+                    </Table.Row>
+                  {/each}
+                </Table.Body>
+              </Table.Root>
+            </div>
+          {:else}
+            <Empty.Root class="py-10">
+              <Empty.Header>
+                <Empty.Title>No query text yet</Empty.Title>
+                <Empty.Description
+                  >Slow queries appear when instrumented spans include
+                  <span class="font-mono">db.query.text</span>.</Empty.Description
+                >
+              </Empty.Header>
+            </Empty.Root>
+          {/if}
+        </Card.Content>
+      </Card.Root>
+    </div>
+  {:else}
+    <Empty.Root class="py-12">
+      <Empty.Header>
+        <Empty.Title>No database telemetry yet</Empty.Title>
+        <Empty.Description
+          >Database activity will appear after the application exports
+          <span class="font-mono">db.client.operation.duration</span>
+          metrics.</Empty.Description
+        >
+      </Empty.Header>
+    </Empty.Root>
+  {/if}
+{/if}

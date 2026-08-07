@@ -1,4 +1,9 @@
 <script lang="ts">
+  import ActivityIcon from "@lucide/svelte/icons/activity";
+  import BoxesIcon from "@lucide/svelte/icons/boxes";
+  import ContainerIcon from "@lucide/svelte/icons/container";
+  import DatabaseIcon from "@lucide/svelte/icons/database";
+  import ServerIcon from "@lucide/svelte/icons/server";
   import { page, router } from "@inertiajs/svelte";
   import { untrack } from "svelte";
   import { Button } from "@/Components/ui/button";
@@ -139,6 +144,15 @@
         instance.state === "serving" && instance.processKind === "web",
     ) ?? null,
   );
+  const servingInstanceCount = $derived(
+    environment.instances.filter((instance) => instance.state === "serving")
+      .length,
+  );
+  const desiredInstanceCount = $derived(
+    environment.processes
+      .filter((process) => process.kind !== "release")
+      .reduce((total, process) => total + process.replicas, 0),
+  );
   const activeTelemetry = $derived(
     activeDeployment && activeInstance
       ? (telemetry.find(
@@ -244,10 +258,16 @@
       const view = new URLSearchParams($page.url.split("?")[1] ?? "").get(
         "view",
       );
+      const trace = new URLSearchParams($page.url.split("?")[1] ?? "").get(
+        "trace",
+      );
       query.set(
         "view",
-        view === "logs" || view === "traces" ? view : "insights",
+        view === "logs" || view === "traces" || view === "database"
+          ? view
+          : "insights",
       );
+      if (view === "traces" && trace) query.set("trace", trace);
     }
     return `${routes.environmentTelemetry(
       environment.applicationId,
@@ -836,34 +856,274 @@
     </header>
 
     {#if section === "overview"}
-      <UsageSummary
-        cpuCores={activeTelemetry?.cpuCores ?? 0}
-        memoryBytes={activeTelemetry?.memoryBytes ?? 0}
-        cpuChange={usageChange?.cpu ?? null}
-        memoryChange={usageChange?.memory ?? null}
-        cpuAvailable={Boolean(
-          activeTelemetry?.available && activeTelemetry.cpuAvailable,
-        )}
-        memoryAvailable={Boolean(
-          activeTelemetry?.available && activeTelemetry.memoryAvailable,
-        )}
-        observedAt={activeTelemetry?.observedAt ?? ""}
-        telemetryUrl={routes.environmentTelemetry(
-          environment.applicationId,
-          environment.environment.id,
-        )}
-      />
+      <section
+        aria-label="Environment dashboard"
+        class="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.9fr)]"
+      >
+        <Card.Root class="min-w-0 border-primary/25 bg-primary/[0.03]">
+          <Card.Header class="border-b border-border/70">
+            <Card.Action>
+              <StatusBadge
+                status={environment.deployability.deployable
+                  ? "ready"
+                  : "blocked"}
+              />
+            </Card.Action>
+            <div class="flex items-center gap-2">
+              <div
+                class="grid size-8 place-items-center bg-primary/10 text-primary"
+              >
+                <ActivityIcon class="size-4" />
+              </div>
+              <div>
+                <Card.Title>Runtime overview</Card.Title>
+                <Card.Description>
+                  Current deployment posture for this Environment.
+                </Card.Description>
+              </div>
+            </div>
+          </Card.Header>
+          <Card.Content class="grid gap-3 sm:grid-cols-3">
+            <div class="border border-border/70 bg-background/55 p-3">
+              <p
+                class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground"
+              >
+                Deployment
+              </p>
+              <div class="mt-2 flex items-center gap-2">
+                <StatusBadge status={activeDeployment?.status ?? "pending"} />
+                <span class="font-mono text-xs text-muted-foreground"
+                  >{activeDeployment
+                    ? short(activeDeployment.id)
+                    : "None"}</span
+                >
+              </div>
+              <p class="mt-2 text-xs text-muted-foreground">
+                {activeDeployment
+                  ? deploymentStep(activeDeployment)
+                  : "Deploy to start serving traffic"}
+              </p>
+            </div>
+            <div class="border border-border/70 bg-background/55 p-3">
+              <p
+                class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground"
+              >
+                Process health
+              </p>
+              <p class="mt-2 text-2xl font-semibold tracking-tight">
+                {servingInstanceCount}<span
+                  class="text-base font-normal text-muted-foreground"
+                  >/{desiredInstanceCount}</span
+                >
+              </p>
+              <p class="mt-1 text-xs text-muted-foreground">
+                serving instances
+              </p>
+            </div>
+            <div class="border border-border/70 bg-background/55 p-3">
+              <p
+                class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground"
+              >
+                Resources
+              </p>
+              <p class="mt-2 text-2xl font-semibold tracking-tight">
+                {environment.resources.length}
+              </p>
+              <p class="mt-1 text-xs text-muted-foreground">
+                connected services
+              </p>
+            </div>
+          </Card.Content>
+        </Card.Root>
 
-      <Card.Root
-        ><Card.Header
+        <UsageSummary
+          cpuCores={activeTelemetry?.cpuCores ?? 0}
+          memoryBytes={activeTelemetry?.memoryBytes ?? 0}
+          cpuChange={usageChange?.cpu ?? null}
+          memoryChange={usageChange?.memory ?? null}
+          cpuAvailable={Boolean(
+            activeTelemetry?.available && activeTelemetry.cpuAvailable,
+          )}
+          memoryAvailable={Boolean(
+            activeTelemetry?.available && activeTelemetry.memoryAvailable,
+          )}
+          observedAt={activeTelemetry?.observedAt ?? ""}
+          telemetryUrl={routes.environmentTelemetry(
+            environment.applicationId,
+            environment.environment.id,
+          )}
+        />
+      </section>
+
+      <section
+        class="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.9fr)]"
+      >
+        <Card.Root class="min-w-0">
+          <Card.Header class="border-b border-border">
+            <div class="flex items-center gap-2">
+              <div
+                class="grid size-8 place-items-center bg-muted text-muted-foreground"
+              >
+                <ServerIcon class="size-4" />
+              </div>
+              <div>
+                <Card.Title>Process formation</Card.Title>
+                <Card.Description
+                  >Configuration and live capacity for the next rollout.</Card.Description
+                >
+              </div>
+            </div>
+          </Card.Header>
+          <Card.Content class="space-y-2">
+            {#each environment.processes as process (process.name)}
+              <article
+                class="grid gap-3 border border-border/70 bg-card/40 p-3 sm:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1.5fr)_auto] sm:items-center"
+              >
+                <div class="min-w-0">
+                  <div class="flex items-center gap-2">
+                    <p class="truncate font-mono font-medium">{process.name}</p>
+                    <StatusBadge status={process.kind} />
+                  </div>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    {process.kind === "release"
+                      ? "One-off release command"
+                      : `${process.replicas} desired replica${process.replicas === 1 ? "" : "s"}`}
+                  </p>
+                </div>
+                <p class="text-sm font-medium">
+                  {process.kind === "release"
+                    ? "Runs once"
+                    : `${environment.instances.filter((instance) => instance.processName === process.name && instance.state === "serving").length}/${process.replicas} live`}
+                </p>
+                <p class="break-all font-mono text-xs text-muted-foreground">
+                  {process.command
+                    ? [process.command, ...process.arguments].join(" ")
+                    : "OCI image default command"}
+                </p>
+                <p class="text-xs text-muted-foreground">
+                  {process.kind === "web"
+                    ? `Port ${process.container_port}${process.health_path ? ` · ${process.health_path}` : ""}`
+                    : process.kind === "release"
+                      ? `${process.timeout_seconds}s timeout`
+                      : "Private"}
+                </p>
+              </article>
+            {:else}
+              <p
+                class="border border-dashed border-border p-4 text-sm text-muted-foreground"
+              >
+                No processes configured.
+              </p>
+            {/each}
+          </Card.Content>
+        </Card.Root>
+
+        <div class="space-y-4">
+          <Card.Root>
+            <Card.Header class="border-b border-border">
+              <div class="flex items-center gap-2">
+                <div
+                  class="grid size-8 place-items-center bg-muted text-muted-foreground"
+                >
+                  <BoxesIcon class="size-4" />
+                </div>
+                <div>
+                  <Card.Title>Resources</Card.Title><Card.Description
+                    >Services available to this Environment.</Card.Description
+                  >
+                </div>
+              </div>
+            </Card.Header>
+            <Card.Content class="space-y-2">
+              {#each environment.resources as resource (resource.id)}
+                <div
+                  class="flex items-center gap-3 border border-border/70 bg-card/40 p-3"
+                >
+                  <DatabaseIcon class="size-4 shrink-0 text-muted-foreground" />
+                  <div class="min-w-0">
+                    <p class="truncate font-mono text-sm font-medium">
+                      {resource.alias}
+                    </p>
+                    <p class="truncate text-xs text-muted-foreground">
+                      {resource.name} · {resource.engine}
+                    </p>
+                  </div>
+                </div>
+              {:else}
+                <p
+                  class="border border-dashed border-border p-4 text-sm text-muted-foreground"
+                >
+                  No resources connected.
+                </p>
+              {/each}
+            </Card.Content>
+          </Card.Root>
+
+          <Card.Root>
+            <Card.Header>
+              <Card.Action>
+                {#if container.exists}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={containerActionProcessing}
+                    aria-busy={containerActionProcessing}
+                    onclick={container.running
+                      ? restartContainer
+                      : startContainer}
+                    >{#if containerActionProcessing}<Spinner
+                      />{/if}{container.running ? "Restart" : "Start"}</Button
+                  >
+                {/if}
+              </Card.Action>
+              <div class="flex items-center gap-2">
+                <div
+                  class="grid size-8 place-items-center bg-muted text-muted-foreground"
+                >
+                  <ContainerIcon class="size-4" />
+                </div>
+                <div>
+                  <Card.Title>Web container</Card.Title><Card.Description
+                    >Serving container state and controls.</Card.Description
+                  >
+                </div>
+              </div>
+            </Card.Header>
+            <Card.Content>
+              {#if container.exists}
+                <div class="flex flex-wrap items-center gap-2">
+                  <StatusBadge
+                    status={container.running ? "running" : "stopped"}
+                    label={container.running ? "Running" : "Stopped"}
+                  /><span class="font-mono text-xs text-muted-foreground"
+                    >Instance {short(container.instanceId)} · Deployment {short(
+                      container.deploymentId,
+                    )}</span
+                  >
+                </div>
+              {:else}
+                <p class="text-sm text-muted-foreground">
+                  No serving container is currently deployed.
+                </p>
+              {/if}
+            </Card.Content>
+          </Card.Root>
+        </div>
+      </section>
+
+      <Card.Root>
+        <Card.Header
           ><Card.Action
             ><StatusBadge
               status={environment.deployability.deployable
                 ? "ready"
                 : "blocked"}
             /></Card.Action
-          ><Card.Title>Desired state</Card.Title></Card.Header
-        ><Card.Content class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"
+          ><Card.Title>Deployment configuration</Card.Title><Card.Description
+            >The source and target configuration used by the next Release.</Card.Description
+          ></Card.Header
+        >
+        <Card.Content class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"
           ><DataField
             label="Repository"
             value={environment.repository}
@@ -886,45 +1146,7 @@
               label="Missing"
               value={environment.deployability.missing.join(", ")}
             />{/if}</Card.Content
-        ></Card.Root
-      >
-
-      <Card.Root>
-        <Card.Header
-          ><Card.Title>Process formation</Card.Title><Card.Description
-            >The immutable process configuration used by the next Release
-            rollout.</Card.Description
-          ></Card.Header
         >
-        <Card.Content class="space-y-2">
-          {#each environment.processes as process}
-            <div
-              class="grid gap-2 border border-border p-3 text-sm sm:grid-cols-[8rem_8rem_minmax(0,1fr)_auto]"
-            >
-              <div>
-                <p class="font-mono font-medium">{process.name}</p>
-                <StatusBadge status={process.kind} />
-              </div>
-              <p>
-                {process.kind === "release"
-                  ? "one-off"
-                  : `${process.replicas} replica${process.replicas === 1 ? "" : "s"}`}
-              </p>
-              <p class="break-all font-mono text-xs text-muted-foreground">
-                {process.command
-                  ? [process.command, ...process.arguments].join(" ")
-                  : "OCI image default command"}
-              </p>
-              <p class="text-xs text-muted-foreground">
-                {process.kind === "web"
-                  ? `Port ${process.container_port}${process.health_path ? ` · ${process.health_path}` : ""}`
-                  : process.kind === "release"
-                    ? `${process.timeout_seconds}s timeout`
-                    : "Private"}
-              </p>
-            </div>
-          {/each}
-        </Card.Content>
       </Card.Root>
 
       <Card.Root>
@@ -955,7 +1177,7 @@
               ready to apply DNS and deploy this desired state.
             </p>{/if}
           {#if environment.dns.records.length > 0}<div class="space-y-2">
-              {#each environment.dns.records as record}<div
+              {#each environment.dns.records as record (`${record.type}:${record.name}`)}<div
                   class="grid gap-1 border border-border p-3 font-mono text-sm sm:grid-cols-[auto_1fr_1fr]"
                 >
                   <span>{record.type}</span><span>{record.name}</span><span
@@ -1006,100 +1228,58 @@
       </Card.Root>
 
       {#if environment.sourceType === "image"}
-        <Card.Root
-          ><Card.Header
-            ><Card.Title>Deploy image version</Card.Title><Card.Description
-              >Use the configured reference or override it with another tag or
-              sha256 digest.</Card.Description
-            ></Card.Header
-          ><Card.Content class="flex flex-col gap-3 sm:flex-row"
-            ><Input bind:value={imageReference} placeholder="latest" /><Button
-              disabled={deploymentCreationProcessing ||
-                !imageReference.trim() ||
-                !deploymentRequestReady}
-              aria-busy={deploymentCreationProcessing}
-              onclick={buildAndDeploy}
-              >{#if deploymentCreationProcessing}<Spinner />{/if}Resolve &
-              deploy</Button
-            ></Card.Content
-          ></Card.Root
-        >
+        <div class="grid gap-4 xl:grid-cols-2">
+          <Card.Root
+            ><Card.Header
+              ><Card.Title>Deploy image version</Card.Title><Card.Description
+                >Use the configured reference or override it with another tag or
+                sha256 digest.</Card.Description
+              ></Card.Header
+            ><Card.Content class="flex flex-col gap-3 sm:flex-row"
+              ><Input bind:value={imageReference} placeholder="latest" /><Button
+                disabled={deploymentCreationProcessing ||
+                  !imageReference.trim() ||
+                  !deploymentRequestReady}
+                aria-busy={deploymentCreationProcessing}
+                onclick={buildAndDeploy}
+                >{#if deploymentCreationProcessing}<Spinner />{/if}Resolve &
+                deploy</Button
+              ></Card.Content
+            ></Card.Root
+          >
+          <Card.Root
+            ><Card.Header
+              ><Card.Action
+                ><Button
+                  size="sm"
+                  variant="outline"
+                  disabled={apiTokenProcessing}
+                  onclick={() => (apiTokenConfirmOpen = true)}
+                  >{#if apiTokenProcessing}<Spinner
+                    />{/if}{environment.apiTokenPrefix
+                    ? "Rotate token"
+                    : "Create token"}</Button
+                ></Card.Action
+              ><Card.Title>Deployment API</Card.Title><Card.Description
+                >Environment-scoped bearer token for image deployments. A
+                replacement token invalidates the previous token immediately.</Card.Description
+              ></Card.Header
+            ><Card.Content class="space-y-2 text-sm"
+              ><p class="font-mono">
+                POST /api/environments/{environment.environment.id}/deployments
+              </p>
+              <p class="text-xs text-muted-foreground">
+                JSON: {`{"reference":"1.2.3"}`} · Token: {environment.apiTokenPrefix
+                  ? `${environment.apiTokenPrefix}...`
+                  : "Not configured"}
+              </p>
+              {#if apiTokenError}<p class="text-xs text-destructive">
+                  {apiTokenError}
+                </p>{/if}</Card.Content
+            ></Card.Root
+          >
+        </div>
       {/if}
-
-      {#if environment.sourceType === "image"}
-        <Card.Root
-          ><Card.Header
-            ><Card.Action
-              ><Button
-                size="sm"
-                variant="outline"
-                disabled={apiTokenProcessing}
-                onclick={() => (apiTokenConfirmOpen = true)}
-                >{#if apiTokenProcessing}<Spinner
-                  />{/if}{environment.apiTokenPrefix
-                  ? "Rotate token"
-                  : "Create token"}</Button
-              ></Card.Action
-            ><Card.Title>Deployment API</Card.Title><Card.Description
-              >Environment-scoped bearer token for image deployments. A
-              replacement token invalidates the previous token immediately.</Card.Description
-            ></Card.Header
-          ><Card.Content class="space-y-2 text-sm"
-            ><p class="font-mono">
-              POST /api/environments/{environment.environment.id}/deployments
-            </p>
-            <p class="text-xs text-muted-foreground">
-              JSON: {`{"reference":"1.2.3"}`} · Token: {environment.apiTokenPrefix
-                ? `${environment.apiTokenPrefix}...`
-                : "Not configured"}
-            </p>
-            {#if apiTokenError}<p class="text-xs text-destructive">
-                {apiTokenError}
-              </p>{/if}</Card.Content
-          ></Card.Root
-        >
-      {/if}
-
-      <Card.Root
-        ><Card.Header
-          ><Card.Action
-            >{#if container.exists}<div class="flex gap-2">
-                {#if container.running}<Button
-                    size="sm"
-                    variant="outline"
-                    disabled={containerActionProcessing}
-                    aria-busy={containerActionProcessing}
-                    onclick={restartContainer}
-                    >{#if containerActionProcessing}<Spinner
-                      />{/if}Restart</Button
-                  >{:else}<Button
-                    size="sm"
-                    variant="outline"
-                    disabled={containerActionProcessing}
-                    aria-busy={containerActionProcessing}
-                    onclick={startContainer}
-                    >{#if containerActionProcessing}<Spinner
-                      />{/if}Start</Button
-                  >{/if}
-              </div>{/if}</Card.Action
-          ><Card.Title>Container</Card.Title><Card.Description
-            >Runtime state and controls for the serving web container.</Card.Description
-          ></Card.Header
-        ><Card.Content
-          >{#if container.exists}<div class="flex flex-wrap items-center gap-2">
-              <StatusBadge
-                status={container.running ? "running" : "stopped"}
-                label={container.running ? "Running" : "Stopped"}
-              /><span class="font-mono text-xs text-muted-foreground"
-                >Instance {short(container.instanceId)} · Deployment {short(
-                  container.deploymentId,
-                )}</span
-              >
-            </div>{:else}<p class="text-sm text-muted-foreground">
-              No serving container is currently deployed.
-            </p>{/if}</Card.Content
-        ></Card.Root
-      >
     {/if}
 
     {#if section === "telemetry"}
@@ -1316,26 +1496,6 @@
           live={telemetryLive}
         />
       {/if}
-    {/if}
-
-    {#if section === "overview"}
-      <Card.Root
-        ><Card.Header
-          ><Card.Title>Resources</Card.Title><Card.Description
-            >Explicit connections available to this Environment.</Card.Description
-          ></Card.Header
-        ><Card.Content class="space-y-2"
-          >{#each environment.resources as resource}<div
-              class="grid gap-1 border border-border p-3 sm:grid-cols-3"
-            >
-              <span class="font-mono text-sm">{resource.alias}</span><span
-                >{resource.name}</span
-              ><span class="text-muted-foreground">{resource.engine}</span>
-            </div>{:else}<p class="text-sm text-muted-foreground">
-              No Resources selected.
-            </p>{/each}</Card.Content
-        ></Card.Root
-      >
     {/if}
 
     {#if section === "secrets"}
