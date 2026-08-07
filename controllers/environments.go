@@ -422,9 +422,16 @@ func (c Environments) PromoteToProduction(etx *echo.Context) error {
 			"Staging release promoted to production; deployment queued",
 		)
 	}
+	returnURL := routes.EnvironmentShow.URL(params.routeParams())
+	if strings.EqualFold(
+		strings.TrimSpace(etx.Request().Header.Get("X-Deploycrate-Return-To")),
+		"application",
+	) {
+		returnURL = routes.ApplicationShow.URL(params.ApplicationID)
+	}
 	return inertia.Redirect(
 		etx,
-		routes.EnvironmentShow.URL(params.routeParams()),
+		returnURL,
 		http.StatusSeeOther,
 	)
 }

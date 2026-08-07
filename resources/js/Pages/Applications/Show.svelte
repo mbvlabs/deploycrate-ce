@@ -7,6 +7,7 @@
   import * as Table from "@/Components/ui/table";
   import ConfirmActionDialog from "@/Components/ConfirmActionDialog.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
+  import { Spinner } from "@/Components/ui/spinner";
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
   import { routes } from "@/routes";
 
@@ -23,6 +24,10 @@
     reference: string;
     imageRepository: string;
     registryName: string;
+    canPromoteToProduction: boolean;
+    promotionTargetName: string;
+    latestSuccessfulDeploymentId?: string;
+    latestSuccessfulReleaseId?: string;
   };
 
   type Deployment = {
@@ -91,6 +96,9 @@
 
   let deleteDialogOpen = $state(false);
   let deleteProcessing = $state(false);
+  let promotionDialogOpen = $state(false);
+  let promotionProcessing = $state(false);
+  let promotionError = $state("");
 
   const staging = $derived(
     application.environments.find(
@@ -238,6 +246,37 @@
       onFinish: () => (deleteProcessing = false),
     });
   }
+
+  function askToPromote() {
+    if (!staging) return;
+    promotionError = "";
+    promotionDialogOpen = true;
+  }
+  function promoteToProduction() {
+    if (!staging || promotionProcessing) return;
+    promotionProcessing = true;
+    promotionError = "";
+    router.post(
+      routes.environmentPromoteToProduction(
+        application.id,
+        staging.environmentId,
+      ),
+      {},
+      {
+        preserveScroll: true,
+        headers: { "X-Deploycrate-Return-To": "application" },
+        onSuccess: () => {
+          promotionDialogOpen = false;
+          router.reload({ only: ["application"], preserveScroll: true });
+        },
+        onError: (errors) =>
+          (promotionError =
+            Object.values(errors).map(String).join("\n") ||
+            "The release could not be promoted to production."),
+        onFinish: () => (promotionProcessing = false),
+      },
+    );
+  }
 </script>
 
 <svelte:head><title>{application.name}</title></svelte:head>
@@ -274,17 +313,30 @@
     </header>
 
     <section aria-labelledby="featured-environments-heading" class="space-y-4">
-      <div>
-        <h2
-          id="featured-environments-heading"
-          class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground"
-        >
-          Primary environments
-        </h2>
-        <p class="mt-1 text-sm text-muted-foreground">
-          Open staging or production to deploy, inspect logs, and manage
-          configuration.
-        </p>
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2
+            id="featured-environments-heading"
+            class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground"
+          >
+            Primary environments
+          </h2>
+          <p class="mt-1 text-sm text-muted-foreground">
+            Open staging or production to deploy, inspect logs, and manage
+            configuration.
+          </p>
+        </div>
+        {#if staging?.canPromoteToProduction}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={promotionProcessing}
+            aria-busy={promotionProcessing}
+            onclick={askToPromote}
+            >{#if promotionProcessing}<Spinner />{/if}Promote staging to
+            production</Button
+          >
+        {/if}
       </div>
       <div class="grid gap-4 lg:grid-cols-2">
         {#each [{ kind: "staging", environment: staging }, { kind: "production", environment: production }] as featured (featured.kind)}
@@ -686,5 +738,18 @@
     destructive
     processing={deleteProcessing}
     onconfirm={deleteApplication}
+  />
+
+  <ConfirmActionDialog
+    bind:open={promotionDialogOpen}
+    title="Promote staging to production?"
+    description={`Create a new immutable production Release from the latest successful staging deployment (Release ${short(
+      staging?.latestSuccessfulReleaseId ?? "",
+    )}) and queue its deployment to ${staging?.promotionTargetName ??
+      "production"}. The staging deployment is left unchanged.`}
+    confirmLabel="Promote to production"
+    processing={promotionProcessing}
+    error={promotionError}
+    onconfirm={promoteToProduction}
   />
 </DashboardLayout>

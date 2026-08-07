@@ -634,8 +634,9 @@ func (service *EnvironmentSetup) Overview(
 		Scan(ctx, &releaseCommands); err != nil {
 		return EnvironmentOverview{}, err
 	}
-	canPromote, promotionTargetName, latestSuccessfulDeploymentID, latestSuccessfulReleaseID, err := service.promotionOverview(
+	canPromote, promotionTargetName, latestSuccessfulDeploymentID, latestSuccessfulReleaseID, err := promotionOverview(
 		ctx,
+		service.db.Executor(),
 		applicationID,
 		environmentID,
 		environment.Kind,
@@ -2359,7 +2360,7 @@ func (service *EnvironmentSetup) PromoteToProduction(
 			errors.New("Only a staging Environment can be promoted to production"),
 		)
 	}
-	production, err := service.productionEnvironmentForApplication(ctx, applicationID)
+	production, err := productionEnvironmentForApplication(ctx, service.db.Executor(), applicationID)
 	if err != nil {
 		return PromotionResult{}, err
 	}
@@ -2571,12 +2572,13 @@ func promotableRelease(release models.ReleaseEntity, environmentID uuid.UUID) bo
 		release.RegistryEndpoint.Valid
 }
 
-func (service *EnvironmentSetup) productionEnvironmentForApplication(
+func productionEnvironmentForApplication(
 	ctx context.Context,
+	exec storage.Executor,
 	applicationID uuid.UUID,
 ) (models.EnvironmentEntity, error) {
 	environments := make([]models.EnvironmentEntity, 0)
-	if err := service.db.Executor().NewSelect().Model(&environments).
+	if err := exec.NewSelect().Model(&environments).
 		Where("application_id = ?", applicationID).
 		Where("kind = ?", "production").
 		Where("archived_at IS NULL").
@@ -2599,8 +2601,9 @@ func (service *EnvironmentSetup) productionEnvironmentForApplication(
 	return environments[0], nil
 }
 
-func (service *EnvironmentSetup) promotionOverview(
+func promotionOverview(
 	ctx context.Context,
+	exec storage.Executor,
 	applicationID, environmentID uuid.UUID,
 	kind string,
 	setupComplete bool,
@@ -2608,13 +2611,13 @@ func (service *EnvironmentSetup) promotionOverview(
 	if !strings.EqualFold(strings.TrimSpace(kind), "staging") || !setupComplete {
 		return false, "", nil, nil, nil
 	}
-	production, err := service.productionEnvironmentForApplication(ctx, applicationID)
+	production, err := productionEnvironmentForApplication(ctx, exec, applicationID)
 	if err != nil {
 		return false, "", nil, nil, nil
 	}
 	deployment, err := models.Deployment.LatestSucceededForEnvironment(
 		ctx,
-		service.db.Executor(),
+		exec,
 		environmentID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
