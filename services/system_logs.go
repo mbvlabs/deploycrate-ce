@@ -36,6 +36,10 @@ type SystemLog struct {
 	Line           string            `json:"line"`
 	Instance       string            `json:"instance"`
 	Slot           string            `json:"slot"`
+	Service        string            `json:"service"`
+	ProcessName    string            `json:"processName"`
+	ProcessKind    string            `json:"processKind"`
+	ProcessReplica string            `json:"processReplica"`
 	OccurredAt     time.Time         `json:"occurredAt"`
 }
 
@@ -92,6 +96,10 @@ func (service *SystemLogs) Snapshot(
 	if err != nil {
 		return SystemLogSnapshot{}, err
 	}
+	return systemLogSnapshot(page, after)
+}
+
+func systemLogSnapshot(page clickhouseclient.SystemLogPage, after string) (SystemLogSnapshot, error) {
 	hasMore := len(page.Logs) > systemLogBatchSize
 	if hasMore {
 		page.Logs = page.Logs[:systemLogBatchSize]
@@ -111,6 +119,8 @@ func (service *SystemLogs) Snapshot(
 			TraceID: row.TraceID, SpanID: row.SpanID,
 			Scope: row.Scope, Source: row.Source, Line: row.Line,
 			Instance: row.Instance, Slot: row.Slot, OccurredAt: row.Cursor.Timestamp,
+			Service: row.Service, ProcessName: row.ProcessName,
+			ProcessKind: row.ProcessKind, ProcessReplica: row.ProcessReplica,
 		})
 	}
 	return SystemLogSnapshot{Logs: logs, NextCursor: nextCursor, HasMore: hasMore}, nil

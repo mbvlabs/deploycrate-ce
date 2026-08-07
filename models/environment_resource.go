@@ -72,6 +72,22 @@ func (er environmentResource) Find(
 	return entity, nil
 }
 
+func (er environmentResource) HasActiveEngineForEnvironment(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+	engine string,
+) (bool, error) {
+	count, err := db.NewSelect().
+		TableExpr("environment_resources AS binding").
+		Join("JOIN resources AS resource ON resource.id = binding.resource_id AND resource.archived_at IS NULL").
+		Where("binding.environment_id = ?", environmentID).
+		Where("lower(resource.configuration ->> 'engine') = ?", strings.ToLower(strings.TrimSpace(engine))).
+		Where("binding.archived_at IS NULL").
+		Count(ctx)
+	return count > 0, err
+}
+
 func (er environmentResource) FindConnectionByApplicationAndAlias(
 	ctx context.Context,
 	db storage.Executor,

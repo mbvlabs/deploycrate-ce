@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 
+	clickhouseclient "deploycrate-ce/clients/clickhouse"
 	"deploycrate-ce/internal/inertia"
 	"deploycrate-ce/internal/request"
 	"deploycrate-ce/internal/validation"
@@ -29,6 +30,7 @@ type Environments struct {
 	applicationsSvc    *services.ApplicationSetup
 	metricsSvc         services.MetricRollupService
 	logsSvc            *services.EnvironmentLogs
+	appTelemetrySvc    *services.EnvironmentApplicationTelemetry
 	dnsSvc             *services.EnvironmentDNS
 	releaseCommandsSvc *services.ReleaseCommandExecution
 }
@@ -39,6 +41,7 @@ func NewEnvironments(
 	applications *services.ApplicationSetup,
 	metric services.MetricRollupService,
 	logs *services.EnvironmentLogs,
+	appTelemetry *services.EnvironmentApplicationTelemetry,
 	dns *services.EnvironmentDNS,
 	releaseCommands *services.ReleaseCommandExecution,
 ) Environments {
@@ -48,6 +51,7 @@ func NewEnvironments(
 		applicationsSvc:    applications,
 		metricsSvc:         metric,
 		logsSvc:            logs,
+		appTelemetrySvc:    appTelemetry,
 		dnsSvc:             dns,
 		releaseCommandsSvc: releaseCommands,
 	}
@@ -68,6 +72,8 @@ func (c Environments) RegisterRoutes(router *router.Router) error {
 		{http.MethodPost, routes.EnvironmentCreate, c.Create},
 		{http.MethodGet, routes.EnvironmentShow, c.Show},
 		{http.MethodGet, routes.EnvironmentTelemetry, c.Telemetry},
+		{http.MethodGet, routes.EnvironmentTelemetryLogs, c.TelemetryLogs},
+		{http.MethodGet, routes.EnvironmentTelemetryTrace, c.TelemetryTrace},
 		{http.MethodGet, routes.EnvironmentDeployments, c.Deployments},
 		{http.MethodGet, routes.EnvironmentBuilds, c.Builds},
 		{http.MethodGet, routes.EnvironmentSecrets, c.Secrets},
@@ -166,6 +172,74 @@ func (c Environments) Logs(etx *echo.Context) error {
 	}
 	etx.Response().Header().Set("Cache-Control", "no-store")
 	return etx.JSON(http.StatusOK, snapshot)
+}
+
+func (c Environments) TelemetryLogs(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	if err != nil {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Environment not found"})
+	}
+	snapshot, err := c.appTelemetrySvc.Logs(
+		etx.Request().Context(),
+		params.ApplicationID,
+		params.EnvironmentID,
+		etx.QueryParam("after"),
+		services.ParseTelemetryRange(etx.QueryParam("range")),
+		etx.QueryParam("search"),
+	)
+	if errors.Is(err, services.ErrInvalidSystemLogCursor) || errors.Is(err, services.ErrInvalidSystemLogSearch) {
+		return etx.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Environment not found"})
+	}
+	if errors.Is(err, services.ErrEnvironmentOpenTelemetryUnavailable) {
+		return etx.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
+	}
+	if err != nil {
+		slog.ErrorContext(
+			etx.Request().Context(),
+			"failed to load Environment OpenTelemetry logs",
+			"environment_id", params.EnvironmentID,
+			"error", err,
+		)
+		return etx.JSON(http.StatusInternalServerError, map[string]string{"error": "OpenTelemetry logs could not be loaded"})
+	}
+	etx.Response().Header().Set("Cache-Control", "no-store")
+	return etx.JSON(http.StatusOK, snapshot)
+}
+
+func (c Environments) TelemetryTrace(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	if err != nil {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Environment not found"})
+	}
+	spans, err := c.appTelemetrySvc.Trace(
+		etx.Request().Context(),
+		params.ApplicationID,
+		params.EnvironmentID,
+		etx.Param("traceID"),
+	)
+	if errors.Is(err, services.ErrInvalidTraceID) {
+		return etx.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Environment not found"})
+	}
+	if errors.Is(err, services.ErrEnvironmentOpenTelemetryUnavailable) {
+		return etx.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
+	}
+	if err != nil {
+		slog.ErrorContext(
+			etx.Request().Context(),
+			"failed to load Environment OpenTelemetry trace",
+			"environment_id", params.EnvironmentID,
+			"error", err,
+		)
+		return etx.JSON(http.StatusInternalServerError, map[string]string{"error": "Trace could not be loaded"})
+	}
+	etx.Response().Header().Set("Cache-Control", "no-store")
+	return etx.JSON(http.StatusOK, map[string]any{"spans": spans})
 }
 
 func (c Environments) DeploymentEvents(etx *echo.Context) error {
@@ -731,6 +805,36 @@ func (c Environments) showSection(etx *echo.Context, section string) error {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
 	telemetryRange := services.ParseTelemetryRange(etx.QueryParam("range"))
+	openTelemetryAvailable, openTelemetryErr := c.appTelemetrySvc.Enabled(
+		etx.Request().Context(),
+		params.ApplicationID,
+		params.EnvironmentID,
+	)
+	if openTelemetryErr != nil {
+		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
+	}
+	applicationTelemetry := clickhouseclient.ApplicationTelemetry{
+		History:      []clickhouseclient.ApplicationTelemetryPoint{},
+		Database:     clickhouseclient.DatabaseTelemetry{History: []clickhouseclient.DatabaseTelemetryPoint{}},
+		RecentTraces: []clickhouseclient.TraceSummary{},
+		Routes:       []clickhouseclient.RouteTelemetry{},
+	}
+	if section == "telemetry" && openTelemetryAvailable {
+		applicationTelemetry, err = c.appTelemetrySvc.Snapshot(
+			etx.Request().Context(),
+			params.ApplicationID,
+			params.EnvironmentID,
+			telemetryRange,
+		)
+		if err != nil {
+			slog.WarnContext(
+				etx.Request().Context(),
+				"failed to load Environment application telemetry",
+				"environment_id", params.EnvironmentID,
+				"error", err,
+			)
+		}
+	}
 	telemetry, telemetryErr := c.metricsSvc.EnvironmentTelemetry(
 		etx.Request().Context(),
 		params.EnvironmentID,
@@ -763,7 +867,9 @@ func (c Environments) showSection(etx *echo.Context, section string) error {
 		"auth": authProps(etx), "environment": environmentOverviewProps(overview),
 		"telemetry": telemetry.Rows, "container": container,
 		"host": telemetry.HostUsage, "telemetryRange": telemetryRange,
-		"section": section, "flash": environmentFlashProps(etx),
+		"openTelemetryAvailable": openTelemetryAvailable,
+		"applicationTelemetry":   applicationTelemetry,
+		"section":                section, "flash": environmentFlashProps(etx),
 	})
 }
 

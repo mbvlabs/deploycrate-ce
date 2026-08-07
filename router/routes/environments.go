@@ -57,10 +57,18 @@ type EnvironmentReleaseCommandParams struct {
 	ExecutionID   string `param:"executionID"`
 }
 
+type EnvironmentTelemetryTraceParams struct {
+	ApplicationID string `param:"applicationID"`
+	EnvironmentID string `param:"environmentID"`
+	TraceID       string `param:"traceID"`
+}
+
 var EnvironmentNew = routing.NewRouteWithParams[ApplicationEnvironmentParams]("/:applicationID/environments/new", "applications.environments.new", ApplicationsPrefix)
 var EnvironmentCreate = routing.NewRouteWithParams[ApplicationEnvironmentParams]("/:applicationID/environments", "applications.environments.create", ApplicationsPrefix)
 var EnvironmentShow = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID", "applications.environments.show", ApplicationsPrefix)
 var EnvironmentTelemetry = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/telemetry", "applications.environments.telemetry", ApplicationsPrefix)
+var EnvironmentTelemetryLogs = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/telemetry/logs", "applications.environments.telemetry.logs", ApplicationsPrefix)
+var EnvironmentTelemetryTrace = routing.NewRouteWithParams[EnvironmentTelemetryTraceParams]("/:applicationID/environments/:environmentID/telemetry/traces/:traceID", "applications.environments.telemetry.trace", ApplicationsPrefix)
 var EnvironmentDeployments = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/deployments", "applications.environments.deployments", ApplicationsPrefix)
 var EnvironmentBuilds = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/builds", "applications.environments.builds", ApplicationsPrefix)
 var EnvironmentRestart = routing.NewRouteWithParams[EnvironmentParams]("/:applicationID/environments/:environmentID/restart", "applications.environments.restart", ApplicationsPrefix)

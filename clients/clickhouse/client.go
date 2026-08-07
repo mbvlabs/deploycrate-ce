@@ -116,6 +116,10 @@ type SystemLog struct {
 	Line           string
 	Instance       string
 	Slot           string
+	Service        string
+	ProcessName    string
+	ProcessKind    string
+	ProcessReplica string
 }
 
 type SystemLogPage struct {
@@ -554,10 +558,49 @@ func (client Client) SystemLogs(
 	after *SystemLogCursor,
 	limit uint64,
 ) (SystemLogPage, error) {
+	return client.telemetryLogs(
+		ctx,
+		"ServiceName = {service:String} AND SeverityNumber >= 9",
+		map[string]string{"service": service},
+		since,
+		search,
+		after,
+		limit,
+	)
+}
+
+func (client Client) EnvironmentTelemetryLogs(
+	ctx context.Context,
+	environment string,
+	since time.Time,
+	search string,
+	after *SystemLogCursor,
+	limit uint64,
+) (SystemLogPage, error) {
+	return client.telemetryLogs(
+		ctx,
+		"ResourceAttributes['deploycrate.environment.id'] = {environment:String}",
+		map[string]string{"environment": environment},
+		since,
+		search,
+		after,
+		limit,
+	)
+}
+
+func (client Client) telemetryLogs(
+	ctx context.Context,
+	scopeFilter string,
+	parameters map[string]string,
+	since time.Time,
+	search string,
+	after *SystemLogCursor,
+	limit uint64,
+) (SystemLogPage, error) {
 	const fingerprint = "sipHash64(SeverityText, Body, TraceId, SpanId, ScopeName, toString(LogAttributes), toString(ResourceAttributes))"
-	const columns = "toString(toUnixTimestamp64Nano(Timestamp)) AS timestamp_nanoseconds, toString(" + fingerprint + ") AS fingerprint, Body AS message, SeverityText AS severity, SeverityNumber AS severity_number, LogAttributes AS attributes, TraceId AS trace_id, SpanId AS span_id, ScopeName AS scope, LogAttributes['code.file.path'] AS source, LogAttributes['code.line.number'] AS line, ResourceAttributes['service.instance.id'] AS instance, ResourceAttributes['deploycrate.slot'] AS slot"
+	const columns = "toString(toUnixTimestamp64Nano(Timestamp)) AS timestamp_nanoseconds, toString(" + fingerprint + ") AS fingerprint, Body AS message, SeverityText AS severity, SeverityNumber AS severity_number, LogAttributes AS attributes, TraceId AS trace_id, SpanId AS span_id, ScopeName AS scope, LogAttributes['code.file.path'] AS source, LogAttributes['code.line.number'] AS line, ResourceAttributes['service.instance.id'] AS instance, ResourceAttributes['deploycrate.slot'] AS slot, ServiceName AS service, ResourceAttributes['deploycrate.process.name'] AS process_name, ResourceAttributes['deploycrate.process.kind'] AS process_kind, ResourceAttributes['deploycrate.process.replica'] AS process_replica"
 	const searchable = "concat(Body, ' ', SeverityText, ' ', ScopeName, ' ', toString(LogAttributes), ' ', toString(ResourceAttributes), ' ', toString(TraceId), ' ', toString(SpanId))"
-	filter := "ServiceName = {service:String} AND SeverityNumber >= 9 AND Timestamp >= fromUnixTimestamp64Nano({since_nanoseconds:Int64})"
+	filter := scopeFilter + " AND Timestamp >= fromUnixTimestamp64Nano({since_nanoseconds:Int64})"
 	if search != "" {
 		filter += " AND positionCaseInsensitiveUTF8(" + searchable + ", {search:String}) > 0"
 	}
@@ -570,7 +613,9 @@ func (client Client) SystemLogs(
 	}
 	query := endpoint.Query()
 	query.Set("database", client.database)
-	query.Set("param_service", service)
+	for key, value := range parameters {
+		query.Set("param_"+key, value)
+	}
 	query.Set("param_since_nanoseconds", strconv.FormatInt(since.UnixNano(), 10))
 	query.Set("param_limit", strconv.FormatUint(limit, 10))
 	if search != "" {
@@ -587,18 +632,18 @@ func (client Client) SystemLogs(
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), nil)
 	if err != nil {
-		return SystemLogPage{}, fmt.Errorf("build ClickHouse system log request: %w", err)
+		return SystemLogPage{}, fmt.Errorf("build ClickHouse telemetry log request: %w", err)
 	}
 	request.SetBasicAuth(client.user, client.password)
 	response, err := client.client.Do(request)
 	if err != nil {
-		return SystemLogPage{}, fmt.Errorf("query ClickHouse system logs: %w", err)
+		return SystemLogPage{}, fmt.Errorf("query ClickHouse telemetry logs: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 800))
 		return SystemLogPage{}, fmt.Errorf(
-			"query ClickHouse system logs: unexpected status %s: %s",
+			"query ClickHouse telemetry logs: unexpected status %s: %s",
 			response.Status,
 			string(message),
 		)
@@ -621,19 +666,23 @@ func (client Client) SystemLogs(
 			Line                 string            `json:"line"`
 			Instance             string            `json:"instance"`
 			Slot                 string            `json:"slot"`
+			Service              string            `json:"service"`
+			ProcessName          string            `json:"process_name"`
+			ProcessKind          string            `json:"process_kind"`
+			ProcessReplica       string            `json:"process_replica"`
 		}
 		if err := decoder.Decode(&row); errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
-			return SystemLogPage{}, fmt.Errorf("decode ClickHouse system log: %w", err)
+			return SystemLogPage{}, fmt.Errorf("decode ClickHouse telemetry log: %w", err)
 		}
 		timestampNanoseconds, err := strconv.ParseInt(row.TimestampNanoseconds, 10, 64)
 		if err != nil {
-			return SystemLogPage{}, fmt.Errorf("decode ClickHouse system log timestamp: %w", err)
+			return SystemLogPage{}, fmt.Errorf("decode ClickHouse telemetry log timestamp: %w", err)
 		}
 		fingerprint, err := strconv.ParseUint(row.Fingerprint, 10, 64)
 		if err != nil {
-			return SystemLogPage{}, fmt.Errorf("decode ClickHouse system log fingerprint: %w", err)
+			return SystemLogPage{}, fmt.Errorf("decode ClickHouse telemetry log fingerprint: %w", err)
 		}
 		logs = append(logs, SystemLog{
 			Cursor: SystemLogCursor{
@@ -644,6 +693,8 @@ func (client Client) SystemLogs(
 			Attributes: row.Attributes,
 			TraceID:    row.TraceID, SpanID: row.SpanID, Scope: row.Scope,
 			Source: row.Source, Line: row.Line, Instance: row.Instance, Slot: row.Slot,
+			Service: row.Service, ProcessName: row.ProcessName,
+			ProcessKind: row.ProcessKind, ProcessReplica: row.ProcessReplica,
 		})
 	}
 	if after == nil {

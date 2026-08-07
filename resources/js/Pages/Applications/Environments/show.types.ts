@@ -255,3 +255,107 @@ export type HostUsage = {
   memoryBytes: number;
   available: boolean;
 };
+
+export type ApplicationTelemetryPoint = {
+  observedAt: string;
+  requestsPerSecond: number;
+  clientErrorsPerSecond: number;
+  serverErrorsPerSecond: number;
+  p50DurationMs: number;
+  p95DurationMs: number;
+  p99DurationMs: number;
+};
+
+export type DatabaseTelemetryPoint = {
+  observedAt: string;
+  operationsPerSecond: number;
+  errorsPerSecond: number;
+  p50DurationMs: number;
+  p95DurationMs: number;
+  p99DurationMs: number;
+};
+
+export type TraceSummary = {
+  traceId: string;
+  rootSpanName: string;
+  startedAt: string;
+  durationNs: number;
+  spanCount: number;
+  errorCount: number;
+};
+
+export type TraceSpan = {
+  traceId: string;
+  spanId: string;
+  parentSpanId: string;
+  name: string;
+  kind: string;
+  serviceName: string;
+  scope: string;
+  statusCode: string;
+  statusMessage: string;
+  resourceAttributes: Record<string, string>;
+  spanAttributes: Record<string, string>;
+  startedAt: string;
+  durationNs: number;
+};
+
+export type RouteTelemetry = {
+  route: string;
+  method: string;
+  requestsPerSecond: number;
+  errorRate: number;
+  p95DurationMs: number;
+};
+
+export type ApplicationTelemetry = {
+  available: boolean;
+  observedAt: string;
+  windowSeconds: number;
+  requestsPerSecond: number;
+  serverErrorRate: number;
+  clientErrorRate: number;
+  meanRequestDurationMs: number;
+  runtimeMemoryBytes: number;
+  heapAllocatedBytes: number;
+  heapAllocations: number;
+  heapGoalBytes: number;
+  goroutines: number;
+  history: ApplicationTelemetryPoint[];
+  database: {
+    available: boolean;
+    observedAt: string;
+    operationsPerSecond: number;
+    errorsPerSecond: number;
+    p95DurationMs: number;
+    history: DatabaseTelemetryPoint[];
+  };
+  recentTraces: TraceSummary[];
+  routes: RouteTelemetry[];
+};
+
+export type OpenTelemetryLog = {
+  id: string;
+  message: string;
+  severity: string;
+  severityNumber: number;
+  attributes: Record<string, string>;
+  traceId: string;
+  spanId: string;
+  scope: string;
+  source: string;
+  line: string;
+  instance: string;
+  slot: string;
+  service: string;
+  processName: string;
+  processKind: string;
+  processReplica: string;
+  occurredAt: string;
+};
+
+export type OpenTelemetryLogSnapshot = {
+  logs: OpenTelemetryLog[];
+  nextCursor: string;
+  hasMore: boolean;
+};

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { router } from "@inertiajs/svelte";
+  import { page, router } from "@inertiajs/svelte";
   import { untrack } from "svelte";
   import { Button } from "@/Components/ui/button";
   import * as Card from "@/Components/ui/card";
@@ -9,6 +9,7 @@
   import DataField from "@/Components/DataField.svelte";
   import EnvironmentDeleteDialog from "@/Components/EnvironmentDeleteDialog.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
+  import OpenTelemetry from "@/Components/Applications/Environments/OpenTelemetry.svelte";
   import TelemetryHistory from "@/Components/Applications/Environments/TelemetryHistory.svelte";
   import UsageSummary from "@/Components/Applications/Environments/UsageSummary.svelte";
   import UsageDonut from "@/Components/System/UsageDonut.svelte";
@@ -23,6 +24,7 @@
     EnvironmentLogStream,
   } from "./show-streams.svelte";
   import type {
+    ApplicationTelemetry,
     Build,
     Deployment,
     EnvironmentSection,
@@ -44,6 +46,8 @@
     host = { cpuCores: 0, memoryBytes: 0, available: false },
     telemetryRange = "24h",
     section = "overview",
+    openTelemetryAvailable = false,
+    applicationTelemetry,
   }: {
     auth: { email: string };
     environment: Overview;
@@ -52,6 +56,8 @@
     host: HostUsage;
     telemetryRange: TelemetryRange;
     section: EnvironmentSection;
+    openTelemetryAvailable: boolean;
+    applicationTelemetry: ApplicationTelemetry;
   } = $props();
   let key = $state("");
   let value = $state("");
@@ -142,6 +148,13 @@
         ) ?? null)
       : null,
   );
+  const telemetryMode = $derived(
+    openTelemetryAvailable &&
+      new URLSearchParams($page.url.split("?")[1] ?? "").get("source") ===
+        "opentelemetry"
+      ? "opentelemetry"
+      : "standard",
+  );
   const environmentMemorySeries = $derived.by(() => {
     const totals: Record<
       string,
@@ -222,11 +235,25 @@
   const formatCPU = (value: number) => `${value.toFixed(2)} cores`;
   const stamp = (value: string) =>
     value ? new Date(value).toLocaleString() : "Pending";
-  const telemetryHref = (range: string) =>
-    `${routes.environmentTelemetry(
+  const telemetryHref = (
+    range: string,
+    source: "standard" | "opentelemetry" = telemetryMode,
+  ) => {
+    const query = new URLSearchParams({ range, source });
+    if (source === "opentelemetry") {
+      const view = new URLSearchParams($page.url.split("?")[1] ?? "").get(
+        "view",
+      );
+      query.set(
+        "view",
+        view === "logs" || view === "traces" ? view : "insights",
+      );
+    }
+    return `${routes.environmentTelemetry(
       environment.applicationId,
       environment.environment.id,
-    )}?range=${range}`;
+    )}?${query.toString()}`;
+  };
   const stepLabel = (value: string) =>
     value ? value.replaceAll("_", " ") : "waiting for worker";
   const deploymentStep = (deployment: Deployment) =>
@@ -670,7 +697,7 @@
   }
 
   $effect(() => {
-    if (section !== "telemetry") return;
+    if (section !== "telemetry" || telemetryMode !== "standard") return;
     logStream.logs.length;
     if (!followingEnvironmentLogs) return;
     const frame = window.requestAnimationFrame(() => {
@@ -682,7 +709,12 @@
   });
 
   $effect(() => {
-    if (section !== "telemetry" || environmentLogsPaused) return;
+    if (
+      section !== "telemetry" ||
+      telemetryMode !== "standard" ||
+      environmentLogsPaused
+    )
+      return;
     return logStream.poll();
   });
 
@@ -721,7 +753,10 @@
       if (refreshing || document.visibilityState !== "visible") return;
       refreshing = true;
       router.reload({
-        only: ["telemetry"],
+        only:
+          telemetryMode === "opentelemetry"
+            ? ["applicationTelemetry"]
+            : ["telemetry"],
         preserveScroll: true,
         preserveState: true,
         onFinish: () => (refreshing = false),
@@ -1068,175 +1103,219 @@
     {/if}
 
     {#if section === "telemetry"}
-      <section aria-labelledby="workload-telemetry-heading" class="space-y-4">
-        <div class="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2
-              id="workload-telemetry-heading"
-              class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground"
-            >
-              Workload telemetry
-            </h2>
-            <p class="mt-1 text-xs text-muted-foreground">
-              Current rates and usage for the active container
-            </p>
-          </div>
-          {#if activeTelemetry}
-            <p
-              class="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-muted-foreground"
-            >
-              <span class="flex items-baseline gap-1.5">
-                <span
-                  class="font-sans text-[10px] font-medium uppercase tracking-[0.14em]"
-                  >Deployment</span
-                >
-                {short(activeTelemetry.deployment)}
-              </span>
-              <span class="flex items-baseline gap-1.5">
-                <span
-                  class="font-sans text-[10px] font-medium uppercase tracking-[0.14em]"
-                  >Release</span
-                >
-                {short(activeTelemetry.release)}
-              </span>
-            </p>
-          {/if}
-          <div
-            class="flex flex-wrap items-center gap-1"
-            aria-label="Telemetry time range"
+      <div
+        class="flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-end sm:justify-between"
+      >
+        <div>
+          <p
+            class="mb-2 text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground"
           >
-            {#each [{ value: "1h", label: "1h" }, { value: "6h", label: "6h" }, { value: "24h", label: "24h" }, { value: "7d", label: "7d" }] as option}
-              <Button
-                size="sm"
-                variant={telemetryRange === option.value
-                  ? "default"
-                  : "outline"}
-                aria-pressed={telemetryRange === option.value}
-                href={telemetryHref(option.value)}>{option.label}</Button
-              >
-            {/each}
+            Telemetry source
+          </p>
+          <div class="flex flex-wrap gap-1" aria-label="Telemetry source">
             <Button
               size="sm"
-              variant={telemetryLive ? "default" : "outline"}
-              aria-pressed={telemetryLive}
-              onclick={() => (telemetryLive = !telemetryLive)}
+              variant={telemetryMode === "standard" ? "default" : "outline"}
+              aria-pressed={telemetryMode === "standard"}
+              href={telemetryHref(telemetryRange, "standard")}>Standard</Button
             >
-              <span
-                class={`size-1.5 rounded-full ${telemetryLive ? "bg-primary-foreground animate-pulse" : "bg-muted-foreground"}`}
-              ></span>
-              Live
-            </Button>
+            {#if openTelemetryAvailable}
+              <Button
+                size="sm"
+                variant={telemetryMode === "opentelemetry"
+                  ? "default"
+                  : "outline"}
+                aria-pressed={telemetryMode === "opentelemetry"}
+                href={telemetryHref(telemetryRange, "opentelemetry")}
+                >OpenTelemetry</Button
+              >
+            {/if}
           </div>
         </div>
-
-        {#if activeTelemetry}
-          <div class="grid gap-3 lg:grid-cols-2">
-            <UsageDonut
-              label="CPU"
-              used={activeTelemetry.cpuCores}
-              total={host.cpuCores}
-              formatValue={formatCPU}
-              available={activeTelemetry.available &&
-                activeTelemetry.cpuAvailable &&
-                host.available}
-            />
-            <UsageDonut
-              label="Memory"
-              used={activeTelemetry.memoryBytes}
-              total={host.memoryBytes}
-              formatValue={formatBytes}
-              available={activeTelemetry.available &&
-                activeTelemetry.memoryAvailable &&
-                host.available}
-            />
-          </div>
-        {/if}
-        {#if activeTelemetry || environmentMemorySeries.length > 0}
-          <TelemetryHistory series={environmentMemorySeries} {telemetryRange} />
-        {:else}
-          <div class="border border-border bg-card/35 px-5 py-16 text-center">
-            <p class="text-sm text-muted-foreground">
-              No telemetry is available for the active container yet.
-            </p>
-          </div>
-        {/if}
-      </section>
-
-      <Collapsible.Root bind:open={workloadLogsOpen}>
-        <Card.Root>
-          <Card.Header>
-            <Card.Action
-              ><div class="flex gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onclick={() => (workloadLogsOpen = !workloadLogsOpen)}
-                  aria-expanded={workloadLogsOpen}
-                  >{workloadLogsOpen ? "Hide logs" : "Show logs"}</Button
-                ><Button
-                  size="sm"
-                  variant="outline"
-                  disabled={!workloadLogsOpen}
-                  onclick={() =>
-                    (environmentLogsPaused = !environmentLogsPaused)}
-                  >{environmentLogsPaused ? "Resume" : "Pause"}</Button
-                >
-              </div></Card.Action
+        <div
+          class="flex flex-wrap items-center gap-1"
+          aria-label="Telemetry time range"
+        >
+          {#each [{ value: "1h", label: "1h" }, { value: "6h", label: "6h" }, { value: "24h", label: "24h" }, { value: "7d", label: "7d" }] as option (option.value)}
+            <Button
+              size="sm"
+              variant={telemetryRange === option.value ? "default" : "outline"}
+              aria-pressed={telemetryRange === option.value}
+              href={telemetryHref(option.value)}>{option.label}</Button
             >
-            <Card.Title>Workload logs</Card.Title>
-            <Card.Description
-              >Live stdout and stderr from this Environment's containers.
-              ClickHouse retains logs for seven days.</Card.Description
-            >
-          </Card.Header>
-          <Collapsible.Content>
-            <Card.Content>
-              {#if logStream.connectionError}<p
-                  class="mb-3 text-xs text-warning"
-                >
-                  {logStream.connectionError}
-                </p>{/if}
-              <div
-                bind:this={environmentLogViewport}
-                onscroll={updateEnvironmentLogFollow}
-                class="max-h-[32rem] min-h-48 overflow-auto border border-border bg-black/35 p-3 font-mono text-[11px] leading-relaxed"
+          {/each}
+          <Button
+            size="sm"
+            variant={telemetryLive ? "default" : "outline"}
+            aria-pressed={telemetryLive}
+            onclick={() => (telemetryLive = !telemetryLive)}
+          >
+            <span
+              class={`size-1.5 rounded-full ${telemetryLive ? "bg-primary-foreground animate-pulse" : "bg-muted-foreground"}`}
+            ></span>
+            Live
+          </Button>
+        </div>
+      </div>
+
+      {#if telemetryMode === "standard"}
+        <section aria-labelledby="workload-telemetry-heading" class="space-y-4">
+          <div class="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <h2
+                id="workload-telemetry-heading"
+                class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground"
               >
-                {#each logStream.logs as log (log.id)}
-                  <div
-                    class={cn(
-                      "grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 py-1",
-                      { "text-destructive": log.stream === "stderr" },
-                    )}
+                Workload telemetry
+              </h2>
+              <p class="mt-1 text-xs text-muted-foreground">
+                Current rates and usage for the active container
+              </p>
+            </div>
+            {#if activeTelemetry}
+              <p
+                class="flex flex-wrap items-center gap-x-4 gap-y-1 font-mono text-[11px] text-muted-foreground"
+              >
+                <span class="flex items-baseline gap-1.5">
+                  <span
+                    class="font-sans text-[10px] font-medium uppercase tracking-[0.14em]"
+                    >Deployment</span
                   >
-                    <span
-                      class="select-none whitespace-nowrap text-muted-foreground"
-                      >{stamp(log.occurredAt)}</span
+                  {short(activeTelemetry.deployment)}
+                </span>
+                <span class="flex items-baseline gap-1.5">
+                  <span
+                    class="font-sans text-[10px] font-medium uppercase tracking-[0.14em]"
+                    >Release</span
+                  >
+                  {short(activeTelemetry.release)}
+                </span>
+              </p>
+            {/if}
+          </div>
+
+          {#if activeTelemetry}
+            <div class="grid gap-3 lg:grid-cols-2">
+              <UsageDonut
+                label="CPU"
+                used={activeTelemetry.cpuCores}
+                total={host.cpuCores}
+                formatValue={formatCPU}
+                available={activeTelemetry.available &&
+                  activeTelemetry.cpuAvailable &&
+                  host.available}
+              />
+              <UsageDonut
+                label="Memory"
+                used={activeTelemetry.memoryBytes}
+                total={host.memoryBytes}
+                formatValue={formatBytes}
+                available={activeTelemetry.available &&
+                  activeTelemetry.memoryAvailable &&
+                  host.available}
+              />
+            </div>
+          {/if}
+          {#if activeTelemetry || environmentMemorySeries.length > 0}
+            <TelemetryHistory
+              series={environmentMemorySeries}
+              {telemetryRange}
+            />
+          {:else}
+            <div class="border border-border bg-card/35 px-5 py-16 text-center">
+              <p class="text-sm text-muted-foreground">
+                No telemetry is available for the active container yet.
+              </p>
+            </div>
+          {/if}
+        </section>
+
+        <Collapsible.Root bind:open={workloadLogsOpen}>
+          <Card.Root>
+            <Card.Header>
+              <Card.Action
+                ><div class="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onclick={() => (workloadLogsOpen = !workloadLogsOpen)}
+                    aria-expanded={workloadLogsOpen}
+                    >{workloadLogsOpen ? "Hide logs" : "Show logs"}</Button
+                  ><Button
+                    size="sm"
+                    variant="outline"
+                    disabled={!workloadLogsOpen}
+                    onclick={() =>
+                      (environmentLogsPaused = !environmentLogsPaused)}
+                    >{environmentLogsPaused ? "Resume" : "Pause"}</Button
+                  >
+                </div></Card.Action
+              >
+              <Card.Title>Workload logs</Card.Title>
+              <Card.Description
+                >Live stdout and stderr from this Environment's containers.
+                ClickHouse retains logs for seven days.</Card.Description
+              >
+            </Card.Header>
+            <Collapsible.Content>
+              <Card.Content>
+                {#if logStream.connectionError}<p
+                    class="mb-3 text-xs text-warning"
+                  >
+                    {logStream.connectionError}
+                  </p>{/if}
+                <div
+                  bind:this={environmentLogViewport}
+                  onscroll={updateEnvironmentLogFollow}
+                  class="max-h-[32rem] min-h-48 overflow-auto border border-border bg-black/35 p-3 font-mono text-[11px] leading-relaxed"
+                >
+                  {#each logStream.logs as log (log.id)}
+                    <div
+                      class={cn(
+                        "grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 py-1",
+                        { "text-destructive": log.stream === "stderr" },
+                      )}
                     >
-                    <div class="min-w-0">
-                      <p class="select-none text-[10px] text-muted-foreground">
-                        {log.stream} · {log.processKind || "process"}
-                        {log.processName || "unknown"}{log.processReplica
-                          ? ` · ${log.processReplica}`
-                          : ""} · {log.container || "container"} · deployment {short(
-                          log.deployment,
-                        )} · instance {short(log.instance)}
-                      </p>
-                      <pre
-                        class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
+                      <span
+                        class="select-none whitespace-nowrap text-muted-foreground"
+                        >{stamp(log.occurredAt)}</span
+                      >
+                      <div class="min-w-0">
+                        <p
+                          class="select-none text-[10px] text-muted-foreground"
+                        >
+                          {log.stream} · {log.processKind || "process"}
+                          {log.processName || "unknown"}{log.processReplica
+                            ? ` · ${log.processReplica}`
+                            : ""} · {log.container || "container"} · deployment {short(
+                            log.deployment,
+                          )} · instance {short(log.instance)}
+                        </p>
+                        <pre
+                          class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
+                      </div>
                     </div>
-                  </div>
-                {:else}
-                  <p class="text-muted-foreground">
-                    {logStream.loaded
-                      ? "No workload logs have been collected yet."
-                      : "Loading workload logs..."}
-                  </p>
-                {/each}
-              </div>
-            </Card.Content>
-          </Collapsible.Content>
-        </Card.Root>
-      </Collapsible.Root>
+                  {:else}
+                    <p class="text-muted-foreground">
+                      {logStream.loaded
+                        ? "No workload logs have been collected yet."
+                        : "Loading workload logs..."}
+                    </p>
+                  {/each}
+                </div>
+              </Card.Content>
+            </Collapsible.Content>
+          </Card.Root>
+        </Collapsible.Root>
+      {:else}
+        <OpenTelemetry
+          applicationId={environment.applicationId}
+          environmentId={environment.environment.id}
+          telemetry={applicationTelemetry}
+          {telemetryRange}
+          live={telemetryLive}
+        />
+      {/if}
     {/if}
 
     {#if section === "overview"}
