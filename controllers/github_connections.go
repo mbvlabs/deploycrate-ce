@@ -91,11 +91,12 @@ func (controller GitHubConnections) StartAppSetup(etx *echo.Context) error {
 	var payload struct {
 		OwnerType  string `json:"ownerType"`
 		OwnerLogin string `json:"ownerLogin"`
+		Public     bool   `json:"public"`
 	}
 	if err := etx.Bind(&payload); err != nil {
 		return inertia.Page(etx, "Errors/BadRequest", inertia.Props{})
 	}
-	start, err := controller.connection.StartManifest(etx.Request().Context(), cookies.ExtractFromCookieApp(etx).UserID, payload.OwnerType, payload.OwnerLogin)
+	start, err := controller.connection.StartManifest(etx.Request().Context(), cookies.ExtractFromCookieApp(etx).UserID, payload.OwnerType, payload.OwnerLogin, payload.Public)
 	if err != nil {
 		return controller.redirectWithError(etx, routes.GitHubConnection.URL(), err)
 	}

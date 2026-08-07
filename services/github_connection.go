@@ -21,7 +21,6 @@ import (
 	"io"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -87,7 +86,7 @@ func NewGitHubConnection(db storage.Pool, cfg config.Config, client *githubclien
 	return &GitHubConnection{db: db, cfg: cfg, client: client}
 }
 
-func (service *GitHubConnection) StartManifest(ctx context.Context, userID uuid.UUID, ownerType, ownerLogin string) (GitHubManifestStart, error) {
+func (service *GitHubConnection) StartManifest(ctx context.Context, userID uuid.UUID, ownerType, ownerLogin string, isPublic bool) (GitHubManifestStart, error) {
 	instanceID, err := service.instanceID()
 	if err != nil {
 		return GitHubManifestStart{}, err
@@ -145,7 +144,7 @@ func (service *GitHubConnection) StartManifest(ctx context.Context, userID uuid.
 		"redirect_url":        routes.GitHubAppCallback.FullURL(config.BaseURL),
 		"setup_url":           routes.GitHubInstallCallback.FullURL(config.BaseURL),
 		"setup_on_update":     true,
-		"public":              true,
+		"public":              isPublic,
 		"hook_attributes":     map[string]any{"url": routes.GitHubWebhook.FullURL(config.BaseURL), "active": true},
 		"default_permissions": map[string]string{"contents": "read", "metadata": "read"},
 		"default_events":      []string{"push"},
@@ -240,7 +239,7 @@ func (service *GitHubConnection) StartInstallation(ctx context.Context, userID u
 	if err != nil {
 		return "", ErrGitHubNotConfigured
 	}
-	targetType, targetLogin, suggestedTargetID, err := service.installationTarget(ctx, app, ownerType, ownerLogin)
+	targetType, targetLogin, _, err := service.installationTarget(ctx, ownerType, ownerLogin)
 	if err != nil {
 		return "", err
 	}
@@ -252,14 +251,10 @@ func (service *GitHubConnection) StartInstallation(ctx context.Context, userID u
 	if err != nil {
 		return "", err
 	}
-	installURL := "https://github.com/apps/" + url.PathEscape(app.Slug) + "/installations/new"
-	if suggestedTargetID > 0 {
-		installURL += "/permissions?suggested_target_id=" + strconv.FormatInt(suggestedTargetID, 10)
-	}
-	return installURL + "?state=" + url.QueryEscape(state), nil
+	return "https://github.com/apps/" + url.PathEscape(app.Slug) + "/installations/new?state=" + url.QueryEscape(state), nil
 }
 
-func (service *GitHubConnection) installationTarget(ctx context.Context, app models.GitHubAppEntity, ownerType, ownerLogin string) (sql.NullString, sql.NullString, int64, error) {
+func (service *GitHubConnection) installationTarget(ctx context.Context, ownerType, ownerLogin string) (sql.NullString, sql.NullString, int64, error) {
 	ownerType = strings.ToLower(strings.TrimSpace(ownerType))
 	ownerLogin = strings.TrimSpace(ownerLogin)
 	switch ownerType {
@@ -269,11 +264,7 @@ func (service *GitHubConnection) installationTarget(ctx context.Context, app mod
 		if ownerLogin == "" || strings.ContainsAny(ownerLogin, "/?#") {
 			return sql.NullString{}, sql.NullString{}, 0, errors.Join(models.ErrDomainValidation, errors.New("organization login is required"))
 		}
-		auth, err := service.authentication(ctx, app)
-		if err != nil {
-			return sql.NullString{}, sql.NullString{}, 0, err
-		}
-		account, err := service.client.LookupAccount(ctx, auth, ownerLogin)
+		account, err := service.client.LookupAccount(ctx, ownerLogin)
 		if err != nil {
 			return sql.NullString{}, sql.NullString{}, 0, errors.Join(models.ErrDomainValidation, fmt.Errorf("GitHub could not be found for the organization login: %w", err))
 		}

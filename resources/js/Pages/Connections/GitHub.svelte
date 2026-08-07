@@ -8,6 +8,7 @@
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import { Button } from "@/Components/ui/button";
   import * as Card from "@/Components/ui/card";
+  import { Checkbox } from "@/Components/ui/checkbox";
   import * as Dialog from "@/Components/ui/dialog";
   import * as Empty from "@/Components/ui/empty";
   import { Input } from "@/Components/ui/input";
@@ -47,7 +48,11 @@
     auth,
     connection,
   }: { auth: { email: string }; connection: Connection } = $props();
-  const setup = useForm({ ownerType: "personal", ownerLogin: "" });
+  const setup = useForm({
+    ownerType: "personal",
+    ownerLogin: "",
+    public: true,
+  });
   const install = useForm({ ownerType: "personal", ownerLogin: "" });
   let setupDialogOpen = $state(false);
   let installDialogOpen = $state(false);
@@ -294,9 +299,7 @@
         <Dialog.Header
           ><Dialog.Title>Add GitHub App</Dialog.Title><Dialog.Description
             >GitHub returns the private key and webhook secret directly to
-            DeployCrate. The App is created as installable by any account so
-            personal and organization installations can share one connection.
-            Secret values are encrypted before persistence.</Dialog.Description
+            DeployCrate. Secret values are encrypted before persistence.</Dialog.Description
           ></Dialog.Header
         >
         <FormField label="App owner" error={$setup.errors.ownerType}>
@@ -321,6 +324,20 @@
               disabled={$setup.processing}
             /></FormField
           >{/if}
+        <label class="flex items-start gap-3 border border-border p-4"
+          ><Checkbox
+            class="mt-0.5"
+            bind:checked={$setup.public}
+            disabled={$setup.processing}
+          /><span
+            ><span class="block text-sm font-medium"
+              >Installable by any account (public)</span
+            ><span class="mt-1 block text-xs text-muted-foreground"
+              >Public apps can be installed on personal and organization
+              accounts. Private apps can only be installed on the owner account.</span
+            ></span
+          ></label
+        >
         <Dialog.Footer
           ><Button
             type="button"
