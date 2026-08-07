@@ -52,30 +52,12 @@
     deployments: Deployment[];
   };
 
-  type TelemetryRow = {
-    environment: string;
-    available: boolean;
-    cpuCores: number;
-    memoryBytes: number;
-    cpuAvailable: boolean;
-    memoryAvailable: boolean;
-  };
-
-  type TelemetrySummary = {
-    cpuCores: number;
-    memoryBytes: number;
-    cpuAvailable: boolean;
-    memoryAvailable: boolean;
-  };
-
   let {
     auth,
     application,
-    telemetry,
   }: {
     auth: { email: string };
     application: Application;
-    telemetry: TelemetryRow[];
   } = $props();
 
   let deleteDialogOpen = $state(false);
@@ -101,11 +83,6 @@
         environment.environmentId !== production?.environmentId,
     ),
   );
-  const currentTelemetry = $derived(
-    (telemetry ?? []).filter((row) => row.available),
-  );
-  const combinedTelemetry = $derived(summarizeTelemetry(currentTelemetry));
-
   function hasTimestamp(value: unknown) {
     if (typeof value === "string") return value.trim() !== "";
     if (!value || typeof value !== "object") return false;
@@ -140,44 +117,6 @@
     );
   }
 
-  function telemetryForEnvironment(environmentId: string) {
-    return summarizeTelemetry(
-      currentTelemetry.filter((row) => row.environment === environmentId),
-    );
-  }
-
-  function summarizeTelemetry(rows: TelemetryRow[]): TelemetrySummary {
-    const summary: TelemetrySummary = {
-      cpuCores: 0,
-      memoryBytes: 0,
-      cpuAvailable: false,
-      memoryAvailable: false,
-    };
-    for (const row of rows) {
-      if (row.cpuAvailable) {
-        summary.cpuCores += row.cpuCores;
-        summary.cpuAvailable = true;
-      }
-      if (row.memoryAvailable) {
-        summary.memoryBytes += row.memoryBytes;
-        summary.memoryAvailable = true;
-      }
-    }
-    return summary;
-  }
-
-  function formatBytes(value: number) {
-    if (!Number.isFinite(value) || value < 0) return "Unavailable";
-    if (value === 0) return "0 B";
-    const units = ["B", "KB", "MB", "GB", "TB"];
-    const index = Math.min(
-      Math.floor(Math.log(value) / Math.log(1024)),
-      units.length - 1,
-    );
-    return `${(value / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
-  }
-
-  const formatCPU = (value: number) => `${value.toFixed(2)} cores`;
   const formatTimestamp = (value: string) =>
     value ? new Date(value).toLocaleString() : "Not recorded";
   const short = (value: string) =>
@@ -256,12 +195,8 @@
         </p>
       </div>
       <div class="flex gap-2">
-        <Button variant="outline"
-          >{#snippet child({ props })}<Link
-              {...props}
-              href={routes.applicationEdit(application.id)}
-              >Edit application</Link
-            >{/snippet}</Button
+        <Button variant="destructive" onclick={() => (deleteDialogOpen = true)}
+          >Delete application</Button
         >
         <Button
           >{#snippet child({ props })}<Link
@@ -280,19 +215,12 @@
         >
           Primary environments
         </h2>
-        <p class="mt-1 text-sm text-muted-foreground">
-          Open staging or production to deploy, inspect logs, and manage
-          configuration.
-        </p>
       </div>
       <div class="grid gap-4 lg:grid-cols-2">
         {#each [{ kind: "staging", environment: staging }, { kind: "production", environment: production }] as featured (featured.kind)}
           {#if featured.environment}
             {@const environment = featured.environment}
             {@const deployment = latestDeployment(environment.environmentId)}
-            {@const environmentTelemetry = telemetryForEnvironment(
-              environment.environmentId,
-            )}
             <Link
               href={routes.environmentShow(
                 application.id,
@@ -323,41 +251,15 @@
                     )}</Card.Description
                   >
                 </Card.Header>
-                <Card.Content class="grid gap-5 sm:grid-cols-3">
-                  <div>
-                    <p
-                      class="text-[10px] uppercase tracking-[0.12em] text-muted-foreground"
-                    >
-                      Reference
-                    </p>
-                    <p class="mt-1 truncate font-mono text-xs">
-                      {environment.reference || "Not configured"}
-                    </p>
-                  </div>
-                  <div>
-                    <p
-                      class="text-[10px] uppercase tracking-[0.12em] text-muted-foreground"
-                    >
-                      CPU
-                    </p>
-                    <p class="mt-1 font-medium">
-                      {environmentTelemetry.cpuAvailable
-                        ? formatCPU(environmentTelemetry.cpuCores)
-                        : "Unavailable"}
-                    </p>
-                  </div>
-                  <div>
-                    <p
-                      class="text-[10px] uppercase tracking-[0.12em] text-muted-foreground"
-                    >
-                      Memory
-                    </p>
-                    <p class="mt-1 font-medium">
-                      {environmentTelemetry.memoryAvailable
-                        ? formatBytes(environmentTelemetry.memoryBytes)
-                        : "Unavailable"}
-                    </p>
-                  </div>
+                <Card.Content>
+                  <p
+                    class="text-[10px] uppercase tracking-[0.12em] text-muted-foreground"
+                  >
+                    Reference
+                  </p>
+                  <p class="mt-1 truncate font-mono text-xs">
+                    {environment.reference || "Not configured"}
+                  </p>
                 </Card.Content>
                 <Card.Footer
                   class="flex items-center justify-between gap-3 border-t border-border text-xs text-muted-foreground"
@@ -496,76 +398,6 @@
       {/if}
     </section>
 
-    <section aria-labelledby="telemetry-heading" class="space-y-4">
-      <div>
-        <h2
-          id="telemetry-heading"
-          class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground"
-        >
-          Combined telemetry
-        </h2>
-        <p class="mt-1 text-sm text-muted-foreground">
-          Current resource use across fresh workload telemetry from all
-          application environments.
-        </p>
-      </div>
-      <div class="grid gap-3 sm:grid-cols-2">
-        <Card.Root size="sm"
-          ><Card.Header
-            ><Card.Description>CPU</Card.Description><Card.Title
-              >{combinedTelemetry.cpuAvailable
-                ? formatCPU(combinedTelemetry.cpuCores)
-                : "Unavailable"}</Card.Title
-            ></Card.Header
-          ></Card.Root
-        >
-        <Card.Root size="sm"
-          ><Card.Header
-            ><Card.Description>Memory</Card.Description><Card.Title
-              >{combinedTelemetry.memoryAvailable
-                ? formatBytes(combinedTelemetry.memoryBytes)
-                : "Unavailable"}</Card.Title
-            ></Card.Header
-          ></Card.Root
-        >
-      </div>
-      <div class="border border-border">
-        <Table.Root>
-          <Table.Header
-            ><Table.Row
-              ><Table.Head>Environment</Table.Head><Table.Head>CPU</Table.Head
-              ><Table.Head>Memory</Table.Head></Table.Row
-            ></Table.Header
-          >
-          <Table.Body>
-            {#each application.environments as environment (environment.environmentId)}
-              {@const summary = telemetryForEnvironment(
-                environment.environmentId,
-              )}
-              <Table.Row>
-                <Table.Cell
-                  ><div class="font-medium">{environment.environmentName}</div>
-                  <div class="text-xs capitalize text-muted-foreground">
-                    {environment.environmentKind}
-                  </div></Table.Cell
-                >
-                <Table.Cell
-                  >{summary.cpuAvailable
-                    ? formatCPU(summary.cpuCores)
-                    : "Unavailable"}</Table.Cell
-                >
-                <Table.Cell
-                  >{summary.memoryAvailable
-                    ? formatBytes(summary.memoryBytes)
-                    : "Unavailable"}</Table.Cell
-                >
-              </Table.Row>
-            {/each}
-          </Table.Body>
-        </Table.Root>
-      </div>
-    </section>
-
     <section aria-labelledby="deployments-heading" class="space-y-4">
       <div>
         <h2
@@ -574,9 +406,6 @@
         >
           Recent deployments
         </h2>
-        <p class="mt-1 text-sm text-muted-foreground">
-          The latest deployment activity across all environments.
-        </p>
       </div>
       {#if application.deployments.length === 0}
         <Empty.Root class="border border-dashed border-border py-10"
@@ -639,12 +468,6 @@
         </div>
       {/if}
     </section>
-
-    <div>
-      <Button variant="destructive" onclick={() => (deleteDialogOpen = true)}
-        >Delete application</Button
-      >
-    </div>
   </div>
 
   <ConfirmActionDialog

@@ -349,6 +349,23 @@
         ) ?? null)
       : null,
   );
+  const memorySeries = $derived(
+    telemetry
+      .filter((row) =>
+        row.history.some(
+          (point) =>
+            point.memoryAvailable &&
+            Number.isFinite(new Date(point.observedAt).getTime()),
+        ),
+      )
+      .map((row) => ({
+        id: row.instance,
+        label: short(row.instance),
+        active: row === activeTelemetry,
+        points: row.history,
+      }))
+      .sort((a, b) => Number(b.active) - Number(a.active)),
+  );
   const usageChange = $derived.by(() => {
     if (!activeTelemetry) return null;
     const hourAgo = Date.now() - 60 * 60 * 1000;
@@ -1542,7 +1559,9 @@
                 host.available}
             />
           </div>
-          <TelemetryHistory points={activeTelemetry.history} {telemetryRange} />
+        {/if}
+        {#if activeTelemetry || memorySeries.length > 0}
+          <TelemetryHistory series={memorySeries} {telemetryRange} />
         {:else}
           <div class="border border-border bg-card/35 px-5 py-16 text-center">
             <p class="text-sm text-muted-foreground">
