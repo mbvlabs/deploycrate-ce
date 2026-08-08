@@ -57,6 +57,11 @@ type EnvironmentSecretMutation struct {
 	NoOp     bool                             `json:"noOp"`
 }
 
+type EnvironmentSecretInput struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
 type ResolvedEnvironmentSecret struct {
 	Key   string
 	Value string
@@ -204,6 +209,112 @@ func (service *EnvironmentSecrets) CreateUser(
 		return EnvironmentSecretMutation{}, err
 	}
 	return EnvironmentSecretMutation{Secret: secret.Sanitized(), Revision: revision.ID}, nil
+}
+
+func (service *EnvironmentSecrets) BulkCreateUser(
+	ctx context.Context,
+	applicationID, environmentID, userID uuid.UUID,
+	secrets []EnvironmentSecretInput,
+) (EnvironmentSecretMutation, error) {
+	if len(secrets) == 0 {
+		return EnvironmentSecretMutation{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("at least one secret is required"),
+		)
+	}
+	prepared := make([]PreparedEnvironmentSecret, 0, len(secrets))
+	seen := make(map[string]struct{}, len(secrets))
+	for _, secret := range secrets {
+		key := models.NormalizeEnvironmentSecretKey(secret.Key)
+		if _, exists := seen[key]; exists {
+			return EnvironmentSecretMutation{}, errors.Join(
+				models.ErrDomainValidation,
+				validation.ValidationErrors{{
+					Field:   "key",
+					Code:    "duplicate",
+					Message: fmt.Sprintf("secret key %q is listed more than once", key),
+				}},
+			)
+		}
+		seen[key] = struct{}{}
+		item, err := service.Prepare(
+			environmentID,
+			key,
+			secret.Value,
+			models.EnvironmentSecretSourceUser,
+			userID,
+		)
+		if err != nil {
+			return EnvironmentSecretMutation{}, err
+		}
+		prepared = append(prepared, item)
+	}
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return EnvironmentSecretMutation{}, err
+	}
+	defer tx.Rollback()
+	environment, err := models.Environment.Lock(ctx, tx, environmentID)
+	if err != nil {
+		return EnvironmentSecretMutation{}, err
+	}
+	setupComplete, err := models.Environment.SetupComplete(ctx, tx, environmentID)
+	if err != nil {
+		return EnvironmentSecretMutation{}, err
+	}
+	if environment.ApplicationID != applicationID || !setupComplete ||
+		environment.ArchivedAt.Valid {
+		return EnvironmentSecretMutation{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("Environment setup must be complete"),
+		)
+	}
+	base, err := models.EnvironmentStateRevision.LatestCommitted(ctx, tx, environment.ID)
+	if err != nil {
+		return EnvironmentSecretMutation{}, err
+	}
+	state, err := models.ParseEnvironmentDesiredState(base.State)
+	if err != nil {
+		return EnvironmentSecretMutation{}, err
+	}
+	existing := make(map[string]struct{}, len(state.Secrets)+len(prepared))
+	for _, descriptor := range state.Secrets {
+		existing[descriptor.Key] = struct{}{}
+	}
+	changes := make([]secretRevisionChange, 0, len(prepared))
+	for _, item := range prepared {
+		if _, exists := existing[item.Key]; exists {
+			return EnvironmentSecretMutation{}, errors.Join(
+				models.ErrDomainValidation,
+				validation.ValidationErrors{{
+					Field:   "key",
+					Code:    "reserved",
+					Message: fmt.Sprintf("secret key %q already exists", item.Key),
+				}},
+			)
+		}
+		existing[item.Key] = struct{}{}
+		secret, err := service.CreatePrepared(ctx, tx, item)
+		if err != nil {
+			return EnvironmentSecretMutation{}, err
+		}
+		changes = append(changes, secretRevisionChange{requested: &secret})
+	}
+	revision, err := service.commitSecretsRevision(
+		ctx,
+		tx,
+		environment,
+		userID,
+		"secret_create",
+		changes,
+	)
+	if err != nil {
+		return EnvironmentSecretMutation{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return EnvironmentSecretMutation{}, err
+	}
+	return EnvironmentSecretMutation{Revision: revision.ID}, nil
 }
 
 func (service *EnvironmentSecrets) RotateUser(
@@ -765,6 +876,10 @@ func (service *EnvironmentSecrets) digest(
 	return valueMAC.Sum(nil), nil
 }
 
+type secretRevisionChange struct {
+	previous, requested *models.EnvironmentSecretEntity
+}
+
 func (service *EnvironmentSecrets) commitSecretRevision(
 	ctx context.Context,
 	db storage.Executor,
@@ -772,6 +887,24 @@ func (service *EnvironmentSecrets) commitSecretRevision(
 	actorID uuid.UUID,
 	kind string,
 	previous, requested *models.EnvironmentSecretEntity,
+) (models.EnvironmentStateRevisionEntity, error) {
+	return service.commitSecretsRevision(
+		ctx,
+		db,
+		environment,
+		actorID,
+		kind,
+		[]secretRevisionChange{{previous: previous, requested: requested}},
+	)
+}
+
+func (service *EnvironmentSecrets) commitSecretsRevision(
+	ctx context.Context,
+	db storage.Executor,
+	environment models.EnvironmentEntity,
+	actorID uuid.UUID,
+	kind string,
+	changes []secretRevisionChange,
 ) (models.EnvironmentStateRevisionEntity, error) {
 	if _, err := models.Environment.Lock(ctx, db, environment.ID); err != nil {
 		return models.EnvironmentStateRevisionEntity{}, err
@@ -784,15 +917,27 @@ func (service *EnvironmentSecrets) commitSecretRevision(
 	if err != nil {
 		return models.EnvironmentStateRevisionEntity{}, err
 	}
-	secrets := make([]models.EnvironmentSecretDescriptor, 0, len(state.Secrets)+1)
+	secrets := make([]models.EnvironmentSecretDescriptor, 0, len(state.Secrets)+len(changes))
 	for _, descriptor := range state.Secrets {
-		if previous != nil && descriptor.ID == previous.ID {
+		removed := false
+		for _, change := range changes {
+			if change.previous != nil && descriptor.ID == change.previous.ID {
+				removed = true
+				break
+			}
+		}
+		if removed {
 			continue
 		}
 		secrets = append(secrets, descriptor)
 	}
-	if requested != nil {
-		secrets = append(secrets, models.EnvironmentSecretDescriptorFromEntity(*requested))
+	for _, change := range changes {
+		if change.requested != nil {
+			secrets = append(
+				secrets,
+				models.EnvironmentSecretDescriptorFromEntity(*change.requested),
+			)
+		}
 	}
 	state.Secrets = secrets
 	canonical, err := models.CanonicalEnvironmentDesiredState(state)
@@ -827,23 +972,23 @@ func (service *EnvironmentSecrets) commitSecretRevision(
 		value, _ := json.Marshal(models.EnvironmentSecretDescriptorFromEntity(*secret))
 		return value
 	}
-	subjectID := uuid.Nil
-	if requested != nil {
-		subjectID = requested.ID
-	} else if previous != nil {
-		subjectID = previous.ID
-	}
-	if _, err := models.ChangeItem.Create(ctx, db, models.CreateChangeItemData{
-		Action:      kind,
-		SubjectType: "environment_secret",
-		SubjectID:   subjectID,
-		PreviousValue: changeValue(
-			previous,
-		),
-		RequestedValue: changeValue(requested),
-		ChangeID:       change.ID,
-	}); err != nil {
-		return models.EnvironmentStateRevisionEntity{}, err
+	for _, item := range changes {
+		subjectID := uuid.Nil
+		if item.requested != nil {
+			subjectID = item.requested.ID
+		} else if item.previous != nil {
+			subjectID = item.previous.ID
+		}
+		if _, err := models.ChangeItem.Create(ctx, db, models.CreateChangeItemData{
+			Action:         kind,
+			SubjectType:    "environment_secret",
+			SubjectID:      subjectID,
+			PreviousValue:  changeValue(item.previous),
+			RequestedValue: changeValue(item.requested),
+			ChangeID:       change.ID,
+		}); err != nil {
+			return models.EnvironmentStateRevisionEntity{}, err
+		}
 	}
 	revision, err := models.EnvironmentStateRevision.Create(
 		ctx,

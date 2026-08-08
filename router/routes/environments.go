@@ -267,6 +267,12 @@ var EnvironmentSecretsCreate = routing.NewRouteWithParams[EnvironmentParams](
 	ApplicationsPrefix,
 )
 
+var EnvironmentSecretsBulkCreate = routing.NewRouteWithParams[EnvironmentParams](
+	"/:applicationID/environments/:environmentID/secrets/bulk",
+	"applications.environments.secrets.bulk_create",
+	ApplicationsPrefix,
+)
+
 var EnvironmentSecretRotate = routing.NewRouteWithParams[EnvironmentSecretParams](
 	"/:applicationID/environments/:environmentID/secrets/:secretID/rotate",
 	"applications.environments.secrets.rotate",

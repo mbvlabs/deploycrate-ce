@@ -102,6 +102,7 @@ func (c Environments) RegisterRoutes(router *router.Router) error {
 		{http.MethodPost, routes.EnvironmentDNSRetry, c.RetryDNS},
 		{http.MethodPost, routes.EnvironmentDNSRefresh, c.RefreshDNS},
 		{http.MethodPost, routes.EnvironmentSecretsCreate, c.CreateSecret},
+		{http.MethodPost, routes.EnvironmentSecretsBulkCreate, c.BulkCreateSecrets},
 		{http.MethodPost, routes.EnvironmentSecretRotate, c.RotateSecret},
 		{http.MethodDelete, routes.EnvironmentSecretDestroy, c.ArchiveSecret},
 	}
@@ -1293,6 +1294,26 @@ func (c Environments) CreateSecret(etx *echo.Context) error {
 	return c.secretRedirect(etx, params, err, "Secret added")
 }
 
+func (c Environments) BulkCreateSecrets(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	var payload struct {
+		Secrets []services.EnvironmentSecretInput `json:"secrets"`
+	}
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	if err == nil {
+		_, err = c.envSecretsSvc.BulkCreateUser(
+			etx.Request().Context(),
+			params.ApplicationID,
+			params.EnvironmentID,
+			cookies.ExtractFromCookieApp(etx).UserID,
+			payload.Secrets,
+		)
+	}
+	return c.secretRedirect(etx, params, err, "Secrets added")
+}
+
 func (c Environments) RotateSecret(etx *echo.Context) error {
 	params, err := environmentPathParams(etx)
 	secretID, parseErr := uuid.Parse(etx.Param("secretID"))
@@ -1347,7 +1368,7 @@ func (c Environments) secretRedirect(
 	}
 	return inertia.Redirect(
 		etx,
-		routes.EnvironmentShow.URL(params.routeParams()),
+		environmentSectionReturnURL(etx, params),
 		http.StatusSeeOther,
 	)
 }

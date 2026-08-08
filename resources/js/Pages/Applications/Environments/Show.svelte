@@ -18,6 +18,7 @@
   import TelemetryHistory from "@/Components/Applications/Environments/TelemetryHistory.svelte";
   import UsageSummary from "@/Components/Applications/Environments/UsageSummary.svelte";
   import UsageDonut from "@/Components/System/UsageDonut.svelte";
+  import BulkEnvironmentSecretsDialog from "@/Components/BulkEnvironmentSecretsDialog.svelte";
   import { Input } from "@/Components/ui/input";
   import { Spinner } from "@/Components/ui/spinner";
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
@@ -66,6 +67,9 @@
   } = $props();
   let key = $state("");
   let value = $state("");
+  let bulkSecretDialogOpen = $state(false);
+  let bulkSecretImporting = $state(false);
+  let secretAddError = $state("");
   let imageReference = $state(untrack(() => environment.reference));
   let apiToken = $state("");
   let apiTokenError = $state("");
@@ -316,20 +320,42 @@
   function createSecret() {
     if (!key.trim() || !value || secretCreationProcessing) return;
     secretCreationProcessing = true;
+    secretAddError = "";
     router.post(
-      routes.environmentDeploymentsCreate(
+      routes.environmentSecretsCreate(
         environment.applicationId,
         environment.environment.id,
       ),
-      environment.sourceType === "image" ? { reference: imageReference } : {},
+      { key: key.trim().toUpperCase(), value },
       {
         headers: { "X-Deploycrate-Section": section },
         preserveScroll: true,
         onSuccess: () => {
-          buildStream.reset();
-          expandedBuildId = "";
+          key = "";
+          value = "";
         },
-        onFinish: () => (deploymentCreationProcessing = false),
+        onError: (errors) =>
+          (secretAddError =
+            Object.values(errors).map(String).join("\n") ||
+            "The secret could not be added."),
+        onFinish: () => (secretCreationProcessing = false),
+      },
+    );
+  }
+
+  function importBulkSecrets(secrets: { key: string; value: string }[]) {
+    if (bulkSecretImporting || secrets.length === 0) return;
+    bulkSecretImporting = true;
+    router.post(
+      routes.environmentSecretsBulkCreate(
+        environment.applicationId,
+        environment.environment.id,
+      ),
+      { secrets },
+      {
+        headers: { "X-Deploycrate-Section": section },
+        preserveScroll: true,
+        onFinish: () => (bulkSecretImporting = false),
       },
     );
   }
@@ -1598,6 +1624,13 @@
     {#if section === "secrets"}
       <Card.Root
         ><Card.Header
+          ><Card.Action
+            ><Button
+              type="button"
+              variant="outline"
+              onclick={() => (bulkSecretDialogOpen = true)}
+              >Import secrets</Button
+            ></Card.Action
           ><Card.Title>Environment secrets</Card.Title><Card.Description
             >Status compares each desired value fingerprint with the revision
             running in the serving container. Resource-managed values are
@@ -1654,17 +1687,23 @@
               placeholder="SECRET_KEY"
               autocomplete="off"
             /><Input
-              type="password"
+              type="text"
               bind:value
-              placeholder="Write-only value"
-              autocomplete="new-password"
+              placeholder="Secret value"
+              autocomplete="off"
             /><Button
               disabled={!key.trim() || !value || secretCreationProcessing}
               aria-busy={secretCreationProcessing}
               onclick={createSecret}
               >{#if secretCreationProcessing}<Spinner />{/if}Add secret</Button
             >
-          </div></Card.Content
+          </div>
+          {#if secretAddError}<p
+              class="whitespace-pre-wrap border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive"
+              role="alert"
+            >
+              {secretAddError}
+            </p>{/if}</Card.Content
         ></Card.Root
       >
     {/if}
@@ -2120,6 +2159,16 @@
     onconfirm={archiveSecret}
   />
 
+  <BulkEnvironmentSecretsDialog
+    bind:open={bulkSecretDialogOpen}
+    existingSecrets={environment.secrets.map((secret) => ({
+      key: secret.key,
+      value: "",
+    }))}
+    reservedKeys={["PORT"]}
+    onImport={importBulkSecrets}
+  />
+
   <ConfirmActionDialog
     bind:open={apiTokenConfirmOpen}
     title={environment.apiTokenPrefix
@@ -2153,8 +2202,8 @@
         <Dialog.Header
           ><Dialog.Title>Rotate {rotatingSecret?.key ?? "secret"}</Dialog.Title
           ><Dialog.Description
-            >Enter the replacement value. It remains visible while typing and
-            takes effect on the next deployment.</Dialog.Description
+            >Enter the replacement value. It takes effect on the next
+            deployment.</Dialog.Description
           ></Dialog.Header
         >
         <Input
