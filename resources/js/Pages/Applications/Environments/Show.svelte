@@ -1573,12 +1573,11 @@
     {/if}
 
     {#if section === "builds"}
-      <div class="grid gap-8 xl:grid-cols-2">
-        <Card.Root>
+      <div class="grid gap-8 xl:grid-cols-5">
+        <Card.Root class="min-w-0 xl:col-span-2">
           <Card.Header
             ><Card.Title>Builds</Card.Title><Card.Description
-              >Builds run in the background. Active output is loaded
-              automatically.</Card.Description
+              >Select a build to view its output.</Card.Description
             ></Card.Header
           >
           <Card.Content class="space-y-2">
@@ -1586,7 +1585,14 @@
                 {buildStream.connectionError}
               </p>{/if}
             {#each builds as build}
-              <div class="border border-border text-sm">
+              <div
+                class={cn(
+                  "border text-sm",
+                  expandedBuildId === build.id
+                    ? "border-primary/40 bg-primary/[0.04]"
+                    : "border-border",
+                )}
+              >
                 <div class="flex items-start gap-2 p-3">
                   <Button
                     type="button"
@@ -1596,12 +1602,16 @@
                     aria-expanded={expandedBuildId === build.id}
                   >
                     <div class="flex justify-between gap-3">
-                      <span class="font-mono"
-                        >{short(build.sourceRevision)}</span
+                      <span class="font-mono">{short(build.id)}</span
                       ><StatusBadge status={build.status} />
                     </div>
+                    <p
+                      class="mt-1 break-all font-mono text-xs text-muted-foreground"
+                    >
+                      {short(build.sourceRevision)} · {stamp(build.createdAt)}
+                    </p>
                     <p class="mt-1 text-xs text-muted-foreground">
-                      {stamp(build.createdAt)} · {stepLabel(build.currentStep)}
+                      {stepLabel(build.currentStep)}
                     </p>
                     <p
                       class="mt-1 break-all font-mono text-[11px] text-muted-foreground"
@@ -1638,103 +1648,54 @@
                       >{/if}
                   </div>
                 </div>
-                {#if expandedBuildId === build.id}
-                  <div class="border-t border-border bg-black/30 p-3">
-                    <div
-                      class="max-h-96 space-y-2 overflow-auto font-mono text-[11px] leading-relaxed"
-                    >
-                      {#each buildStream.logs[build.id] ?? [] as log (log.id)}
-                        <div
-                          class={cn({
-                            "text-primary": log.stream === "system",
-                          })}
-                        >
-                          <span class="select-none text-muted-foreground"
-                            >{stamp(log.occurredAt)} · {log.stream}</span
-                          >
-                          <pre
-                            class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
-                        </div>
-                      {:else}
-                        <p class="text-muted-foreground">
-                          Waiting for Build output...
-                        </p>
-                      {/each}
-                    </div>
-                    {#if build.error}<pre
-                        class="mt-3 whitespace-pre-wrap break-words border-t border-destructive/30 pt-3 text-xs text-destructive">{build.error}</pre>{/if}
-                  </div>
-                {/if}
               </div>
             {:else}<p class="text-sm text-muted-foreground">
                 No Builds yet.
               </p>{/each}
           </Card.Content>
         </Card.Root>
-        <Card.Root>
+
+        <Card.Root class="min-w-0 xl:col-span-3">
           <Card.Header
-            ><Card.Title>Releases</Card.Title><Card.Description
-              >Redeploy an existing image with the current Environment secrets
-              and configuration.</Card.Description
+            ><Card.Title>Build logs</Card.Title><Card.Description
+              >Live output for the selected build.</Card.Description
             ></Card.Header
           >
-          <Card.Content class="space-y-2">
-            {#if environment.canPromoteToProduction}
+          <Card.Content class="min-h-0">
+            {#if expandedBuildId}
+              {@const selectedBuild = builds.find(
+                (item) => item.id === expandedBuildId,
+              )}
               <div
-                class="flex items-start justify-between gap-3 border border-primary/40 bg-primary/10 p-3 text-sm"
+                class="max-h-[32rem] space-y-2 overflow-auto border border-border bg-black/30 p-3 font-mono text-[11px] leading-relaxed"
               >
-                <div>
-                  <p class="font-medium">Promote to production</p>
-                  <p class="mt-1 text-xs text-muted-foreground">
-                    Promote the latest successful staging deployment (Release{" "}
-                    {short(environment.latestSuccessfulReleaseId ?? "")}) to{" "}
-                    {environment.promotionTargetName}, creating a new immutable
-                    production Release and queuing its deployment.
+                {#each buildStream.logs[expandedBuildId] ?? [] as log (log.id)}
+                  <div
+                    class={cn({
+                      "text-primary": log.stream === "system",
+                    })}
+                  >
+                    <span class="select-none text-muted-foreground"
+                      >{stamp(log.occurredAt)} · {log.stream}</span
+                    >
+                    <pre
+                      class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
+                  </div>
+                {:else}
+                  <p class="text-muted-foreground">
+                    Waiting for Build output...
                   </p>
-                </div>
-                <Button
-                  size="sm"
-                  disabled={promotionProcessing}
-                  aria-busy={promotionProcessing}
-                  onclick={askToPromote}
-                  >{#if promotionProcessing}<Spinner />{/if}Promote</Button
-                >
+                {/each}
+              </div>
+              {#if selectedBuild?.error}<pre
+                  class="mt-3 whitespace-pre-wrap break-words border-t border-destructive/30 pt-3 text-xs text-destructive">{selectedBuild.error}</pre>{/if}
+            {:else}
+              <div
+                class="flex min-h-64 items-center justify-center border border-dashed border-border p-6 text-sm text-muted-foreground"
+              >
+                Select a build to view its logs.
               </div>
             {/if}
-            {#each environment.releases as release}
-              <div class="border border-border p-3 text-sm">
-                <div class="flex items-start justify-between gap-3">
-                  <div class="min-w-0">
-                    <span class="flex justify-between">
-                      <p class="font-mono">ID {short(release.id)}</p>
-                      <p class="font-mono mx-2">·</p>
-                      <p class="font-mono">
-                        Revision {short(release.sourceRevision)}
-                      </p>
-                    </span>
-                    <p class="mt-1 text-xs text-muted-foreground">
-                      {stamp(release.createdAt)}
-                    </p>
-                  </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={Boolean(activeReleaseDeployment)}
-                    aria-busy={activeReleaseDeployment === release.id}
-                    onclick={() => redeployRelease(release.id)}
-                    >{#if activeReleaseDeployment === release.id}<Spinner
-                      />{/if}Redeploy</Button
-                  >
-                </div>
-                <p
-                  class="mt-2 break-all font-mono text-xs text-muted-foreground"
-                >
-                  {release.artifactReference}
-                </p>
-              </div>
-            {:else}<p class="text-sm text-muted-foreground">
-                No Releases yet.
-              </p>{/each}
           </Card.Content>
         </Card.Root>
       </div>

@@ -274,19 +274,6 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 		if currentErr == nil && current.Status == "cancelled" {
 			return &PermanentBuildError{Err: errors.New("Build cancelled by user")}
 		}
-		if logErr := logger.System(
-			persistCtx,
-			"Build failed: "+operationErr.Error(),
-		); logErr != nil {
-			slog.ErrorContext(
-				persistCtx,
-				"Build failure log could not be persisted",
-				"build_id",
-				build.ID,
-				"error",
-				logErr,
-			)
-		}
 		_ = models.Build.MarkFailed(
 			persistCtx,
 			service.db.Executor(),
@@ -910,30 +897,6 @@ func (service *BuildExecution) Fail(
 	if err != nil || build.Status == "succeeded" || build.Status == "failed" ||
 		build.Status == "cancelled" {
 		return err
-	}
-	if logger, logErr := newBuildLogger(ctx, service.db, build.ID); logErr == nil {
-		if logErr := logger.System(
-			ctx,
-			"Build failed after exhausting background job attempts: "+operationErr.Error(),
-		); logErr != nil {
-			slog.ErrorContext(
-				ctx,
-				"Build failure log could not be persisted",
-				"build_id",
-				build.ID,
-				"error",
-				logErr,
-			)
-		}
-	} else {
-		slog.ErrorContext(
-			ctx,
-			"Build logging could not be initialized for terminal failure",
-			"build_id",
-			build.ID,
-			"error",
-			logErr,
-		)
 	}
 	now := time.Now().UTC()
 	if err := models.Build.MarkFailed(
