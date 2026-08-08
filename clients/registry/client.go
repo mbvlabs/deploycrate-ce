@@ -280,7 +280,7 @@ func (Client) ResolveRemoteDigest(
 	if response.StatusCode == http.StatusUnauthorized {
 		challenge := response.Header.Get("WWW-Authenticate")
 		_ = response.Body.Close()
-		token, tokenErr := registryBearerToken(ctx, client, challenge, credentials)
+		token, tokenErr := registryBearerToken(ctx, client, challenge, credentials, "")
 		if tokenErr != nil {
 			return "", fmt.Errorf(
 				"authenticate published registry manifest inspection: %w",
@@ -304,6 +304,97 @@ func (Client) ResolveRemoteDigest(
 		return "", errors.New("registry returned a different digest than requested")
 	}
 	return endpoint + "/" + repository + "@" + digest, nil
+}
+
+func (Client) DeleteManifest(ctx context.Context, credentials Credentials, reference string) error {
+	endpoint := strings.TrimSuffix(strings.TrimSpace(credentials.Endpoint), "/")
+	reference = strings.TrimSpace(reference)
+	prefix := endpoint + "/"
+	if !strings.HasPrefix(reference, prefix) {
+		return errors.New("image must belong to the authenticated registry")
+	}
+	repositoryAndReference := strings.TrimPrefix(reference, prefix)
+	repository, manifestReference, found := strings.Cut(repositoryAndReference, "@")
+	if !found {
+		return errors.New("image deletion requires an immutable digest")
+	}
+	digest := strings.ToLower(manifestReference)
+	if !validSHA256Digest(digest) {
+		return errors.New("image digest is invalid")
+	}
+	if strings.Trim(repository, "/") != repository || strings.ContainsAny(repository, " \\?#\t\r\n") {
+		return errors.New("image repository is invalid")
+	}
+	apiRepository := repository
+	apiEndpoint := endpoint
+	if endpoint == "docker.io" {
+		apiEndpoint = "registry-1.docker.io"
+		if !strings.Contains(apiRepository, "/") {
+			apiRepository = "library/" + apiRepository
+		}
+	}
+	segments := strings.Split(apiRepository, "/")
+	for index := range segments {
+		segments[index] = url.PathEscape(segments[index])
+	}
+	requestURL := "https://" + apiEndpoint + "/v2/" + strings.Join(segments, "/") + "/manifests/" + digest
+	client := telemetry.NewHTTPClient(30 * time.Second)
+	client.CheckRedirect = func(*http.Request, []*http.Request) error {
+		return errors.New("registry image deletion does not allow redirects")
+	}
+	request, err := registryDeleteManifestRequest(ctx, requestURL, credentials, "")
+	if err != nil {
+		return err
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return fmt.Errorf("delete registry image: %w", err)
+	}
+	if response.StatusCode == http.StatusUnauthorized {
+		challenge := response.Header.Get("WWW-Authenticate")
+		_ = response.Body.Close()
+		token, tokenErr := registryBearerToken(ctx, client, challenge, credentials, "repository:"+apiRepository+":pull,delete")
+		if tokenErr != nil {
+			return fmt.Errorf("authenticate registry image deletion: %w", tokenErr)
+		}
+		request, err = registryDeleteManifestRequest(ctx, requestURL, credentials, token)
+		if err != nil {
+			return err
+		}
+		response, err = client.Do(request)
+		if err != nil {
+			return fmt.Errorf("delete registry image: %w", err)
+		}
+	}
+	defer response.Body.Close()
+	switch response.StatusCode {
+	case http.StatusOK, http.StatusAccepted, http.StatusNotFound:
+		return nil
+	case http.StatusMethodNotAllowed:
+		return errors.New("registry does not allow deleting images")
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return errors.New("registry does not allow deleting this image")
+	default:
+		return fmt.Errorf("delete registry image: status %d", response.StatusCode)
+	}
+}
+
+func registryDeleteManifestRequest(
+	ctx context.Context,
+	requestURL string,
+	credentials Credentials,
+	bearerToken string,
+) (*http.Request, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, requestURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	if bearerToken != "" {
+		request.Header.Set("Authorization", "Bearer "+bearerToken)
+	} else {
+		request.SetBasicAuth(credentials.Username, credentials.Password)
+	}
+	return request, nil
 }
 
 func (Client) ListRepositories(ctx context.Context, credentials Credentials) ([]Repository, error) {
@@ -517,6 +608,7 @@ func registryBearerToken(
 	client *http.Client,
 	challenge string,
 	credentials Credentials,
+	requestedScope string,
 ) (string, error) {
 	scheme, parametersText, found := strings.Cut(strings.TrimSpace(challenge), " ")
 	if !found || !strings.EqualFold(scheme, "Bearer") {
@@ -536,6 +628,9 @@ func registryBearerToken(
 		if value := strings.TrimSpace(parameters[key]); value != "" {
 			query.Set(key, value)
 		}
+	}
+	if requestedScope != "" {
+		query.Set("scope", requestedScope)
 	}
 	tokenURL.RawQuery = query.Encode()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, tokenURL.String(), nil)

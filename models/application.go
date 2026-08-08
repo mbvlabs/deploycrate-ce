@@ -173,6 +173,18 @@ func (a application) Destroy(ctx context.Context, db storage.Executor, id uuid.U
 		return ErrSystemApplicationImmutable
 	}
 
+	if err := deleteReleaseCommandExecutionsForEnvironmentTargets(
+		ctx,
+		db,
+		`SELECT target.id
+		 FROM environment_targets AS target
+		 JOIN environments AS environment ON environment.id = target.environment_id
+		 WHERE environment.application_id = ?`,
+		id,
+	); err != nil {
+		return err
+	}
+
 	_, err = db.NewDelete().
 		Model((*ApplicationEntity)(nil)).
 		Where("id = ?", id).

@@ -153,29 +153,83 @@ func (service *RegistryResources) Inventory(
 	return summaries, nil
 }
 
+func (service *RegistryResources) DeleteImage(
+	ctx context.Context,
+	resourceID uuid.UUID,
+	repository,
+	tag string,
+) error {
+	repository = strings.TrimSpace(repository)
+	tag = strings.TrimSpace(tag)
+	if repository == "" || tag == "" ||
+		strings.ContainsAny(repository, " \\?#\t\r\n") ||
+		strings.Trim(repository, "/") != repository ||
+		strings.ContainsAny(tag, "/ \\?#\t\r\n") {
+		return errors.New("image repository and tag are required")
+	}
+	credentials, err := service.publisherCredentials(ctx, resourceID, false)
+	if err != nil {
+		return err
+	}
+	clientCredentials := registryclient.Credentials{
+		Endpoint: credentials.Endpoint,
+		Username: credentials.Username,
+		Password: credentials.Password,
+	}
+	reference := strings.TrimSuffix(credentials.Endpoint, "/") + "/" +
+		repository + ":" + tag
+	digestReference, err := service.registry.ResolveRemoteDigest(
+		ctx,
+		clientCredentials,
+		reference,
+	)
+	if err != nil {
+		return fmt.Errorf("resolve Registry image: %w", err)
+	}
+	if err := service.registry.DeleteManifest(
+		ctx,
+		clientCredentials,
+		digestReference,
+	); err != nil {
+		return fmt.Errorf("delete Registry image: %w", err)
+	}
+	return nil
+}
+
 func (service *RegistryResources) managedCredentials(
 	ctx context.Context,
 	resourceID uuid.UUID,
 ) (ManagedRegistryCredentials, error) {
+	return service.publisherCredentials(ctx, resourceID, true)
+}
+
+func (service *RegistryResources) publisherCredentials(
+	ctx context.Context,
+	resourceID uuid.UUID,
+	managedOnly bool,
+) (ManagedRegistryCredentials, error) {
+	query := service.db.Executor().NewSelect().
+		TableExpr("registry_resources AS registry").
+		ColumnExpr("CASE WHEN resource.system_managed THEN COALESCE(NULLIF(registry.configuration ->> 'route_host', ''), endpoint.address) WHEN endpoint.port IN (80, 443) THEN endpoint.address ELSE endpoint.address || ':' || endpoint.port::text END AS endpoint").
+		ColumnExpr("credential.username, credential.enc_payload").
+		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.archived_at IS NULL").
+		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = resource.id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL").
+		Join("JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.archived_at IS NULL").
+		Where("registry.resource_id = ?", resourceID).
+		Where("credential.name = ?", "Registry publisher")
+	if managedOnly {
+		query = query.Where("resource.system_managed = TRUE")
+	}
 	var row struct {
 		Endpoint   string         `bun:"endpoint"`
 		Username   sql.NullString `bun:"username"`
 		EncPayload []byte         `bun:"enc_payload"`
 	}
-	err := service.db.Executor().NewSelect().TableExpr("registry_resources AS registry").
-		ColumnExpr("registry.configuration ->> 'route_host' AS endpoint").
-		ColumnExpr("credential.username, credential.enc_payload").
-		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.system_managed = TRUE AND resource.archived_at IS NULL").
-		Join("JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.archived_at IS NULL").
-		Where("registry.resource_id = ?", resourceID).
-		Where("credential.name = ?", "Registry publisher").
-		Limit(1).
-		Scan(ctx, &row)
-	if err != nil {
+	if err := query.Limit(1).Scan(ctx, &row); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ManagedRegistryCredentials{}, ErrManagedRegistryUnavailable
 		}
-		return ManagedRegistryCredentials{}, fmt.Errorf("load managed Registry credential: %w", err)
+		return ManagedRegistryCredentials{}, fmt.Errorf("load Registry credential: %w", err)
 	}
 	if strings.TrimSpace(row.Endpoint) == "" || !row.Username.Valid ||
 		strings.TrimSpace(row.Username.String) == "" {
@@ -189,7 +243,7 @@ func (service *RegistryResources) managedCredentials(
 	)
 	if err != nil {
 		return ManagedRegistryCredentials{}, errors.New(
-			"managed Registry credential cannot be decrypted",
+			"Registry credential cannot be decrypted",
 		)
 	}
 	var payload struct {
@@ -199,7 +253,7 @@ func (service *RegistryResources) managedCredentials(
 	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 ||
 		payload.Values["password"] == "" {
 		return ManagedRegistryCredentials{}, errors.New(
-			"managed Registry credential payload is invalid",
+			"Registry credential payload is invalid",
 		)
 	}
 

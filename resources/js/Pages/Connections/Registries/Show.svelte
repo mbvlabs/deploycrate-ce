@@ -52,6 +52,12 @@
   let archiveDialogOpen = $state(false);
   let archiveProcessing = $state(false);
   let archiveError = $state("");
+  let deleteImageDialogOpen = $state(false);
+  let deleteImageTarget = $state<{ repository: string; tag: string } | null>(
+    null,
+  );
+  let deleteImageProcessing = $state(false);
+  let deleteImageError = $state("");
 
   function askToArchive() {
     archiveError = "";
@@ -145,6 +151,35 @@
 
   function imageReference(repository: string, tag: string) {
     return `${registry.endpoint}/${repository}:${tag}`;
+  }
+
+  function askToDeleteImage(repository: string, tag: string) {
+    deleteImageError = "";
+    deleteImageTarget = { repository, tag };
+    deleteImageDialogOpen = true;
+  }
+
+  function deleteImage() {
+    if (deleteImageProcessing || !deleteImageTarget) return;
+    deleteImageProcessing = true;
+    deleteImageError = "";
+    router.post(
+      routes.registryResourceImageDelete(registry.id),
+      deleteImageTarget,
+      {
+        preserveScroll: true,
+        onSuccess: () => {
+          deleteImageDialogOpen = false;
+          deleteImageTarget = null;
+          deleteImageError = "";
+        },
+        onError: (errors) =>
+          (deleteImageError =
+            Object.values(errors).map(String).join("\n") ||
+            "The image could not be deleted."),
+        onFinish: () => (deleteImageProcessing = false),
+      },
+    );
   }
 
   function refreshInventory() {
@@ -271,16 +306,27 @@
                         >
                           <code class="min-w-0 break-all text-xs"
                             >{imageReference(repository.name, tag)}</code
-                          ><Button
-                            type="button"
-                            size="xs"
-                            variant="outline"
-                            onclick={() =>
-                              copyCredential(
-                                imageReference(repository.name, tag),
-                                "Image reference",
-                              )}>Copy</Button
                           >
+                          <div class="flex shrink-0 gap-2">
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="outline"
+                              onclick={() =>
+                                copyCredential(
+                                  imageReference(repository.name, tag),
+                                  "Image reference",
+                                )}>Copy</Button
+                            ><Button
+                              type="button"
+                              size="xs"
+                              variant="outline"
+                              class="text-destructive hover:text-destructive"
+                              onclick={() =>
+                                askToDeleteImage(repository.name, tag)}
+                              >Delete</Button
+                            >
+                          </div>
                         </div>
                       {/each}
                     </div>
@@ -477,5 +523,17 @@
     processing={archiveProcessing}
     error={archiveError}
     onconfirm={archive}
+  />
+  <ConfirmActionDialog
+    bind:open={deleteImageDialogOpen}
+    title="Delete image?"
+    description={deleteImageTarget
+      ? `The stored image ${deleteImageTarget.repository}:${deleteImageTarget.tag} will be permanently removed from the registry. Deployments referencing it will continue to serve existing instances until redeployed.`
+      : ""}
+    confirmLabel="Delete image"
+    destructive
+    processing={deleteImageProcessing}
+    error={deleteImageError}
+    onconfirm={deleteImage}
   />
 </DashboardLayout>

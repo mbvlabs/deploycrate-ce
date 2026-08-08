@@ -92,6 +92,7 @@ export const routes = {
   registryResourceCreate: () => '/connections/registries',
   registryResourceCredentials: (id: string) => `/connections/registries/${id}/credentials`,
   registryResourceDestroy: (id: string) => `/connections/registries/${id}`,
+  registryResourceImageDelete: (id: string) => `/connections/registries/${id}/images`,
   registryResourceShow: (id: string) => `/connections/registries/${id}`,
   registryResources: () => '/connections/registries',
   resourceBackupPolicyCreate: (id: string, databaseName: string) => `/resources/${id}/databases/${databaseName}/backups`,

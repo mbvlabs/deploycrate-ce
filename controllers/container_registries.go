@@ -42,6 +42,7 @@ func (controller RegistryResources) RegisterRoutes(r *router.Router) error {
 		{http.MethodPost, routes.RegistryResourceCreate, controller.Create, nil},
 		{http.MethodGet, routes.RegistryResourceShow, controller.Show, nil},
 		{http.MethodDelete, routes.RegistryResourceDestroy, controller.Destroy, nil},
+		{http.MethodPost, routes.RegistryResourceImageDelete, controller.DeleteImage, nil},
 		{
 			http.MethodPost,
 			routes.RegistryResourceCredentials,
@@ -233,7 +234,48 @@ func (controller RegistryResources) Destroy(etx *echo.Context) error {
 	return inertia.Redirect(etx, routes.RegistryResources.URL(), http.StatusSeeOther)
 }
 
+func (controller RegistryResources) DeleteImage(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	if err != nil {
+		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
+	}
+	var payload struct {
+		Repository string `json:"repository"`
+		Tag        string `json:"tag"`
+	}
+	if err := etx.Bind(&payload); err != nil ||
+		strings.TrimSpace(payload.Repository) == "" || strings.TrimSpace(payload.Tag) == "" {
+		return controller.redirectWithErrorTo(
+			etx,
+			routes.RegistryResourceShow.URL(resourceID),
+			errors.New("image repository and tag are required"),
+		)
+	}
+	if err := controller.service.DeleteImage(
+		etx.Request().Context(),
+		resourceID,
+		payload.Repository,
+		payload.Tag,
+	); err != nil {
+		return controller.redirectWithErrorTo(
+			etx,
+			routes.RegistryResourceShow.URL(resourceID),
+			err,
+		)
+	}
+	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Image deleted")
+	return inertia.Redirect(etx, routes.RegistryResourceShow.URL(resourceID), http.StatusSeeOther)
+}
+
 func (controller RegistryResources) redirectWithError(etx *echo.Context, err error) error {
+	return controller.redirectWithErrorTo(etx, routes.RegistryResources.URL(), err)
+}
+
+func (controller RegistryResources) redirectWithErrorTo(
+	etx *echo.Context,
+	url string,
+	err error,
+) error {
 	message := strings.TrimSpace(err.Error())
 	if message == "" {
 		message = "Registry Resource operation failed"
@@ -241,5 +283,5 @@ func (controller RegistryResources) redirectWithError(etx *echo.Context, err err
 	if flashErr := cookies.AddFlash(etx, cookies.FlashError, message); flashErr != nil {
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
-	return inertia.Redirect(etx, routes.RegistryResources.URL(), http.StatusSeeOther)
+	return inertia.Redirect(etx, url, http.StatusSeeOther)
 }

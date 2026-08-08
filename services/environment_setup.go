@@ -3469,17 +3469,15 @@ func (service *EnvironmentSetup) rehomeDurableChanges(
 	return err
 }
 
-func archiveEnvironmentResourceCredentials(
+func deleteEnvironmentResourceCredentials(
 	ctx context.Context,
 	db storage.Executor,
 	environmentID uuid.UUID,
 ) error {
-	now := time.Now().UTC()
-	_, err := db.NewUpdate().TableExpr("resource_credentials").
-		Set("archived_at = ?", now).Set("updated_at = ?", now).
+	_, err := db.NewDelete().TableExpr("resource_credentials").
 		Where("metadata ->> 'purpose' = 'application'").
 		Where("metadata ->> 'environment_id' = ?", environmentID.String()).
-		Where("archived_at IS NULL").Exec(ctx)
+		Exec(ctx)
 	return err
 }
 
@@ -3523,11 +3521,11 @@ func (service *EnvironmentSetup) DeleteEnvironment(
 	if err := service.rehomeDurableChanges(ctx, tx, []uuid.UUID{environmentID}); err != nil {
 		return err
 	}
-	if err := archiveEnvironmentResourceCredentials(ctx, tx, environmentID); err != nil {
-		return fmt.Errorf("archive Environment Resource credentials: %w", err)
-	}
 	if err := models.Environment.Destroy(ctx, tx, environmentID); err != nil {
 		return fmt.Errorf("delete Environment data: %w", err)
+	}
+	if err := deleteEnvironmentResourceCredentials(ctx, tx, environmentID); err != nil {
+		return fmt.Errorf("delete Environment Resource credentials: %w", err)
 	}
 	remaining, err := tx.NewSelect().
 		TableExpr("environments").
@@ -3582,19 +3580,21 @@ func (service *EnvironmentSetup) DeleteApplication(
 		if err := service.cleanupEnvironment(ctx, environmentID); err != nil {
 			return fmt.Errorf("clean up Environment %s: %w", environmentID, err)
 		}
-		if err := archiveEnvironmentResourceCredentials(ctx, tx, environmentID); err != nil {
-			return fmt.Errorf(
-				"archive Resource credentials for Environment %s: %w",
-				environmentID,
-				err,
-			)
-		}
 	}
 	if err := service.rehomeDurableChanges(ctx, tx, lockedEnvironmentIDs); err != nil {
 		return err
 	}
 	if err := models.Application.Destroy(ctx, tx, applicationID); err != nil {
 		return fmt.Errorf("delete Application data: %w", err)
+	}
+	for _, environmentID := range lockedEnvironmentIDs {
+		if err := deleteEnvironmentResourceCredentials(ctx, tx, environmentID); err != nil {
+			return fmt.Errorf(
+				"delete Resource credentials for Environment %s: %w",
+				environmentID,
+				err,
+			)
+		}
 	}
 	return tx.Commit()
 }

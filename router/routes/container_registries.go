@@ -33,3 +33,9 @@ var RegistryResourceCredentials = routing.NewRouteWithUUIDID(
 	"registry-resources.credentials",
 	RegistryResourcesPrefix,
 )
+
+var RegistryResourceImageDelete = routing.NewRouteWithUUIDID(
+	"/:id/images",
+	"registry-resources.images.delete",
+	RegistryResourcesPrefix,
+)

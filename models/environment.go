@@ -334,11 +334,32 @@ func (e environment) Update(
 }
 
 func (e environment) Destroy(ctx context.Context, db storage.Executor, id uuid.UUID) error {
+	if err := deleteReleaseCommandExecutionsForEnvironmentTargets(
+		ctx,
+		db,
+		"SELECT id FROM environment_targets WHERE environment_id = ?",
+		id,
+	); err != nil {
+		return err
+	}
 	_, err := db.NewDelete().
 		Model((*EnvironmentEntity)(nil)).
 		Where("id = ?", id).
 		Exec(ctx)
 
+	return err
+}
+
+func deleteReleaseCommandExecutionsForEnvironmentTargets(
+	ctx context.Context,
+	db storage.Executor,
+	targetsSubquery string,
+	args ...any,
+) error {
+	_, err := db.NewDelete().
+		TableExpr("release_command_executions").
+		Where("environment_target_id IN ("+targetsSubquery+")", args...).
+		Exec(ctx)
 	return err
 }
 
