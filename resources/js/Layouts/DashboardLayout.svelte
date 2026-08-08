@@ -136,7 +136,7 @@
           environmentNavigation.applicationId,
           environmentNavigation.id,
         ),
-        deployments: routes.environmentDeployments(
+        releases: routes.environmentReleases(
           environmentNavigation.applicationId,
           environmentNavigation.id,
         ),
@@ -227,7 +227,7 @@
       const sections: Record<string, string> = {
         [contextualEnvironmentRoutes.overview]: "Overview",
         [contextualEnvironmentRoutes.telemetry]: "Telemetry",
-        [contextualEnvironmentRoutes.deployments]: "Deployments",
+        [contextualEnvironmentRoutes.releases]: "Releases",
         [contextualEnvironmentRoutes.builds]: "Builds",
         [contextualEnvironmentRoutes.secrets]: "Secrets",
         [contextualEnvironmentRoutes.source]: "Source",
@@ -617,13 +617,13 @@
                   <Sidebar.MenuItem>
                     <Sidebar.MenuButton
                       isActive={$page.url.split("?")[0] ===
-                        contextualEnvironmentRoutes.deployments}
-                      tooltipContent="Deployments"
+                        contextualEnvironmentRoutes.releases}
+                      tooltipContent="Releases"
                     >
                       {#snippet child({ props })}<Link
                           {...props}
-                          href={contextualEnvironmentRoutes.deployments}
-                          ><RouteIcon /><span>Deployments</span></Link
+                          href={contextualEnvironmentRoutes.releases}
+                          ><RouteIcon /><span>Releases</span></Link
                         >{/snippet}
                     </Sidebar.MenuButton>
                   </Sidebar.MenuItem>

@@ -361,13 +361,18 @@ type EnvironmentReleaseActivity struct {
 }
 
 type EnvironmentDeploymentActivity struct {
-	ID          uuid.UUID `json:"id"          bun:"id"`
-	Status      string    `json:"status"      bun:"status"`
-	CurrentStep string    `json:"currentStep" bun:"current_step"`
-	Error       string    `json:"error"       bun:"error"`
-	ReleaseID   uuid.UUID `json:"releaseId"   bun:"release_id"`
-	CreatedAt   time.Time `json:"createdAt"   bun:"created_at"`
-	Active      bool      `json:"active"      bun:"active"`
+	ID          uuid.UUID  `json:"id"          bun:"id"`
+	Status      string     `json:"status"      bun:"status"`
+	CurrentStep string     `json:"currentStep" bun:"current_step"`
+	Error       string     `json:"error"       bun:"error"`
+	ReleaseID   uuid.UUID  `json:"releaseId"   bun:"release_id"`
+	TargetID    uuid.UUID  `json:"targetId"    bun:"target_id"`
+	TargetName  string     `json:"targetName"  bun:"target_name"`
+	Attempt     int32      `json:"attempt"     bun:"attempt"`
+	CreatedAt   time.Time  `json:"createdAt"   bun:"created_at"`
+	StartedAt   *time.Time `json:"startedAt"   bun:"started_at"`
+	FinishedAt  *time.Time `json:"finishedAt"  bun:"finished_at"`
+	Active      bool       `json:"active"      bun:"active"`
 }
 
 const environmentDeploymentActiveExpression = `EXISTS (
@@ -597,9 +602,11 @@ func (service *EnvironmentSetup) Overview(
 	}
 	deployments := make([]EnvironmentDeploymentActivity, 0)
 	if err := service.db.Executor().NewSelect().TableExpr("deployments AS deployment").
-		ColumnExpr("deployment.id, deployment.status, COALESCE(deployment.current_step, '') AS current_step, COALESCE(deployment.error, '') AS error, deployment.release_id, deployment.created_at").
+		ColumnExpr("deployment.id, deployment.status, COALESCE(deployment.current_step, '') AS current_step, COALESCE(deployment.error, '') AS error, deployment.release_id, deployment.environment_target_id AS target_id, server.name AS target_name, deployment.attempt, deployment.created_at, deployment.started_at, deployment.finished_at").
 		ColumnExpr(environmentDeploymentActiveExpression+" AS active").
 		Join("JOIN releases AS release ON release.id = deployment.release_id").
+		Join("JOIN environment_targets AS target ON target.id = deployment.environment_target_id").
+		Join("JOIN servers AS server ON server.id = target.server_id").
 		Where("release.environment_id = ?", environmentID).
 		Where("release.registry_resource_id IS NOT NULL").
 		OrderExpr("deployment.created_at DESC").Limit(30).Scan(ctx, &deployments); err != nil {
@@ -1133,9 +1140,11 @@ func (service *EnvironmentSetup) DeploymentEvents(
 ) (EnvironmentDeploymentEventSnapshot, error) {
 	var deployment EnvironmentDeploymentActivity
 	err := service.db.Executor().NewSelect().TableExpr("deployments AS deployment").
-		ColumnExpr("deployment.id, deployment.status, COALESCE(deployment.current_step, '') AS current_step, COALESCE(deployment.error, '') AS error, deployment.release_id, deployment.created_at").
+		ColumnExpr("deployment.id, deployment.status, COALESCE(deployment.current_step, '') AS current_step, COALESCE(deployment.error, '') AS error, deployment.release_id, deployment.environment_target_id AS target_id, server.name AS target_name, deployment.attempt, deployment.created_at, deployment.started_at, deployment.finished_at").
 		ColumnExpr(environmentDeploymentActiveExpression+" AS active").
 		Join("JOIN releases AS release ON release.id = deployment.release_id").
+		Join("JOIN environment_targets AS target ON target.id = deployment.environment_target_id").
+		Join("JOIN servers AS server ON server.id = target.server_id").
 		Where("deployment.id = ?", deploymentID).Where("release.environment_id = ?", environmentID).
 		Where("release.registry_resource_id IS NOT NULL").Limit(1).Scan(ctx, &deployment)
 	if errors.Is(err, sql.ErrNoRows) {

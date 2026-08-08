@@ -76,6 +76,17 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	if deployment.Status == "succeeded" || deployment.Status == "failed" {
 		return nil
 	}
+	if err := service.recordEvent(
+		ctx,
+		deploymentID,
+		"progress",
+		"running",
+		"preflight",
+		"Deployment claimed, running preflight checks",
+		nil,
+	); err != nil {
+		return err
+	}
 	fail := func(operationErr error) error {
 		persistCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()
@@ -115,6 +126,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 			deploymentID,
 			"failed",
 			"failed",
+			"failed",
 			operationErr.Error(),
 			operationErr,
 		)
@@ -140,9 +152,15 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 			),
 		)
 	}
-	if err := service.advance(ctx, deploymentID, "resolving_secrets"); err != nil {
+	if err := service.advance(
+		ctx,
+		deploymentID,
+		"resolving_secrets",
+		"Resolving Environment secrets and configuration",
+	); err != nil {
 		return err
 	}
+	resolutionStarted := time.Now()
 	if _, err := service.db.Executor().NewUpdate().TableExpr("environment_target_states").
 		Set("state = 'applying'").
 		Set("applying_revision_id = ?", scope.Revision.ID).Set("updated_at = ?", time.Now().UTC()).
@@ -175,9 +193,22 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 			return fail(err)
 		}
 	}
-	if err := service.advance(ctx, deploymentID, "docker_candidate"); err != nil {
+	service.recordTiming(
+		ctx,
+		deploymentID,
+		"resolving_secrets",
+		"Secrets and Resource configuration",
+		resolutionStarted,
+	)
+	if err := service.advance(
+		ctx,
+		deploymentID,
+		"docker_candidate",
+		"Pulling candidate image and preparing workloads",
+	); err != nil {
 		return err
 	}
+	candidateStarted := time.Now()
 	credentials, err := service.builds.RegistryCredentials(
 		ctx,
 		scope.RegistryID,
@@ -197,6 +228,21 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		if !exists || process.Kind != instance.ProcessKind {
 			return errors.New("Deployment Instance process snapshot is mismatched")
 		}
+		_ = service.recordEvent(
+			ctx,
+			scope.Deployment.ID,
+			"instance",
+			"running",
+			"instance_start",
+			fmt.Sprintf(
+				"starting %s process %s (replica %s) from %s",
+				instance.ProcessKind,
+				instance.ProcessName,
+				instance.ReplicaKey,
+				scope.Release.ArtifactReference,
+			),
+			nil,
+		)
 		includePort := process.Kind == models.EnvironmentProcessWeb
 		environment, _, err := service.composeEnvironment(ctx, scope, resolved, includePort)
 		if err != nil {
@@ -295,8 +341,31 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
 		return fail(err)
 	}
+	service.recordTiming(
+		ctx,
+		deploymentID,
+		"docker_candidate",
+		"Candidate web workload startup",
+		candidateStarted,
+	)
 	webProcess, _ := scope.State.WebProcess()
 	webCandidate := candidates[scope.Instance.ID]
+	if err := service.recordEvent(
+		ctx,
+		deploymentID,
+		"health",
+		"running",
+		"health_check",
+		fmt.Sprintf(
+			"Waiting for candidate web workload to become healthy at 0.0.0.0:%d%s",
+			webCandidate.HostPort,
+			webProcess.HealthPath,
+		),
+		nil,
+	); err != nil {
+		return err
+	}
+	healthStarted := time.Now()
 	if err := waitForWorkloadHealth(
 		ctx,
 		webCandidate.HostAddress,
@@ -306,9 +375,22 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
 		return fail(err)
 	}
-	if err := service.advance(ctx, deploymentID, "worker_candidates"); err != nil {
+	service.recordTiming(
+		ctx,
+		deploymentID,
+		"health_check",
+		"Candidate health checks",
+		healthStarted,
+	)
+	if err := service.advance(
+		ctx,
+		deploymentID,
+		"worker_candidates",
+		"Starting worker processes",
+	); err != nil {
 		return err
 	}
+	workersStarted := time.Now()
 	for _, instance := range scope.Instances {
 		if instance.ProcessKind != models.EnvironmentProcessWorker {
 			continue
@@ -322,6 +404,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
 		return fail(err)
 	}
+	service.recordTiming(ctx, deploymentID, "worker_candidates", "Worker startup", workersStarted)
 	route, previous, first, err := service.prepareCaddy(ctx, scope)
 	if err != nil {
 		return err
@@ -332,9 +415,15 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	if err := service.caddy.Verify(ctx, route.ExternalID); err != nil {
 		return err
 	}
-	if err := service.advance(ctx, deploymentID, "traffic_switch"); err != nil {
+	if err := service.advance(
+		ctx,
+		deploymentID,
+		"traffic_switch",
+		"Routing public traffic to candidate",
+	); err != nil {
 		return err
 	}
+	trafficStarted := time.Now()
 	if !first {
 		weights := map[uuid.UUID]int32{scope.Instance.ID: 100}
 		for _, old := range previous {
@@ -352,6 +441,13 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	if err := service.caddy.Verify(ctx, route.ExternalID); err != nil {
 		return err
 	}
+	service.recordTiming(
+		ctx,
+		deploymentID,
+		"traffic_switch",
+		"Traffic switch",
+		trafficStarted,
+	)
 	if err := waitForWorkloadHealth(
 		ctx,
 		webCandidate.HostAddress,
@@ -393,6 +489,17 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	if err := service.markSucceeded(ctx, scope, candidates); err != nil {
 		return err
 	}
+	if err := service.recordEvent(
+		ctx,
+		deploymentID,
+		"progress",
+		"running",
+		"cleanup",
+		"Cleaning up previous Deployment formation",
+		nil,
+	); err != nil {
+		return err
+	}
 	previousFormation, err := service.previousFormation(ctx, previous)
 	if err != nil {
 		return err
@@ -409,6 +516,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 				deploymentID,
 				"cleanup",
 				"warning",
+				"cleanup",
 				"previous container cleanup will be retried",
 				err,
 			)
@@ -421,6 +529,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 					deploymentID,
 					"cleanup",
 					"warning",
+					"cleanup",
 					"previous backend cleanup will be retried",
 					err,
 				)
@@ -448,6 +557,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 			deploymentID,
 			"cleanup",
 			"warning",
+			"cleanup",
 			"stale candidate cleanup will be retried",
 			err,
 		)
@@ -463,6 +573,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 			deploymentID,
 			"cleanup",
 			"warning",
+			"cleanup",
 			"stale Resource network access cleanup will be retried",
 			err,
 		)
@@ -473,7 +584,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 func (service *DeploymentExecution) advance(
 	ctx context.Context,
 	deploymentID uuid.UUID,
-	step string,
+	step, message string,
 ) error {
 	now := time.Now().UTC()
 	if _, err := service.db.Executor().
@@ -486,7 +597,21 @@ func (service *DeploymentExecution) advance(
 		Exec(ctx); err != nil {
 		return err
 	}
-	return service.recordEvent(ctx, deploymentID, "progress", "running", step, nil)
+	return service.recordEvent(ctx, deploymentID, "progress", "running", step, message, nil)
+}
+
+func (service *DeploymentExecution) recordTiming(
+	ctx context.Context,
+	deploymentID uuid.UUID,
+	step, label string,
+	startedAt time.Time,
+) {
+	message := fmt.Sprintf(
+		"%s completed in %s",
+		label,
+		max(time.Since(startedAt), 0).Round(time.Millisecond),
+	)
+	_ = service.recordEvent(ctx, deploymentID, "timing", "running", step, message, nil)
 }
 
 func previousRelease(instances []models.InstanceEntity, id uuid.UUID) uuid.UUID {
@@ -1223,6 +1348,7 @@ func (service *DeploymentExecution) markSucceeded(
 		scope.Deployment.ID,
 		"serving",
 		"succeeded",
+		"serving",
 		"candidate is serving public traffic",
 		nil,
 	)
@@ -1303,7 +1429,7 @@ func (service *DeploymentExecution) previousFormation(
 func (service *DeploymentExecution) recordEvent(
 	ctx context.Context,
 	deploymentID uuid.UUID,
-	eventType, status, message string,
+	eventType, status, step, message string,
 	operationErr error,
 ) error {
 	var sequence int64
@@ -1330,6 +1456,7 @@ func (service *DeploymentExecution) recordEvent(
 			Sequence:     sequence,
 			EventType:    eventType,
 			Status:       sql.NullString{String: status, Valid: status != ""},
+			Step:         sql.NullString{String: step, Valid: step != ""},
 			Message:      message,
 			Metadata:     json.RawMessage(`{}`),
 			Error:        failure,

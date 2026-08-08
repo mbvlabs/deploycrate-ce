@@ -105,9 +105,9 @@ var EnvironmentTelemetryTrace = routing.NewRouteWithParams[EnvironmentTelemetryT
 	ApplicationsPrefix,
 )
 
-var EnvironmentDeployments = routing.NewRouteWithParams[EnvironmentParams](
-	"/:applicationID/environments/:environmentID/deployments",
-	"applications.environments.deployments",
+var EnvironmentReleases = routing.NewRouteWithParams[EnvironmentParams](
+	"/:applicationID/environments/:environmentID/releases",
+	"applications.environments.releases",
 	ApplicationsPrefix,
 )
 

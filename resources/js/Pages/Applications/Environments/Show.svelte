@@ -78,7 +78,9 @@
   let secretCreationProcessing = $state(false);
   let deploymentRetrying = $state("");
   let expandedBuildId = $state("");
-  let expandedDeploymentId = $state("");
+  let expandedReleaseId = $state("");
+  let selectedDeploymentId = $state("");
+  let autoSelectedForRelease = $state("");
   let environmentLogsPaused = $state(false);
   let followingEnvironmentLogs = $state(true);
   let workloadLogsOpen = $state(true);
@@ -101,7 +103,6 @@
   let secretActionError = $state("");
   let archiveSecretDialogOpen = $state(false);
   let archivingSecret = $state<Secret | null>(null);
-  let expandedReleaseCommandId = $state("");
   let releaseCommandLogs = $state<Record<string, ReleaseCommandLog[]>>({});
   let releaseCommandLoading = $state("");
   let releaseCommandRetrying = $state("");
@@ -231,10 +232,6 @@
       builds.find((build) => build.status === "pending")?.id ??
       "",
   );
-  const expandedDeploymentStatus = $derived(
-    deployments.find((deployment) => deployment.id === expandedDeploymentId)
-      ?.status ?? "",
-  );
   const short = (value: string) => (value ? value.slice(0, 12) : "Unavailable");
   const formatBytes = (value: number) => {
     if (!Number.isFinite(value) || value < 0) return "Unavailable";
@@ -282,6 +279,27 @@
       : deployment.status === "succeeded"
         ? "superseded"
         : deployment.currentStep || "queued";
+  const releases = $derived(environment.releases);
+  const deploymentsFor = (releaseId: string) =>
+    deployments.filter((deployment) => deployment.releaseId === releaseId);
+  const releaseStatus = (releaseId: string) => {
+    const own = deploymentsFor(releaseId);
+    if (own.some((d) => d.status === "queued" || d.status === "running"))
+      return "running";
+    if (own.some((d) => d.status === "succeeded")) return "succeeded";
+    if (own.some((d) => d.status === "failed")) return "failed";
+    return "";
+  };
+  const releaseCommandForRelease = $derived(
+    environment.releaseCommands.find(
+      (execution) => execution.releaseId === expandedReleaseId,
+    ) ?? null,
+  );
+  const selectedDeployment = $derived(
+    deploymentsFor(expandedReleaseId).find(
+      (deployment) => deployment.id === selectedDeploymentId,
+    ) ?? null,
+  );
   const secretStatusLabel = (secret: Secret) =>
     secret.status === "pending_removal"
       ? "Pending removal"
@@ -299,18 +317,19 @@
     if (!key.trim() || !value || secretCreationProcessing) return;
     secretCreationProcessing = true;
     router.post(
-      routes.environmentSecretsCreate(
+      routes.environmentDeploymentsCreate(
         environment.applicationId,
         environment.environment.id,
       ),
-      { key, value },
+      environment.sourceType === "image" ? { reference: imageReference } : {},
       {
+        headers: { "X-Deploycrate-Section": section },
         preserveScroll: true,
         onSuccess: () => {
-          key = "";
-          value = "";
+          buildStream.reset();
+          expandedBuildId = "";
         },
-        onFinish: () => (secretCreationProcessing = false),
+        onFinish: () => (deploymentCreationProcessing = false),
       },
     );
   }
@@ -335,16 +354,6 @@
     } finally {
       releaseCommandLoading = "";
     }
-  }
-
-  async function toggleReleaseCommandLogs(executionId: string) {
-    if (expandedReleaseCommandId === executionId) {
-      expandedReleaseCommandId = "";
-      return;
-    }
-    expandedReleaseCommandId = executionId;
-    if (!releaseCommandLogs[executionId])
-      await loadReleaseCommandLogs(executionId);
   }
 
   function askToRetryReleaseCommand(execution: ReleaseCommand) {
@@ -374,6 +383,7 @@
       ),
       { targetId: releaseCommandRetryTarget(execution) },
       {
+        headers: { "X-Deploycrate-Section": section },
         preserveScroll: true,
         onSuccess: () => (releaseCommandRetryDialogOpen = false),
         onError: (errors) =>
@@ -546,6 +556,7 @@
   }
   function redeployRelease(releaseId: string) {
     activeReleaseDeployment = releaseId;
+    expandedReleaseId = releaseId;
     router.post(
       routes.environmentReleaseDeploymentsCreate(
         environment.applicationId,
@@ -554,10 +565,10 @@
       ),
       {},
       {
+        headers: { "X-Deploycrate-Section": section },
         preserveScroll: true,
         onSuccess: () => {
           deploymentStream.reset();
-          expandedDeploymentId = "";
         },
         onFinish: () => (activeReleaseDeployment = ""),
       },
@@ -582,7 +593,6 @@
         onSuccess: () => {
           promotionDialogOpen = false;
           deploymentStream.reset();
-          expandedDeploymentId = "";
         },
         onError: (errors) =>
           (promotionError =
@@ -629,6 +639,7 @@
       ),
       {},
       {
+        headers: { "X-Deploycrate-Section": section },
         preserveScroll: true,
         onFinish: () => (deploymentRetrying = ""),
       },
@@ -664,6 +675,7 @@
       url,
       {},
       {
+        headers: { "X-Deploycrate-Section": section },
         preserveScroll: true,
         onSuccess: () => (buildActionDialogOpen = false),
         onFinish: () => (activeBuildAction = ""),
@@ -682,27 +694,6 @@
         while (snapshot?.hasMore) snapshot = await buildStream.load(buildId);
       } catch {
         buildStream.connectionError = "Build logs are temporarily unavailable.";
-      }
-    }
-  }
-
-  async function toggleDeploymentEvents(deploymentId: string) {
-    if (expandedDeploymentId === deploymentId) {
-      expandedDeploymentId = "";
-      return;
-    }
-    expandedDeploymentId = deploymentId;
-    const deployment = deployments.find((item) => item.id === deploymentId);
-    if (deployment?.status === "queued" || deployment?.status === "running")
-      return;
-    if (!(deploymentId in deploymentStream.events)) {
-      try {
-        let snapshot = await deploymentStream.load(deploymentId);
-        while (snapshot?.hasMore)
-          snapshot = await deploymentStream.load(deploymentId);
-      } catch {
-        deploymentStream.connectionError =
-          "Deployment events are temporarily unavailable.";
       }
     }
   }
@@ -767,6 +758,16 @@
   });
 
   $effect(() => {
+    if (section !== "overview") return;
+    const runningDeployment = deployments.find(
+      (deployment) =>
+        deployment.status === "queued" || deployment.status === "running",
+    );
+    if (!runningDeployment) return;
+    return deploymentStream.poll(runningDeployment.id);
+  });
+
+  $effect(() => {
     if (section !== "telemetry" || !telemetryLive) return;
     let refreshing = false;
     const refresh = () => {
@@ -788,30 +789,75 @@
   });
 
   $effect(() => {
-    if (section !== "deployments") return;
+    if (section !== "releases") return;
     const activeReleaseCommand = environment.releaseCommands.find(
       (execution) =>
         execution.status === "queued" || execution.status === "running",
     );
     if (!activeReleaseCommand) return;
     const timer = window.setInterval(() => {
-      if (expandedReleaseCommandId === activeReleaseCommand.id)
-        void loadReleaseCommandLogs(activeReleaseCommand.id);
+      void loadReleaseCommandLogs(activeReleaseCommand.id);
       router.reload({ only: ["environment"], preserveScroll: true });
     }, 2000);
     return () => window.clearInterval(timer);
   });
 
   $effect(() => {
-    if (section !== "deployments") return;
-    const deploymentId = expandedDeploymentId;
-    const deploymentStatus = expandedDeploymentStatus;
-    if (
-      !deploymentId ||
-      (deploymentStatus !== "queued" && deploymentStatus !== "running")
-    )
-      return;
+    if (section !== "releases") return;
+    const runningDeployment = deployments.find(
+      (deployment) =>
+        deployment.status === "queued" || deployment.status === "running",
+    );
+    const candidateReleaseId =
+      runningDeployment?.releaseId ?? releases[0]?.id ?? "";
+    if (!candidateReleaseId) return;
+    if (!expandedReleaseId) expandedReleaseId = candidateReleaseId;
+    const deploymentId =
+      runningDeployment && expandedReleaseId === runningDeployment.releaseId
+        ? runningDeployment.id
+        : "";
+    if (!deploymentId) return;
     return deploymentStream.poll(deploymentId);
+  });
+
+  $effect(() => {
+    if (section !== "releases") return;
+    const releaseId = expandedReleaseId;
+    const own = deploymentsFor(releaseId);
+    if (!releaseId || own.length === 0) return;
+    if (autoSelectedForRelease === releaseId) return;
+    autoSelectedForRelease = releaseId;
+    const preferred =
+      own.find(
+        (deployment) =>
+          deployment.status === "queued" || deployment.status === "running",
+      ) ?? own[0];
+    selectedDeploymentId = preferred.id;
+  });
+
+  $effect(() => {
+    if (section !== "releases" || !expandedReleaseId) return;
+    const execution = releaseCommandForRelease;
+    if (execution && !releaseCommandLogs[execution.id])
+      void loadReleaseCommandLogs(execution.id);
+    const deployment = selectedDeployment;
+    if (!deployment) return;
+    if (
+      deployment.status !== "queued" &&
+      deployment.status !== "running" &&
+      !(deployment.id in deploymentStream.events)
+    ) {
+      void (async () => {
+        try {
+          let snapshot = await deploymentStream.load(deployment.id);
+          while (snapshot?.hasMore)
+            snapshot = await deploymentStream.load(deployment.id);
+        } catch {
+          deploymentStream.connectionError =
+            "Deployment events are temporarily unavailable.";
+        }
+      })();
+    }
   });
 </script>
 
@@ -1110,6 +1156,57 @@
           </Card.Root>
         </div>
       </section>
+
+      <Card.Root>
+        <Card.Header>
+          <Card.Action>
+            <StatusBadge
+              status={servingInstanceCount > 0 ? "serving" : "pending"}
+              label={servingInstanceCount > 0
+                ? `${servingInstanceCount} serving`
+                : "Idle"}
+            />
+          </Card.Action>
+          <div class="flex items-center gap-2">
+            <div
+              class="grid size-8 place-items-center bg-muted text-muted-foreground"
+            >
+              <ServerIcon class="size-4" />
+            </div>
+            <div>
+              <Card.Title>Process instances</Card.Title>
+              <Card.Description
+                >Live workload instances across all process kinds.</Card.Description
+              >
+            </div>
+          </div>
+        </Card.Header>
+        <Card.Content class="space-y-2">
+          {#each environment.instances as instance}
+            <div
+              class="grid items-center gap-2 border border-border/70 bg-card/40 p-3 text-sm sm:grid-cols-[minmax(0,1fr)_8rem_8rem_minmax(0,1fr)]"
+            >
+              <div>
+                <p class="font-mono font-medium">{instance.processName}</p>
+                <p class="text-xs text-muted-foreground">
+                  {instance.replicaKey}
+                </p>
+              </div>
+              <StatusBadge status={instance.processKind} /><StatusBadge
+                status={instance.state}
+              /><span class="text-muted-foreground"
+                >{instance.processKind === "web" && instance.ports?.http
+                  ? `${instance.ports.host || "127.0.0.1"}:${instance.ports.http}`
+                  : "No public port"}</span
+              >
+            </div>
+          {:else}
+            <p class="border border-dashed border-border p-4 text-sm">
+              No instances running.
+            </p>
+          {/each}
+        </Card.Content>
+      </Card.Root>
 
       <Card.Root>
         <Card.Header
@@ -1701,226 +1798,281 @@
       </div>
     {/if}
 
-    {#if section === "deployments"}
-      <Card.Root>
-        <Card.Header
-          ><Card.Title>Release commands</Card.Title><Card.Description
-            >One-off commands gate target creation. Ambiguous outcomes are never
-            rerun automatically.</Card.Description
-          ></Card.Header
-        >
-        <Card.Content class="space-y-2">
-          {#each environment.releaseCommands as execution}
-            <div class="border border-border text-sm">
-              <div class="grid gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_auto]">
-                <button
-                  type="button"
-                  class="min-w-0 text-left"
-                  onclick={() => toggleReleaseCommandLogs(execution.id)}
-                  aria-expanded={expandedReleaseCommandId === execution.id}
-                >
-                  <div class="flex flex-wrap items-center gap-2">
-                    <span class="font-mono">{short(execution.id)}</span
-                    ><StatusBadge status={execution.status} /><span
-                      class="text-xs text-muted-foreground"
-                      >Attempt {execution.attempt} · Release {short(
-                        execution.releaseId,
-                      )} · {execution.targetName}</span
-                    >
-                  </div>
-                  <p
-                    class="mt-2 break-all font-mono text-xs text-muted-foreground"
-                  >
-                    {[execution.command, ...execution.arguments].join(" ")}
-                  </p>
-                  {#if execution.error}<p class="mt-2 text-xs text-destructive">
-                      {execution.error}
-                    </p>{/if}
-                </button>
-                {#if execution.status === "failed" || execution.status === "ambiguous"}
-                  <div class="flex flex-wrap items-center gap-2">
-                    <select
-                      class="h-8 border border-input bg-background px-2 text-xs"
-                      value={releaseCommandRetryTarget(execution)}
-                      onchange={(event) =>
-                        (releaseCommandRetryTargets = {
-                          ...releaseCommandRetryTargets,
-                          [execution.id]: event.currentTarget.value,
-                        })}
-                      aria-label="Release command retry target"
-                    >
-                      {#each environment.runtimeTargetIds as targetId, index}<option
-                          value={targetId}
-                          >{environment.runtimeServers[index]}</option
-                        >{/each}
-                    </select>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={Boolean(releaseCommandRetrying) ||
-                        environment.runtimeTargetIds.length === 0}
-                      onclick={() => askToRetryReleaseCommand(execution)}
-                      >Review retry</Button
-                    >
-                  </div>
-                {/if}
-              </div>
-              {#if expandedReleaseCommandId === execution.id}
-                <div
-                  class="max-h-96 overflow-auto border-t border-border bg-black/30 p-3 font-mono text-[11px] leading-relaxed"
-                >
-                  {#each releaseCommandLogs[execution.id] ?? [] as log (log.id)}<div
-                      class={cn({
-                        "text-destructive": log.stream === "stderr",
-                        "text-primary": log.stream === "system",
-                      })}
-                    >
-                      <span class="text-muted-foreground"
-                        >{stamp(log.occurredAt)} · attempt {log.attempt} · {log.stream}</span
-                      >
-                      <pre
-                        class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
-                    </div>{:else}<p class="text-muted-foreground">
-                      {releaseCommandLoading === execution.id
-                        ? "Loading release command output..."
-                        : "No release command output was persisted."}
-                    </p>{/each}
-                </div>
-              {/if}
-            </div>
-          {:else}<p
-              class="border border-dashed border-border p-4 text-sm text-muted-foreground"
-            >
-              No Release has required a release command yet.
-            </p>{/each}
-        </Card.Content>
-      </Card.Root>
-
-      <Card.Root>
-        <Card.Header
-          ><Card.Title>Deployments</Card.Title><Card.Description
-            >Durable blue-green rollout attempts and recovery actions.</Card.Description
-          ></Card.Header
-        >
-        <Card.Content class="space-y-2">
-          {#if deploymentStream.connectionError}<p class="text-xs text-warning">
-              {deploymentStream.connectionError}
-            </p>{/if}
-          {#each deployments as deployment}
-            <div class="border border-border text-sm">
-              <div class="flex items-start justify-between gap-4 p-3">
+    {#if section === "releases"}
+      <div class="grid gap-8 xl:grid-cols-5">
+        <Card.Root class="min-w-0 xl:col-span-2">
+          <Card.Header
+            ><Card.Title>Releases</Card.Title><Card.Description
+              >Immutable workload artifacts. Select a release to inspect its
+              deployments.</Card.Description
+            ></Card.Header
+          >
+          <Card.Content class="space-y-2">
+            {#if deploymentStream.connectionError}<p
+                class="text-xs text-warning"
+              >
+                {deploymentStream.connectionError}
+              </p>{/if}
+            {#each releases as release}
+              <div
+                class={cn(
+                  "border text-sm",
+                  expandedReleaseId === release.id
+                    ? "border-primary/40 bg-primary/[0.04]"
+                    : "border-border",
+                )}
+              >
                 <Button
                   type="button"
                   variant="ghost"
-                  class="h-auto min-w-0 flex-1 flex-col items-stretch p-0 text-left whitespace-normal hover:bg-transparent"
-                  onclick={() => toggleDeploymentEvents(deployment.id)}
-                  aria-expanded={expandedDeploymentId === deployment.id}
+                  class="h-auto min-w-0 w-full flex-col items-stretch p-3 text-left whitespace-normal hover:bg-transparent"
+                  onclick={() => (expandedReleaseId = release.id)}
+                  aria-expanded={expandedReleaseId === release.id}
                 >
-                  <div class="flex flex-wrap items-center gap-2">
-                    <span class="font-mono">{short(deployment.id)}</span
-                    ><StatusBadge status={deployment.status} /><StatusBadge
-                      status={deploymentStep(deployment)}
-                    />
+                  <div class="flex justify-between gap-3">
+                    <span class="font-mono">{short(release.id)}</span>
+                    {#if releaseStatus(release.id)}<StatusBadge
+                        status={releaseStatus(release.id)}
+                      />{/if}
                   </div>
-                  <p class="mt-1 text-xs text-muted-foreground">
-                    {stamp(deployment.createdAt)} · Release {short(
-                      deployment.releaseId,
-                    )} · {expandedDeploymentId === deployment.id
-                      ? "Hide timeline"
-                      : "Show timeline"}
+                  <p
+                    class="mt-1 break-all font-mono text-xs text-muted-foreground"
+                  >
+                    {short(release.sourceRevision)} · {stamp(release.createdAt)}
                   </p>
-                  {#if deployment.error}<p
-                      class="mt-2 text-xs text-destructive"
-                    >
-                      {deployment.error}
-                    </p>{/if}
+                  <p
+                    class="mt-1 break-all font-mono text-[11px] text-muted-foreground"
+                  >
+                    {release.artifactReference}
+                  </p>
                 </Button>
-                {#if deployment.status === "failed"}<Button
-                    size="sm"
+                <div class="flex items-center justify-between gap-3 px-3 pb-3">
+                  <span class="text-xs text-muted-foreground"
+                    >{deploymentsFor(release.id).length} deployment
+                    {deploymentsFor(release.id).length === 1 ? "" : "s"}</span
+                  >
+                  <Button
+                    size="xs"
                     variant="outline"
-                    disabled={Boolean(deploymentRetrying)}
-                    aria-busy={deploymentRetrying === deployment.id}
-                    onclick={() => retryDeployment(deployment.id)}
-                    >{#if deploymentRetrying === deployment.id}<Spinner
-                      />{/if}Retry</Button
-                  >{/if}
-              </div>
-              {#if expandedDeploymentId === deployment.id}
-                <div class="border-t border-border bg-muted/20 p-3">
-                  <div
-                    class="max-h-80 space-y-3 overflow-auto font-mono text-[11px] leading-relaxed"
+                    disabled={Boolean(activeReleaseDeployment)}
+                    onclick={() => redeployRelease(release.id)}
+                    >{#if activeReleaseDeployment === release.id}<Spinner
+                      />{/if}Deploy now</Button
                   >
-                    {#each deploymentStream.events[deployment.id] ?? [] as event (event.id)}
-                      <div
-                        class={cn({
-                          "text-destructive": event.status === "failed",
-                          "text-warning": event.status === "warning",
-                          "text-success": event.status === "succeeded",
-                        })}
-                      >
-                        <p class="select-none text-muted-foreground">
-                          {stamp(event.occurredAt)} · {event.step ||
-                            event.eventType} · {event.status}
-                        </p>
-                        <pre
-                          class="whitespace-pre-wrap break-words font-mono">{event.message}</pre>
-                        {#if event.error && event.error !== event.message}<pre
-                            class="whitespace-pre-wrap break-words font-mono text-destructive">{event.error}</pre>{/if}
-                      </div>
-                    {:else}
-                      <p class="text-muted-foreground">
-                        Waiting for Deployment events...
-                      </p>
-                    {/each}
-                  </div>
                 </div>
-              {/if}
-            </div>
-          {:else}
-            <p class="text-sm text-muted-foreground">No Deployments yet.</p>
-          {/each}
-        </Card.Content>
-      </Card.Root>
+              </div>
+            {:else}<p class="text-sm text-muted-foreground">
+                No Releases yet.
+              </p>{/each}
+          </Card.Content>
+        </Card.Root>
 
-      <Card.Root
-        ><Card.Header
-          ><Card.Title>Process instances</Card.Title><Card.Description
-            >Current and candidate formation grouped by target, process, and
-            stable replica identity.</Card.Description
-          ></Card.Header
-        ><Card.Content class="space-y-4"
-          >{#each environment.runtimeTargetIds as targetId, targetIndex}<div
-              class="space-y-2"
-            >
-              <p
-                class="text-xs font-semibold uppercase tracking-wide text-muted-foreground"
+        <Card.Root class="min-w-0 xl:col-span-3">
+          <Card.Header
+            ><Card.Title>Deployments</Card.Title><Card.Description
+              >Deployments and their release commands for the selected release.
+              Select a deployment to examine it in detail.</Card.Description
+            ></Card.Header
+          >
+          <Card.Content class="min-h-0 space-y-4">
+            {#if expandedReleaseId}
+              {#if deploymentsFor(expandedReleaseId).length > 0 || releaseCommandForRelease}
+                <div class="border border-border text-sm">
+                  {#if releaseCommandForRelease}
+                    {@const execution = releaseCommandForRelease}
+                    <div class="border-b border-border bg-muted/20 px-3 py-2">
+                      <p
+                        class="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
+                      >
+                        Release command
+                      </p>
+                    </div>
+                    <div
+                      class="grid gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_auto]"
+                    >
+                      <div class="min-w-0">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <span class="font-mono">{short(execution.id)}</span
+                          ><StatusBadge status={execution.status} /><span
+                            class="text-xs text-muted-foreground"
+                            >Attempt {execution.attempt} · {execution.targetName}</span
+                          >
+                        </div>
+                        <p
+                          class="mt-2 break-all font-mono text-xs text-muted-foreground"
+                        >
+                          {[execution.command, ...execution.arguments].join(
+                            " ",
+                          )}
+                        </p>
+                        {#if execution.error}<p
+                            class="mt-2 text-xs text-destructive"
+                          >
+                            {execution.error}
+                          </p>{/if}
+                      </div>
+                      {#if execution.status === "failed" || execution.status === "ambiguous"}
+                        <div class="flex flex-wrap items-center gap-2">
+                          <select
+                            class="h-8 border border-input bg-background px-2 text-xs"
+                            value={releaseCommandRetryTarget(execution)}
+                            onchange={(event) =>
+                              (releaseCommandRetryTargets = {
+                                ...releaseCommandRetryTargets,
+                                [execution.id]: event.currentTarget.value,
+                              })}
+                            aria-label="Release command retry target"
+                          >
+                            {#each environment.runtimeTargetIds as targetId, index}<option
+                                value={targetId}
+                                >{environment.runtimeServers[index]}</option
+                              >{/each}
+                          </select>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={Boolean(releaseCommandRetrying) ||
+                              environment.runtimeTargetIds.length === 0}
+                            onclick={() => askToRetryReleaseCommand(execution)}
+                            >Review retry</Button
+                          >
+                        </div>
+                      {/if}
+                    </div>
+                    <div
+                      class="max-h-96 overflow-auto border-t border-border bg-black/30 p-3 font-mono text-[11px] leading-relaxed"
+                    >
+                      {#each releaseCommandLogs[execution.id] ?? [] as log (log.id)}<div
+                          class={cn({
+                            "text-destructive": log.stream === "stderr",
+                            "text-primary": log.stream === "system",
+                          })}
+                        >
+                          <span class="text-muted-foreground"
+                            >{stamp(log.occurredAt)} · release command · attempt
+                            {log.attempt} ·
+                            {log.stream}</span
+                          >
+                          <pre
+                            class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
+                        </div>{:else}<p class="text-muted-foreground">
+                          {releaseCommandLoading === execution.id
+                            ? "Loading release command output..."
+                            : "No release command output was persisted."}
+                        </p>{/each}
+                    </div>
+                  {/if}
+                  {#if deploymentsFor(expandedReleaseId).length > 0}
+                    <div
+                      class="flex flex-wrap items-center gap-2 border-b border-border bg-muted/20 p-3"
+                    >
+                      <label
+                        for="deployment-select"
+                        class="text-xs font-medium text-muted-foreground"
+                        >Deployment</label
+                      >
+                      <select
+                        id="deployment-select"
+                        class="h-9 min-w-0 flex-1 border border-input bg-background px-2 text-xs"
+                        bind:value={selectedDeploymentId}
+                      >
+                        {#each deploymentsFor(expandedReleaseId) as deployment}
+                          <option value={deployment.id}>
+                            {short(deployment.id)} · {deployment.status}{deployment.attempt >
+                            1
+                              ? ` · attempt ${deployment.attempt}`
+                              : ""} · {stamp(deployment.createdAt)}
+                          </option>
+                        {/each}
+                      </select>
+                    </div>
+                    {#if selectedDeployment}
+                      {@const deployment = selectedDeployment}
+                      <div
+                        class="grid gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_auto]"
+                      >
+                        <div class="min-w-0">
+                          <div class="flex flex-wrap items-center gap-2">
+                            <span class="font-mono">{short(deployment.id)}</span
+                            ><StatusBadge
+                              status={deployment.status}
+                            /><StatusBadge
+                              status={deploymentStep(deployment)}
+                            />
+                          </div>
+                          <p class="mt-1 text-xs text-muted-foreground">
+                            {stamp(deployment.createdAt)} · {deployment.targetName}
+                            {deployment.attempt > 1
+                              ? ` · attempt ${deployment.attempt}`
+                              : ""}
+                          </p>
+                          {#if deployment.error}<p
+                              class="mt-2 text-xs text-destructive"
+                            >
+                              {deployment.error}
+                            </p>{/if}
+                        </div>
+                        {#if deployment.status === "failed"}<Button
+                            size="sm"
+                            variant="outline"
+                            disabled={Boolean(deploymentRetrying)}
+                            aria-busy={deploymentRetrying === deployment.id}
+                            onclick={() => retryDeployment(deployment.id)}
+                            >{#if deploymentRetrying === deployment.id}<Spinner
+                              />{/if}Retry</Button
+                          >{/if}
+                      </div>
+                      <div class="border-t border-border bg-muted/20 p-3">
+                        <div
+                          class="max-h-80 space-y-3 overflow-auto font-mono text-[11px] leading-relaxed"
+                        >
+                          {#each deploymentStream.events[deployment.id] ?? [] as event (event.id)}
+                            <div
+                              class={cn({
+                                "text-destructive": event.status === "failed",
+                                "text-warning": event.status === "warning",
+                                "text-success": event.status === "succeeded",
+                              })}
+                            >
+                              <p class="select-none text-muted-foreground">
+                                {stamp(event.occurredAt)} · deployment · {event.step ||
+                                  event.eventType} · {event.status}
+                              </p>
+                              <pre
+                                class="whitespace-pre-wrap break-words font-mono">{event.message}</pre>
+                              {#if event.error && event.error !== event.message}<pre
+                                  class="whitespace-pre-wrap break-words font-mono text-destructive">{event.error}</pre>{/if}
+                            </div>
+                          {:else}
+                            <p class="text-muted-foreground">
+                              {deployment.status === "queued" ||
+                              deployment.status === "running"
+                                ? "Waiting for Deployment events..."
+                                : "No deployment events recorded yet."}
+                            </p>
+                          {/each}
+                        </div>
+                      </div>
+                    {/if}
+                  {/if}
+                </div>
+              {:else}
+                <p
+                  class="border border-dashed border-border p-4 text-sm text-muted-foreground"
+                >
+                  No deployments or release commands for this release yet.
+                </p>
+              {/if}
+            {:else}
+              <div
+                class="flex min-h-64 items-center justify-center border border-dashed border-border p-6 text-sm text-muted-foreground"
               >
-                {environment.runtimeServers[targetIndex]}
-              </p>
-              {#each environment.instances.filter((instance) => instance.targetId === targetId) as instance}<div
-                  class="grid items-center gap-2 border border-border p-3 text-sm sm:grid-cols-[minmax(0,1fr)_8rem_8rem_minmax(0,1fr)]"
-                >
-                  <div>
-                    <p class="font-mono">{instance.processName}</p>
-                    <p class="text-xs text-muted-foreground">
-                      {instance.replicaKey}
-                    </p>
-                  </div>
-                  <StatusBadge status={instance.processKind} /><StatusBadge
-                    status={instance.state}
-                  /><span class="text-muted-foreground"
-                    >{instance.processKind === "web" && instance.ports?.http
-                      ? `${instance.ports.host || "127.0.0.1"}:${instance.ports.http}`
-                      : "No public port"}</span
-                  >
-                </div>{:else}<p
-                  class="border border-dashed border-border p-3 text-sm text-muted-foreground"
-                >
-                  No Instances on this target.
-                </p>{/each}
-            </div>{/each}</Card.Content
-        ></Card.Root
-      >
+                Select a release to view its deployments.
+              </div>
+            {/if}
+          </Card.Content>
+        </Card.Root>
+      </div>
     {/if}
   </div>
 

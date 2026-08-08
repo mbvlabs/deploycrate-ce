@@ -75,7 +75,7 @@ func (c Environments) RegisterRoutes(router *router.Router) error {
 		{http.MethodGet, routes.EnvironmentTelemetryLogs, c.TelemetryLogs},
 		{http.MethodGet, routes.EnvironmentTelemetryQueries, c.TelemetryQueries},
 		{http.MethodGet, routes.EnvironmentTelemetryTrace, c.TelemetryTrace},
-		{http.MethodGet, routes.EnvironmentDeployments, c.Deployments},
+		{http.MethodGet, routes.EnvironmentReleases, c.Releases},
 		{http.MethodGet, routes.EnvironmentBuilds, c.Builds},
 		{http.MethodGet, routes.EnvironmentSecrets, c.Secrets},
 		{http.MethodPost, routes.EnvironmentRestart, c.Restart},
@@ -512,7 +512,7 @@ func (c Environments) RetryDeployment(etx *echo.Context) error {
 	}
 	return inertia.Redirect(
 		etx,
-		routes.EnvironmentShow.URL(params.routeParams()),
+		environmentSectionReturnURL(etx, params),
 		http.StatusSeeOther,
 	)
 }
@@ -590,7 +590,7 @@ func (c Environments) Deploy(etx *echo.Context) error {
 	}
 	return inertia.Redirect(
 		etx,
-		routes.EnvironmentShow.URL(params.routeParams()),
+		environmentSectionReturnURL(etx, params),
 		http.StatusSeeOther,
 	)
 }
@@ -630,7 +630,7 @@ func (c Environments) RedeployRelease(etx *echo.Context) error {
 	}
 	return inertia.Redirect(
 		etx,
-		routes.EnvironmentShow.URL(params.routeParams()),
+		environmentSectionReturnURL(etx, params),
 		http.StatusSeeOther,
 	)
 }
@@ -667,7 +667,7 @@ func (c Environments) buildAction(
 	}
 	return inertia.Redirect(
 		etx,
-		routes.EnvironmentShow.URL(params.routeParams()),
+		environmentSectionReturnURL(etx, params),
 		http.StatusSeeOther,
 	)
 }
@@ -788,7 +788,7 @@ func (c Environments) RetryReleaseCommand(etx *echo.Context) error {
 	}
 	return inertia.Redirect(
 		etx,
-		routes.EnvironmentShow.URL(params.routeParams()),
+		environmentSectionReturnURL(etx, params),
 		http.StatusSeeOther,
 	)
 }
@@ -797,6 +797,21 @@ func (ids environmentPathIDs) routeParams() routes.EnvironmentParams {
 	return routes.EnvironmentParams{
 		ApplicationID: ids.ApplicationID.String(),
 		EnvironmentID: ids.EnvironmentID.String(),
+	}
+}
+
+func environmentSectionReturnURL(etx *echo.Context, params environmentPathIDs) string {
+	switch strings.TrimSpace(etx.Request().Header.Get("X-Deploycrate-Section")) {
+	case "releases":
+		return routes.EnvironmentReleases.URL(params.routeParams())
+	case "builds":
+		return routes.EnvironmentBuilds.URL(params.routeParams())
+	case "telemetry":
+		return routes.EnvironmentTelemetry.URL(params.routeParams())
+	case "secrets":
+		return routes.EnvironmentSecrets.URL(params.routeParams())
+	default:
+		return routes.EnvironmentShow.URL(params.routeParams())
 	}
 }
 
@@ -817,8 +832,8 @@ func (c Environments) Telemetry(etx *echo.Context) error {
 	return c.showSection(etx, "telemetry")
 }
 
-func (c Environments) Deployments(etx *echo.Context) error {
-	return c.showSection(etx, "deployments")
+func (c Environments) Releases(etx *echo.Context) error {
+	return c.showSection(etx, "releases")
 }
 
 func (c Environments) Builds(etx *echo.Context) error {

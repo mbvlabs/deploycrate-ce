@@ -1,7 +1,7 @@
 export type TelemetryRange = "1h" | "6h" | "24h" | "7d";
 
 export type EnvironmentSection =
-  "overview" | "telemetry" | "deployments" | "builds" | "secrets";
+  "overview" | "telemetry" | "releases" | "builds" | "secrets";
 
 export type Secret = {
   id: string;
@@ -70,7 +70,12 @@ export type Deployment = {
   currentStep: string;
   error: string;
   releaseId: string;
+  targetId: string;
+  targetName: string;
+  attempt: number;
   createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
   active: boolean;
 };
 
