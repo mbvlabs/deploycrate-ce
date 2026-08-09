@@ -13,17 +13,36 @@ import type {
   EnvironmentLogSnapshot,
 } from "./show.types";
 
+type StreamUpdate<T> = {
+  value: T;
+  base: T | undefined;
+};
+
 export class BuildLogStream {
-  live = $state<Build[] | null>(null);
-  logs = $state<Record<string, BuildLog[]>>({});
+  private updates = $state.raw<Record<string, StreamUpdate<Build>>>({});
+  logs = $state.raw<Record<string, BuildLog[]>>({});
   connectionError = $state("");
-  private cursors = $state<Record<string, number>>({});
+  private cursors = $state.raw<Record<string, number>>({});
   private loading = new Set<string>();
 
   constructor(
     private environmentId: string,
     private baseBuilds: () => Build[],
   ) {}
+
+  get current(): Build[] {
+    const base = this.baseBuilds();
+    const baseIDs = new Set(base.map((build) => build.id));
+    return [
+      ...base.map((build) => {
+        const update = this.updates[build.id];
+        return update?.base === build ? update.value : build;
+      }),
+      ...Object.values(this.updates)
+        .filter((update) => !baseIDs.has(update.value.id))
+        .map((update) => update.value),
+    ];
+  }
 
   async load(
     buildId: string,
@@ -45,9 +64,15 @@ export class BuildLogStream {
       if (!response.ok)
         throw new Error(`Build logs returned ${response.status}`);
       const snapshot = (await response.json()) as BuildLogSnapshot;
-      this.live = (this.live ?? this.baseBuilds()).map((build) =>
-        build.id === snapshot.build.id ? snapshot.build : build,
-      );
+      this.updates = {
+        ...this.updates,
+        [snapshot.build.id]: {
+          value: snapshot.build,
+          base: this.baseBuilds().find(
+            (build) => build.id === snapshot.build.id,
+          ),
+        },
+      };
       if (snapshot.logs.length > 0) {
         this.logs = {
           ...this.logs,
@@ -72,7 +97,11 @@ export class BuildLogStream {
     const next = async () => {
       try {
         const snapshot = await this.load(buildId, abortController.signal);
-        if (!snapshot || abortController.signal.aborted) return;
+        if (abortController.signal.aborted) return;
+        if (!snapshot) {
+          timer = window.setTimeout(next, 100);
+          return;
+        }
         retryDelay = 1000;
         if (snapshot.hasMore) {
           timer = window.setTimeout(next, 0);
@@ -84,7 +113,6 @@ export class BuildLogStream {
         ) {
           router.reload({
             only: ["environment", "telemetry"],
-            preserveScroll: true,
           });
           return;
         }
@@ -104,23 +132,37 @@ export class BuildLogStream {
   }
 
   reset() {
-    this.live = null;
+    this.updates = {};
     this.logs = {};
     this.cursors = {};
   }
 }
 
 export class DeploymentEventStream {
-  live = $state<Deployment[] | null>(null);
-  events = $state<Record<string, DeploymentEvent[]>>({});
+  private updates = $state.raw<Record<string, StreamUpdate<Deployment>>>({});
+  events = $state.raw<Record<string, DeploymentEvent[]>>({});
   connectionError = $state("");
-  private cursors = $state<Record<string, number>>({});
+  private cursors = $state.raw<Record<string, number>>({});
   private loading = new Set<string>();
 
   constructor(
     private environmentId: string,
     private baseDeployments: () => Deployment[],
   ) {}
+
+  get current(): Deployment[] {
+    const base = this.baseDeployments();
+    const baseIDs = new Set(base.map((deployment) => deployment.id));
+    return [
+      ...base.map((deployment) => {
+        const update = this.updates[deployment.id];
+        return update?.base === deployment ? update.value : deployment;
+      }),
+      ...Object.values(this.updates)
+        .filter((update) => !baseIDs.has(update.value.id))
+        .map((update) => update.value),
+    ];
+  }
 
   async load(
     deploymentId: string,
@@ -142,12 +184,23 @@ export class DeploymentEventStream {
       if (!response.ok)
         throw new Error(`Deployment events returned ${response.status}`);
       const snapshot = (await response.json()) as DeploymentEventSnapshot;
-      this.live = (this.live ?? this.baseDeployments()).map((deployment) => {
-        if (deployment.id === snapshot.deployment.id)
-          return snapshot.deployment;
-        if (snapshot.deployment.active) return { ...deployment, active: false };
-        return deployment;
-      });
+      const base = this.baseDeployments();
+      const updates = { ...this.updates };
+      if (snapshot.deployment.active) {
+        for (const deployment of this.current) {
+          if (deployment.id !== snapshot.deployment.id && deployment.active) {
+            updates[deployment.id] = {
+              value: { ...deployment, active: false },
+              base: base.find((item) => item.id === deployment.id),
+            };
+          }
+        }
+      }
+      updates[snapshot.deployment.id] = {
+        value: snapshot.deployment,
+        base: base.find((item) => item.id === snapshot.deployment.id),
+      };
+      this.updates = updates;
       if (snapshot.events.length > 0) {
         this.events = {
           ...this.events,
@@ -175,7 +228,11 @@ export class DeploymentEventStream {
     const next = async () => {
       try {
         const snapshot = await this.load(deploymentId, abortController.signal);
-        if (!snapshot || abortController.signal.aborted) return;
+        if (abortController.signal.aborted) return;
+        if (!snapshot) {
+          timer = window.setTimeout(next, 100);
+          return;
+        }
         retryDelay = 1000;
         if (snapshot.hasMore) {
           timer = window.setTimeout(next, 0);
@@ -187,7 +244,6 @@ export class DeploymentEventStream {
         ) {
           router.reload({
             only: ["environment", "telemetry"],
-            preserveScroll: true,
           });
           return;
         }
@@ -207,14 +263,14 @@ export class DeploymentEventStream {
   }
 
   reset() {
-    this.live = null;
+    this.updates = {};
     this.events = {};
     this.cursors = {};
   }
 }
 
 export class EnvironmentLogStream {
-  logs = $state<EnvironmentLog[]>([]);
+  logs = $state.raw<EnvironmentLog[]>([]);
   loaded = $state(false);
   connectionError = $state("");
   private cursor = $state("");

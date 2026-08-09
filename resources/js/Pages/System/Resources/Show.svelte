@@ -277,7 +277,7 @@
     privateNetworkId: "",
     publication: { enabled: false, hostname: "", healthPath: "" },
   }));
-  const endpointErrors = $derived(Object.values($endpointForm.errors));
+  const endpointErrors = $derived(Object.entries($endpointForm.errors));
   const deviceForm = useForm(() => ({ name: "", deviceId: "" }));
   let revokeDialogOpen = $state(false);
   let revokeProcessing = $state(false);
@@ -985,7 +985,7 @@
                 bind:value={$deviceForm.deviceId}
                 ><NativeSelect.Option value=""
                   >Enroll a new device</NativeSelect.Option
-                >{#each resource.availableDevices as device}<NativeSelect.Option
+                >{#each resource.availableDevices as device (device.id)}<NativeSelect.Option
                     value={device.id}
                     >{device.name} · {device.privateAddress}</NativeSelect.Option
                   >{/each}</NativeSelect.Root
@@ -1212,7 +1212,9 @@
           >
             <p class="font-medium">Endpoint could not be added</p>
             <ul class="mt-2 list-disc space-y-1 pl-5">
-              {#each endpointErrors as error}<li>{error}</li>{/each}
+              {#each endpointErrors as [field, error] (field)}<li>
+                  {error}
+                </li>{/each}
             </ul>
           </div>
         {/if}
@@ -1248,7 +1250,7 @@
                 required
                 ><NativeSelect.Option value=""
                   >Select a private network</NativeSelect.Option
-                >{#each endpointNetworks as network}<NativeSelect.Option
+                >{#each endpointNetworks as network (network.id)}<NativeSelect.Option
                     value={network.id}
                     >{network.name} · {network.serverAddresses[
                       endpointServerID
@@ -1289,7 +1291,7 @@
                 )}
                 onchange={(event) =>
                   chooseServiceMapping(Number(event.currentTarget.value))}
-                >{#each serviceMappings as mapping, index}<NativeSelect.Option
+                >{#each serviceMappings as mapping, index (`${mapping.installationId}:${mapping.hostPort}:${mapping.containerPort}:${mapping.protocol}`)}<NativeSelect.Option
                     value={String(index)}
                     >{mapping.containerName} · {mapping.containerPort}/{mapping.protocol}
                     → {mapping.hostPort}</NativeSelect.Option
@@ -1313,7 +1315,7 @@
               ><NativeSelect.Root
                 class="w-full"
                 bind:value={$endpointForm.protocol}
-                >{#each definition.protocols as protocol}<NativeSelect.Option
+                >{#each definition.protocols as protocol (protocol)}<NativeSelect.Option
                     value={protocol}>{protocol}</NativeSelect.Option
                   >{/each}</NativeSelect.Root
               ></FormField
@@ -1322,7 +1324,7 @@
             ><NativeSelect.Root
               class="w-full"
               bind:value={$endpointForm.tlsMode}
-              >{#each definition.tlsModes as mode}<NativeSelect.Option
+              >{#each definition.tlsModes as mode (mode)}<NativeSelect.Option
                   value={mode}>{label(mode)}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
             ></FormField

@@ -127,10 +127,8 @@
     () => environment.deployments,
   );
   const logStream = new EnvironmentLogStream(applicationId, environmentId);
-  const builds = $derived(buildStream.live ?? environment.builds);
-  const deployments = $derived(
-    deploymentStream.live ?? environment.deployments,
-  );
+  const builds = $derived(buildStream.current);
+  const deployments = $derived(deploymentStream.current);
   const activeDeployment = $derived(
     deployments.find((deployment) => deployment.active) ?? null,
   );

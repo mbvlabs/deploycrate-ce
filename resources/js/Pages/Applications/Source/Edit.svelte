@@ -132,7 +132,7 @@
           ><NativeSelect.Root
             bind:value={$form.registryResourceId}
             class="w-full"
-            >{#each options.registries as registry}<NativeSelect.Option
+            >{#each options.registries as registry (registry.id)}<NativeSelect.Option
                 value={registry.id}
                 >{registry.name} · {registry.endpoint}</NativeSelect.Option
               >{/each}</NativeSelect.Root
@@ -143,7 +143,7 @@
             ><NativeSelect.Root
               bind:value={$form.githubInstallationId}
               class="w-full"
-              >{#each options.installations as installation}<NativeSelect.Option
+              >{#each options.installations as installation (installation.id)}<NativeSelect.Option
                   value={installation.id}
                   >{installation.accountLogin}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
@@ -153,7 +153,7 @@
             ><NativeSelect.Root
               bind:value={$form.githubRepositoryId}
               class="w-full"
-              >{#each repositories as repository}<NativeSelect.Option
+              >{#each repositories as repository (repository.id)}<NativeSelect.Option
                   value={repository.id}
                   >{repository.fullName}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
@@ -169,7 +169,7 @@
               bind:value={$form.buildServerId}
               class="w-full"
               required
-              >{#each options.buildServers as server}<NativeSelect.Option
+              >{#each options.buildServers as server (server.id)}<NativeSelect.Option
                   value={server.id}
                   >{server.name} · {server.kind === "worker"
                     ? server.address

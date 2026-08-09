@@ -106,11 +106,17 @@
 
   const form = useForm<RouteInput>(() => {
     const domain = options.domains[0];
+    const target = options.targets.find(
+      (item) => item.environmentId === domain?.environmentId,
+    );
+    const release = options.releases.find(
+      (item) => item.environmentId === domain?.environmentId,
+    );
     return {
       externalId: domain ? routeIDForHostname(domain.hostname) : "",
       environmentDomainId: domain?.id ?? "",
-      environmentTargetId: "",
-      releaseId: "",
+      environmentTargetId: target?.id ?? "",
+      releaseId: release?.id ?? "",
       backends: [],
     };
   });
@@ -136,22 +142,6 @@
     ),
   );
 
-  $effect(() => {
-    if (
-      createTargets.length > 0 &&
-      !createTargets.some((target) => target.id === $form.environmentTargetId)
-    ) {
-      $form.environmentTargetId = createTargets[0].id;
-      $form.backends = [];
-    }
-    if (
-      createReleases.length > 0 &&
-      !createReleases.some((release) => release.id === $form.releaseId)
-    ) {
-      $form.releaseId = createReleases[0].id;
-    }
-  });
-
   function defaultExternalID(domainID: string) {
     const domain = options.domains.find((item) => item.id === domainID);
     if (!domain || $form.externalId) return;
@@ -163,9 +153,18 @@
   }
 
   function selectCreateDomain(domainID: string) {
+    const environmentID =
+      options.domains.find((domain) => domain.id === domainID)?.environmentId ??
+      "";
+    const target = options.targets.find(
+      (item) => item.environmentId === environmentID,
+    );
+    const release = options.releases.find(
+      (item) => item.environmentId === environmentID,
+    );
     $form.environmentDomainId = domainID;
-    $form.environmentTargetId = "";
-    $form.releaseId = "";
+    $form.environmentTargetId = target?.id ?? "";
+    $form.releaseId = release?.id ?? "";
     $form.backends = [];
     defaultExternalID(domainID);
   }
@@ -321,7 +320,7 @@
               onchange={(event) =>
                 selectCreateDomain(event.currentTarget.value)}
               required
-              >{#each options.domains as domain}<NativeSelect.Option
+              >{#each options.domains as domain (domain.id)}<NativeSelect.Option
                   value={domain.id}
                   >{domain.hostname} · {domain.applicationName} / {domain.environmentName}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
@@ -341,7 +340,7 @@
               onchange={(event) =>
                 selectCreateTarget(event.currentTarget.value)}
               required
-              >{#each createTargets as target}<NativeSelect.Option
+              >{#each createTargets as target (target.id)}<NativeSelect.Option
                   value={target.id}>{target.serverName}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
             ></FormField
@@ -351,7 +350,7 @@
               class="w-full"
               bind:value={$form.releaseId}
               required
-              >{#each createReleases as release}<NativeSelect.Option
+              >{#each createReleases as release (release.id)}<NativeSelect.Option
                   value={release.id}>{release.label}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
             ></FormField
@@ -359,7 +358,7 @@
           <div class="sm:col-span-2">
             <p class="mb-2 text-xs font-medium">Backends and weights</p>
             <div class="divide-y divide-border border border-border">
-              {#each createInstances as instance}<div
+              {#each createInstances as instance (instance.id)}<div
                   class="grid grid-cols-[auto_1fr_7rem] items-center gap-3 p-3"
                 >
                   <Checkbox

@@ -215,7 +215,7 @@
         ><Alert.Title>The changes could not be saved</Alert.Title
         ><Alert.Description
           ><ul class="mt-2 list-disc pl-5">
-            {#each Object.entries(errors) as [field, message]}<li>
+            {#each Object.entries(errors) as [field, message] (field)}<li>
                 {field}: {message}
               </li>{/each}
           </ul></Alert.Description
@@ -252,7 +252,7 @@
               receive the values as Resource-managed secrets.</Card.Description
             ></Card.Header
           ><Card.Content class="grid gap-5 sm:grid-cols-2"
-            >{#each definition.environmentKeys as key}<FormField
+            >{#each definition.environmentKeys as key (key.name)}<FormField
                 label={key.label}
                 error={errors[`configuration.environment_keys.${key.name}`]}
                 ><Input
@@ -300,7 +300,7 @@
             <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <FormField label="Server" error={errors.serverId}
                 ><NativeSelect.Root class="w-full" bind:value={item.serverId}
-                  >{#each options.servers as server}<NativeSelect.Option
+                  >{#each options.servers as server (server.id)}<NativeSelect.Option
                       value={server.id}
                       >{server.name} · {server.address}</NativeSelect.Option
                     >{/each}</NativeSelect.Root
@@ -338,7 +338,7 @@
                   class="w-full"
                   bind:value={item.registryCredentialId}
                   ><NativeSelect.Option value="">None</NativeSelect.Option
-                  >{#each options.registryCredentials as credential}<NativeSelect.Option
+                  >{#each options.registryCredentials as credential (credential.id)}<NativeSelect.Option
                       value={credential.id}
                       >{credential.name}</NativeSelect.Option
                     >{/each}</NativeSelect.Root

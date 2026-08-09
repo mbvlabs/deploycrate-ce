@@ -131,24 +131,6 @@
     ),
   );
 
-  $effect(() => {
-    if (!editDraft) return;
-    if (
-      editTargets.length > 0 &&
-      !editTargets.some(
-        (target) => target.id === editDraft?.environmentTargetId,
-      )
-    ) {
-      editDraft.environmentTargetId = editTargets[0].id;
-      editDraft.backends = [];
-    }
-    if (
-      editReleases.length > 0 &&
-      !editReleases.some((release) => release.id === editDraft?.releaseId)
-    )
-      editDraft.releaseId = editReleases[0].id;
-  });
-
   function formatTime(value: string) {
     return value
       ? new Intl.DateTimeFormat(undefined, {
@@ -189,6 +171,23 @@
   function selectEditTarget(targetID: string) {
     if (!editDraft) return;
     editDraft.environmentTargetId = targetID;
+    editDraft.backends = [];
+  }
+
+  function selectEditDomain(domainID: string) {
+    if (!editDraft) return;
+    const environmentID =
+      route.options.domains.find((domain) => domain.id === domainID)
+        ?.environmentId ?? "";
+    const targets = route.options.targets.filter(
+      (target) => target.environmentId === environmentID,
+    );
+    const releases = route.options.releases.filter(
+      (release) => release.environmentId === environmentID,
+    );
+    editDraft.environmentDomainId = domainID;
+    editDraft.environmentTargetId = targets[0]?.id ?? "";
+    editDraft.releaseId = releases[0]?.id ?? "";
     editDraft.backends = [];
   }
 
@@ -352,7 +351,7 @@
                   ></Table.Row
                 ></Table.Header
               ><Table.Body
-                >{#each route.backends as backend}<Table.Row
+                >{#each route.backends as backend (backend.instanceId)}<Table.Row
                     ><Table.Cell class="font-mono text-xs"
                       >{backend.externalId || "Origin"}</Table.Cell
                     ><Table.Cell class="font-mono text-xs"
@@ -410,8 +409,9 @@
           <FormField label="Domain"
             ><NativeSelect.Root
               class="w-full"
-              bind:value={editDraft.environmentDomainId}
-              >{#each route.options.domains as domain}<NativeSelect.Option
+              value={editDraft.environmentDomainId}
+              onchange={(event) => selectEditDomain(event.currentTarget.value)}
+              >{#each route.options.domains as domain (domain.id)}<NativeSelect.Option
                   value={domain.id}
                   >{domain.hostname} · {domain.applicationName} / {domain.environmentName}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
@@ -425,14 +425,14 @@
               class="w-full"
               value={editDraft.environmentTargetId}
               onchange={(event) => selectEditTarget(event.currentTarget.value)}
-              >{#each editTargets as target}<NativeSelect.Option
+              >{#each editTargets as target (target.id)}<NativeSelect.Option
                   value={target.id}>{target.serverName}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
             ></FormField
           >
           <FormField label="Active release"
             ><NativeSelect.Root class="w-full" bind:value={editDraft.releaseId}
-              >{#each editReleases as release}<NativeSelect.Option
+              >{#each editReleases as release (release.id)}<NativeSelect.Option
                   value={release.id}>{release.label}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
             ></FormField
@@ -440,7 +440,7 @@
           <div class="sm:col-span-2">
             <p class="mb-2 text-xs font-medium">Backends and weights</p>
             <div class="divide-y divide-border border border-border">
-              {#each editInstances as instance}<div
+              {#each editInstances as instance (instance.id)}<div
                   class="grid grid-cols-[auto_1fr_7rem] items-center gap-3 p-3"
                 >
                   <Checkbox

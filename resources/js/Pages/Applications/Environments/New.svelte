@@ -317,7 +317,7 @@
         <p class="font-medium">The Environment could not be created.</p>
         {#if setupError}<p class="mt-1">
             {setupError}
-          </p>{/if}{#each [...new Set(Object.values(displayedErrors))] as error}<p
+          </p>{/if}{#each [...new Set(Object.values(displayedErrors))] as error (error)}<p
             class="mt-1"
           >
             {error}
@@ -407,7 +407,7 @@
                 required
                 ><NativeSelect.Option value=""
                   >Select an account</NativeSelect.Option
-                >{#each installations as installation}<NativeSelect.Option
+                >{#each installations as installation (installation.id)}<NativeSelect.Option
                     value={installation.id}
                     >{installation.accountLogin}</NativeSelect.Option
                   >{/each}</NativeSelect.Root
@@ -422,7 +422,7 @@
                 required
                 ><NativeSelect.Option value=""
                   >Select a repository</NativeSelect.Option
-                >{#each repositoriesForInstallation as repository}<NativeSelect.Option
+                >{#each repositoriesForInstallation as repository (repository.id)}<NativeSelect.Option
                     value={repository.id}
                     >{repository.fullName}</NativeSelect.Option
                   >{/each}</NativeSelect.Root
@@ -442,7 +442,7 @@
                 required
                 ><NativeSelect.Option value=""
                   >Select a Build Server</NativeSelect.Option
-                >{#each buildServers as server}<NativeSelect.Option
+                >{#each buildServers as server (server.id)}<NativeSelect.Option
                     value={server.id}
                     >{server.name} · {server.kind === "worker"
                       ? server.address
@@ -471,7 +471,7 @@
                 required
                 ><NativeSelect.Option value=""
                   >Select a Registry</NativeSelect.Option
-                >{#each registries as registry}<NativeSelect.Option
+                >{#each registries as registry (registry.id)}<NativeSelect.Option
                     value={registry.id}
                     >{registry.name} · {registry.endpoint}</NativeSelect.Option
                   >{/each}</NativeSelect.Root
@@ -501,7 +501,7 @@
                 required
                 ><NativeSelect.Option value=""
                   >Select a Registry</NativeSelect.Option
-                >{#each registries as registry}<NativeSelect.Option
+                >{#each registries as registry (registry.id)}<NativeSelect.Option
                     value={registry.id}
                     >{registry.name} · {registry.endpoint}</NativeSelect.Option
                   >{/each}</NativeSelect.Root
@@ -537,7 +537,7 @@
               >Add node</Button
             >
           </div>{:else}<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {#each servers as server}<label
+            {#each servers as server (server.id)}<label
                 class={`flex cursor-pointer gap-3 border p-4 transition-colors hover:border-primary/60 ${serverIds.includes(server.id) ? "border-primary bg-primary/5" : "border-border"}`}
                 ><Checkbox
                   class="mt-1"
@@ -579,7 +579,7 @@
               ><NativeSelect.Root bind:value={dnsZoneId} class="w-full" required
                 ><NativeSelect.Option value=""
                   >Select a zone</NativeSelect.Option
-                >{#each dnsZones as zone}<NativeSelect.Option
+                >{#each dnsZones as zone (`${zone.connectionId}:${zone.zoneId}`)}<NativeSelect.Option
                     value={zone.zoneId}
                     >{zone.zoneName} · {zone.connectionName}</NativeSelect.Option
                   >{/each}</NativeSelect.Root
@@ -619,7 +619,7 @@
           <NativeSelect.Root bind:value={selectedResource} class="w-full flex-1"
             ><NativeSelect.Option value=""
               >Select a Resource</NativeSelect.Option
-            >{#each availableResources as option}<NativeSelect.Option
+            >{#each availableResources as option (`${option.id}:${option.endpointId}:${option.credentialId ?? ""}`)}<NativeSelect.Option
                 value={`${option.id}:${option.endpointId}:${option.credentialId ?? ""}`}
                 >{option.name} · {option.engine}{option.database
                   ? ` · ${option.database}`
@@ -635,7 +635,7 @@
             onclick={addResource}>Attach</Button
           >
         </div>
-        {#each resources as resource, index}<div
+        {#each resources as resource, index (resource)}<div
             class="grid gap-3 border border-border p-4 sm:grid-cols-2"
           >
             <FormField label="Connection alias"
@@ -701,7 +701,7 @@
         ></Card.Header
       >
       <Card.Content class="space-y-4"
-        >{#each secrets as secret, index}<div
+        >{#each secrets as secret, index (secret)}<div
             class="grid gap-3 border border-border p-4 sm:grid-cols-2"
           >
             <FormField label="Key"

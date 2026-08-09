@@ -270,7 +270,7 @@
         </p>
       </header>
       <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {#each availableEngines as engine}
+        {#each availableEngines as engine (engine.engine)}
           {@const card = presets[engine.engine] ?? {
             badge: engine.engine.slice(0, 2).toUpperCase(),
             description: `A ${engine.label} Docker Resource.`,
@@ -328,7 +328,7 @@
           ><Alert.Title>The Resource could not be created</Alert.Title
           ><Alert.Description
             ><ul class="mt-2 list-disc space-y-1 pl-5">
-              {#each Object.entries(errors) as [field, message]}<li>
+              {#each Object.entries(errors) as [field, message] (field)}<li>
                   {field}: {message}
                 </li>{/each}
             </ul></Alert.Description
@@ -365,7 +365,7 @@
             receive the values as Resource-managed secrets.</Card.Description
           ></Card.Header
         ><Card.Content class="grid gap-5 sm:grid-cols-2"
-          >{#each definition.environmentKeys as key}<FormField
+          >{#each definition.environmentKeys as key (key.name)}<FormField
               label={key.label}
               error={errors[`configuration.environment_keys.${key.name}`]}
               ><Input
@@ -393,7 +393,7 @@
               required
               ><NativeSelect.Option value=""
                 >Select a Server</NativeSelect.Option
-              >{#each options.servers as server}<NativeSelect.Option
+              >{#each options.servers as server (server.id)}<NativeSelect.Option
                   value={server.id}
                   >{server.name} · {server.address}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
@@ -404,7 +404,7 @@
               bind:value={form.privateNetworkId}
               disabled={!form.installation.serverId}
               ><NativeSelect.Option value="">Do not attach</NativeSelect.Option
-              >{#each availableNetworks as network}<NativeSelect.Option
+              >{#each availableNetworks as network (network.id)}<NativeSelect.Option
                   value={network.id}>{network.name}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
             ></FormField
@@ -443,7 +443,7 @@
               class="w-full"
               bind:value={form.installation.registryCredentialId}
               ><NativeSelect.Option value="">None</NativeSelect.Option
-              >{#each options.registryCredentials as credential}<NativeSelect.Option
+              >{#each options.registryCredentials as credential (credential.id)}<NativeSelect.Option
                   value={credential.id}>{credential.name}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
             ></FormField

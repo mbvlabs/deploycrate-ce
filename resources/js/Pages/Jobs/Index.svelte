@@ -205,7 +205,7 @@
             aria-label="Filter by state"
           >
             <NativeSelect.Option value="">All states</NativeSelect.Option>
-            {#each jobStates as state}<NativeSelect.Option value={state}
+            {#each jobStates as state (state)}<NativeSelect.Option value={state}
                 >{state}</NativeSelect.Option
               >{/each}
           </NativeSelect.Root>

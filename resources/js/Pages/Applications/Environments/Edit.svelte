@@ -279,7 +279,7 @@
               class="w-full"
               required
               ><NativeSelect.Option value="">Select a zone</NativeSelect.Option
-              >{#each options.dnsZones ?? [] as zone}<NativeSelect.Option
+              >{#each options.dnsZones ?? [] as zone (`${zone.connectionId}:${zone.zoneId}`)}<NativeSelect.Option
                   value={zone.zoneId}
                   >{zone.zoneName} · {zone.connectionName}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
@@ -342,7 +342,7 @@
           <NativeSelect.Root bind:value={selectedResource} class="w-full flex-1"
             ><NativeSelect.Option value=""
               >Select a Resource</NativeSelect.Option
-            >{#each availableResources as option}<NativeSelect.Option
+            >{#each availableResources as option (`${option.id}:${option.endpointId}:${option.credentialId ?? ""}`)}<NativeSelect.Option
                 value={`${option.id}:${option.endpointId}:${option.credentialId ?? ""}`}
                 >{option.name} · {option.engine}{option.database
                   ? ` · ${option.database}`
@@ -358,7 +358,7 @@
             onclick={addResource}>Attach</Button
           >
         </div>
-        {#each $form.resources as resource, index}
+        {#each $form.resources as resource, index (resource)}
           <div class="grid gap-3 border border-border p-4 sm:grid-cols-2">
             <FormField
               label="Connection alias"

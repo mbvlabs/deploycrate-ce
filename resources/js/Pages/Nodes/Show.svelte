@@ -167,7 +167,7 @@
             >Workloads this node may accept.</Card.Description
           ></Card.Header
         ><Card.Content class="flex flex-wrap gap-2"
-          >{#each Object.entries(node.capabilities).filter(([key, enabled]) => key !== "telemetry" && enabled) as [capability]}<span
+          >{#each Object.entries(node.capabilities).filter(([key, enabled]) => key !== "telemetry" && enabled) as [capability] (capability)}<span
               class="border border-border px-2 py-1 text-xs capitalize"
               >{capability}</span
             >{/each}</Card.Content

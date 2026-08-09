@@ -1629,7 +1629,7 @@
                   ></Table.Header
                 >
                 <Table.Body>
-                  {#each resource.databases as item}
+                  {#each resource.databases as item (item.name)}
                     {@const backup = backups.databases.find(
                       (detail) => detail.databaseName === item.name,
                     )}
@@ -1712,7 +1712,7 @@
                     selectBackupDatabase(event.currentTarget.value)}
                   class="w-full"
                 >
-                  {#each configuredBackups as database}<NativeSelect.Option
+                  {#each configuredBackups as database (database.databaseName)}<NativeSelect.Option
                       value={database.databaseName}
                       >{database.databaseName}</NativeSelect.Option
                     >{/each}
@@ -1937,7 +1937,7 @@
             >
               No installation is configured.
             </p>{/if}
-          {#each resource.installations as item}
+          {#each resource.installations as item (item.id)}
             <article class="border border-border p-4">
               <div class="flex flex-wrap items-start justify-between gap-4">
                 <div>
@@ -2214,7 +2214,7 @@
                           ></Table.Row
                         ></Table.Header
                       ><Table.Body
-                        >{#each resource.deviceGrants as grant}{@const grantState =
+                        >{#each resource.deviceGrants as grant (grant.grantId)}{@const grantState =
                             grant.applicationState === "applied"
                               ? "ready"
                               : grant.applicationState === "failed"
@@ -2376,7 +2376,7 @@
                       ></Table.Row
                     ></Table.Header
                   ><Table.Body
-                    >{#each resource.volumes as item}<Table.Row
+                    >{#each resource.volumes as item (item.id)}<Table.Row
                         ><Table.Cell class="font-medium">{item.name}</Table.Cell
                         ><Table.Cell>{item.driver}</Table.Cell><Table.Cell
                           >{item.serverName}</Table.Cell
@@ -2407,7 +2407,7 @@
                         ></Table.Row
                       ></Table.Header
                     ><Table.Body
-                      >{#each resource.mounts as item}<Table.Row
+                      >{#each resource.mounts as item (item.id)}<Table.Row
                           ><Table.Cell class="font-mono text-xs"
                             >{item.mountPath}</Table.Cell
                           ><Table.Cell>{item.volumeName}</Table.Cell><Table.Cell
@@ -2464,7 +2464,7 @@
                     ></Table.Row
                   ></Table.Header
                 ><Table.Body
-                  >{#each resource.healthChecks as item}<Table.Row
+                  >{#each resource.healthChecks as item (item.id)}<Table.Row
                       ><Table.Cell
                         ><div>
                           <span class="font-medium">{item.name}</span
@@ -2514,7 +2514,7 @@
             >
               This Resource is not attached to an Environment.
             </p>{/if}
-          {#each resource.connections as item}
+          {#each resource.connections as item (item.id)}
             <div
               class="grid gap-3 border border-border p-3 sm:grid-cols-[1fr_auto]"
             >
@@ -2717,7 +2717,7 @@
             required
             ><NativeSelect.Option value=""
               >Select a private network</NativeSelect.Option
-            >{#each endpointNetworks as value}<NativeSelect.Option
+            >{#each endpointNetworks as value (value.id)}<NativeSelect.Option
                 value={value.id}>{value.name}</NativeSelect.Option
               >{/each}</NativeSelect.Root
           ></FormField
@@ -2759,7 +2759,7 @@
           ><NativeSelect.Root bind:value={device.deviceId} class="w-full"
             ><NativeSelect.Option value=""
               >Enroll a new device</NativeSelect.Option
-            >{#each resource.availableDevices as item}<NativeSelect.Option
+            >{#each resource.availableDevices as item (item.id)}<NativeSelect.Option
                 value={item.id}
                 >{item.name} · {item.privateAddress}</NativeSelect.Option
               >{/each}</NativeSelect.Root
@@ -2842,7 +2842,7 @@
                 required
                 ><NativeSelect.Option value=""
                   >Select a private network</NativeSelect.Option
-                >{#each endpointNetworks as network}<NativeSelect.Option
+                >{#each endpointNetworks as network (network.id)}<NativeSelect.Option
                     value={network.id}
                     >{network.name} · {network.serverAddresses[
                       resource.installations[0]?.serverId
@@ -2881,7 +2881,7 @@
                 onchange={(event) =>
                   chooseServiceMapping(Number(event.currentTarget.value))}
                 class="w-full"
-                >{#each serviceMappings as mapping, index}<NativeSelect.Option
+                >{#each serviceMappings as mapping, index (`${mapping.installationId}:${mapping.hostPort}:${mapping.containerPort}:${mapping.protocol}`)}<NativeSelect.Option
                     value={String(index)}
                     >{mapping.containerName} · {mapping.containerPort}/{mapping.protocol}
                     → {mapping.hostPort}</NativeSelect.Option
@@ -2897,15 +2897,15 @@
             >{/if}
           {#if !endpoint.publication.enabled}<FormField label="Protocol"
               ><NativeSelect.Root bind:value={endpoint.protocol} class="w-full"
-                >{#each definition.protocols as value}<NativeSelect.Option
+                >{#each definition.protocols as value (value)}<NativeSelect.Option
                     {value}>{value}</NativeSelect.Option
                   >{/each}</NativeSelect.Root
               ></FormField
             >{/if}
           <FormField label="Origin TLS"
             ><NativeSelect.Root bind:value={endpoint.tlsMode} class="w-full"
-              >{#each definition.tlsModes as value}<NativeSelect.Option {value}
-                  >{value}</NativeSelect.Option
+              >{#each definition.tlsModes as value (value)}<NativeSelect.Option
+                  {value}>{value}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
             ></FormField
           >
@@ -2987,7 +2987,7 @@
           ></Dialog.Header
         >
         <div class="grid gap-4 sm:grid-cols-2">
-          {#each connectionKeyDefinitions(connectionKeysConnection) as key}
+          {#each connectionKeyDefinitions(connectionKeysConnection) as key (key.name)}
             <FormField
               label={key.label}
               error={errors[`configuration.environment_keys.${key.name}`]}
@@ -3066,14 +3066,14 @@
                 disabled={credential.purpose === "administrator"}
                 required={credential.purpose === "application"}
                 ><NativeSelect.Option value="">No Database</NativeSelect.Option
-                >{#each resource.databases as item}<NativeSelect.Option
+                >{#each resource.databases as item (item.name)}<NativeSelect.Option
                     value={item.name}>{item.name}</NativeSelect.Option
                   >{/each}</NativeSelect.Root
               ></FormField
             >{/if}{#if editingCredentialId}<label
               class="flex items-center gap-2 self-end text-xs"
               ><Checkbox bind:checked={credential.rotate} /> Rotate secret values</label
-            >{/if}{#if !editingCredentialId || credential.rotate}{#each definition.credentialFields as field}<FormField
+            >{/if}{#if !editingCredentialId || credential.rotate}{#each definition.credentialFields as field (field.name)}<FormField
                 label={field.label}
                 error={errors[`secretValues.${field.name}`]}
                 ><Input
@@ -3141,7 +3141,7 @@
               bind:value={backupPolicy.backupDestinationId}
               class="w-full"
               required
-              >{#each backups.destinations as destination}<NativeSelect.Option
+              >{#each backups.destinations as destination (destination.id)}<NativeSelect.Option
                   value={destination.id}
                   >{destination.name} · {destination.bucket}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
@@ -3347,7 +3347,7 @@
             ><Input bind:value={volume.driver} required /></FormField
           ><FormField label="Server"
             ><NativeSelect.Root bind:value={volume.serverId} class="w-full"
-              >{#each options.servers as value}<NativeSelect.Option
+              >{#each options.servers as value (value.id)}<NativeSelect.Option
                   value={value.id}>{value.name}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
             ></FormField
@@ -3408,7 +3408,7 @@
             ><NativeSelect.Root
               bind:value={mount.resourceVolumeId}
               class="w-full"
-              >{#each resource.volumes as value}<NativeSelect.Option
+              >{#each resource.volumes as value (value.id)}<NativeSelect.Option
                   value={value.id}>{value.name}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
             ></FormField
@@ -3416,7 +3416,7 @@
             ><NativeSelect.Root
               bind:value={mount.resourceInstallationId}
               class="w-full"
-              >{#each resource.installations as value}<NativeSelect.Option
+              >{#each resource.installations as value (value.id)}<NativeSelect.Option
                   value={value.id}>{value.containerName}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
             ></FormField
@@ -3471,7 +3471,7 @@
             ><Input bind:value={health.name} required /></FormField
           ><FormField label="Kind"
             ><NativeSelect.Root bind:value={health.kind} class="w-full"
-              >{#each definition.healthCheckKinds as value}<NativeSelect.Option
+              >{#each definition.healthCheckKinds as value (value)}<NativeSelect.Option
                   {value}>{value}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
             ></FormField
@@ -3480,7 +3480,7 @@
               bind:value={health.resourceEndpointId}
               class="w-full"
               ><NativeSelect.Option value="">None</NativeSelect.Option
-              >{#each resource.endpoints as value}<NativeSelect.Option
+              >{#each resource.endpoints as value (value.id)}<NativeSelect.Option
                   value={value.id}>{value.name}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
             ></FormField
@@ -3489,7 +3489,7 @@
               bind:value={health.resourceCredentialId}
               class="w-full"
               ><NativeSelect.Option value="">None</NativeSelect.Option
-              >{#each resource.credentials as value}<NativeSelect.Option
+              >{#each resource.credentials as value (value.id)}<NativeSelect.Option
                   value={value.id}>{value.name}</NativeSelect.Option
                 >{/each}</NativeSelect.Root
             ></FormField

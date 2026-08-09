@@ -238,7 +238,7 @@
     telemetryRange: "1h" | "6h" | "24h" | "7d";
   } = $props();
 
-  let systemLogs = $state<SystemLog[]>([]);
+  let systemLogs = $state.raw<SystemLog[]>([]);
   let systemLogCursor = $state("");
   let systemLogsLoaded = $state(false);
   let systemLogConnectionError = $state("");
@@ -249,12 +249,13 @@
   let systemLogViewport = $state<HTMLDivElement>();
   let traceDialogOpen = $state(false);
   let selectedTraceID = $state("");
-  let traceSpans = $state<TraceSpan[]>([]);
+  let traceSpans = $state.raw<TraceSpan[]>([]);
   let traceLoading = $state(false);
   let traceError = $state("");
   let selectedAttributionID = $state("");
   let attributionComparison = $state<"host" | "service">("host");
   let live = $state(false);
+  let traceAbortController: AbortController | undefined;
 
   const activeView = $derived.by<TelemetryView>(() => {
     const view = new URLSearchParams($page.url.split("?")[1] ?? "").get("view");
@@ -700,6 +701,9 @@
   }
 
   async function loadTrace(traceID: string) {
+    traceAbortController?.abort();
+    const abortController = new AbortController();
+    traceAbortController = abortController;
     selectedTraceID = traceID;
     traceDialogOpen = true;
     traceSpans = [];
@@ -712,21 +716,31 @@
           cache: "no-store",
           credentials: "same-origin",
           headers: { Accept: "application/json" },
+          signal: abortController.signal,
         },
       );
       if (!response.ok) throw new Error(`Trace returned ${response.status}`);
-      traceSpans = ((await response.json()) as { spans: TraceSpan[] }).spans;
+      const spans = ((await response.json()) as { spans: TraceSpan[] }).spans;
+      if (abortController.signal.aborted) return;
+      traceSpans = spans;
     } catch {
+      if (abortController.signal.aborted) return;
       traceError = "This trace could not be loaded.";
     } finally {
-      traceLoading = false;
+      if (traceAbortController === abortController) {
+        traceAbortController = undefined;
+        traceLoading = false;
+      }
     }
   }
 
   function closeTrace() {
+    traceAbortController?.abort();
+    traceAbortController = undefined;
     selectedTraceID = "";
     traceSpans = [];
     traceError = "";
+    traceLoading = false;
   }
 
   function updateSystemLogFollow() {
@@ -846,7 +860,7 @@
         class="flex flex-wrap gap-1 xl:justify-end"
         aria-label="Telemetry time range"
       >
-        {#each [{ value: "1h", label: "1h" }, { value: "6h", label: "6h" }, { value: "24h", label: "24h" }, { value: "7d", label: "7d" }] as option}
+        {#each [{ value: "1h", label: "1h" }, { value: "6h", label: "6h" }, { value: "24h", label: "24h" }, { value: "7d", label: "7d" }] as option (option.value)}
           <Button
             size="sm"
             variant={telemetryRange === option.value ? "default" : "outline"}
@@ -920,7 +934,7 @@
           <Card.Content>
             {#if healthIssues.length}
               <ul class="grid gap-2 text-sm">
-                {#each healthIssues as issue}<li>{issue}</li>{/each}
+                {#each healthIssues as issue (issue)}<li>{issue}</li>{/each}
               </ul>
             {:else}
               <p class="text-sm text-muted-foreground">
@@ -1067,7 +1081,7 @@
                 disabled={attributionOptions.length === 0}
                 aria-label="Select system service"
               >
-                {#each attributionOptions as option}
+                {#each attributionOptions as option (option.id)}
                   <NativeSelect.Option value={option.id}
                     >{option.label} · {option.scope}</NativeSelect.Option
                   >
