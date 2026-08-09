@@ -30,6 +30,42 @@ type BackupDestinationEntity struct {
 	CredentialID   uuid.UUID      `bun:"credential_id,type:uuid"`
 }
 
+func backupDestinationActiveCredentialQuery(
+	db storage.Executor,
+	id uuid.UUID,
+) *bun.SelectQuery {
+	return db.NewSelect().
+		TableExpr("backup_destinations AS destination").
+		Join("JOIN credentials AS credential ON credential.id = destination.credential_id").
+		Where("destination.id = ?", id).
+		Where("destination.archived_at IS NULL").
+		Where("credential.archived_at IS NULL").
+		Where("credential.verified_at IS NOT NULL").
+		Where("credential.provider = 'backup_' || destination.provider")
+}
+
+func (backupDestination) ActiveVerifiedCredentialPayload(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) ([]byte, error) {
+	var payload []byte
+	err := backupDestinationActiveCredentialQuery(db, id).
+		ColumnExpr("credential.enc_payload").
+		Limit(1).
+		Scan(ctx, &payload)
+	return payload, err
+}
+
+func (backupDestination) IsActiveVerified(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (bool, error) {
+	count, err := backupDestinationActiveCredentialQuery(db, id).Count(ctx)
+	return count > 0, err
+}
+
 type BackupDestinationSummary struct {
 	ID             uuid.UUID  `bun:"id"`
 	Name           string     `bun:"name"`

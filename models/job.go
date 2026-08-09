@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"strings"
 	"time"
 
@@ -61,6 +62,21 @@ func (job) FindForBuild(
 		Where("kind = 'build_source'").Where("args ->> 'build_id' = ?", buildID.String()).
 		OrderExpr("id DESC").Limit(1).Scan(ctx, &reference)
 	return reference, err
+}
+
+func (job) DNSReconciliationQueued(
+	ctx context.Context,
+	db storage.Executor,
+	bindingID uuid.UUID,
+	generation int64,
+) (bool, error) {
+	count, err := db.NewSelect().TableExpr("river_job AS job").
+		Where("job.kind = 'dns_reconciliation'").
+		Where("job.args ->> 'binding_id' = ?", bindingID.String()).
+		Where("job.args ->> 'generation' = ?", fmt.Sprint(generation)).
+		Where("job.state::text IN ('available', 'pending', 'retryable', 'running', 'scheduled')").
+		Count(ctx)
+	return count > 0, err
 }
 
 func (job) BuildID(ctx context.Context, db storage.Executor, jobID int64) (uuid.UUID, error) {

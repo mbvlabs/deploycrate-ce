@@ -52,17 +52,11 @@ func (service *ResourcePrivateAccess) requireOrdinaryManagedResource(
 	ctx context.Context,
 	resourceID uuid.UUID,
 ) error {
-	count, err := service.db.Executor().
-		NewSelect().
-		TableExpr("resources").
-		Where("id = ?", resourceID).
-		Where("system_managed = FALSE").
-		Where("archived_at IS NULL").
-		Count(ctx)
+	exists, err := models.Resource.ActiveOrdinaryExists(ctx, service.db.Executor(), resourceID)
 	if err != nil {
 		return err
 	}
-	if count != 1 {
+	if !exists {
 		return models.ErrNotFound
 	}
 	return nil
@@ -99,13 +93,7 @@ func (service *ResourcePrivateAccess) Enable(
 	}
 	defer tx.Rollback()
 
-	var resource models.ResourceEntity
-	err = tx.NewSelect().Model(&resource).
-		Where("id = ?", resourceID).
-		Where("archived_at IS NULL").
-		Where("system_managed = FALSE").
-		For("UPDATE").
-		Scan(ctx)
+	_, err = models.Resource.LockActiveOrdinary(ctx, tx, resourceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.ResourceEndpointEntity{}, models.ErrNotFound
 	}
@@ -127,11 +115,7 @@ func createManagedResourcePrivateEndpoint(
 	db storage.Executor,
 	resourceID, privateNetworkID uuid.UUID,
 ) (models.ResourceEndpointEntity, error) {
-	privateEndpoints, err := db.NewSelect().TableExpr("resource_endpoints").
-		Where("resource_id = ?", resourceID).
-		Where("private_network_id IS NOT NULL").
-		Where("archived_at IS NULL").
-		Count(ctx)
+	privateEndpoints, err := models.ResourceEndpoint.ActivePrivateCount(ctx, db, resourceID, uuid.Nil)
 	if err != nil {
 		return models.ResourceEndpointEntity{}, err
 	}
@@ -143,13 +127,7 @@ func createManagedResourcePrivateEndpoint(
 		)
 	}
 
-	var origin models.ResourceEndpointEntity
-	err = db.NewSelect().Model(&origin).
-		Where("resource_id = ?", resourceID).
-		Where("role = 'primary'").
-		Where("private_network_id IS NULL").
-		Where("archived_at IS NULL").
-		Scan(ctx)
+	origin, err := models.ResourceEndpoint.FindActivePrimaryPublic(ctx, db, resourceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.ResourceEndpointEntity{}, domainError(
 			"privateNetworkId",
@@ -160,19 +138,7 @@ func createManagedResourcePrivateEndpoint(
 	if err != nil {
 		return models.ResourceEndpointEntity{}, err
 	}
-	var attachment struct {
-		Address       string          `bun:"address"`
-		Configuration json.RawMessage `bun:"configuration"`
-	}
-	err = db.NewSelect().TableExpr("server_networks AS attachment").
-		ColumnExpr("COALESCE(attachment.configuration ->> 'address', '') AS address, installation.configuration AS configuration").
-		Join("JOIN resource_installations AS installation ON installation.server_id = attachment.server_id AND installation.resource_id = ? AND installation.archived_at IS NULL", resourceID).
-		Join("JOIN private_networks AS network ON network.id = attachment.private_network_id AND network.archived_at IS NULL").
-		Where("attachment.private_network_id = ?", privateNetworkID).
-		Where("attachment.driver = 'wireguard'").
-		Where("attachment.removed_at IS NULL").
-		Limit(1).
-		Scan(ctx, &attachment)
+	attachment, err := models.ServerNetwork.ResourceAttachment(ctx, db, resourceID, privateNetworkID)
 	if errors.Is(err, sql.ErrNoRows) || strings.TrimSpace(attachment.Address) == "" {
 		return models.ResourceEndpointEntity{}, domainError(
 			"privateNetworkId",
@@ -246,14 +212,9 @@ func (service *ResourcePrivateAccess) Disable(ctx context.Context, resourceID uu
 	if err != nil {
 		return err
 	}
-	privateEndpoints, err := service.db.Executor().
-		NewSelect().
-		TableExpr("resource_endpoints AS endpoint").
-		Where("endpoint.resource_id = ?", resourceID).
-		Where("endpoint.private_network_id IS NOT NULL").
-		Where("endpoint.id <> ?", target.WireGuardEndpointID).
-		Where("endpoint.archived_at IS NULL").
-		Count(ctx)
+	privateEndpoints, err := models.ResourceEndpoint.ActivePrivateCount(
+		ctx, service.db.Executor(), resourceID, target.WireGuardEndpointID,
+	)
 	if err != nil {
 		return err
 	}
@@ -263,12 +224,9 @@ func (service *ResourcePrivateAccess) Disable(ctx context.Context, resourceID uu
 			errors.New("archive every endpoint using WireGuard before turning off private access"),
 		)
 	}
-	dependencies, err := service.db.Executor().
-		NewSelect().
-		TableExpr("resource_endpoints AS endpoint").
-		Where("endpoint.id = ?", target.WireGuardEndpointID).
-		Where("EXISTS (SELECT 1 FROM environment_resources WHERE resource_endpoint_id = endpoint.id AND archived_at IS NULL) OR EXISTS (SELECT 1 FROM resource_health_checks WHERE resource_endpoint_id = endpoint.id AND archived_at IS NULL)").
-		Count(ctx)
+	dependencies, err := models.ResourceEndpoint.ActiveDependencyCount(
+		ctx, service.db.Executor(), target.WireGuardEndpointID,
+	)
 	if err != nil {
 		return err
 	}
@@ -296,21 +254,13 @@ func (service *ResourcePrivateAccess) Disable(ctx context.Context, resourceID uu
 		}
 	}
 
-	now := time.Now().UTC()
-	result, err := service.db.Executor().NewUpdate().TableExpr("resource_endpoints").
-		Set("archived_at = ?", now).
-		Set("updated_at = ?", now).
-		Where("id = ?", target.WireGuardEndpointID).
-		Where("archived_at IS NULL").
-		Exec(ctx)
+	archived, err := models.ResourceEndpoint.ArchiveActive(
+		ctx, service.db.Executor(), target.WireGuardEndpointID, time.Now().UTC(),
+	)
 	if err != nil {
 		return err
 	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if rows == 0 {
+	if !archived {
 		return models.ErrNotFound
 	}
 	return nil
@@ -320,34 +270,9 @@ func (service *ResourcePrivateAccess) Details(
 	ctx context.Context,
 	resourceID, currentUserID uuid.UUID,
 ) (models.ResourcePrivateAccessDetails, error) {
-	detail := models.ResourcePrivateAccessDetails{
-		DeviceGrants:     make([]models.SystemWireGuardDeviceGrant, 0),
-		AvailableDevices: make([]models.SystemWireGuardDeviceOption, 0),
-	}
-	if err := service.db.Executor().
-		NewSelect().
-		TableExpr("wireguard_device_resource_grants AS resource_grant").
-		ColumnExpr("device.id::text AS device_id, device.name AS device_name, owner.email AS owner_email, device.private_address::text AS private_address, resource_grant.id::text AS grant_id, resource_grant.granted_at, COALESCE(application.state, 'pending') AS application_state, COALESCE(application.error, '') AS application_error, status.latest_handshake_at, status.observed_at").
-		Join("JOIN wireguard_devices AS device ON device.id = resource_grant.wireguard_device_id AND device.revoked_at IS NULL").
-		Join("JOIN users AS owner ON owner.id = device.owner_user_id").
-		Join("LEFT JOIN wireguard_device_resource_grant_applications AS application ON application.wireguard_device_resource_grant_id = resource_grant.id").
-		Join("LEFT JOIN wireguard_device_statuses AS status ON status.wireguard_device_id = device.id").
-		Where("resource_grant.resource_id = ?", resourceID).
-		Where("resource_grant.revoked_at IS NULL").
-		OrderExpr("device.name").
-		Scan(ctx, &detail.DeviceGrants); err != nil {
-		return models.ResourcePrivateAccessDetails{}, err
-	}
-	if err := service.db.Executor().NewSelect().TableExpr("wireguard_devices AS device").
-		ColumnExpr("device.id::text AS id, device.name, device.private_address::text AS private_address").
-		Where("device.owner_user_id = ?", currentUserID).
-		Where("device.revoked_at IS NULL").
-		Where("NOT EXISTS (SELECT 1 FROM wireguard_device_resource_grants resource_grant WHERE resource_grant.wireguard_device_id = device.id AND resource_grant.resource_id = ? AND resource_grant.revoked_at IS NULL)", resourceID).
-		OrderExpr("device.name").
-		Scan(ctx, &detail.AvailableDevices); err != nil {
-		return models.ResourcePrivateAccessDetails{}, err
-	}
-	return detail, nil
+	return models.WireGuardDevice.PrivateAccessDetails(
+		ctx, service.db.Executor(), resourceID, currentUserID,
+	)
 }
 
 func (service *ResourcePrivateAccess) Enroll(
@@ -603,10 +528,10 @@ func targetUsesControlPlaneListener(target models.ResourceAccessTarget) bool {
 func (service *ResourcePrivateAccess) controlPlaneWireGuardPeer(
 	ctx context.Context,
 ) (models.WireGuardPeerEntity, error) {
-	var peer models.WireGuardPeerEntity
-	if err := service.db.Executor().NewSelect().Model(&peer).
-		Where("private_address = ?", WireGuardPrivateAddress).
-		Where("retired_at IS NULL").Scan(ctx); err != nil {
+	peer, err := models.WireGuardPeer.FindActiveByPrivateAddress(
+		ctx, service.db.Executor(), WireGuardPrivateAddress,
+	)
+	if err != nil {
 		return models.WireGuardPeerEntity{}, fmt.Errorf(
 			"load control-plane WireGuard identity: %w",
 			err,

@@ -84,11 +84,12 @@ func (service *DatabaseBackups) DetailsForResource(
 		if eligibilityErr != nil {
 			return models.ResourceBackupCatalog{}, eligibilityErr
 		}
-		var policy models.BackupPolicyEntity
-		policyErr := service.db.Executor().NewSelect().Model(&policy).
-			Where("resource_id = ?", resourceID).Where("target_type = 'resource'").
-			Where("target ->> 'database' = ?", database.Name).
-			Where("archived_at IS NULL").Limit(1).Scan(ctx)
+		policy, policyErr := models.BackupPolicy.FindForResourceDatabase(
+			ctx,
+			service.db.Executor(),
+			resourceID,
+			database.Name,
+		)
 		var activePolicy *models.BackupPolicyEntity
 		if policyErr == nil {
 			activePolicy = &policy
@@ -298,26 +299,18 @@ func (service *DatabaseBackups) RecoveryMaterial(
 	if err := service.identity.VerifyUserPassword(ctx, userID, password); err != nil {
 		return ObjectStorageRecoveryMaterial{}, err
 	}
-	var row struct {
-		EncPayload []byte `bun:"enc_payload"`
-	}
-	err := service.db.Executor().NewSelect().TableExpr("backup_destinations AS destination").
-		ColumnExpr("credential.enc_payload").
-		Join("JOIN credentials AS credential ON credential.id = destination.credential_id").
-		Where("destination.id = ?", destinationID).
-		Where("destination.archived_at IS NULL").
-		Where("credential.archived_at IS NULL").
-		Where("credential.verified_at IS NOT NULL").
-		Where("credential.provider = 'backup_' || destination.provider").
-		Limit(1).
-		Scan(ctx, &row)
+	encPayload, err := models.BackupDestination.ActiveVerifiedCredentialPayload(
+		ctx,
+		service.db.Executor(),
+		destinationID,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ObjectStorageRecoveryMaterial{}, models.ErrNotFound
 	}
 	if err != nil {
 		return ObjectStorageRecoveryMaterial{}, err
 	}
-	plaintext, err := secretcrypto.Decrypt(row.EncPayload, service.config.App.SessionEncryptionKey)
+	plaintext, err := secretcrypto.Decrypt(encPayload, service.config.App.SessionEncryptionKey)
 	if err != nil {
 		return ObjectStorageRecoveryMaterial{}, errors.New(
 			"Object Storage recovery material could not be decrypted",
@@ -600,17 +593,13 @@ func (service *DatabaseBackups) validateDestination(
 	db storage.Executor,
 	destinationID uuid.UUID,
 ) error {
-	count, err := db.NewSelect().
-		TableExpr("backup_destinations AS destination").
-		Join("JOIN credentials AS credential ON credential.id = destination.credential_id").
-		Where("destination.id = ?", destinationID).
-		Where("destination.archived_at IS NULL").
-		Where("credential.archived_at IS NULL").
-		Where("credential.verified_at IS NOT NULL").
-		Where("credential.provider = 'backup_' || destination.provider").
-		Count(ctx)
+	active, err := models.BackupDestination.IsActiveVerified(ctx, db, destinationID)
 	if err != nil {
 		return err
+	}
+	count := 0
+	if active {
+		count = 1
 	}
 	return requireChild(
 		count,
@@ -631,13 +620,8 @@ func (service *DatabaseBackups) eligibility(
 	if resource.Engine() != "postgresql" || !resourceHasDatabase(resource, databaseName) {
 		return ineligible("Logical backups currently support configured PostgreSQL databases only.")
 	}
-	var installation models.ResourceInstallationEntity
-	if err := db.NewSelect().
-		Model(&installation).
-		Where("resource_id = ?", resource.ID).
-		Where("archived_at IS NULL").
-		Limit(1).
-		Scan(ctx); err != nil {
+	installation, err := models.ResourceInstallation.FindActiveForResource(ctx, db, resource.ID)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ineligible("This Resource has no active Docker installation.")
 		}
@@ -653,12 +637,7 @@ func (service *DatabaseBackups) eligibility(
 			"The Resource installation is not on an available Resource-capable Server.",
 		)
 	}
-	administrators, err := db.NewSelect().
-		TableExpr("resource_credentials").
-		Where("resource_id = ?", resource.ID).
-		Where("metadata ->> 'purpose' = 'administrator'").
-		Where("archived_at IS NULL").
-		Count(ctx)
+	administrators, err := models.ResourceCredential.ActiveAdministratorCount(ctx, db, resource.ID)
 	if err != nil {
 		return models.ResourceBackupEligibility{}, err
 	}

@@ -141,6 +141,37 @@ func (wireGuardDevice) ActiveForResource(
 	return entities, err
 }
 
+func (wireGuardDevice) PrivateAccessDetails(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID, currentUserID uuid.UUID,
+) (ResourcePrivateAccessDetails, error) {
+	detail := ResourcePrivateAccessDetails{
+		DeviceGrants:     make([]SystemWireGuardDeviceGrant, 0),
+		AvailableDevices: make([]SystemWireGuardDeviceOption, 0),
+	}
+	if err := db.NewSelect().TableExpr("wireguard_device_resource_grants AS resource_grant").
+		ColumnExpr("device.id::text AS device_id, device.name AS device_name, owner.email AS owner_email, device.private_address::text AS private_address, resource_grant.id::text AS grant_id, resource_grant.granted_at, COALESCE(application.state, 'pending') AS application_state, COALESCE(application.error, '') AS application_error, status.latest_handshake_at, status.observed_at").
+		Join("JOIN wireguard_devices AS device ON device.id = resource_grant.wireguard_device_id AND device.revoked_at IS NULL").
+		Join("JOIN users AS owner ON owner.id = device.owner_user_id").
+		Join("LEFT JOIN wireguard_device_resource_grant_applications AS application ON application.wireguard_device_resource_grant_id = resource_grant.id").
+		Join("LEFT JOIN wireguard_device_statuses AS status ON status.wireguard_device_id = device.id").
+		Where("resource_grant.resource_id = ?", resourceID).
+		Where("resource_grant.revoked_at IS NULL").OrderExpr("device.name").
+		Scan(ctx, &detail.DeviceGrants); err != nil {
+		return ResourcePrivateAccessDetails{}, err
+	}
+	if err := db.NewSelect().TableExpr("wireguard_devices AS device").
+		ColumnExpr("device.id::text AS id, device.name, device.private_address::text AS private_address").
+		Where("device.owner_user_id = ?", currentUserID).
+		Where("device.revoked_at IS NULL").
+		Where("NOT EXISTS (SELECT 1 FROM wireguard_device_resource_grants resource_grant WHERE resource_grant.wireguard_device_id = device.id AND resource_grant.resource_id = ? AND resource_grant.revoked_at IS NULL)", resourceID).
+		OrderExpr("device.name").Scan(ctx, &detail.AvailableDevices); err != nil {
+		return ResourcePrivateAccessDetails{}, err
+	}
+	return detail, nil
+}
+
 func (wireGuardDevice) Revoke(
 	ctx context.Context,
 	db storage.Executor,

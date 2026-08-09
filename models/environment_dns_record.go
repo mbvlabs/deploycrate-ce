@@ -27,6 +27,46 @@ type EnvironmentDNSRecordEntity struct {
 	DNSZoneID               uuid.UUID    `bun:"dns_zone_id,type:uuid"`
 }
 
+type DNSRecordStatus struct {
+	Type    string `json:"type"    bun:"record_type"`
+	Name    string `json:"name"    bun:"observed_name"`
+	Content string `json:"content" bun:"content"`
+}
+
+type DNSTrackedRemoval struct {
+	RecordID          uuid.UUID `bun:"record_id"`
+	ExternalID        string    `bun:"external_id"`
+	ObservedName      string    `bun:"observed_name"`
+	ZoneID            uuid.UUID `bun:"zone_id"`
+	ZoneExternalID    string    `bun:"zone_external_id"`
+	CredentialPayload []byte    `bun:"credential_payload"`
+}
+
+func (environmentDNSRecord) StatusForBinding(
+	ctx context.Context, db storage.Executor, bindingID uuid.UUID,
+) ([]DNSRecordStatus, error) {
+	records := make([]DNSRecordStatus, 0)
+	err := db.NewSelect().TableExpr("environment_dns_records").
+		ColumnExpr("record_type, observed_name, content").
+		Where("environment_dns_binding_id = ?", bindingID).
+		Where("archived_at IS NULL").OrderExpr("content").Scan(ctx, &records)
+	return records, err
+}
+
+func (environmentDNSRecord) TrackedRemovals(
+	ctx context.Context, db storage.Executor, bindingID uuid.UUID,
+) ([]DNSTrackedRemoval, error) {
+	records := make([]DNSTrackedRemoval, 0)
+	err := db.NewSelect().TableExpr("environment_dns_records AS record").
+		ColumnExpr("record.id AS record_id, record.external_id, record.observed_name, zone.id AS zone_id, zone.external_id AS zone_external_id, credential.enc_payload AS credential_payload").
+		Join("JOIN dns_zones AS zone ON zone.id = record.dns_zone_id").
+		Join("JOIN dns_connections AS connection ON connection.id = zone.dns_connection_id").
+		Join("JOIN credentials AS credential ON credential.id = connection.credential_id").
+		Where("record.environment_dns_binding_id = ?", bindingID).
+		Where("record.archived_at IS NULL").OrderExpr("record.id").Scan(ctx, &records)
+	return records, err
+}
+
 func (entity *EnvironmentDNSRecordEntity) Validate() error {
 	entity.ExternalID = strings.TrimSpace(entity.ExternalID)
 	entity.Content = strings.TrimSpace(entity.Content)

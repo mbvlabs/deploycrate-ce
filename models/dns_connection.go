@@ -50,6 +50,67 @@ type DNSConnectionEntity struct {
 	CredentialID  uuid.UUID    `bun:"credential_id,type:uuid"`
 }
 
+type DNSConnectionSummary struct {
+	ID           uuid.UUID    `json:"id"           bun:"id"`
+	Name         string       `json:"name"         bun:"name"`
+	Provider     string       `json:"provider"     bun:"provider"`
+	AccountID    string       `json:"accountId"    bun:"account_external_id"`
+	VerifiedAt   sql.NullTime `json:"verifiedAt"   bun:"verified_at"`
+	LastSyncedAt sql.NullTime `json:"lastSyncedAt" bun:"last_synced_at"`
+	ArchivedAt   sql.NullTime `json:"archivedAt"   bun:"archived_at"`
+	ActiveZones  int          `json:"activeZones"  bun:"active_zones"`
+	BindingCount int          `json:"bindingCount" bun:"binding_count"`
+}
+
+func dnsConnectionSummaryQuery(db storage.Executor) *bun.SelectQuery {
+	return db.NewSelect().
+		TableExpr("dns_connections AS connection").
+		ColumnExpr("connection.id, connection.name, connection.provider, connection.account_external_id, connection.verified_at, connection.last_synced_at, connection.archived_at").
+		ColumnExpr("COUNT(DISTINCT zone.id) FILTER (WHERE zone.archived_at IS NULL AND zone.status = 'active') AS active_zones").
+		ColumnExpr("COUNT(DISTINCT binding.id) FILTER (WHERE binding.archived_at IS NULL) AS binding_count").
+		Join("LEFT JOIN dns_zones AS zone ON zone.dns_connection_id = connection.id").
+		Join("LEFT JOIN environment_dns_bindings AS binding ON binding.dns_zone_id = zone.id").
+		Where("connection.archived_at IS NULL")
+}
+
+func (dnsConnection) Summaries(
+	ctx context.Context,
+	db storage.Executor,
+) ([]DNSConnectionSummary, error) {
+	items := make([]DNSConnectionSummary, 0)
+	err := dnsConnectionSummaryQuery(db).
+		Group("connection.id").
+		OrderExpr("lower(connection.name)").
+		Scan(ctx, &items)
+	return items, err
+}
+
+func (dnsConnection) Summary(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (DNSConnectionSummary, error) {
+	var item DNSConnectionSummary
+	err := dnsConnectionSummaryQuery(db).
+		Where("connection.id = ?", id).
+		Group("connection.id").
+		Scan(ctx, &item)
+	return item, err
+}
+
+func (dnsConnection) ActiveBindingCount(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (int, error) {
+	return db.NewSelect().
+		TableExpr("environment_dns_bindings AS binding").
+		Join("JOIN dns_zones AS zone ON zone.id = binding.dns_zone_id").
+		Where("zone.dns_connection_id = ?", id).
+		Where("binding.archived_at IS NULL").
+		Count(ctx)
+}
+
 func (entity *DNSConnectionEntity) Validate() error {
 	entity.Name = strings.TrimSpace(entity.Name)
 	entity.AccountID = strings.ToLower(strings.TrimSpace(entity.AccountID))

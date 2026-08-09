@@ -93,6 +93,24 @@ func (a application) FindSystem(
 	return entity, nil
 }
 
+func (application) EnsureSlugAvailable(
+	ctx context.Context,
+	db storage.Executor,
+	slug string,
+	excludeID uuid.UUID,
+) (bool, error) {
+	if err := lockUnique(ctx, db, "application-slug:"+slug); err != nil {
+		return false, err
+	}
+	query := db.NewSelect().TableExpr("applications").
+		Where("slug = ?", slug).Where("archived_at IS NULL")
+	if excludeID != uuid.Nil {
+		query = query.Where("id <> ?", excludeID)
+	}
+	count, err := query.Count(ctx)
+	return count == 0, err
+}
+
 type CreateApplicationData struct {
 	Name       string
 	Slug       string

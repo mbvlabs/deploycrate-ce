@@ -105,11 +105,7 @@ func (service *GitHubWebhook) Process(
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(
-		ctx,
-		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
-		"github-delivery:"+deliveryID,
-	); err != nil {
+	if err := models.GitHubWebhookDelivery.LockDeliveryID(ctx, tx, deliveryID); err != nil {
 		return err
 	}
 	delivery, duplicate, err := models.GitHubWebhookDelivery.CreateOrFind(
@@ -197,23 +193,21 @@ func (service *GitHubWebhook) processInstallationLifecycle(
 			return err
 		}
 	case "deleted":
-		if _, err := service.db.Executor().
-			NewUpdate().
-			TableExpr("github_installations").
-			Set("archived_at = ?", now).
-			Set("updated_at = ?", now).
-			Where("external_id = ?", payload.Installation.ID).
-			Exec(ctx); err != nil {
+		if err := models.GitHubInstallation.ArchiveByExternal(
+			ctx,
+			service.db.Executor(),
+			payload.Installation.ID,
+			now,
+		); err != nil {
 			return err
 		}
 	case "suspended":
-		if _, err := service.db.Executor().
-			NewUpdate().
-			TableExpr("github_installations").
-			Set("suspended_at = ?", now).
-			Set("updated_at = ?", now).
-			Where("external_id = ? AND archived_at IS NULL", payload.Installation.ID).
-			Exec(ctx); err != nil {
+		if err := models.GitHubInstallation.SuspendByExternal(
+			ctx,
+			service.db.Executor(),
+			payload.Installation.ID,
+			now,
+		); err != nil {
 			return err
 		}
 	default:

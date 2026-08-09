@@ -74,6 +74,8 @@ type (
 	changeStateRevision          struct{}
 	resourceHealthCheck          struct{}
 	resourceHealthCheckStatus    struct{}
+	wireGuardAddress             struct{}
+	dashboard                    struct{}
 )
 
 var (
@@ -149,4 +151,6 @@ var (
 	ChangeStateRevision          changeStateRevision
 	ResourceHealthCheck          resourceHealthCheck
 	ResourceHealthCheckStatus    resourceHealthCheckStatus
+	WireGuardAddress             wireGuardAddress
+	Dashboard                    dashboard
 )

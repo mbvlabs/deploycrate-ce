@@ -43,6 +43,23 @@ func (en environmentNetwork) Find(
 	return entity, nil
 }
 
+func (environmentNetwork) SystemPrivateNetworkID(
+	ctx context.Context,
+	db storage.Executor,
+) (uuid.UUID, error) {
+	var networkID uuid.UUID
+	err := db.NewSelect().
+		TableExpr("applications AS application").
+		ColumnExpr("membership.private_network_id").
+		Join("JOIN environments AS environment ON environment.application_id = application.id AND environment.archived_at IS NULL").
+		Join("JOIN environment_networks AS membership ON membership.environment_id = environment.id AND membership.removed_at IS NULL").
+		Where("application.slug = ?", SystemApplicationSlug).
+		Where("application.archived_at IS NULL").
+		Limit(1).
+		Scan(ctx, &networkID)
+	return networkID, err
+}
+
 type CreateEnvironmentNetworkData struct {
 	Role             string
 	RemovedAt        sql.NullTime

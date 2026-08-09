@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/gosimple/slug"
@@ -64,20 +63,8 @@ type ApplicationSetupOptions struct {
 	BuildServers  []ApplicationBuildServerOption  `json:"buildServers"`
 }
 
-type ApplicationBuildServerOption struct {
-	ID           uuid.UUID                 `json:"id"         bun:"id"`
-	Name         string                    `json:"name"       bun:"name"`
-	Kind         string                    `json:"kind"       bun:"kind"`
-	Address      string                    `json:"address"    bun:"address"`
-	Architecture string                    `json:"architecture" bun:"architecture"`
-	Buildpacks   []models.BuildpackRuntime `json:"buildpacks" bun:"-"`
-}
-
-type RegistryResourceOption struct {
-	ID       uuid.UUID `json:"id"       bun:"id"`
-	Name     string    `json:"name"     bun:"name"`
-	Endpoint string    `json:"endpoint" bun:"endpoint"`
-}
+type ApplicationBuildServerOption = models.ApplicationBuildServerOption
+type RegistryResourceOption = models.ApplicationRegistryOption
 
 type ApplicationListItem struct {
 	ID           uuid.UUID                    `json:"id"`
@@ -96,42 +83,7 @@ type ApplicationListEnvironment struct {
 	SourceType         string    `json:"sourceType"         bun:"source_type"`
 }
 
-type ApplicationDetails struct {
-	ID                           uuid.UUID       `json:"id"                                     bun:"id"`
-	Name                         string          `json:"name"                                   bun:"name"`
-	Slug                         string          `json:"slug"                                   bun:"slug"`
-	EnvironmentID                uuid.UUID       `json:"environmentId"                          bun:"environment_id"`
-	EnvironmentName              string          `json:"environmentName"                        bun:"environment_name"`
-	EnvironmentSlug              string          `json:"environmentSlug"                        bun:"environment_slug"`
-	EnvironmentKind              string          `json:"environmentKind"                        bun:"environment_kind"`
-	SetupComplete                bool            `json:"setupComplete"                          bun:"setup_complete"`
-	Runtime                      string          `json:"runtime"                                bun:"runtime"`
-	EnvironmentSourceID          uuid.UUID       `json:"environmentSourceId"                    bun:"environment_source_id"`
-	SourceType                   string          `json:"sourceType"                             bun:"source_type"`
-	RepositoryID                 uuid.UUID       `json:"repositoryId"                           bun:"repository_id"`
-	RepositoryFullName           string          `json:"repositoryFullName"                     bun:"repository_full_name"`
-	RepositoryRemovedAt          sql.NullTime    `json:"repositoryRemovedAt"                    bun:"repository_removed_at"`
-	InstallationID               uuid.UUID       `json:"installationId"                         bun:"installation_id"`
-	InstallationAccount          string          `json:"installationAccount"                    bun:"installation_account"`
-	InstallationSuspendedAt      sql.NullTime    `json:"installationSuspendedAt"                bun:"installation_suspended_at"`
-	Reference                    string          `json:"reference"                              bun:"reference"`
-	AutoBuild                    bool            `json:"autoBuild"                              bun:"auto_build"`
-	ContextPath                  string          `json:"contextPath"                            bun:"context_path"`
-	BuilderReference             sql.NullString  `json:"builderReference"                       bun:"builder_reference"`
-	BuildpackSettings            json.RawMessage `json:"buildpackSettings"                      bun:"buildpack_settings"`
-	ImageRepository              string          `json:"imageRepository"                        bun:"image_repository"`
-	RegistryName                 string          `json:"registryName"                           bun:"registry_name"`
-	RegistryID                   uuid.UUID       `json:"registryId"                             bun:"registry_id"`
-	BuildServerID                uuid.UUID       `json:"buildServerId"                          bun:"build_server_id"`
-	BuildServerName              string          `json:"buildServerName"                        bun:"build_server_name"`
-	LatestRevision               sql.NullString  `json:"latestRevision"                         bun:"latest_revision"`
-	LatestDeliveryStatus         sql.NullString  `json:"latestDeliveryStatus"                   bun:"latest_delivery_status"`
-	LatestBuildStatus            sql.NullString  `json:"latestBuildStatus"                      bun:"latest_build_status"`
-	CanPromoteToProduction       bool            `json:"canPromoteToProduction"`
-	PromotionTargetName          string          `json:"promotionTargetName"`
-	LatestSuccessfulDeploymentID *uuid.UUID      `json:"latestSuccessfulDeploymentId,omitempty"`
-	LatestSuccessfulReleaseID    *uuid.UUID      `json:"latestSuccessfulReleaseId,omitempty"`
-}
+type ApplicationDetails = models.ApplicationDetails
 
 type ApplicationOverview struct {
 	ID           uuid.UUID                       `json:"id"`
@@ -141,19 +93,7 @@ type ApplicationOverview struct {
 	Deployments  []ApplicationDeploymentActivity `json:"deployments"`
 }
 
-type ApplicationDeploymentActivity struct {
-	ID              uuid.UUID `json:"id"              bun:"id"`
-	EnvironmentID   uuid.UUID `json:"environmentId"   bun:"environment_id"`
-	EnvironmentName string    `json:"environmentName" bun:"environment_name"`
-	EnvironmentKind string    `json:"environmentKind" bun:"environment_kind"`
-	Status          string    `json:"status"          bun:"status"`
-	CurrentStep     string    `json:"currentStep"     bun:"current_step"`
-	Error           string    `json:"error"           bun:"error"`
-	ReleaseID       uuid.UUID `json:"releaseId"       bun:"release_id"`
-	SourceRevision  string    `json:"sourceRevision"  bun:"source_revision"`
-	CreatedAt       time.Time `json:"createdAt"       bun:"created_at"`
-	Active          bool      `json:"active"          bun:"active"`
-}
+type ApplicationDeploymentActivity = models.ApplicationDeploymentActivity
 
 type ApplicationSetup struct {
 	db  storage.Pool
@@ -200,22 +140,13 @@ func (service *ApplicationSetup) CreateEnvironment(
 		return ApplicationSetupResult{}, err
 	}
 	defer tx.Rollback()
-	lockKey := "environment-slug:" + applicationID.String() + ":" + prepared.data.EnvironmentSlug
-	if _, err := tx.ExecContext(
-		ctx,
-		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
-		lockKey,
-	); err != nil {
-		return ApplicationSetupResult{}, err
-	}
-	count, err := tx.NewSelect().TableExpr("environments").
-		Where("application_id = ?", applicationID).
-		Where("slug = ?", prepared.data.EnvironmentSlug).
-		Where("archived_at IS NULL").Count(ctx)
+	available, err := models.Environment.EnsureSlugAvailable(
+		ctx, tx, applicationID, prepared.data.EnvironmentSlug,
+	)
 	if err != nil {
 		return ApplicationSetupResult{}, err
 	}
-	if count > 0 {
+	if !available {
 		return ApplicationSetupResult{}, errors.Join(
 			models.ErrDomainValidation,
 			errors.New("Environment slug is already in use for this Application"),
@@ -256,17 +187,7 @@ func (service *ApplicationSetup) DeleteIncompleteEnvironment(
 		return err
 	}
 	defer tx.Rollback()
-	for _, table := range []string{"github_environment_sources", "buildpack_configurations", "image_configurations"} {
-		if _, err := tx.NewDelete().TableExpr(table).
-			Where("environment_source_id IN (SELECT id FROM environment_sources WHERE environment_id = ?)", environmentID).
-			Exec(ctx); err != nil {
-			return err
-		}
-	}
-	if _, err := tx.NewDelete().
-		TableExpr("environment_sources").
-		Where("environment_id = ?", environmentID).
-		Exec(ctx); err != nil {
+	if err := models.Environment.DeleteIncompleteSources(ctx, tx, environmentID); err != nil {
 		return err
 	}
 	if err := models.Environment.Destroy(ctx, tx, environmentID); err != nil {
@@ -331,22 +252,11 @@ func (service *ApplicationSetup) CreateApplication(
 		return ApplicationCreationResult{}, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(
-		ctx,
-		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
-		"application-slug:"+data.ApplicationSlug,
-	); err != nil {
-		return ApplicationCreationResult{}, err
-	}
-	activeSlugCount, err := tx.NewSelect().
-		TableExpr("applications").
-		Where("slug = ?", data.ApplicationSlug).
-		Where("archived_at IS NULL").
-		Count(ctx)
+	available, err := models.Application.EnsureSlugAvailable(ctx, tx, data.ApplicationSlug, uuid.Nil)
 	if err != nil {
 		return ApplicationCreationResult{}, err
 	}
-	if activeSlugCount > 0 {
+	if !available {
 		return ApplicationCreationResult{}, errors.Join(
 			models.ErrDomainValidation,
 			errors.New("application slug is already in use"),
@@ -568,32 +478,13 @@ func (service *ApplicationSetup) Options(ctx context.Context) (ApplicationSetupO
 		}
 	}
 
-	registries := make([]RegistryResourceOption, 0)
-	if err := service.db.Executor().
-		NewSelect().
-		TableExpr("registry_resources AS registry").
-		ColumnExpr("resource.id, resource.name").
-		ColumnExpr("CASE WHEN endpoint.port IN (80, 443) THEN endpoint.address ELSE endpoint.address || ':' || endpoint.port::text END AS endpoint").
-		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.archived_at IS NULL").
-		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = resource.id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL").
-		Where("EXISTS (SELECT 1 FROM resource_credentials credential WHERE credential.resource_id = resource.id AND credential.archived_at IS NULL)").
-		OrderExpr("resource.name ASC").
-		Scan(ctx, &registries); err != nil {
+	registries, err := models.RegistryResource.ApplicationOptions(ctx, service.db.Executor())
+	if err != nil {
 		return ApplicationSetupOptions{}, err
 	}
 
-	type buildServerRow struct {
-		ApplicationBuildServerOption
-		Capabilities json.RawMessage `bun:"capabilities"`
-	}
-	rows := make([]buildServerRow, 0)
-	if err := service.db.Executor().NewSelect().TableExpr("servers AS server").
-		ColumnExpr("server.id, server.name, server.kind, server.address, COALESCE(server.architecture, '') AS architecture, server.capabilities").
-		Where("server.archived_at IS NULL").Where("server.is_configured = TRUE").
-		Where("server.kind IN ('self_hosted', 'worker')").
-		Where("server.capabilities @> '{\"build\":true}'::jsonb").
-		OrderExpr("CASE WHEN server.kind = 'self_hosted' THEN 0 ELSE 1 END, server.name").
-		Scan(ctx, &rows); err != nil {
+	rows, err := models.Server.ApplicationBuildOptions(ctx, service.db.Executor())
+	if err != nil {
 		return ApplicationSetupOptions{}, err
 	}
 	buildServers := make([]ApplicationBuildServerOption, 0, len(rows))
@@ -603,7 +494,7 @@ func (service *ApplicationSetup) Options(ctx context.Context) (ApplicationSetupO
 			continue
 		}
 		row.Buildpacks = capabilities.Buildpacks.Runtimes
-		buildServers = append(buildServers, row.ApplicationBuildServerOption)
+		buildServers = append(buildServers, row)
 	}
 
 	return ApplicationSetupOptions{
@@ -615,41 +506,7 @@ func (service *ApplicationSetup) Options(ctx context.Context) (ApplicationSetupO
 }
 
 func (service *ApplicationSetup) List(ctx context.Context) ([]ApplicationListItem, error) {
-	type applicationEnvironmentRow struct {
-		ApplicationID      uuid.UUID `bun:"application_id"`
-		ApplicationName    string    `bun:"application_name"`
-		ApplicationSlug    string    `bun:"application_slug"`
-		EnvironmentID      uuid.UUID `bun:"environment_id"`
-		EnvironmentName    string    `bun:"environment_name"`
-		EnvironmentKind    string    `bun:"environment_kind"`
-		RepositoryFullName string    `bun:"repository_full_name"`
-		Reference          string    `bun:"reference"`
-		SourceHealthy      bool      `bun:"source_healthy"`
-		SourceType         string    `bun:"source_type"`
-	}
-	var rows []applicationEnvironmentRow
-	err := service.db.Executor().NewSelect().TableExpr("applications AS application").
-		ColumnExpr("application.id AS application_id").
-		ColumnExpr("application.name AS application_name").
-		ColumnExpr("application.slug AS application_slug").
-		ColumnExpr("environment.id AS environment_id").
-		ColumnExpr("environment.name AS environment_name").
-		ColumnExpr("environment.kind AS environment_kind").
-		ColumnExpr("COALESCE(repository.full_name, source.repository) AS repository_full_name").
-		ColumnExpr("source.reference").
-		ColumnExpr("CASE WHEN source.kind = 'image' THEN 'image' ELSE 'buildpacks' END AS source_type").
-		ColumnExpr("CASE WHEN source.kind = 'image' THEN registry_resource.id IS NOT NULL AND registry_resource.archived_at IS NULL ELSE (repository.removed_at IS NULL AND installation.archived_at IS NULL AND installation.suspended_at IS NULL) END AS source_healthy").
-		Join("JOIN environments AS environment ON environment.application_id = application.id AND environment.archived_at IS NULL").
-		Join("JOIN environment_sources AS source ON source.environment_id = environment.id AND source.archived_at IS NULL").
-		Join("LEFT JOIN github_environment_sources AS binding ON binding.environment_source_id = source.id").
-		Join("LEFT JOIN github_repositories AS repository ON repository.id = binding.github_repository_id").
-		Join("LEFT JOIN github_installations AS installation ON installation.id = repository.github_installation_id").
-		Join("LEFT JOIN image_configurations AS image ON image.environment_source_id = source.id").
-		Join("LEFT JOIN resources AS registry_resource ON registry_resource.id = image.registry_resource_id").
-		Where("application.archived_at IS NULL").
-		Where("application.slug <> ?", models.SystemApplicationSlug).
-		OrderExpr("application.name ASC, CASE environment.kind WHEN 'staging' THEN 0 WHEN 'production' THEN 1 ELSE 2 END, environment.name ASC").
-		Scan(ctx, &rows)
+	rows, err := models.Application.EnvironmentRows(ctx, service.db.Executor())
 	if err != nil {
 		return nil, err
 	}
@@ -699,13 +556,10 @@ func (service *ApplicationSetup) Overview(
 		application.Slug == models.SystemApplicationSlug {
 		return ApplicationOverview{}, sql.ErrNoRows
 	}
-	var environmentIDs []uuid.UUID
-	if err := service.db.Executor().NewSelect().TableExpr("environments AS environment").
-		ColumnExpr("environment.id").
-		Where("environment.application_id = ?", applicationID).
-		Where("environment.archived_at IS NULL").
-		OrderExpr("CASE environment.kind WHEN 'staging' THEN 0 WHEN 'production' THEN 1 ELSE 2 END, environment.name").
-		Scan(ctx, &environmentIDs); err != nil {
+	environmentIDs, err := models.Environment.ActiveIDsForApplication(
+		ctx, service.db.Executor(), applicationID,
+	)
+	if err != nil {
 		return ApplicationOverview{}, err
 	}
 	environments := make([]ApplicationDetails, 0, len(environmentIDs))
@@ -737,18 +591,10 @@ func (service *ApplicationSetup) Overview(
 		environments[i].LatestSuccessfulReleaseID = latestReleaseID
 		break
 	}
-	deployments := make([]ApplicationDeploymentActivity, 0)
-	if err := service.db.Executor().NewSelect().TableExpr("deployments AS deployment").
-		ColumnExpr("deployment.id, deployment.status, COALESCE(deployment.current_step, '') AS current_step, COALESCE(deployment.error, '') AS error, deployment.release_id, deployment.created_at").
-		ColumnExpr("environment.id AS environment_id, environment.name AS environment_name, environment.kind AS environment_kind").
-		ColumnExpr("COALESCE(release.source_revision, release.version, '') AS source_revision").
-		ColumnExpr(environmentDeploymentActiveExpression+" AS active").
-		Join("JOIN releases AS release ON release.id = deployment.release_id AND release.registry_resource_id IS NOT NULL").
-		Join("JOIN environments AS environment ON environment.id = release.environment_id AND environment.archived_at IS NULL").
-		Where("environment.application_id = ?", applicationID).
-		OrderExpr("deployment.created_at DESC").
-		Limit(20).
-		Scan(ctx, &deployments); err != nil {
+	deployments, err := models.Application.RecentDeploymentActivity(
+		ctx, service.db.Executor(), applicationID,
+	)
+	if err != nil {
 		return ApplicationOverview{}, err
 	}
 	return ApplicationOverview{
@@ -769,60 +615,7 @@ func (service *ApplicationSetup) details(
 	applicationID uuid.UUID,
 	environmentID *uuid.UUID,
 ) (ApplicationDetails, error) {
-	var details ApplicationDetails
-	query := service.db.Executor().NewSelect().TableExpr("applications AS application").
-		ColumnExpr("application.id").ColumnExpr("application.name").ColumnExpr("application.slug").
-		ColumnExpr("environment.id AS environment_id").
-		ColumnExpr("environment.name AS environment_name").
-		ColumnExpr("environment.slug AS environment_slug").
-		ColumnExpr("environment.kind AS environment_kind").
-		ColumnExpr(`EXISTS (
-			SELECT 1 FROM changes AS setup_change
-			JOIN change_state_revisions AS setup_result ON setup_result.change_id = setup_change.id AND setup_result.role = 'result'
-			JOIN environment_state_revisions AS setup_revision ON setup_revision.id = setup_result.environment_state_revision_id AND setup_revision.environment_id = environment.id
-			WHERE setup_change.environment_id = environment.id AND setup_change.kind = 'environment_setup'
-			AND setup_change.committed_at IS NOT NULL AND setup_change.cancelled_at IS NULL
-		) AS setup_complete`).
-		ColumnExpr("source.id AS environment_source_id").
-		ColumnExpr("source.reference").
-		ColumnExpr("source.auto_build").
-		ColumnExpr("CASE WHEN source.kind = 'image' THEN 'image' ELSE 'buildpacks' END AS source_type").
-		ColumnExpr("COALESCE(runtime.runtime, '') AS runtime").
-		ColumnExpr("repository.id AS repository_id").
-		ColumnExpr("COALESCE(repository.full_name, source.repository) AS repository_full_name").
-		ColumnExpr("repository.removed_at AS repository_removed_at").
-		ColumnExpr("installation.id AS installation_id").
-		ColumnExpr("COALESCE(installation.account_login, '') AS installation_account").
-		ColumnExpr("installation.suspended_at AS installation_suspended_at").
-		ColumnExpr("COALESCE(buildpack.context_path, '') AS context_path").
-		ColumnExpr("buildpack.builder_reference").
-		ColumnExpr("COALESCE(buildpack.settings, '{}'::jsonb) AS buildpack_settings").
-		ColumnExpr("COALESCE(buildpack.image_repository, source.repository) AS image_repository").
-		ColumnExpr("build_server.id AS build_server_id, COALESCE(build_server.name, '') AS build_server_name").
-		ColumnExpr("registry_resource.id AS registry_id").
-		ColumnExpr("registry_resource.name AS registry_name").
-		ColumnExpr("(SELECT event.source_revision FROM source_events AS event WHERE event.environment_source_id = source.id ORDER BY event.received_at DESC LIMIT 1) AS latest_revision").
-		ColumnExpr("(SELECT delivery.status FROM github_webhook_deliveries AS delivery WHERE delivery.repository_external_id = repository.external_id ORDER BY delivery.received_at DESC LIMIT 1) AS latest_delivery_status").
-		ColumnExpr("(SELECT build.status FROM builds AS build WHERE build.environment_source_id = source.id ORDER BY build.created_at DESC LIMIT 1) AS latest_build_status").
-		Join("JOIN environments AS environment ON environment.application_id = application.id AND environment.archived_at IS NULL").
-		Join("JOIN environment_sources AS source ON source.environment_id = environment.id AND source.archived_at IS NULL").
-		Join("LEFT JOIN github_environment_sources AS binding ON binding.environment_source_id = source.id").
-		Join("LEFT JOIN github_repositories AS repository ON repository.id = binding.github_repository_id").
-		Join("LEFT JOIN github_installations AS installation ON installation.id = repository.github_installation_id").
-		Join("LEFT JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = source.id").
-		Join("LEFT JOIN image_configurations AS image ON image.environment_source_id = source.id").
-		Join("LEFT JOIN runtime_configurations AS runtime ON runtime.environment_id = environment.id").
-		Join("LEFT JOIN servers AS build_server ON build_server.id = buildpack.server_id").
-		Join("JOIN registry_resources AS registry ON registry.resource_id = COALESCE(buildpack.registry_resource_id, image.registry_resource_id)").
-		Join("JOIN resources AS registry_resource ON registry_resource.id = registry.resource_id").
-		Where("application.id = ?", applicationID).
-		Where("application.archived_at IS NULL").
-		Where("application.slug <> ?", models.SystemApplicationSlug)
-	if environmentID != nil {
-		query = query.Where("environment.id = ?", *environmentID)
-	}
-	err := query.Scan(ctx, &details)
-	return details, err
+	return models.Application.Details(ctx, service.db.Executor(), applicationID, environmentID)
 }
 
 func (service *ApplicationSetup) UpdatePresentation(
@@ -847,23 +640,13 @@ func (service *ApplicationSetup) UpdatePresentation(
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(
-		ctx,
-		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
-		"application-slug:"+applicationSlug,
-	); err != nil {
-		return err
-	}
-	count, err := tx.NewSelect().
-		TableExpr("applications").
-		Where("slug = ?", applicationSlug).
-		Where("id <> ?", application.ID).
-		Where("archived_at IS NULL").
-		Count(ctx)
+	available, err := models.Application.EnsureSlugAvailable(
+		ctx, tx, applicationSlug, application.ID,
+	)
 	if err != nil {
 		return err
 	}
-	if count > 0 {
+	if !available {
 		return errors.Join(
 			models.ErrDomainValidation,
 			errors.New("application slug is already in use"),
@@ -993,13 +776,8 @@ func (service *ApplicationSetup) updateSource(
 	if _, err := models.EnvironmentSource.Update(ctx, tx, sourceData); err != nil {
 		return err
 	}
-	for _, table := range []string{"github_environment_sources", "buildpack_configurations", "image_configurations"} {
-		if _, err := tx.NewDelete().
-			TableExpr(table).
-			Where("environment_source_id = ?", source.ID).
-			Exec(ctx); err != nil {
-			return err
-		}
+	if err := models.EnvironmentSource.DeleteConfiguration(ctx, tx, source.ID); err != nil {
+		return err
 	}
 	if data.SourceType == "buildpacks" {
 		if _, err := models.GitHubEnvironmentSource.Create(
@@ -1040,19 +818,8 @@ func validateRegistrySelection(
 	db storage.Executor,
 	resourceID uuid.UUID,
 ) error {
-	var selection struct {
-		Engine          string `bun:"engine"`
-		EndpointCount   int    `bun:"endpoint_count"`
-		CredentialCount int    `bun:"credential_count"`
-	}
-	err := db.NewSelect().TableExpr("registry_resources AS registry").
-		ColumnExpr("resource.configuration ->> 'engine' AS engine").
-		ColumnExpr("(SELECT count(*) FROM resource_endpoints endpoint WHERE endpoint.resource_id = resource.id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL) AS endpoint_count").
-		ColumnExpr("(SELECT count(*) FROM resource_credentials credential WHERE credential.resource_id = resource.id AND credential.archived_at IS NULL) AS credential_count").
-		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.archived_at IS NULL").
-		Where("registry.resource_id = ?", resourceID).Scan(ctx, &selection)
-	if err != nil || selection.Engine != "registry" || selection.EndpointCount != 1 ||
-		selection.CredentialCount != 1 {
+	valid, err := models.RegistryResource.ValidApplicationSelection(ctx, db, resourceID)
+	if err != nil || !valid {
 		return errors.Join(
 			models.ErrDomainValidation,
 			errors.New(

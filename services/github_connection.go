@@ -274,11 +274,7 @@ func (service *GitHubConnection) CompleteManifest(
 		return models.GitHubAppEntity{}, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(
-		ctx,
-		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
-		"github-app:"+instanceID.String(),
-	); err != nil {
+	if err := models.GitHubApp.LockInstance(ctx, tx, instanceID); err != nil {
 		return models.GitHubAppEntity{}, err
 	}
 	attempt, err := models.GitHubAppSetupAttempt.LockUsable(
@@ -682,11 +678,7 @@ func (service *GitHubConnection) RotateCredential(
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(
-		ctx,
-		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
-		"github-app:"+instanceID.String(),
-	); err != nil {
+	if err := models.GitHubApp.LockInstance(ctx, tx, instanceID); err != nil {
 		return err
 	}
 	credential, err := models.Credential.Find(ctx, tx, app.CredentialID)
@@ -710,12 +702,7 @@ func (service *GitHubConnection) RotateCredential(
 	); err != nil {
 		return err
 	}
-	if _, err := tx.NewUpdate().
-		TableExpr("github_apps").
-		Set("verified_at = ?", now).
-		Set("updated_at = ?", now).
-		Where("id = ? AND archived_at IS NULL", app.ID).
-		Exec(ctx); err != nil {
+	if err := models.GitHubApp.MarkVerified(ctx, tx, app.ID, now); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -757,12 +744,7 @@ func (service *GitHubConnection) ArchiveApp(ctx context.Context) error {
 		return err
 	}
 	now := time.Now().UTC()
-	if _, err := tx.NewUpdate().
-		TableExpr("credentials").
-		Set("archived_at = ?", now).
-		Set("updated_at = ?", now).
-		Where("id = ?", app.CredentialID).
-		Exec(ctx); err != nil {
+	if err := models.Credential.Archive(ctx, tx, app.CredentialID, now); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -788,12 +770,11 @@ func (service *GitHubConnection) State(ctx context.Context) (GitHubConnectionSta
 	_, credentialErr := service.authentication(ctx, app)
 	degraded := credentialErr != nil
 	for _, installation := range installations {
-		count, countErr := service.db.Executor().
-			NewSelect().
-			TableExpr("github_repositories").
-			Where("github_installation_id = ?", installation.ID).
-			Where("removed_at IS NULL").
-			Count(ctx)
+		count, countErr := models.GitHubRepository.ActiveCountForInstallation(
+			ctx,
+			service.db.Executor(),
+			installation.ID,
+		)
 		if countErr != nil {
 			return GitHubConnectionState{}, countErr
 		}

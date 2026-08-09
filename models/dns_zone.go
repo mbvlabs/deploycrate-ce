@@ -26,6 +26,48 @@ type DNSZoneEntity struct {
 	DNSConnectionID uuid.UUID    `bun:"dns_connection_id,type:uuid"`
 }
 
+type DNSZoneSummary struct {
+	ID     uuid.UUID `json:"id"     bun:"id"`
+	Name   string    `json:"name"   bun:"name"`
+	Status string    `json:"status" bun:"status"`
+}
+
+type EnvironmentDNSOption struct {
+	ZoneID         uuid.UUID `json:"zoneId"         bun:"zone_id"`
+	ZoneName       string    `json:"zoneName"       bun:"zone_name"`
+	ConnectionID   uuid.UUID `json:"connectionId"   bun:"connection_id"`
+	ConnectionName string    `json:"connectionName" bun:"connection_name"`
+}
+
+func (dnsZone) EnvironmentOptions(
+	ctx context.Context,
+	db storage.Executor,
+) ([]EnvironmentDNSOption, error) {
+	options := make([]EnvironmentDNSOption, 0)
+	err := db.NewSelect().TableExpr("dns_zones AS zone").
+		ColumnExpr("zone.id AS zone_id, zone.name AS zone_name, connection.id AS connection_id, connection.name AS connection_name").
+		Join("JOIN dns_connections AS connection ON connection.id = zone.dns_connection_id AND connection.archived_at IS NULL").
+		Where("zone.archived_at IS NULL").Where("zone.status = 'active'").
+		OrderExpr("lower(connection.name), lower(zone.name)").Scan(ctx, &options)
+	return options, err
+}
+
+func (dnsZone) SummariesForConnection(
+	ctx context.Context,
+	db storage.Executor,
+	connectionID uuid.UUID,
+) ([]DNSZoneSummary, error) {
+	zones := make([]DNSZoneSummary, 0)
+	err := db.NewSelect().
+		TableExpr("dns_zones AS zone").
+		ColumnExpr("zone.id, zone.name, zone.status").
+		Where("zone.dns_connection_id = ?", connectionID).
+		Where("zone.archived_at IS NULL").
+		OrderExpr("zone.name").
+		Scan(ctx, &zones)
+	return zones, err
+}
+
 func (entity *DNSZoneEntity) Validate() error {
 	entity.ExternalID = strings.TrimSpace(entity.ExternalID)
 	entity.Name = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(entity.Name), "."))

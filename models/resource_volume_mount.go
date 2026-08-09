@@ -26,6 +26,28 @@ type ResourceVolumeMountEntity struct {
 	ResourceInstallationID uuid.UUID    `bun:"resource_installation_id,type:uuid"`
 }
 
+type ActiveResourceVolumeMount struct {
+	Name      string `bun:"name"`
+	MountPath string `bun:"mount_path"`
+	ReadOnly  bool   `bun:"read_only"`
+}
+
+func (rvm resourceVolumeMount) ActiveWithVolumeForInstallation(
+	ctx context.Context,
+	db storage.Executor,
+	installationID uuid.UUID,
+) ([]ActiveResourceVolumeMount, error) {
+	mounts := make([]ActiveResourceVolumeMount, 0)
+	err := db.NewSelect().
+		TableExpr("resource_volume_mounts AS mount").
+		ColumnExpr("volume.name, mount.mount_path, mount.read_only").
+		Join("JOIN resource_volumes AS volume ON volume.id = mount.resource_volume_id AND volume.archived_at IS NULL").
+		Where("mount.resource_installation_id = ?", installationID).
+		Where("mount.archived_at IS NULL").
+		Scan(ctx, &mounts)
+	return mounts, err
+}
+
 func (e *ResourceVolumeMountEntity) Validate() error {
 	e.MountPath = strings.TrimSpace(e.MountPath)
 	builder := validation.NewBuilder()

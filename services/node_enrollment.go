@@ -76,9 +76,8 @@ func NewNodeEnrollment(
 }
 
 func (service *NodeEnrollment) List(ctx context.Context) ([]NodeEnrollmentDetail, error) {
-	servers := make([]models.ServerEntity, 0)
-	if err := service.db.Executor().NewSelect().Model(&servers).Where("kind = 'worker'").
-		Where("archived_at IS NULL").OrderExpr("created_at DESC").Scan(ctx); err != nil {
+	servers, err := models.Server.ActiveWorkers(ctx, service.db.Executor())
+	if err != nil {
 		return nil, err
 	}
 	items := make([]NodeEnrollmentDetail, 0, len(servers))
@@ -568,22 +567,12 @@ func (service *NodeEnrollment) ensureServerNetwork(
 	serverID uuid.UUID,
 	privateAddress string,
 ) error {
-	var networkID uuid.UUID
-	if err := db.NewSelect().TableExpr("applications AS application").
-		ColumnExpr("membership.private_network_id").
-		Join("JOIN environments AS environment ON environment.application_id = application.id AND environment.archived_at IS NULL").
-		Join("JOIN environment_networks AS membership ON membership.environment_id = environment.id AND membership.removed_at IS NULL").
-		Where("application.slug = ?", models.SystemApplicationSlug).
-		Where("application.archived_at IS NULL").Limit(1).Scan(ctx, &networkID); err != nil {
+	networkID, err := models.EnvironmentNetwork.SystemPrivateNetworkID(ctx, db)
+	if err != nil {
 		return fmt.Errorf("load control-plane private network: %w", err)
 	}
-	count, err := db.NewSelect().
-		Model((*models.ServerNetworkEntity)(nil)).
-		Where("server_id = ?", serverID).
-		Where("private_network_id = ?", networkID).
-		Where("removed_at IS NULL").
-		Count(ctx)
-	if err != nil || count > 0 {
+	exists, err := models.ServerNetwork.ActiveExists(ctx, db, serverID, networkID)
+	if err != nil || exists {
 		return err
 	}
 	now := sql.NullTime{Time: time.Now().UTC(), Valid: true}
@@ -631,13 +620,12 @@ func (service *NodeEnrollment) manifest(
 	ctx context.Context,
 	detail NodeEnrollmentDetail,
 ) (nodeinstall.Manifest, error) {
-	var control models.WireGuardPeerEntity
-	if err := service.db.Executor().
-		NewSelect().
-		Model(&control).
-		Where("private_address = ?", WireGuardPrivateAddress).
-		Where("retired_at IS NULL").
-		Scan(ctx); err != nil {
+	control, err := models.WireGuardPeer.FindActiveByPrivateAddress(
+		ctx,
+		service.db.Executor(),
+		WireGuardPrivateAddress,
+	)
+	if err != nil {
 		return nodeinstall.Manifest{}, fmt.Errorf("load control-plane WireGuard peer: %w", err)
 	}
 	if !control.Endpoint.Valid {
@@ -709,26 +697,13 @@ func (service *NodeEnrollment) activeNodeMeshPeers(
 	ctx context.Context,
 	excludeServerID, includeServerID uuid.UUID,
 ) ([]internalwireguard.Peer, error) {
-	type peerRow struct {
-		ServerID       uuid.UUID `bun:"server_id"`
-		PublicKey      string    `bun:"public_key"`
-		PrivateAddress string    `bun:"private_address"`
-		Endpoint       string    `bun:"endpoint"`
-	}
-	rows := make([]peerRow, 0)
-	query := service.db.Executor().NewSelect().TableExpr("wireguard_peers AS peer").
-		ColumnExpr("peer.server_id, peer.public_key, host(peer.private_address) AS private_address, COALESCE(peer.endpoint, '') AS endpoint").
-		Join("JOIN servers AS server ON server.id = peer.server_id").
-		Where("peer.retired_at IS NULL").
-		Where("server.kind = 'worker'").
-		Where("server.archived_at IS NULL").
-		Where("peer.server_id <> ?", excludeServerID)
-	if includeServerID == uuid.Nil {
-		query = query.Where("server.is_configured = TRUE")
-	} else {
-		query = query.Where("(server.is_configured = TRUE OR server.id = ?)", includeServerID)
-	}
-	if err := query.OrderExpr("peer.private_address").Scan(ctx, &rows); err != nil {
+	rows, err := models.WireGuardPeer.ActiveWorkerPeers(
+		ctx,
+		service.db.Executor(),
+		excludeServerID,
+		includeServerID,
+	)
+	if err != nil {
 		return nil, fmt.Errorf("load active Node WireGuard peers: %w", err)
 	}
 	peers := make([]internalwireguard.Peer, 0, len(rows))
@@ -745,30 +720,23 @@ func (service *NodeEnrollment) reconcileNodeMesh(
 	ctx context.Context,
 	enrollingServerID uuid.UUID,
 ) error {
-	var control models.WireGuardPeerEntity
-	if err := service.db.Executor().NewSelect().Model(&control).
-		Where("private_address = ?", WireGuardPrivateAddress).
-		Where("retired_at IS NULL").Scan(ctx); err != nil {
+	control, err := models.WireGuardPeer.FindActiveByPrivateAddress(
+		ctx,
+		service.db.Executor(),
+		WireGuardPrivateAddress,
+	)
+	if err != nil {
 		return fmt.Errorf("load control-plane WireGuard peer: %w", err)
 	}
 	if !control.Endpoint.Valid {
 		return errors.New("control-plane WireGuard endpoint is unavailable")
 	}
-	type targetRow struct {
-		ServerID       uuid.UUID `bun:"server_id"`
-		PrivateAddress string    `bun:"private_address"`
-		SSHPort        int32     `bun:"ssh_port"`
-		KnownHostKey   string    `bun:"known_host_key"`
-	}
-	targets := make([]targetRow, 0)
-	if err := service.db.Executor().NewSelect().TableExpr("servers AS server").
-		ColumnExpr("server.id AS server_id, host(peer.private_address) AS private_address, credential.port AS ssh_port, credential.known_host_key").
-		Join("JOIN wireguard_peers AS peer ON peer.server_id = server.id AND peer.retired_at IS NULL").
-		Join("JOIN server_ssh_credentials AS credential ON credential.server_id = server.id").
-		Where("server.kind = 'worker'").Where("server.archived_at IS NULL").
-		Where("credential.host_key_confirmed_at IS NOT NULL").
-		Where("(server.is_configured = TRUE OR server.id = ?)", enrollingServerID).
-		OrderExpr("peer.private_address").Scan(ctx, &targets); err != nil {
+	targets, err := models.Server.ActiveWireGuardMeshTargets(
+		ctx,
+		service.db.Executor(),
+		enrollingServerID,
+	)
+	if err != nil {
 		return fmt.Errorf("load Node mesh targets: %w", err)
 	}
 	certificate, err := service.sshCA.GenerateUserCertificate(5 * time.Minute)

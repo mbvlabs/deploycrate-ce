@@ -36,30 +36,20 @@ func (service *ReleaseDeployment) OrchestrateTx(
 	change models.ChangeEntity,
 	revision models.EnvironmentStateRevisionEntity,
 ) (ReleaseOrchestrationResult, error) {
-	if _, err := tx.ExecContext(
+	if err := models.Release.LockOrchestration(ctx, tx, release.EnvironmentID); err != nil {
+		return ReleaseOrchestrationResult{}, err
+	}
+	active, err := models.Release.ActiveOperationsExcluding(
 		ctx,
-		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
-		"release-orchestration:"+release.EnvironmentID.String(),
-	); err != nil {
-		return ReleaseOrchestrationResult{}, err
-	}
-	activeCommands, err := tx.NewSelect().TableExpr("release_command_executions AS execution").
-		Join("JOIN releases AS release ON release.id = execution.release_id").
-		Where("release.environment_id = ?", release.EnvironmentID).
-		Where("execution.release_id <> ?", release.ID).
-		Where("execution.status IN ('queued', 'running')").Count(ctx)
+		tx,
+		release.EnvironmentID,
+		release.ID,
+		change.ID,
+	)
 	if err != nil {
 		return ReleaseOrchestrationResult{}, err
 	}
-	activeDeployments, err := tx.NewSelect().TableExpr("deployments AS deployment").
-		Join("JOIN releases AS release ON release.id = deployment.release_id").
-		Where("release.environment_id = ?", release.EnvironmentID).
-		Where("deployment.change_id <> ?", change.ID).
-		Where("deployment.status IN ('queued', 'running')").Count(ctx)
-	if err != nil {
-		return ReleaseOrchestrationResult{}, err
-	}
-	if activeCommands != 0 || activeDeployments != 0 {
+	if active.Commands != 0 || active.Deployments != 0 {
 		return ReleaseOrchestrationResult{}, errors.New(
 			"Environment already has an active release operation",
 		)
@@ -187,17 +177,14 @@ func (service *ReleaseDeployment) FanOutSucceededReleaseCommand(
 		return err
 	}
 	now := time.Now().UTC()
-	if _, err := tx.NewUpdate().
-		TableExpr("release_command_executions").
-		Set("status = 'succeeded'").
-		Set("external_id = ?", externalID).
-		Set("exit_code = ?", exitCode).
-		Set("finished_at = ?", now).
-		Set("error = NULL").
-		Set("updated_at = ?", now).
-		Where("id = ?", execution.ID).
-		Where("status = 'running'").
-		Exec(ctx); err != nil {
+	if err := models.ReleaseCommandExecution.MarkSucceeded(
+		ctx,
+		tx,
+		execution.ID,
+		externalID,
+		exitCode,
+		now,
+	); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -212,31 +199,22 @@ func (service *ReleaseDeployment) fanOutTx(
 	state models.EnvironmentDesiredState,
 	targets []models.EnvironmentTargetEntity,
 ) (ReleaseOrchestrationResult, error) {
-	existing, err := tx.NewSelect().
-		Model((*models.DeploymentEntity)(nil)).
-		Where("change_id = ?", change.ID).
-		Count(ctx)
+	existing, err := models.Deployment.CountForChange(ctx, tx, change.ID)
 	if err != nil {
 		return ReleaseOrchestrationResult{}, err
 	}
 	if existing > 0 {
-		var first models.DeploymentEntity
-		err := tx.NewSelect().
-			Model(&first).
-			Where("change_id = ?", change.ID).
-			OrderExpr("created_at, id").
-			Limit(1).
-			Scan(ctx)
+		first, err := models.Deployment.FirstForChange(ctx, tx, change.ID)
 		return ReleaseOrchestrationResult{Deployment: first}, err
 	}
 	now := time.Now().UTC()
-	if _, err := tx.NewUpdate().
-		TableExpr("environment_target_states").
-		Set("desired_revision_id = ?", revision.ID).
-		Set("state = 'pending'").
-		Set("updated_at = ?", now).
-		Where("environment_target_id IN (SELECT id FROM environment_targets WHERE environment_id = ? AND detached_at IS NULL)", release.EnvironmentID).
-		Exec(ctx); err != nil {
+	if err := models.EnvironmentTargetState.SetDesiredRevisionForEnvironment(
+		ctx,
+		tx,
+		release.EnvironmentID,
+		revision.ID,
+		now,
+	); err != nil {
 		return ReleaseOrchestrationResult{}, err
 	}
 	var first models.DeploymentEntity

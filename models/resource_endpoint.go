@@ -610,23 +610,11 @@ func ensureCaddyEndpointHostnameUnique(
 	if err := lockUnique(ctx, db, "environment-domain-hostname:"+hostname); err != nil {
 		return err
 	}
-	environmentDomains, err := db.NewSelect().Model((*EnvironmentDomainEntity)(nil)).
-		Where("lower(hostname) = ?", hostname).
-		Where("archived_at IS NULL").
-		Count(ctx)
+	conflicts, err := ResourceEndpoint.CaddyHostnameConflicts(ctx, db, hostname, entity.ID)
 	if err != nil {
 		return err
 	}
-	resourceEndpoints, err := db.NewSelect().Model((*ResourceEndpointEntity)(nil)).
-		Where("id <> ?", entity.ID).
-		Where("lower(address) = ?", hostname).
-		Where("settings ->> 'address_source' = ?", ResourceEndpointAddressCaddy).
-		Where("archived_at IS NULL").
-		Count(ctx)
-	if err != nil {
-		return err
-	}
-	if environmentDomains+resourceEndpoints > 0 {
+	if conflicts > 0 {
 		return errors.Join(
 			ErrDomainValidation,
 			validation.ValidationErrors{
@@ -639,6 +627,106 @@ func ensureCaddyEndpointHostnameUnique(
 		)
 	}
 	return nil
+}
+
+func (resourceEndpoint) CaddyHostnameConflicts(
+	ctx context.Context,
+	db storage.Executor,
+	hostname string,
+	excludeEndpointID uuid.UUID,
+) (int, error) {
+	hostname = NormalizeHostname(hostname)
+	environmentDomains, err := db.NewSelect().Model((*EnvironmentDomainEntity)(nil)).
+		Where("lower(hostname) = ?", hostname).
+		Where("archived_at IS NULL").
+		Count(ctx)
+	if err != nil {
+		return 0, err
+	}
+	query := db.NewSelect().Model((*ResourceEndpointEntity)(nil)).
+		Where("lower(address) = ?", hostname).
+		Where("settings ->> 'address_source' = ?", ResourceEndpointAddressCaddy).
+		Where("archived_at IS NULL")
+	if excludeEndpointID != uuid.Nil {
+		query = query.Where("id <> ?", excludeEndpointID)
+	}
+	resourceEndpoints, err := query.Count(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return environmentDomains + resourceEndpoints, nil
+}
+
+func (resourceEndpoint) ManagedActive(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+) ([]ResourceEndpointEntity, error) {
+	endpoints := make([]ResourceEndpointEntity, 0)
+	query := db.NewSelect().Model(&endpoints).
+		Where("archived_at IS NULL").
+		Where("settings -> 'caddy' ->> 'managed' = 'true'")
+	if resourceID != uuid.Nil {
+		query = query.Where("resource_id = ?", resourceID)
+	}
+	err := query.OrderExpr("created_at").Scan(ctx)
+	return endpoints, err
+}
+
+func (resourceEndpoint) ActivePrivateCount(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID, excludeEndpointID uuid.UUID,
+) (int, error) {
+	query := db.NewSelect().TableExpr("resource_endpoints AS endpoint").
+		Where("endpoint.resource_id = ?", resourceID).
+		Where("endpoint.private_network_id IS NOT NULL").
+		Where("endpoint.archived_at IS NULL")
+	if excludeEndpointID != uuid.Nil {
+		query = query.Where("endpoint.id <> ?", excludeEndpointID)
+	}
+	return query.Count(ctx)
+}
+
+func (resourceEndpoint) FindActivePrimaryPublic(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+) (ResourceEndpointEntity, error) {
+	var endpoint ResourceEndpointEntity
+	err := db.NewSelect().Model(&endpoint).
+		Where("resource_id = ?", resourceID).
+		Where("role = 'primary'").
+		Where("private_network_id IS NULL").
+		Where("archived_at IS NULL").Scan(ctx)
+	return endpoint, err
+}
+
+func (resourceEndpoint) ActiveDependencyCount(
+	ctx context.Context,
+	db storage.Executor,
+	endpointID uuid.UUID,
+) (int, error) {
+	return db.NewSelect().TableExpr("resource_endpoints AS endpoint").
+		Where("endpoint.id = ?", endpointID).
+		Where("EXISTS (SELECT 1 FROM environment_resources WHERE resource_endpoint_id = endpoint.id AND archived_at IS NULL) OR EXISTS (SELECT 1 FROM resource_health_checks WHERE resource_endpoint_id = endpoint.id AND archived_at IS NULL)").
+		Count(ctx)
+}
+
+func (resourceEndpoint) ArchiveActive(
+	ctx context.Context,
+	db storage.Executor,
+	endpointID uuid.UUID,
+	at time.Time,
+) (bool, error) {
+	result, err := db.NewUpdate().TableExpr("resource_endpoints").
+		Set("archived_at = ?", at).Set("updated_at = ?", at).
+		Where("id = ?", endpointID).Where("archived_at IS NULL").Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows > 0, err
 }
 
 func (re resourceEndpoint) Destroy(ctx context.Context, db storage.Executor, id uuid.UUID) error {

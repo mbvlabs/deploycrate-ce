@@ -43,6 +43,43 @@ func (crb caddyRouteBackend) Find(
 	return entity, nil
 }
 
+type RetiredWorkloadBackend struct {
+	RouteID      uuid.UUID `bun:"route_id"`
+	InstanceID   uuid.UUID `bun:"instance_id"`
+	DeploymentID uuid.UUID `bun:"deployment_id"`
+	ServerID     uuid.UUID `bun:"server_id"`
+}
+
+func (caddyRouteBackend) RetiredWorkloads(
+	ctx context.Context,
+	db storage.Executor,
+) ([]RetiredWorkloadBackend, error) {
+	rows := make([]RetiredWorkloadBackend, 0)
+	err := db.NewSelect().TableExpr("caddy_route_backends AS backend").
+		ColumnExpr("backend.caddy_route_id AS route_id, instance.id AS instance_id, instance.deployment_id AS deployment_id, target.server_id AS server_id").
+		Join("JOIN caddy_routes AS route ON route.id = backend.caddy_route_id AND route.removed_at IS NULL").
+		Join("JOIN releases AS release ON release.id = route.release_id").
+		Join("JOIN environments AS environment ON environment.id = release.environment_id").
+		Join("JOIN applications AS application ON application.id = environment.application_id").
+		Join("JOIN instances AS instance ON instance.id = backend.instance_id AND instance.removed_at IS NULL").
+		Join("JOIN environment_targets AS target ON target.id = instance.environment_target_id").
+		Join("JOIN deployments AS deployment ON deployment.id = instance.deployment_id AND deployment.status NOT IN ('queued', 'running')").
+		Where("application.slug <> ?", SystemApplicationSlug).
+		Where("backend.removed_at IS NULL").Where("backend.weight = 0").Scan(ctx, &rows)
+	return rows, err
+}
+
+func (caddyRouteBackend) ActiveExists(
+	ctx context.Context,
+	db storage.Executor,
+	routeID, instanceID uuid.UUID,
+) (bool, error) {
+	count, err := db.NewSelect().Model((*CaddyRouteBackendEntity)(nil)).
+		Where("caddy_route_id = ?", routeID).Where("instance_id = ?", instanceID).
+		Where("removed_at IS NULL").Count(ctx)
+	return count > 0, err
+}
+
 type CreateCaddyRouteBackendData struct {
 	Weight       int32
 	RemovedAt    sql.NullTime

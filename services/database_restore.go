@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"deploycrate-ce/clients/objectstorage"
+	"deploycrate-ce/models"
 )
 
 type DatabaseRestoreEngine struct {
@@ -63,11 +64,7 @@ func (service *DatabaseRestoreEngine) Run(
 		ctx,
 		target,
 		"postgres",
-		"CREATE DATABASE "+postgresIdentifier(
-			stagingName,
-		)+" WITH TEMPLATE template0 OWNER "+postgresIdentifier(
-			target.Username,
-		),
+		models.PostgreSQLRestoreCreateDatabaseStatement(stagingName, target.Username),
 	); err != nil {
 		return DatabaseRestoreResult{}, fmt.Errorf("create staging database: %w", err)
 	}
@@ -299,7 +296,7 @@ func (service *DatabaseRestoreEngine) verifyDatabase(
 		"--tuples-only",
 		"--no-align",
 		"--command",
-		"SELECT 1",
+		models.PostgreSQLRestoreVerifyStatement(),
 	); err != nil {
 		return err
 	}
@@ -315,7 +312,7 @@ func (service *DatabaseRestoreEngine) databaseExists(
 	databaseName string,
 ) (bool, error) {
 	var output bytes.Buffer
-	query := "SELECT 1 FROM pg_database WHERE datname = " + postgresLiteral(databaseName)
+	query := models.PostgreSQLRestoreDatabaseExistsStatement(databaseName)
 	if err := service.database.runContainerPostgres(
 		ctx,
 		target,
@@ -346,7 +343,7 @@ func (service *DatabaseRestoreEngine) dropDatabase(
 		ctx,
 		target,
 		"postgres",
-		"DROP DATABASE IF EXISTS "+postgresIdentifier(databaseName)+" WITH (FORCE)",
+		models.PostgreSQLRestoreDropDatabaseStatement(databaseName),
 	)
 }
 
@@ -359,7 +356,7 @@ func (service *DatabaseRestoreEngine) renameDatabase(
 		ctx,
 		target,
 		"postgres",
-		"ALTER DATABASE "+postgresIdentifier(from)+" RENAME TO "+postgresIdentifier(to),
+		models.PostgreSQLRestoreRenameDatabaseStatement(from, to),
 	)
 }
 
@@ -369,15 +366,11 @@ func (service *DatabaseRestoreEngine) setConnections(
 	databaseName string,
 	allowed bool,
 ) error {
-	value := "false"
-	if allowed {
-		value = "true"
-	}
 	return service.sql(
 		ctx,
 		target,
 		"postgres",
-		"ALTER DATABASE "+postgresIdentifier(databaseName)+" ALLOW_CONNECTIONS "+value,
+		models.PostgreSQLRestoreAllowConnectionsStatement(databaseName, allowed),
 	)
 }
 
@@ -390,9 +383,7 @@ func (service *DatabaseRestoreEngine) terminateConnections(
 		ctx,
 		target,
 		"postgres",
-		"SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = "+postgresLiteral(
-			databaseName,
-		)+" AND pid <> pg_backend_pid()",
+		models.PostgreSQLRestoreTerminateConnectionsStatement(databaseName),
 	)
 }
 
@@ -417,12 +408,4 @@ func (service *DatabaseRestoreEngine) sql(
 		"--command",
 		statement,
 	)
-}
-
-func postgresIdentifier(value string) string {
-	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
-}
-
-func postgresLiteral(value string) string {
-	return `'` + strings.ReplaceAll(value, `'`, `''`) + `'`
 }

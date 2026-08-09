@@ -34,6 +34,95 @@ type DeploymentEntity struct {
 	EnvironmentTargetID  uuid.UUID       `bun:"environment_target_id,type:uuid"`
 }
 
+func (deployment) ActiveCountForEnvironment(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) (int, error) {
+	return db.NewSelect().
+		TableExpr("deployments AS deployment").
+		Join("JOIN environment_targets AS target ON target.id = deployment.environment_target_id").
+		Where("target.environment_id = ?", environmentID).
+		Where("deployment.status IN ('queued', 'running')").
+		Count(ctx)
+}
+
+func (deployment) CountForChange(
+	ctx context.Context,
+	db storage.Executor,
+	changeID uuid.UUID,
+) (int, error) {
+	return db.NewSelect().
+		Model((*DeploymentEntity)(nil)).
+		Where("change_id = ?", changeID).
+		Count(ctx)
+}
+
+func (deployment) FirstForChange(
+	ctx context.Context,
+	db storage.Executor,
+	changeID uuid.UUID,
+) (DeploymentEntity, error) {
+	var entity DeploymentEntity
+	err := db.NewSelect().
+		Model(&entity).
+		Where("change_id = ?", changeID).
+		OrderExpr("created_at, id").
+		Limit(1).
+		Scan(ctx)
+	return entity, err
+}
+
+func (deployment) UnresolvedWorkloads(
+	ctx context.Context,
+	db storage.Executor,
+) ([]DeploymentEntity, error) {
+	items := make([]DeploymentEntity, 0)
+	err := db.NewSelect().Model(&items).
+		Join("JOIN releases AS release ON release.id = deployments.release_id").
+		Join("JOIN environments AS environment ON environment.id = release.environment_id").
+		Join("JOIN applications AS application ON application.id = environment.application_id").
+		Where("application.slug <> ?", SystemApplicationSlug).
+		Where("deployments.status IN ('queued', 'running')").
+		OrderExpr("deployments.created_at").Scan(ctx)
+	return items, err
+}
+
+func (deployment) SetCurrentStep(
+	ctx context.Context, db storage.Executor, id uuid.UUID, step string, at time.Time,
+) error {
+	_, err := db.NewUpdate().TableExpr("deployments").Set("current_step = ?", step).
+		Set("updated_at = ?", at).Where("id = ?", id).Where("status = 'running'").Exec(ctx)
+	return err
+}
+
+func (deployment) MarkSucceeded(
+	ctx context.Context, db storage.Executor, id uuid.UUID, at time.Time,
+) error {
+	_, err := db.NewUpdate().TableExpr("deployments").
+		Set("status = 'succeeded'").Set("current_step = 'serving'").
+		Set("finished_at = ?", at).Set("error = NULL").Set("updated_at = ?", at).
+		Where("id = ?", id).Where("status = 'running'").Exec(ctx)
+	return err
+}
+
+func (deployment) RemainingForChange(
+	ctx context.Context, db storage.Executor, changeID uuid.UUID,
+) (int, error) {
+	return db.NewSelect().TableExpr("deployments").Where("change_id = ?", changeID).
+		Where("status <> 'succeeded'").Count(ctx)
+}
+
+func (deployment) ActiveCountForTarget(
+	ctx context.Context,
+	db storage.Executor,
+	targetID uuid.UUID,
+) (int, error) {
+	return db.NewSelect().Model((*DeploymentEntity)(nil)).
+		Where("environment_target_id = ?", targetID).
+		Where("status IN ('queued', 'running')").Count(ctx)
+}
+
 func (e *DeploymentEntity) Validate() error {
 	builder := validation.NewBuilder()
 	if e.ID == uuid.Nil || e.ChangeID == uuid.Nil || e.ReleaseID == uuid.Nil ||

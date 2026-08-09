@@ -634,11 +634,7 @@ func (service *EnvironmentSecrets) ReconcileManagedResource(
 		})
 		return err
 	}
-	activeBuilds, err := db.NewSelect().
-		TableExpr("builds").
-		Where("environment_id = ?", environment.ID).
-		Where("status IN ('pending', 'running')").
-		Count(ctx)
+	activeBuilds, err := models.Build.ActiveCountForEnvironment(ctx, db, environment.ID)
 	if err != nil {
 		return err
 	}
@@ -651,10 +647,7 @@ func (service *EnvironmentSecrets) ReconcileManagedResource(
 			},
 		})
 	}
-	activeDeployments, err := db.NewSelect().TableExpr("deployments AS deployment").
-		Join("JOIN environment_targets AS target ON target.id = deployment.environment_target_id").
-		Where("target.environment_id = ?", environment.ID).
-		Where("deployment.status IN ('queued', 'running')").Count(ctx)
+	activeDeployments, err := models.Deployment.ActiveCountForEnvironment(ctx, db, environment.ID)
 	if err != nil {
 		return err
 	}
@@ -835,13 +828,13 @@ func (service *EnvironmentSecrets) ReconcileManagedResource(
 	); err != nil {
 		return err
 	}
-	if _, err := db.NewUpdate().
-		TableExpr("environment_target_states AS state").
-		Set("desired_revision_id = ?", revision.ID).
-		Set("state = 'pending'").
-		Set("updated_at = ?", now).
-		Where("EXISTS (SELECT 1 FROM environment_targets target WHERE target.id = state.environment_target_id AND target.environment_id = ? AND target.detached_at IS NULL)", environment.ID).
-		Exec(ctx); err != nil {
+	if err := models.EnvironmentTargetState.SetDesiredRevisionForEnvironment(
+		ctx,
+		db,
+		environment.ID,
+		revision.ID,
+		now,
+	); err != nil {
 		return err
 	}
 	if _, err := models.EnvironmentResource.Update(ctx, db, models.UpdateEnvironmentResourceData{
@@ -1022,11 +1015,13 @@ func (service *EnvironmentSecrets) commitSecretsRevision(
 	); err != nil {
 		return models.EnvironmentStateRevisionEntity{}, err
 	}
-	if _, err := db.NewUpdate().TableExpr("environment_target_states AS state").
-		Set("desired_revision_id = ?", revision.ID).
-		Set("state = 'pending'").Set("updated_at = ?", now).
-		Where("EXISTS (SELECT 1 FROM environment_targets target WHERE target.id = state.environment_target_id AND target.environment_id = ? AND target.detached_at IS NULL)", environment.ID).
-		Exec(ctx); err != nil {
+	if err := models.EnvironmentTargetState.SetDesiredRevisionForEnvironment(
+		ctx,
+		db,
+		environment.ID,
+		revision.ID,
+		now,
+	); err != nil {
 		return models.EnvironmentStateRevisionEntity{}, err
 	}
 	return revision, nil
@@ -1038,9 +1033,7 @@ func (service *EnvironmentSecrets) queueRevisionDeployment(
 	change models.ChangeEntity,
 	revision models.EnvironmentStateRevisionEntity,
 ) error {
-	var release models.ReleaseEntity
-	err := db.NewSelect().Model(&release).Where("environment_id = ?", revision.EnvironmentID).
-		OrderExpr("created_at DESC").Limit(1).Scan(ctx)
+	release, err := models.Release.LatestForEnvironment(ctx, db, revision.EnvironmentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}

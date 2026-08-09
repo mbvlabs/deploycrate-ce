@@ -368,15 +368,13 @@ func (service *ReleaseCommandExecution) Execute(ctx context.Context, executionID
 			Stdout:               releaseCommandStreamWriter{logger: logger, stream: "stdout"},
 			Stderr:               releaseCommandStreamWriter{logger: logger, stream: "stderr"},
 			Created: func(identifier string) error {
-				_, err := service.db.Executor().
-					NewUpdate().
-					TableExpr("release_command_executions").
-					Set("external_id = ?", identifier).
-					Set("updated_at = ?", time.Now().UTC()).
-					Where("id = ?", execution.ID).
-					Where("status = 'running'").
-					Exec(context.WithoutCancel(ctx))
-				return err
+				return models.ReleaseCommandExecution.SetExternalID(
+					context.WithoutCancel(ctx),
+					service.db.Executor(),
+					execution.ID,
+					identifier,
+					time.Now().UTC(),
+				)
 			},
 		},
 		credentials,
@@ -634,11 +632,12 @@ func (service *ReleaseCommandExecution) Retry(
 		return errors.New("release command retry target is unavailable")
 	}
 	if target.ID != execution.EnvironmentTargetID {
-		if _, err := tx.NewUpdate().
-			TableExpr("release_command_executions").
-			Set("environment_target_id = ?", target.ID).
-			Where("id = ?", execution.ID).
-			Exec(ctx); err != nil {
+		if err := models.ReleaseCommandExecution.SetEnvironmentTarget(
+			ctx,
+			tx,
+			execution.ID,
+			target.ID,
+		); err != nil {
 			return err
 		}
 	}

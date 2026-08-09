@@ -27,6 +27,74 @@ type EnvironmentTargetStateEntity struct {
 	AppliedRevisionID   *uuid.UUID      `bun:"applied_revision_id,type:uuid"`
 }
 
+func (environmentTargetState) SetDesiredRevisionForEnvironment(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID, revisionID uuid.UUID,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("environment_target_states AS state").
+		Set("desired_revision_id = ?", revisionID).
+		Set("state = 'pending'").
+		Set("updated_at = ?", at).
+		Where("EXISTS (SELECT 1 FROM environment_targets target WHERE target.id = state.environment_target_id AND target.environment_id = ? AND target.detached_at IS NULL)", environmentID).
+		Exec(ctx)
+	return err
+}
+
+func (environmentTargetState) MarkFailedForDeployment(
+	ctx context.Context,
+	db storage.Executor,
+	deploymentID uuid.UUID,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().TableExpr("environment_target_states AS state").
+		Set("state = 'failed'").Set("applying_revision_id = NULL").Set("updated_at = ?", at).
+		Where("EXISTS (SELECT 1 FROM deployments deployment WHERE deployment.id = ? AND deployment.environment_target_id = state.environment_target_id)", deploymentID).
+		Exec(ctx)
+	return err
+}
+
+func (environmentTargetState) MarkApplying(
+	ctx context.Context,
+	db storage.Executor,
+	targetID, revisionID uuid.UUID,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().TableExpr("environment_target_states").
+		Set("state = 'applying'").Set("applying_revision_id = ?", revisionID).
+		Set("updated_at = ?", at).Where("environment_target_id = ?", targetID).Exec(ctx)
+	return err
+}
+
+func (environmentTargetState) MarkFailed(
+	ctx context.Context,
+	db storage.Executor,
+	targetID uuid.UUID,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().TableExpr("environment_target_states").
+		Set("state = 'failed'").Set("applying_revision_id = NULL").Set("updated_at = ?", at).
+		Where("environment_target_id = ?", targetID).Exec(ctx)
+	return err
+}
+
+func (environmentTargetState) MarkApplied(
+	ctx context.Context,
+	db storage.Executor,
+	targetID, revisionID uuid.UUID,
+	observed json.RawMessage,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().TableExpr("environment_target_states").
+		Set("state = 'applied'").Set("observed_state = ?", observed).
+		Set("applying_revision_id = NULL").Set("applied_revision_id = ?", revisionID).
+		Set("observed_at = ?", at).Set("updated_at = ?", at).
+		Where("environment_target_id = ?", targetID).Exec(ctx)
+	return err
+}
+
 func (e *EnvironmentTargetStateEntity) Validate() error {
 	return nil
 }

@@ -41,14 +41,13 @@ func ensureSystemApplicationInTransaction(
 	now time.Time,
 ) error {
 	if _, err := models.Application.FindSystem(ctx, exec); err == nil {
-		if _, err := exec.NewUpdate().
-			TableExpr("servers").
-			Set("capabilities = ?", systemServerCapabilities).
-			Set("updated_at = ?", now).
-			Where("slug = ?", models.SystemApplicationSlug).
-			Where("kind = 'self_hosted'").
-			Where("archived_at IS NULL").
-			Exec(ctx); err != nil {
+		if err := models.Server.UpdateActiveSelfHostedCapabilitiesBySlug(
+			ctx,
+			exec,
+			models.SystemApplicationSlug,
+			systemServerCapabilities,
+			now,
+		); err != nil {
 			return fmt.Errorf("update DeployCrate CE system server capabilities: %w", err)
 		}
 		return nil

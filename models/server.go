@@ -55,6 +55,61 @@ func (s server) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (Se
 	return entity, nil
 }
 
+func (server) ActiveWorkers(
+	ctx context.Context,
+	db storage.Executor,
+) ([]ServerEntity, error) {
+	servers := make([]ServerEntity, 0)
+	err := db.NewSelect().
+		Model(&servers).
+		Where("kind = 'worker'").
+		Where("archived_at IS NULL").
+		OrderExpr("created_at DESC").
+		Scan(ctx)
+	return servers, err
+}
+
+func (server) ApplicationBuildOptions(
+	ctx context.Context,
+	db storage.Executor,
+) ([]ApplicationBuildServerOption, error) {
+	rows := make([]ApplicationBuildServerOption, 0)
+	err := db.NewSelect().TableExpr("servers AS server").
+		ColumnExpr("server.id, server.name, server.kind, server.address, COALESCE(server.architecture, '') AS architecture, server.capabilities").
+		Where("server.archived_at IS NULL").Where("server.is_configured = TRUE").
+		Where("server.kind IN ('self_hosted', 'worker')").
+		Where("server.capabilities @> '{\"build\":true}'::jsonb").
+		OrderExpr("CASE WHEN server.kind = 'self_hosted' THEN 0 ELSE 1 END, server.name").Scan(ctx, &rows)
+	return rows, err
+}
+
+type ServerWireGuardMeshTarget struct {
+	ServerID       uuid.UUID `bun:"server_id"`
+	PrivateAddress string    `bun:"private_address"`
+	SSHPort        int32     `bun:"ssh_port"`
+	KnownHostKey   string    `bun:"known_host_key"`
+}
+
+func (server) ActiveWireGuardMeshTargets(
+	ctx context.Context,
+	db storage.Executor,
+	includingServerID uuid.UUID,
+) ([]ServerWireGuardMeshTarget, error) {
+	targets := make([]ServerWireGuardMeshTarget, 0)
+	err := db.NewSelect().
+		TableExpr("servers AS server").
+		ColumnExpr("server.id AS server_id, host(peer.private_address) AS private_address, credential.port AS ssh_port, credential.known_host_key").
+		Join("JOIN wireguard_peers AS peer ON peer.server_id = server.id AND peer.retired_at IS NULL").
+		Join("JOIN server_ssh_credentials AS credential ON credential.server_id = server.id").
+		Where("server.kind = 'worker'").
+		Where("server.archived_at IS NULL").
+		Where("credential.host_key_confirmed_at IS NOT NULL").
+		Where("(server.is_configured = TRUE OR server.id = ?)", includingServerID).
+		OrderExpr("peer.private_address").
+		Scan(ctx, &targets)
+	return targets, err
+}
+
 type CreateServerData struct {
 	ArchivedAt          sql.NullTime
 	Name                string
@@ -197,6 +252,37 @@ func (s server) UpdateCapabilities(
 		Set("capabilities = ?", capabilities).
 		Set("updated_at = ?", time.Now()).
 		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+func (server) UpdateIPv4Address(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	address string,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().TableExpr("servers").
+		Set("ipv4_address = ?", address).Set("updated_at = ?", at).
+		Where("id = ?", id).Exec(ctx)
+	return err
+}
+
+func (s server) UpdateActiveSelfHostedCapabilitiesBySlug(
+	ctx context.Context,
+	db storage.Executor,
+	slug string,
+	capabilities json.RawMessage,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("servers").
+		Set("capabilities = ?", capabilities).
+		Set("updated_at = ?", at).
+		Where("slug = ?", slug).
+		Where("kind = 'self_hosted'").
+		Where("archived_at IS NULL").
 		Exec(ctx)
 	return err
 }

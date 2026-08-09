@@ -36,6 +36,18 @@ type BuildEntity struct {
 	ChangeID            uuid.UUID       `bun:"change_id,type:uuid"`
 }
 
+func (build) ActiveCountForEnvironment(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) (int, error) {
+	return db.NewSelect().
+		TableExpr("builds").
+		Where("environment_id = ?", environmentID).
+		Where("status IN ('pending', 'running')").
+		Count(ctx)
+}
+
 func (e *BuildEntity) Validate() error {
 	builder := validation.NewBuilder()
 	if e.ID == uuid.Nil || e.EnvironmentID == uuid.Nil || e.EnvironmentSourceID == uuid.Nil ||

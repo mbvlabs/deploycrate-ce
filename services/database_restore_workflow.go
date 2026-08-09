@@ -442,19 +442,7 @@ func activeDatabaseBackupPolicy(
 	resourceID uuid.UUID,
 	databaseName string,
 ) (models.ScheduledBackupPolicy, error) {
-	var policyID uuid.UUID
-	if err := db.NewSelect().
-		TableExpr("backup_policies AS policy").
-		ColumnExpr("policy.id").
-		Where("policy.target_type = 'resource'").
-		Where("policy.resource_id = ?", resourceID).
-		Where("policy.target ->> 'database' = ?", databaseName).
-		Where("policy.archived_at IS NULL AND policy.activated_at IS NOT NULL").
-		Limit(1).
-		Scan(ctx, &policyID); err != nil {
-		return models.ScheduledBackupPolicy{}, err
-	}
-	return models.BackupPolicy.FindScheduled(ctx, db, policyID)
+	return models.BackupPolicy.FindActiveDatabasePolicy(ctx, db, resourceID, databaseName)
 }
 
 func advanceDatabaseRestoreAfterSafetyBackup(
@@ -487,19 +475,14 @@ func failDatabaseRestoreSafetyBackup(
 	backupID uuid.UUID,
 	operationErr error,
 ) error {
-	var restore models.ResourceRestoreEntity
-	if err := db.Executor().
-		NewSelect().
-		Model(&restore).
-		Where("resource_restore.safety_backup_id = ?", backupID).
-		Where("resource_restore.status = ?", models.ResourceRestoreStatusSafetyBackup).
-		Scan(ctx); errors.Is(
-		err,
+	restore, findErr := models.ResourceRestore.FindBySafetyBackup(ctx, db.Executor(), backupID)
+	if errors.Is(
+		findErr,
 		sql.ErrNoRows,
 	) {
 		return nil
-	} else if err != nil {
-		return err
+	} else if findErr != nil {
+		return findErr
 	}
 	service := DatabaseRestoreWorkflow{db: db}
 	tx, err := db.BeginTx(ctx, nil)

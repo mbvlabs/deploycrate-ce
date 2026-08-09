@@ -193,12 +193,7 @@ type EnvironmentSetupResourceOption struct {
 	SupportsConnectionURL bool              `json:"supportsConnectionUrl" bun:"-"`
 }
 
-type EnvironmentSetupServerOption struct {
-	ID      uuid.UUID `json:"id"      bun:"id"`
-	Name    string    `json:"name"    bun:"name"`
-	Kind    string    `json:"kind"    bun:"kind"`
-	Address string    `json:"address" bun:"address"`
-}
+type EnvironmentSetupServerOption = models.EnvironmentSetupServerOption
 
 type EnvironmentSetupOptions struct {
 	Resources []EnvironmentSetupResourceOption `json:"resources"`
@@ -273,48 +268,13 @@ type EnvironmentOverview struct {
 	LatestSuccessfulReleaseID    *uuid.UUID                          `json:"latestSuccessfulReleaseId,omitempty"`
 }
 
-type EnvironmentListItem struct {
-	ID                uuid.UUID `json:"id"                bun:"id"`
-	Name              string    `json:"name"              bun:"name"`
-	Kind              string    `json:"kind"              bun:"kind"`
-	ApplicationID     uuid.UUID `json:"applicationId"     bun:"application_id"`
-	ApplicationName   string    `json:"applicationName"   bun:"application_name"`
-	SetupComplete     bool      `json:"setupComplete"     bun:"setup_complete"`
-	Domain            string    `json:"domain"            bun:"domain"`
-	Repository        string    `json:"repository"        bun:"repository"`
-	Reference         string    `json:"reference"         bun:"reference"`
-	LatestBuildStatus string    `json:"latestBuildStatus" bun:"latest_build_status"`
-}
+type EnvironmentListItem = models.EnvironmentListItem
 
 func (service *EnvironmentSetup) List(ctx context.Context) ([]EnvironmentListItem, error) {
-	environments := make([]EnvironmentListItem, 0)
-	err := service.db.Executor().NewSelect().TableExpr("environments AS environment").
-		ColumnExpr("environment.id, environment.name, environment.kind").
-		ColumnExpr("application.id AS application_id, application.name AS application_name").
-		ColumnExpr(`EXISTS (
-			SELECT 1 FROM changes AS setup_change
-			JOIN change_state_revisions AS setup_result ON setup_result.change_id = setup_change.id AND setup_result.role = 'result'
-			JOIN environment_state_revisions AS setup_revision ON setup_revision.id = setup_result.environment_state_revision_id AND setup_revision.environment_id = environment.id
-			WHERE setup_change.environment_id = environment.id AND setup_change.kind = 'environment_setup'
-			AND setup_change.committed_at IS NOT NULL AND setup_change.cancelled_at IS NULL
-		) AS setup_complete`).
-		ColumnExpr("COALESCE((SELECT hostname FROM environment_domains WHERE environment_id = environment.id AND is_primary AND archived_at IS NULL ORDER BY created_at DESC LIMIT 1), '') AS domain").
-		ColumnExpr("COALESCE((SELECT repository FROM environment_sources WHERE environment_id = environment.id AND archived_at IS NULL ORDER BY created_at DESC LIMIT 1), '') AS repository").
-		ColumnExpr("COALESCE((SELECT reference FROM environment_sources WHERE environment_id = environment.id AND archived_at IS NULL ORDER BY created_at DESC LIMIT 1), '') AS reference").
-		ColumnExpr("COALESCE((SELECT status FROM builds WHERE environment_id = environment.id ORDER BY created_at DESC LIMIT 1), '') AS latest_build_status").
-		Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").
-		Where("environment.archived_at IS NULL").
-		Where("application.slug <> ?", models.SystemApplicationSlug).
-		OrderExpr("application.name, environment.name").Scan(ctx, &environments)
-	return environments, err
+	return models.Environment.ListCatalog(ctx, service.db.Executor())
 }
 
-type EnvironmentResourceActivity struct {
-	ID     uuid.UUID `json:"id"     bun:"id"`
-	Alias  string    `json:"alias"  bun:"alias"`
-	Name   string    `json:"name"   bun:"name"`
-	Engine string    `json:"engine" bun:"engine"`
-}
+type EnvironmentResourceActivity = models.EnvironmentResourceActivity
 
 type EnvironmentVariableActivity struct {
 	Key      string `json:"key"`
@@ -334,19 +294,7 @@ type EnvironmentSecretActivity struct {
 	Desired      bool      `json:"desired"`
 }
 
-type EnvironmentBuildActivity struct {
-	ID               uuid.UUID  `json:"id"               bun:"id"`
-	SourceRevision   string     `json:"sourceRevision"   bun:"source_revision"`
-	Status           string     `json:"status"           bun:"status"`
-	CurrentStep      string     `json:"currentStep"      bun:"current_step"`
-	Error            string     `json:"error"            bun:"error"`
-	CreatedAt        time.Time  `json:"createdAt"        bun:"created_at"`
-	StartedAt        *time.Time `json:"startedAt"        bun:"started_at"`
-	FinishedAt       *time.Time `json:"finishedAt"       bun:"finished_at"`
-	RegistryEndpoint string     `json:"registryEndpoint" bun:"registry_endpoint"`
-	JobID            *int64     `json:"jobId"            bun:"job_id"`
-	JobState         string     `json:"jobState"         bun:"job_state"`
-}
+type EnvironmentBuildActivity = models.EnvironmentBuildActivity
 
 type EnvironmentBuildLogSnapshot struct {
 	Build        EnvironmentBuildActivity `json:"build"`
@@ -355,41 +303,9 @@ type EnvironmentBuildLogSnapshot struct {
 	HasMore      bool                     `json:"hasMore"`
 }
 
-type EnvironmentReleaseActivity struct {
-	ID                uuid.UUID `json:"id"                bun:"id"`
-	SourceRevision    string    `json:"sourceRevision"    bun:"source_revision"`
-	ArtifactReference string    `json:"artifactReference" bun:"artifact_reference"`
-	CreatedAt         time.Time `json:"createdAt"         bun:"created_at"`
-}
+type EnvironmentReleaseActivity = models.EnvironmentReleaseActivity
 
-type EnvironmentDeploymentActivity struct {
-	ID          uuid.UUID  `json:"id"          bun:"id"`
-	Status      string     `json:"status"      bun:"status"`
-	CurrentStep string     `json:"currentStep" bun:"current_step"`
-	Error       string     `json:"error"       bun:"error"`
-	ReleaseID   uuid.UUID  `json:"releaseId"   bun:"release_id"`
-	TargetID    uuid.UUID  `json:"targetId"    bun:"target_id"`
-	TargetName  string     `json:"targetName"  bun:"target_name"`
-	Attempt     int32      `json:"attempt"     bun:"attempt"`
-	CreatedAt   time.Time  `json:"createdAt"   bun:"created_at"`
-	StartedAt   *time.Time `json:"startedAt"   bun:"started_at"`
-	FinishedAt  *time.Time `json:"finishedAt"  bun:"finished_at"`
-	Active      bool       `json:"active"      bun:"active"`
-}
-
-const environmentDeploymentActiveExpression = `EXISTS (
-	SELECT 1
-	FROM instances AS active_instance
-	JOIN caddy_route_backends AS active_backend ON active_backend.instance_id = active_instance.id
-	JOIN caddy_routes AS active_route ON active_route.id = active_backend.caddy_route_id
-	WHERE active_instance.deployment_id = deployment.id
-		AND active_instance.state = 'serving'
-		AND active_instance.removed_at IS NULL
-		AND active_backend.weight = 100
-		AND active_backend.removed_at IS NULL
-		AND active_route.environment_target_id = deployment.environment_target_id
-		AND active_route.removed_at IS NULL
-)`
+type EnvironmentDeploymentActivity = models.EnvironmentDeploymentActivity
 
 type EnvironmentDeploymentEventActivity struct {
 	ID         uuid.UUID `json:"id"`
@@ -409,38 +325,9 @@ type EnvironmentDeploymentEventSnapshot struct {
 	HasMore      bool                                 `json:"hasMore"`
 }
 
-type EnvironmentInstanceActivity struct {
-	ID           uuid.UUID       `json:"id"           bun:"id"`
-	State        string          `json:"state"        bun:"state"`
-	Slot         string          `json:"slot"         bun:"slot"`
-	ProcessName  string          `json:"processName"  bun:"process_name"`
-	ProcessKind  string          `json:"processKind"  bun:"process_kind"`
-	ReplicaKey   string          `json:"replicaKey"   bun:"replica_key"`
-	Ports        json.RawMessage `json:"ports"        bun:"ports"`
-	ReleaseID    uuid.UUID       `json:"releaseId"    bun:"release_id"`
-	DeploymentID uuid.UUID       `json:"deploymentId" bun:"deployment_id"`
-	TargetID     uuid.UUID       `json:"targetId"     bun:"target_id"`
-	TargetName   string          `json:"targetName"   bun:"target_name"`
-	ObservedAt   time.Time       `json:"observedAt"   bun:"observed_at"`
-}
+type EnvironmentInstanceActivity = models.EnvironmentInstanceActivity
 
-type EnvironmentReleaseCommandActivity struct {
-	ID             uuid.UUID       `json:"id"             bun:"id"`
-	Status         string          `json:"status"         bun:"status"`
-	Attempt        int32           `json:"attempt"        bun:"attempt"`
-	ExternalID     string          `json:"externalId"     bun:"external_id"`
-	ExitCode       *int32          `json:"exitCode"       bun:"exit_code"`
-	StartedAt      *time.Time      `json:"startedAt"      bun:"started_at"`
-	FinishedAt     *time.Time      `json:"finishedAt"     bun:"finished_at"`
-	Error          string          `json:"error"          bun:"error"`
-	ReleaseID      uuid.UUID       `json:"releaseId"      bun:"release_id"`
-	TargetID       uuid.UUID       `json:"targetId"       bun:"target_id"`
-	TargetName     string          `json:"targetName"     bun:"target_name"`
-	Command        string          `json:"command"        bun:"command"`
-	Arguments      json.RawMessage `json:"arguments"      bun:"arguments"`
-	TimeoutSeconds int32           `json:"timeoutSeconds" bun:"timeout_seconds"`
-	CreatedAt      time.Time       `json:"createdAt"      bun:"created_at"`
-}
+type EnvironmentReleaseCommandActivity = models.EnvironmentReleaseCommandActivity
 
 func (service *EnvironmentSetup) Overview(
 	ctx context.Context,
@@ -463,29 +350,13 @@ func (service *EnvironmentSetup) Overview(
 	if err != nil {
 		return EnvironmentOverview{}, err
 	}
-	var source struct {
-		ApplicationName  string `bun:"application_name"`
-		SourceType       string `bun:"source_type"`
-		Repository       string `bun:"repository"`
-		Reference        string `bun:"reference"`
-		ContextPath      string `bun:"context_path"`
-		RegistryName     string `bun:"registry_name"`
-		RegistryEndpoint string `bun:"registry_endpoint"`
-	}
-	err = service.db.Executor().NewSelect().TableExpr("applications AS application").
-		ColumnExpr("application.name AS application_name, environment_source.repository, environment_source.reference, CASE WHEN environment_source.kind = 'image' THEN 'image' ELSE 'buildpacks' END AS source_type, COALESCE(buildpack.context_path, '') AS context_path").
-		ColumnExpr("registry_resource.name AS registry_name").
-		ColumnExpr("CASE WHEN registry_resource.system_managed THEN COALESCE(NULLIF(registry.configuration ->> 'route_host', ''), registry_endpoint.address) WHEN registry_endpoint.port IN (80, 443) THEN registry_endpoint.address ELSE registry_endpoint.address || ':' || registry_endpoint.port::text END AS registry_endpoint").
-		Join("JOIN environment_sources AS environment_source ON environment_source.environment_id = ? AND environment_source.archived_at IS NULL", environmentID).
-		Join("LEFT JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = environment_source.id").
-		Join("LEFT JOIN image_configurations AS image ON image.environment_source_id = environment_source.id").
-		Join("JOIN registry_resources AS registry ON registry.resource_id = COALESCE(buildpack.registry_resource_id, image.registry_resource_id)").
-		Join("JOIN resources AS registry_resource ON registry_resource.id = registry.resource_id").
-		Join("JOIN resource_endpoints AS registry_endpoint ON registry_endpoint.resource_id = registry.resource_id AND registry_endpoint.role = 'primary' AND registry_endpoint.archived_at IS NULL").
-		Where("application.id = ?", applicationID).Limit(1).Scan(ctx, &source)
+	overviewRows, err := models.Environment.OverviewCatalog(
+		ctx, service.db.Executor(), applicationID, environmentID, setupComplete,
+	)
 	if err != nil {
 		return EnvironmentOverview{}, err
 	}
+	source := overviewRows.Source
 	deployability, err := models.Environment.Deployability(
 		ctx,
 		service.db.Executor(),
@@ -530,36 +401,12 @@ func (service *EnvironmentSetup) Overview(
 			func(left, right int) bool { return variables[left].Key < variables[right].Key },
 		)
 	}
-	var domain string
-	_ = service.db.Executor().
-		NewSelect().
-		TableExpr("environment_domains").
-		ColumnExpr("hostname").
-		Where("environment_id = ?", environmentID).
-		Where("is_primary = TRUE").
-		Where("archived_at IS NULL").
-		Limit(1).
-		Scan(ctx, &domain)
+	domain := overviewRows.Domain
 	dnsStatus, err := service.dns.Status(ctx, environmentID)
 	if err != nil {
 		return EnvironmentOverview{}, err
 	}
-	type runtimeServer struct {
-		ID       uuid.UUID `bun:"id"`
-		TargetID uuid.UUID `bun:"target_id"`
-		Name     string    `bun:"name"`
-	}
-	runtimeServers := make([]runtimeServer, 0)
-	if setupComplete {
-		if err := service.db.Executor().NewSelect().TableExpr("environment_targets AS target").
-			ColumnExpr("server.id, target.id AS target_id, server.name").
-			Join("JOIN servers AS server ON server.id = target.server_id").
-			Where("target.environment_id = ?", environmentID).
-			Where("target.detached_at IS NULL").
-			OrderExpr("server.name").Scan(ctx, &runtimeServers); err != nil {
-			return EnvironmentOverview{}, err
-		}
-	}
+	runtimeServers := overviewRows.RuntimeServers
 	runtimeServerIDs := make([]uuid.UUID, 0, len(runtimeServers))
 	runtimeTargetIDs := make([]uuid.UUID, 0, len(runtimeServers))
 	runtimeServerNames := make([]string, 0, len(runtimeServers))
@@ -568,82 +415,12 @@ func (service *EnvironmentSetup) Overview(
 		runtimeTargetIDs = append(runtimeTargetIDs, server.TargetID)
 		runtimeServerNames = append(runtimeServerNames, server.Name)
 	}
-	resources := make([]EnvironmentResourceActivity, 0)
-	if err := service.db.Executor().
-		NewSelect().
-		TableExpr("environment_resources AS connection").
-		ColumnExpr("connection.id, connection.alias, resource.name, resource.configuration ->> 'engine' AS engine").
-		Join("JOIN resources AS resource ON resource.id = connection.resource_id").
-		Where("connection.environment_id = ?", environmentID).
-		Where("connection.archived_at IS NULL").
-		OrderExpr("connection.alias").
-		Scan(ctx, &resources); err != nil {
-		return EnvironmentOverview{}, err
-	}
-	builds := make([]EnvironmentBuildActivity, 0)
-	if err := service.db.Executor().NewSelect().TableExpr("builds").
-		ColumnExpr("id, source_revision, status, COALESCE(current_step, '') AS current_step, COALESCE(error, '') AS error, created_at, started_at, finished_at").
-		ColumnExpr("COALESCE(build_configuration ->> 'registry_endpoint', '') AS registry_endpoint").
-		ColumnExpr("(SELECT job.id FROM river_job AS job WHERE job.kind = 'build_source' AND job.args ->> 'build_id' = builds.id::text ORDER BY job.id DESC LIMIT 1) AS job_id").
-		ColumnExpr("COALESCE((SELECT job.state::text FROM river_job AS job WHERE job.kind = 'build_source' AND job.args ->> 'build_id' = builds.id::text ORDER BY job.id DESC LIMIT 1), '') AS job_state").
-		Where("environment_id = ?", environmentID).
-		OrderExpr("created_at DESC").Limit(20).Scan(ctx, &builds); err != nil {
-		return EnvironmentOverview{}, err
-	}
-	releases := make([]EnvironmentReleaseActivity, 0)
-	if err := service.db.Executor().
-		NewSelect().
-		TableExpr("releases").
-		ColumnExpr("id, COALESCE(source_revision, version, '') AS source_revision, artifact_reference, created_at").
-		Where("environment_id = ?", environmentID).
-		Where("registry_resource_id IS NOT NULL").
-		OrderExpr("created_at DESC").
-		Limit(20).
-		Scan(ctx, &releases); err != nil {
-		return EnvironmentOverview{}, err
-	}
-	deployments := make([]EnvironmentDeploymentActivity, 0)
-	if err := service.db.Executor().NewSelect().TableExpr("deployments AS deployment").
-		ColumnExpr("deployment.id, deployment.status, COALESCE(deployment.current_step, '') AS current_step, COALESCE(deployment.error, '') AS error, deployment.release_id, deployment.environment_target_id AS target_id, server.name AS target_name, deployment.attempt, deployment.created_at, deployment.started_at, deployment.finished_at").
-		ColumnExpr(environmentDeploymentActiveExpression+" AS active").
-		Join("JOIN releases AS release ON release.id = deployment.release_id").
-		Join("JOIN environment_targets AS target ON target.id = deployment.environment_target_id").
-		Join("JOIN servers AS server ON server.id = target.server_id").
-		Where("release.environment_id = ?", environmentID).
-		Where("release.registry_resource_id IS NOT NULL").
-		OrderExpr("deployment.created_at DESC").Limit(30).Scan(ctx, &deployments); err != nil {
-		return EnvironmentOverview{}, err
-	}
-	instances := make([]EnvironmentInstanceActivity, 0)
-	if err := service.db.Executor().
-		NewSelect().
-		TableExpr("instances AS instance").
-		ColumnExpr("instance.id, instance.state, instance.slot, instance.process_name, instance.process_kind, instance.replica_key, instance.ports, instance.release_id, instance.deployment_id, instance.environment_target_id AS target_id, server.name AS target_name, instance.observed_at").
-		Join("JOIN releases AS release ON release.id = instance.release_id").
-		Join("JOIN environment_targets AS target ON target.id = instance.environment_target_id").
-		Join("JOIN servers AS server ON server.id = target.server_id").
-		Where("release.environment_id = ?", environmentID).
-		Where("release.registry_resource_id IS NOT NULL").
-		Where("instance.removed_at IS NULL").
-		OrderExpr("target.attached_at, instance.process_kind, instance.process_name, instance.replica_key, instance.created_at DESC").
-		Limit(200).
-		Scan(ctx, &instances); err != nil {
-		return EnvironmentOverview{}, err
-	}
-	releaseCommands := make([]EnvironmentReleaseCommandActivity, 0)
-	if err := service.db.Executor().
-		NewSelect().
-		TableExpr("release_command_executions AS execution").
-		ColumnExpr("execution.id, execution.status, execution.attempt, COALESCE(execution.external_id, '') AS external_id, execution.exit_code, execution.started_at, execution.finished_at, COALESCE(execution.error, '') AS error, execution.release_id, execution.environment_target_id AS target_id, server.name AS target_name, execution.configuration ->> 'command' AS command, execution.configuration -> 'arguments' AS arguments, (execution.configuration ->> 'timeout_seconds')::integer AS timeout_seconds, execution.created_at").
-		Join("JOIN releases AS release ON release.id = execution.release_id").
-		Join("JOIN environment_targets AS target ON target.id = execution.environment_target_id").
-		Join("JOIN servers AS server ON server.id = target.server_id").
-		Where("release.environment_id = ?", environmentID).
-		OrderExpr("execution.created_at DESC").
-		Limit(20).
-		Scan(ctx, &releaseCommands); err != nil {
-		return EnvironmentOverview{}, err
-	}
+	resources := overviewRows.Resources
+	builds := overviewRows.Builds
+	releases := overviewRows.Releases
+	deployments := overviewRows.Deployments
+	instances := overviewRows.Instances
+	releaseCommands := overviewRows.ReleaseCommands
 	canPromote, promotionTargetName, latestSuccessfulDeploymentID, latestSuccessfulReleaseID, err := promotionOverview(
 		ctx,
 		service.db.Executor(),
@@ -712,22 +489,7 @@ func (service *EnvironmentSetup) ServingContainer(
 	); err != nil {
 		return container, err
 	}
-	var instance struct {
-		ID                  uuid.UUID `bun:"id"`
-		DeploymentID        uuid.UUID `bun:"deployment_id"`
-		EnvironmentTargetID uuid.UUID `bun:"environment_target_id"`
-	}
-	err := service.db.Executor().NewSelect().TableExpr("instances AS instance").
-		ColumnExpr("instance.id, instance.deployment_id, instance.environment_target_id").
-		Join("JOIN releases AS release ON release.id = instance.release_id").
-		Where("release.environment_id = ?", environmentID).
-		Where("release.registry_resource_id IS NOT NULL").
-		Where("instance.process_kind = 'web'").
-		Where("instance.state = 'serving'").
-		Where("instance.removed_at IS NULL").
-		OrderExpr("instance.created_at DESC").
-		Limit(1).
-		Scan(ctx, &instance)
+	instance, err := models.Instance.ServingForEnvironment(ctx, service.db.Executor(), environmentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return container, nil
 	}
@@ -807,12 +569,8 @@ func (service *EnvironmentSetup) environmentSecretActivity(
 	ctx context.Context,
 	environmentID uuid.UUID,
 ) ([]EnvironmentSecretActivity, error) {
-	targetStates := make([]models.EnvironmentTargetStateEntity, 0)
-	if err := service.db.Executor().NewSelect().Model(&targetStates).
-		Join("JOIN environment_targets AS target ON target.id = environment_target_states.environment_target_id").
-		Where("target.environment_id = ?", environmentID).
-		Where("target.detached_at IS NULL").
-		OrderExpr("target.attached_at, target.id").Scan(ctx); err != nil {
+	targetStates, err := models.EnvironmentTargetState.ActiveForEnvironment(ctx, service.db.Executor(), environmentID)
+	if err != nil {
 		return nil, err
 	}
 	if len(targetStates) == 0 {
@@ -941,21 +699,7 @@ func (service *EnvironmentSetup) environmentLatestFailedRevisionID(
 	ctx context.Context,
 	targetID uuid.UUID,
 ) (*uuid.UUID, error) {
-	var revisionID uuid.UUID
-	err := service.db.Executor().NewSelect().TableExpr("deployments AS deployment").
-		ColumnExpr("association.environment_state_revision_id").
-		Join("JOIN change_state_revisions AS association ON association.change_id = deployment.change_id AND association.role = 'result'").
-		Where("deployment.environment_target_id = ?", targetID).
-		Where("deployment.status = 'failed'").
-		OrderExpr("deployment.finished_at DESC NULLS LAST, deployment.created_at DESC").
-		Limit(1).Scan(ctx, &revisionID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, err
-	}
-	return &revisionID, nil
+	return models.Deployment.LatestFailedRevisionID(ctx, service.db.Executor(), targetID)
 }
 
 func (service *EnvironmentSetup) environmentRevisionSecrets(
@@ -1007,26 +751,8 @@ func (service *EnvironmentSetup) EditData(
 	if err != nil {
 		return EnvironmentEditData{}, err
 	}
-	type resourceRow struct {
-		ID                   uuid.UUID       `bun:"id"`
-		ResourceID           uuid.UUID       `bun:"resource_id"`
-		ResourceEndpointID   uuid.UUID       `bun:"resource_endpoint_id"`
-		ResourceCredentialID *uuid.UUID      `bun:"resource_credential_id"`
-		Alias                string          `bun:"alias"`
-		Configuration        json.RawMessage `bun:"configuration"`
-		CredentialMetadata   json.RawMessage `bun:"credential_metadata"`
-	}
-	rows := make([]resourceRow, 0)
-	if err := service.db.Executor().NewSelect().TableExpr("environment_resources AS connection").
-		ColumnExpr("connection.id, connection.resource_id, connection.resource_endpoint_id, connection.resource_credential_id, connection.alias, connection.configuration").
-		ColumnExpr("credential.metadata AS credential_metadata").
-		Join("JOIN resource_endpoints AS endpoint ON endpoint.id = connection.resource_endpoint_id AND endpoint.archived_at IS NULL").
-		Join("JOIN resources AS resource ON resource.id = connection.resource_id AND resource.archived_at IS NULL").
-		Join("LEFT JOIN resource_credentials AS credential ON credential.id = connection.resource_credential_id AND credential.archived_at IS NULL").
-		Where("connection.environment_id = ?", environmentID).
-		Where("connection.archived_at IS NULL").
-		Where("resource.environment_attachable = TRUE").
-		OrderExpr("connection.alias").Scan(ctx, &rows); err != nil {
+	rows, err := models.EnvironmentResource.EditRows(ctx, service.db.Executor(), environmentID)
+	if err != nil {
 		return EnvironmentEditData{}, err
 	}
 	resources := make([]EnvironmentSetupResourceInput, 0, len(rows))
@@ -1141,15 +867,7 @@ func (service *EnvironmentSetup) DeploymentEvents(
 	environmentID, deploymentID uuid.UUID,
 	after int64,
 ) (EnvironmentDeploymentEventSnapshot, error) {
-	var deployment EnvironmentDeploymentActivity
-	err := service.db.Executor().NewSelect().TableExpr("deployments AS deployment").
-		ColumnExpr("deployment.id, deployment.status, COALESCE(deployment.current_step, '') AS current_step, COALESCE(deployment.error, '') AS error, deployment.release_id, deployment.environment_target_id AS target_id, server.name AS target_name, deployment.attempt, deployment.created_at, deployment.started_at, deployment.finished_at").
-		ColumnExpr(environmentDeploymentActiveExpression+" AS active").
-		Join("JOIN releases AS release ON release.id = deployment.release_id").
-		Join("JOIN environment_targets AS target ON target.id = deployment.environment_target_id").
-		Join("JOIN servers AS server ON server.id = target.server_id").
-		Where("deployment.id = ?", deploymentID).Where("release.environment_id = ?", environmentID).
-		Where("release.registry_resource_id IS NOT NULL").Limit(1).Scan(ctx, &deployment)
+	deployment, err := models.Deployment.EnvironmentActivity(ctx, service.db.Executor(), environmentID, deploymentID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return EnvironmentDeploymentEventSnapshot{}, sql.ErrNoRows
 	}
@@ -1237,14 +955,8 @@ func (service *EnvironmentSetup) Options(ctx context.Context) (EnvironmentSetupO
 		options = append(options, option)
 	}
 
-	servers := make([]EnvironmentSetupServerOption, 0)
-	if err := service.db.Executor().NewSelect().TableExpr("servers AS server").
-		ColumnExpr("server.id, server.name, server.kind, server.address").
-		Where("server.archived_at IS NULL").Where("server.is_configured = TRUE").
-		Where("server.kind IN ('self_hosted', 'worker')").
-		Where("server.capabilities @> '{\"runtime\":true}'::jsonb").
-		OrderExpr("CASE WHEN server.kind = 'self_hosted' THEN 0 ELSE 1 END, server.name").
-		Scan(ctx, &servers); err != nil {
+	servers, err := models.Server.EnvironmentSetupOptions(ctx, service.db.Executor())
+	if err != nil {
 		return EnvironmentSetupOptions{}, err
 	}
 
@@ -1256,26 +968,7 @@ func (service *EnvironmentSetup) Options(ctx context.Context) (EnvironmentSetupO
 	return EnvironmentSetupOptions{Resources: options, Servers: servers, DNSZones: dnsZones}, nil
 }
 
-type environmentSetupSource struct {
-	ApplicationID         uuid.UUID    `bun:"application_id"`
-	EnvironmentID         uuid.UUID    `bun:"environment_id"`
-	EnvironmentSourceID   uuid.UUID    `bun:"environment_source_id"`
-	EnvironmentArchivedAt sql.NullTime `bun:"environment_archived_at"`
-	SetupComplete         bool
-	Kind                  string          `bun:"kind"`
-	Reference             string          `bun:"reference"`
-	Repository            string          `bun:"repository"`
-	RepositoryID          uuid.UUID       `bun:"repository_id"`
-	InstallationID        uuid.UUID       `bun:"installation_id"`
-	ContextPath           string          `bun:"context_path"`
-	BuilderReference      sql.NullString  `bun:"builder_reference"`
-	BuildpackSettings     json.RawMessage `bun:"buildpack_settings"`
-	ImageRepository       string          `bun:"image_repository"`
-	RegistryID            uuid.UUID       `bun:"registry_id"`
-	RegistryCredentialID  uuid.UUID       `bun:"registry_credential_id"`
-	RegistryEndpoint      string          `bun:"registry_endpoint"`
-	BuildServerID         uuid.UUID       `bun:"build_server_id"`
-}
+type environmentSetupSource = models.EnvironmentSetupSource
 
 type preparedSetupResource struct {
 	input                   EnvironmentSetupResourceInput
@@ -2100,9 +1793,7 @@ func (service *EnvironmentSetup) queueImageDeploymentTx(
 			errors.New("Environment has no runtime Server targets"),
 		)
 	}
-	active, err := tx.NewSelect().TableExpr("deployments").
-		Where("environment_target_id IN (SELECT id FROM environment_targets WHERE environment_id = ? AND detached_at IS NULL)", source.EnvironmentID).
-		Where("status IN ('queued', 'running')").Count(ctx)
+	active, err := models.Deployment.ActiveCountForEnvironment(ctx, tx, source.EnvironmentID)
 	if err != nil {
 		return models.ReleaseEntity{}, models.DeploymentEntity{}, err
 	}
@@ -2407,9 +2098,7 @@ func (service *EnvironmentSetup) QueueReleaseDeployment(
 			errors.New("Environment has no runtime Server targets"),
 		)
 	}
-	active, err := tx.NewSelect().TableExpr("deployments").
-		Where("environment_target_id IN (SELECT id FROM environment_targets WHERE environment_id = ? AND detached_at IS NULL)", environmentID).
-		Where("status IN ('queued', 'running')").Count(ctx)
+	active, err := models.Deployment.ActiveCountForEnvironment(ctx, tx, environmentID)
 	if err != nil {
 		return ReleaseDeploymentResult{}, err
 	}
@@ -2620,16 +2309,9 @@ func (service *EnvironmentSetup) PromoteToProduction(
 	if err != nil {
 		return PromotionResult{}, err
 	}
-	var productionSourceID *uuid.UUID
-	var sourceID uuid.UUID
-	if err := tx.NewSelect().TableExpr("environment_sources").
-		ColumnExpr("id").
-		Where("environment_id = ?", production.ID).
-		Where("archived_at IS NULL").
-		OrderExpr("created_at DESC").
-		Limit(1).
-		Scan(ctx, &sourceID); err == nil {
-		productionSourceID = &sourceID
+	productionSourceID, err := models.EnvironmentSource.LatestActiveID(ctx, tx, production.ID)
+	if err != nil {
+		return PromotionResult{}, err
 	}
 	now := time.Now().UTC()
 	sequence, err := models.Change.NextSequence(ctx, tx, production.ID)
@@ -2721,13 +2403,8 @@ func productionEnvironmentForApplication(
 	exec storage.Executor,
 	applicationID uuid.UUID,
 ) (models.EnvironmentEntity, error) {
-	environments := make([]models.EnvironmentEntity, 0)
-	if err := exec.NewSelect().Model(&environments).
-		Where("application_id = ?", applicationID).
-		Where("kind = ?", "production").
-		Where("archived_at IS NULL").
-		OrderExpr("created_at").
-		Scan(ctx); err != nil {
+	environments, err := models.Environment.ProductionForApplication(ctx, exec, applicationID)
+	if err != nil {
 		return models.EnvironmentEntity{}, err
 	}
 	if len(environments) == 0 {
@@ -2987,9 +2664,8 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	input.Slug = slug.Make(strings.TrimSpace(input.Slug))
 	input.Kind = strings.TrimSpace(input.Kind)
 	input.HealthPath = strings.TrimSpace(input.HealthPath)
-	var currentRuntime models.RuntimeConfigurationEntity
-	if err := service.db.Executor().NewSelect().Model(&currentRuntime).
-		Where("environment_id = ?", environmentID).Limit(1).Scan(ctx); err != nil {
+	currentRuntime, err := models.RuntimeConfiguration.FindForEnvironment(ctx, service.db.Executor(), environmentID)
+	if err != nil {
 		return err
 	}
 	runtime := models.BuildpackRuntime(currentRuntime.Runtime)
@@ -3022,10 +2698,8 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	if err != nil {
 		return err
 	}
-	var networkID uuid.UUID
-	if err := service.db.Executor().NewSelect().TableExpr("environment_networks").
-		ColumnExpr("private_network_id").Where("environment_id = ?", environmentID).
-		Where("removed_at IS NULL").Limit(1).Scan(ctx, &networkID); err != nil {
+	networkID, err := models.EnvironmentNetwork.ActivePrivateNetworkID(ctx, service.db.Executor(), environmentID)
+	if err != nil {
 		return fmt.Errorf("load Environment network: %w", err)
 	}
 	targets, err := models.EnvironmentTarget.ActiveForEnvironmentAll(
@@ -3089,27 +2763,15 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	if err != nil || !setupComplete {
 		return errors.New("Environment setup is incomplete")
 	}
-	activeBuilds, err := tx.NewSelect().
-		TableExpr("builds").
-		Where("environment_id = ?", environmentID).
-		Where("status IN ('pending', 'running')").
-		Count(ctx)
+	activeBuilds, err := models.Build.ActiveCountForEnvironment(ctx, tx, environmentID)
 	if err != nil {
 		return err
 	}
-	activeDeployments, err := tx.NewSelect().TableExpr("deployments AS deployment").
-		Join("JOIN environment_targets AS target ON target.id = deployment.environment_target_id").
-		Where("target.environment_id = ?", environmentID).
-		Where("deployment.status IN ('queued', 'running')").Count(ctx)
+	activeDeployments, err := models.Deployment.ActiveCountForEnvironment(ctx, tx, environmentID)
 	if err != nil {
 		return err
 	}
-	activeReleaseCommands, err := tx.NewSelect().
-		TableExpr("release_command_executions AS execution").
-		Join("JOIN releases AS release ON release.id = execution.release_id").
-		Where("release.environment_id = ?", environmentID).
-		Where("execution.status IN ('queued', 'running')").
-		Count(ctx)
+	activeReleaseCommands, err := models.ReleaseCommandExecution.ActiveCountForEnvironment(ctx, tx, environmentID)
 	if err != nil {
 		return err
 	}
@@ -3176,23 +2838,13 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 		}
 		newTargets = append(newTargets, target)
 	}
-	if _, err := tx.ExecContext(
-		ctx,
-		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
-		"environment-slug:"+applicationID.String()+":"+input.Slug,
-	); err != nil {
-		return err
-	}
-	duplicateSlugs, err := tx.NewSelect().
-		TableExpr("environments").
-		Where("application_id = ?", applicationID).
-		Where("id <> ?", environmentID).
-		Where("slug = ?", input.Slug).
-		Count(ctx)
+	available, err := models.Environment.EnsureSlugAvailableExcluding(
+		ctx, tx, applicationID, environmentID, input.Slug,
+	)
 	if err != nil {
 		return err
 	}
-	if duplicateSlugs > 0 {
+	if !available {
 		return errors.Join(
 			models.ErrDomainValidation,
 			errors.New("Environment slug is already in use"),
@@ -3205,12 +2857,8 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	}); err != nil {
 		return err
 	}
-	var persistedRuntime models.RuntimeConfigurationEntity
-	if err := tx.NewSelect().
-		Model(&persistedRuntime).
-		Where("environment_id = ?", environmentID).
-		Limit(1).
-		Scan(ctx); err != nil {
+	persistedRuntime, err := models.RuntimeConfiguration.FindForEnvironment(ctx, tx, environmentID)
+	if err != nil {
 		return err
 	}
 	runtimeSettings, _ := json.Marshal(map[string]any{
@@ -3230,9 +2878,8 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	); err != nil {
 		return err
 	}
-	var domain models.EnvironmentDomainEntity
-	if err := tx.NewSelect().Model(&domain).Where("environment_id = ?", environmentID).
-		Where("is_primary = TRUE").Where("archived_at IS NULL").Limit(1).Scan(ctx); err != nil {
+	domain, err := models.EnvironmentDomain.PrimaryForEnvironment(ctx, tx, environmentID)
+	if err != nil {
 		return err
 	}
 	updatedDomain, err := models.EnvironmentDomain.Update(
@@ -3297,9 +2944,8 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 			return err
 		}
 	}
-	currentConnections := make([]models.EnvironmentResourceEntity, 0)
-	if err := tx.NewSelect().Model(&currentConnections).Where("environment_id = ?", environmentID).
-		Where("archived_at IS NULL").Scan(ctx); err != nil {
+	currentConnections, err := models.EnvironmentResource.ActiveForEnvironment(ctx, tx, environmentID)
+	if err != nil {
 		return err
 	}
 	for _, connection := range currentConnections {
@@ -3392,10 +3038,7 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 			continue
 		}
 		now := time.Now().UTC()
-		if _, archiveCredentialErr := tx.NewUpdate().TableExpr("resource_credentials").
-			Set("archived_at = ?", now).Set("updated_at = ?", now).
-			Where("id = ?", credential.ID).
-			Where("archived_at IS NULL").Exec(ctx); archiveCredentialErr != nil {
+		if archiveCredentialErr := models.ResourceCredential.ArchiveID(ctx, tx, credential.ID, now); archiveCredentialErr != nil {
 			return archiveCredentialErr
 		}
 	}
@@ -3467,11 +3110,7 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 			return err
 		}
 	}
-	if _, err := tx.NewUpdate().TableExpr("environment_target_states AS state").
-		Set("desired_revision_id = ?", revision.ID).
-		Set("state = 'pending'").Set("updated_at = ?", now).
-		Where("state.environment_target_id IN (SELECT id FROM environment_targets WHERE environment_id = ? AND detached_at IS NULL)", environmentID).
-		Exec(ctx); err != nil {
+	if err := models.EnvironmentTargetState.MarkEnvironmentPending(ctx, tx, environmentID, revision.ID, now); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -3484,29 +3123,8 @@ func (service *EnvironmentSetup) cleanupEnvironment(
 	ctx context.Context,
 	environmentID uuid.UUID,
 ) error {
-	type jobReference struct {
-		ID    int64  `bun:"id"`
-		State string `bun:"state"`
-	}
-	jobsToDelete := make([]jobReference, 0)
-	if err := service.db.Executor().NewSelect().TableExpr("river_job AS job").
-		ColumnExpr("job.id, job.state::text AS state").
-		Where(`
-			(job.kind = 'build_source' AND EXISTS (
-				SELECT 1 FROM builds AS build
-				WHERE build.environment_id = ? AND build.id::text = job.args ->> 'build_id'
-			)) OR
-			(job.kind = 'deploy_release' AND EXISTS (
-				SELECT 1 FROM deployments AS deployment
-				JOIN environment_targets AS target ON target.id = deployment.environment_target_id
-				WHERE target.environment_id = ? AND deployment.id::text = job.args ->> 'deployment_id'
-			)) OR
-			(job.kind = 'release_command' AND EXISTS (
-				SELECT 1 FROM release_command_executions AS execution
-				JOIN releases AS release ON release.id = execution.release_id
-				WHERE release.environment_id = ? AND execution.id::text = job.args ->> 'release_command_execution_id'
-			))`, environmentID, environmentID, environmentID).
-		Scan(ctx, &jobsToDelete); err != nil {
+	jobsToDelete, err := models.Job.ForEnvironment(ctx, service.db.Executor(), environmentID)
+	if err != nil {
 		return fmt.Errorf("load Environment background jobs: %w", err)
 	}
 	for _, job := range jobsToDelete {
@@ -3519,12 +3137,8 @@ func (service *EnvironmentSetup) cleanupEnvironment(
 		}
 	}
 
-	routeIDs := make([]string, 0)
-	if err := service.db.Executor().NewSelect().TableExpr("caddy_routes AS route").
-		ColumnExpr("route.external_id").
-		Join("JOIN environment_targets AS target ON target.id = route.environment_target_id").
-		Where("target.environment_id = ?", environmentID).
-		Scan(ctx, &routeIDs); err != nil {
+	routeIDs, err := models.CaddyRoute.ExternalIDsForEnvironment(ctx, service.db.Executor(), environmentID)
+	if err != nil {
 		return fmt.Errorf("load Environment Caddy routes: %w", err)
 	}
 	for _, routeID := range routeIDs {
@@ -3532,14 +3146,8 @@ func (service *EnvironmentSetup) cleanupEnvironment(
 			return fmt.Errorf("delete Environment Caddy route: %w", err)
 		}
 	}
-	serverIDs := make([]uuid.UUID, 0)
-	if err := service.db.Executor().
-		NewSelect().
-		TableExpr("environment_targets").
-		Column("server_id").
-		Where("environment_id = ?", environmentID).
-		Group("server_id").
-		Scan(ctx, &serverIDs); err != nil {
+	serverIDs, err := models.EnvironmentTarget.ServerIDsForEnvironment(ctx, service.db.Executor(), environmentID)
+	if err != nil {
 		return fmt.Errorf("load Environment workload Servers: %w", err)
 	}
 	for _, serverID := range serverIDs {
@@ -3575,28 +3183,10 @@ func (service *EnvironmentSetup) rehomeDurableChanges(
 	if len(environmentIDs) == 0 {
 		return nil
 	}
-	var systemEnvironmentID uuid.UUID
-	if err := db.NewSelect().TableExpr("environments AS environment").ColumnExpr("environment.id").
-		Join("JOIN applications AS application ON application.id = environment.application_id").
-		Where("application.slug = ?", models.SystemApplicationSlug).
-		Where("application.archived_at IS NULL").Where("environment.archived_at IS NULL").
-		OrderExpr("environment.created_at").Limit(1).Scan(ctx, &systemEnvironmentID); err != nil {
-		return fmt.Errorf("load system Environment for durable history: %w", err)
+	if err := models.Change.RehomeDurableForEnvironments(ctx, db, environmentIDs, time.Now().UTC()); err != nil {
+		return fmt.Errorf("rehome durable Environment history: %w", err)
 	}
-	_, err := db.NewUpdate().TableExpr("changes AS candidate").
-		Set("environment_id = ?", systemEnvironmentID).Set("updated_at = ?", time.Now().UTC()).
-		Where("candidate.environment_id IN (?)", bun.In(environmentIDs)).
-		Where(`EXISTS (SELECT 1 FROM backups AS backup WHERE backup.change_id = candidate.id)
-			OR EXISTS (SELECT 1 FROM resource_restores AS restore WHERE restore.change_id = candidate.id)
-			OR EXISTS (
-				SELECT 1 FROM change_tasks AS task
-				WHERE task.change_id = candidate.id AND (
-					EXISTS (SELECT 1 FROM backups AS backup WHERE backup.change_task_id = task.id)
-					OR EXISTS (SELECT 1 FROM resource_restores AS restore WHERE restore.change_task_id = task.id)
-				)
-			)`).
-		Exec(ctx)
-	return err
+	return nil
 }
 
 func deleteEnvironmentResourceCredentials(
@@ -3604,11 +3194,7 @@ func deleteEnvironmentResourceCredentials(
 	db storage.Executor,
 	environmentID uuid.UUID,
 ) error {
-	_, err := db.NewDelete().TableExpr("resource_credentials").
-		Where("metadata ->> 'purpose' = 'application'").
-		Where("metadata ->> 'environment_id' = ?", environmentID.String()).
-		Exec(ctx)
-	return err
+	return models.ResourceCredential.DeleteForEnvironment(ctx, db, environmentID)
 }
 
 func (service *EnvironmentSetup) DeleteEnvironment(
@@ -3633,9 +3219,7 @@ func (service *EnvironmentSetup) DeleteEnvironment(
 		return err
 	}
 	defer tx.Rollback()
-	var lockedApplication models.ApplicationEntity
-	if err := tx.NewSelect().Model(&lockedApplication).Where("id = ?", applicationID).
-		Where("slug <> ?", models.SystemApplicationSlug).For("UPDATE").Scan(ctx); err != nil {
+	if _, err := models.Application.LockNonSystem(ctx, tx, applicationID); err != nil {
 		return err
 	}
 	locked, err := models.Environment.Lock(ctx, tx, environmentID)
@@ -3657,10 +3241,7 @@ func (service *EnvironmentSetup) DeleteEnvironment(
 	if err := deleteEnvironmentResourceCredentials(ctx, tx, environmentID); err != nil {
 		return fmt.Errorf("delete Environment Resource credentials: %w", err)
 	}
-	remaining, err := tx.NewSelect().
-		TableExpr("environments").
-		Where("application_id = ?", applicationID).
-		Count(ctx)
+	remaining, err := models.Environment.CountForApplication(ctx, tx, applicationID)
 	if err != nil {
 		return err
 	}
@@ -3688,19 +3269,11 @@ func (service *EnvironmentSetup) DeleteApplication(
 		return err
 	}
 	defer tx.Rollback()
-	var lockedApplication models.ApplicationEntity
-	if err := tx.NewSelect().Model(&lockedApplication).Where("id = ?", applicationID).
-		Where("slug <> ?", models.SystemApplicationSlug).For("UPDATE").Scan(ctx); err != nil {
+	if _, err := models.Application.LockNonSystem(ctx, tx, applicationID); err != nil {
 		return err
 	}
-	lockedEnvironmentIDs := make([]uuid.UUID, 0)
-	if err := tx.NewSelect().
-		TableExpr("environments").
-		Column("id").
-		Where("application_id = ?", applicationID).
-		OrderExpr("created_at, id").
-		For("UPDATE").
-		Scan(ctx, &lockedEnvironmentIDs); err != nil {
+	lockedEnvironmentIDs, err := models.Environment.LockIDsForApplication(ctx, tx, applicationID)
+	if err != nil {
 		return err
 	}
 	for _, environmentID := range lockedEnvironmentIDs {
@@ -3733,22 +3306,12 @@ func (service *EnvironmentSetup) deleteEnvironmentBuildCaches(
 	ctx context.Context,
 	environmentID uuid.UUID,
 ) error {
-	serverIDs := make([]uuid.UUID, 0)
-	if err := service.db.Executor().NewSelect().TableExpr("builds").
-		ColumnExpr("DISTINCT (build_configuration ->> 'server_id')::uuid AS server_id").
-		Where("environment_id = ?", environmentID).
-		Where("build_configuration ->> 'server_id' IS NOT NULL").Scan(ctx, &serverIDs); err != nil {
+	serverIDs, err := models.Build.CacheServerIDs(ctx, service.db.Executor(), environmentID)
+	if err != nil {
 		return err
 	}
-	var configuredServerID uuid.UUID
-	if err := service.db.Executor().
-		NewSelect().
-		TableExpr("buildpack_configurations AS buildpack").
-		ColumnExpr("buildpack.server_id").
-		Join("JOIN environment_sources AS source ON source.id = buildpack.environment_source_id").
-		Where("source.environment_id = ?", environmentID).
-		Limit(1).
-		Scan(ctx, &configuredServerID); err == nil {
+	configuredServerID, err := models.BuildpackConfiguration.ServerIDForEnvironment(ctx, service.db.Executor(), environmentID)
+	if err == nil {
 		serverIDs = append(serverIDs, configuredServerID)
 	} else if !errors.Is(
 		err,
@@ -3837,14 +3400,8 @@ func (service *EnvironmentSetup) RetryDeployment(
 	if err != nil || target.EnvironmentID != environmentID || target.DetachedAt.Valid {
 		return models.DeploymentEntity{}, errors.New("failed Deployment target is unavailable")
 	}
-	var revision models.EnvironmentStateRevisionEntity
-	if err := tx.NewSelect().
-		Model(&revision).
-		Join("JOIN change_state_revisions AS association ON association.environment_state_revision_id = environment_state_revisions.id").
-		Where("association.change_id = ?", previous.ChangeID).
-		Where("association.role = 'result'").
-		Limit(1).
-		Scan(ctx); err != nil {
+	revision, err := models.EnvironmentStateRevision.FindResultForChange(ctx, tx, previous.ChangeID)
+	if err != nil {
 		return models.DeploymentEntity{}, err
 	}
 	state, err := models.ParseEnvironmentDesiredState(revision.State)
@@ -4083,26 +3640,9 @@ func (service *EnvironmentSetup) loadSource(
 	ctx context.Context,
 	applicationID, environmentID uuid.UUID,
 ) (environmentSetupSource, models.GitHubRepositoryEntity, models.GitHubInstallationEntity, error) {
-	var source environmentSetupSource
-	err := service.db.Executor().NewSelect().TableExpr("environments AS environment").
-		ColumnExpr("environment.application_id, environment.id AS environment_id, environment.archived_at AS environment_archived_at").
-		ColumnExpr("source.id AS environment_source_id, source.kind, source.reference, source.repository").
-		ColumnExpr("repository.id AS repository_id, installation.id AS installation_id").
-		ColumnExpr("COALESCE(buildpack.context_path, '') AS context_path, buildpack.builder_reference, COALESCE(buildpack.settings, '{}'::jsonb) AS buildpack_settings, COALESCE(buildpack.image_repository, source.repository) AS image_repository, buildpack.server_id AS build_server_id").
-		ColumnExpr("registry_resource.id AS registry_id, registry_credential.id AS registry_credential_id").
-		ColumnExpr("CASE WHEN registry_resource.system_managed THEN COALESCE(NULLIF(registry.configuration ->> 'route_host', ''), registry_endpoint.address) WHEN registry_endpoint.port IN (80, 443) THEN registry_endpoint.address ELSE registry_endpoint.address || ':' || registry_endpoint.port::text END AS registry_endpoint").
-		Join("JOIN environment_sources AS source ON source.environment_id = environment.id AND source.archived_at IS NULL").
-		Join("LEFT JOIN github_environment_sources AS binding ON binding.environment_source_id = source.id").
-		Join("LEFT JOIN github_repositories AS repository ON repository.id = binding.github_repository_id").
-		Join("LEFT JOIN github_installations AS installation ON installation.id = repository.github_installation_id").
-		Join("LEFT JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = source.id").
-		Join("LEFT JOIN image_configurations AS image ON image.environment_source_id = source.id").
-		Join("JOIN registry_resources AS registry ON registry.resource_id = COALESCE(buildpack.registry_resource_id, image.registry_resource_id)").
-		Join("JOIN resources AS registry_resource ON registry_resource.id = registry.resource_id AND registry_resource.archived_at IS NULL").
-		Join("JOIN resource_endpoints AS registry_endpoint ON registry_endpoint.resource_id = registry.resource_id AND registry_endpoint.role = 'primary' AND registry_endpoint.archived_at IS NULL").
-		Join("JOIN resource_credentials AS registry_credential ON registry_credential.resource_id = registry.resource_id AND registry_credential.archived_at IS NULL").
-		Where("environment.id = ?", environmentID).
-		Where("environment.application_id = ?", applicationID).Limit(1).Scan(ctx, &source)
+	source, err := models.EnvironmentSource.SetupSource(
+		ctx, service.db.Executor(), applicationID, environmentID,
+	)
 	if err != nil {
 		return source, models.GitHubRepositoryEntity{}, models.GitHubInstallationEntity{}, err
 	}
@@ -4221,26 +3761,13 @@ func (service *EnvironmentSetup) runtimePlacement(
 			},
 		)
 	}
-	var row struct{ ServerID, NetworkID uuid.UUID }
-	err = service.db.Executor().NewSelect().TableExpr("applications AS application").
-		ColumnExpr("target.server_id, membership.private_network_id AS network_id").
-		Join("JOIN environments AS environment ON environment.application_id = application.id AND environment.archived_at IS NULL").
-		Join("JOIN environment_targets AS target ON target.environment_id = environment.id AND target.detached_at IS NULL").
-		Join("JOIN environment_networks AS membership ON membership.environment_id = environment.id AND membership.removed_at IS NULL").
-		Where("application.slug = ?", models.SystemApplicationSlug).
-		Where("application.archived_at IS NULL").Limit(1).Scan(ctx, &row)
+	row, err := models.Application.SystemRuntimePlacement(ctx, service.db.Executor())
 	if err != nil {
 		return uuid.Nil, uuid.Nil, models.ServerNetworkEntity{}, err
 	}
-	var network models.ServerNetworkEntity
-	err = service.db.Executor().
-		NewSelect().
-		Model(&network).
-		Where("server_id = ?", serverID).
-		Where("private_network_id = ?", row.NetworkID).
-		Where("removed_at IS NULL").
-		Limit(1).
-		Scan(ctx)
+	network, err := models.ServerNetwork.ActiveForServerNetwork(
+		ctx, service.db.Executor(), serverID, row.NetworkID,
+	)
 	if err != nil {
 		return uuid.Nil, uuid.Nil, models.ServerNetworkEntity{}, errors.Join(
 			models.ErrDomainValidation,
@@ -4266,10 +3793,10 @@ func (service *EnvironmentSetup) prepareResources(
 	prepared := make([]preparedSetupResource, 0, len(inputs))
 	connectionConfigurations := make(map[uuid.UUID]environmentResourceConfiguration)
 	if environmentID != uuid.Nil {
-		connections := make([]models.EnvironmentResourceEntity, 0)
-		if err := service.db.Executor().NewSelect().Model(&connections).
-			Where("environment_id = ?", environmentID).
-			Where("archived_at IS NULL").Scan(ctx); err != nil {
+		connections, err := models.EnvironmentResource.ActiveForEnvironment(
+			ctx, service.db.Executor(), environmentID,
+		)
+		if err != nil {
 			return nil, err
 		}
 		for _, connection := range connections {
@@ -4370,10 +3897,9 @@ func (service *EnvironmentSetup) prepareResources(
 				errors.New("selected Resource endpoint is unavailable from the Environment target"),
 			)
 		}
-		var installation models.ResourceInstallationEntity
-		installationErr := service.db.Executor().NewSelect().Model(&installation).
-			Where("resource_id = ?", resource.ID).
-			Where("archived_at IS NULL").OrderExpr("created_at").Limit(1).Scan(ctx)
+		installation, installationErr := models.ResourceInstallation.FindActiveForResource(
+			ctx, service.db.Executor(), resource.ID,
+		)
 		if installationErr == nil {
 			if _, selected := selectedServers[installation.ServerID]; !selected {
 				return nil, errors.Join(
@@ -4452,12 +3978,9 @@ func (service *EnvironmentSetup) prepareResources(
 		var credentialInput *ResourceCredentialInput
 		if resource.Engine() == "opentelemetry" {
 			if identityToken == "" {
-				var existingCredential models.ResourceCredentialEntity
-				findCredentialErr := service.db.Executor().NewSelect().Model(&existingCredential).
-					Where("resource_id = ?", resource.ID).
-					Where("metadata ->> 'purpose' = 'application'").
-					Where("metadata ->> 'environment_id' = ?", environmentID.String()).
-					Where("archived_at IS NULL").Limit(1).Scan(ctx)
+				existingCredential, findCredentialErr := models.ResourceCredential.ActiveApplicationForEnvironment(
+					ctx, service.db.Executor(), resource.ID, environmentID,
+				)
 				if findCredentialErr == nil {
 					credentialValues, err = service.resources.credentialSecretValues(
 						existingCredential,
@@ -4654,9 +4177,8 @@ func lockPreparedSetupResources(
 		return ordered[left].resource.ID.String() < ordered[right].resource.ID.String()
 	})
 	for _, item := range ordered {
-		var resource models.ResourceEntity
-		if err := db.NewSelect().Model(&resource).Where("id = ?", item.resource.ID).
-			Where("archived_at IS NULL").For("UPDATE").Scan(ctx); err != nil {
+		resource, err := models.Resource.LockActive(ctx, db, item.resource.ID)
+		if err != nil {
 			return errors.New("selected Resource changed while the Environment was being prepared")
 		}
 		if !resource.UpdatedAt.Equal(item.resource.UpdatedAt) {

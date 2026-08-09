@@ -400,6 +400,19 @@ func (esr environmentStateRevision) Find(
 	return entity, nil
 }
 
+func (environmentStateRevision) FindResultForChange(
+	ctx context.Context,
+	db storage.Executor,
+	changeID uuid.UUID,
+) (EnvironmentStateRevisionEntity, error) {
+	var entity EnvironmentStateRevisionEntity
+	err := db.NewSelect().Model(&entity).
+		Join("JOIN change_state_revisions AS association ON association.environment_state_revision_id = environment_state_revisions.id").
+		Where("association.change_id = ?", changeID).
+		Where("association.role = 'result'").Limit(1).Scan(ctx)
+	return entity, err
+}
+
 func (esr environmentStateRevision) LatestCommitted(
 	ctx context.Context,
 	db storage.Executor,

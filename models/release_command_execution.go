@@ -223,6 +223,58 @@ func (releaseCommandExecution) Find(
 	return entity, err
 }
 
+func (releaseCommandExecution) SetExternalID(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	externalID string,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("release_command_executions").
+		Set("external_id = ?", externalID).
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Where("status = 'running'").
+		Exec(ctx)
+	return err
+}
+
+func (releaseCommandExecution) SetEnvironmentTarget(
+	ctx context.Context,
+	db storage.Executor,
+	id, environmentTargetID uuid.UUID,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("release_command_executions").
+		Set("environment_target_id = ?", environmentTargetID).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
+func (releaseCommandExecution) MarkSucceeded(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	externalID string,
+	exitCode int32,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("release_command_executions").
+		Set("status = 'succeeded'").
+		Set("external_id = ?", externalID).
+		Set("exit_code = ?", exitCode).
+		Set("finished_at = ?", at).
+		Set("error = NULL").
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Where("status = 'running'").
+		Exec(ctx)
+	return err
+}
+
 func (releaseCommandExecution) Lock(
 	ctx context.Context,
 	db storage.Executor,
@@ -257,6 +309,16 @@ func (releaseCommandExecution) LatestForEnvironment(
 		Limit(1).
 		Scan(ctx)
 	return entity, err
+}
+
+func (releaseCommandExecution) Running(
+	ctx context.Context,
+	db storage.Executor,
+) ([]ReleaseCommandExecutionEntity, error) {
+	items := make([]ReleaseCommandExecutionEntity, 0)
+	err := db.NewSelect().Model(&items).
+		Where("status = 'running'").OrderExpr("created_at").Scan(ctx)
+	return items, err
 }
 
 func (releaseCommandExecution) MarkRunning(

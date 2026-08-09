@@ -30,6 +30,20 @@ type EnvironmentSourceEntity struct {
 	CredentialID  *uuid.UUID      `bun:"credential_id,type:uuid"`
 }
 
+func (environmentSource) DeleteConfiguration(
+	ctx context.Context,
+	db storage.Executor,
+	sourceID uuid.UUID,
+) error {
+	for _, table := range []string{"github_environment_sources", "buildpack_configurations", "image_configurations"} {
+		if _, err := db.NewDelete().TableExpr(table).
+			Where("environment_source_id = ?", sourceID).Exec(ctx); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (e *EnvironmentSourceEntity) Validate() error {
 	builder := validation.NewBuilder()
 	if e.ID == uuid.Nil {

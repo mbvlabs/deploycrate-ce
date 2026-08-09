@@ -19,7 +19,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/uptrace/bun"
 )
 
 const maximumManagedWorkloadNameLength = 128
@@ -127,22 +126,12 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 			operationErr,
 			now,
 		)
-		_, _ = service.db.Executor().
-			NewUpdate().
-			TableExpr("environment_target_states AS state").
-			Set("state = 'failed'").
-			Set("applying_revision_id = NULL").
-			Set("updated_at = ?", now).
-			Where("EXISTS (SELECT 1 FROM deployments deployment WHERE deployment.id = ? AND deployment.environment_target_id = state.environment_target_id)", deploymentID).
-			Exec(persistCtx)
-		_, _ = service.db.Executor().
-			NewUpdate().
-			TableExpr("instances").
-			Set("state = 'failed'").
-			Set("updated_at = ?", now).
-			Where("deployment_id = ?", deploymentID).
-			Where("state <> 'serving'").
-			Exec(persistCtx)
+		_ = models.EnvironmentTargetState.MarkFailedForDeployment(
+			persistCtx, service.db.Executor(), deploymentID, now,
+		)
+		_ = models.Instance.MarkNonServingFailedForDeployment(
+			persistCtx, service.db.Executor(), deploymentID, now,
+		)
 		_ = service.recordEvent(
 			persistCtx,
 			deploymentID,
@@ -183,10 +172,9 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		return err
 	}
 	resolutionStarted := time.Now()
-	if _, err := service.db.Executor().NewUpdate().TableExpr("environment_target_states").
-		Set("state = 'applying'").
-		Set("applying_revision_id = ?", scope.Revision.ID).Set("updated_at = ?", time.Now().UTC()).
-		Where("environment_target_id = ?", scope.Target.ID).Exec(ctx); err != nil {
+	if err := models.EnvironmentTargetState.MarkApplying(
+		ctx, service.db.Executor(), scope.Target.ID, scope.Revision.ID, time.Now().UTC(),
+	); err != nil {
 		return err
 	}
 	resolved, err := service.secrets.ResolveRevision(ctx, scope.Revision)
@@ -334,16 +322,9 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 			instanceState = "failed"
 		}
 		now := time.Now().UTC()
-		if _, err := service.db.Executor().
-			NewUpdate().
-			TableExpr("instances").
-			Set("external_id = ?", candidate.ID).
-			Set("state = ?", instanceState).
-			Set("ports = ?", ports).
-			Set("observed_at = ?", now).
-			Set("updated_at = ?", now).
-			Where("id = ?", instance.ID).
-			Exec(ctx); err != nil {
+		if err := models.Instance.ObserveRuntime(
+			ctx, service.db.Executor(), instance.ID, candidate.ID, &instanceState, ports, now,
+		); err != nil {
 			return err
 		}
 		if !candidate.Running {
@@ -556,14 +537,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 			}
 		}
 		now := time.Now().UTC()
-		_, _ = service.db.Executor().
-			NewUpdate().
-			TableExpr("instances").
-			Set("state = 'removed'").
-			Set("removed_at = ?", now).
-			Set("updated_at = ?", now).
-			Where("id = ?", old.ID).
-			Exec(ctx)
+		_ = models.Instance.MarkRemoved(ctx, service.db.Executor(), old.ID, now)
 	}
 	if err := cleanupUnroutedWorkloadInstances(
 		ctx,
@@ -606,14 +580,7 @@ func (service *DeploymentExecution) advance(
 	step, message string,
 ) error {
 	now := time.Now().UTC()
-	if _, err := service.db.Executor().
-		NewUpdate().
-		TableExpr("deployments").
-		Set("current_step = ?", step).
-		Set("updated_at = ?", now).
-		Where("id = ?", deploymentID).
-		Where("status = 'running'").
-		Exec(ctx); err != nil {
+	if err := models.Deployment.SetCurrentStep(ctx, service.db.Executor(), deploymentID, step, now); err != nil {
 		return err
 	}
 	return service.recordEvent(ctx, deploymentID, "progress", "running", step, message, nil)
@@ -661,14 +628,9 @@ func (service *DeploymentExecution) Fail(
 	); err != nil {
 		return err
 	}
-	_, _ = service.db.Executor().
-		NewUpdate().
-		TableExpr("environment_target_states").
-		Set("state = 'failed'").
-		Set("applying_revision_id = NULL").
-		Set("updated_at = ?", now).
-		Where("environment_target_id = ?", deployment.EnvironmentTargetID).
-		Exec(ctx)
+	_ = models.EnvironmentTargetState.MarkFailed(
+		ctx, service.db.Executor(), deployment.EnvironmentTargetID, now,
+	)
 	return models.Change.MarkFailed(
 		ctx,
 		service.db.Executor(),
@@ -761,10 +723,9 @@ func (service *DeploymentExecution) loadScope(
 	if err != nil || scope.Application.Slug == "" {
 		return scope, errors.New("Deployment Application is unavailable")
 	}
-	err = service.db.Executor().NewSelect().Model(&scope.Revision).
-		Join("JOIN change_state_revisions AS association ON association.environment_state_revision_id = environment_state_revisions.id").
-		Where("association.change_id = ?", deployment.ChangeID).
-		Where("association.role = 'result'").Limit(1).Scan(ctx)
+	scope.Revision, err = models.EnvironmentStateRevision.FindResultForChange(
+		ctx, service.db.Executor(), deployment.ChangeID,
+	)
 	if err != nil || scope.Revision.EnvironmentID != scope.Environment.ID {
 		return scope, errors.New("Deployment state revision is unavailable or mismatched")
 	}
@@ -801,13 +762,9 @@ func (service *DeploymentExecution) loadScope(
 		return scope, errors.New("Deployment process configuration snapshot is invalid")
 	}
 	scope.State.Processes = processSnapshot
-	err = service.db.Executor().
-		NewSelect().
-		Model(&scope.Instances).
-		Where("deployment_id = ?", deployment.ID).
-		Where("removed_at IS NULL").
-		OrderExpr("process_kind, process_name, replica_key").
-		Scan(ctx)
+	scope.Instances, err = models.Instance.ActiveForDeployment(
+		ctx, service.db.Executor(), deployment.ID,
+	)
 	if err != nil || len(scope.Instances) == 0 {
 		return scope, errors.New("Deployment candidate formation is unavailable")
 	}
@@ -867,12 +824,9 @@ func (service *DeploymentExecution) loadScope(
 		scope.Domain.Hostname != scope.State.Domain.Hostname {
 		return scope, errors.New("Deployment primary domain is unavailable or mismatched")
 	}
-	err = service.db.Executor().
-		NewSelect().
-		Model(&scope.Runtime).
-		Where("environment_id = ?", scope.Environment.ID).
-		Limit(1).
-		Scan(ctx)
+	scope.Runtime, err = models.RuntimeConfiguration.FindForEnvironment(
+		ctx, service.db.Executor(), scope.Environment.ID,
+	)
 	if err != nil ||
 		!models.IsSupportedBuildpackRuntime(models.BuildpackRuntime(scope.Runtime.Runtime)) ||
 		scope.Runtime.Runtime != scope.State.Runtime.Runtime ||
@@ -997,11 +951,9 @@ func (service *DeploymentExecution) composeEnvironment(
 			}
 		}
 		var projected *dockerEndpoint
-		var installation models.ResourceInstallationEntity
-		installationErr := service.db.Executor().NewSelect().Model(&installation).
-			Where("resource_id = ?", resource.ID).
-			Where("archived_at IS NULL").
-			OrderExpr("created_at").Limit(1).Scan(ctx)
+		installation, installationErr := models.ResourceInstallation.FindActiveForResource(
+			ctx, service.db.Executor(), resource.ID,
+		)
 		if installationErr == nil {
 			if installation.ServerID != scope.Target.ServerID {
 				return nil, nil, errors.New(
@@ -1210,16 +1162,9 @@ func (service *DeploymentExecution) prepareCaddy(
 	ctx context.Context,
 	scope deploymentScope,
 ) (models.CaddyRouteEntity, []models.InstanceEntity, bool, error) {
-	var route models.CaddyRouteEntity
-	err := service.db.Executor().
-		NewSelect().
-		Model(&route).
-		Where("environment_target_id = ?", scope.Target.ID).
-		Where("environment_domain_id = ?", scope.Domain.ID).
-		Where("removed_at IS NULL").
-		OrderExpr("created_at").
-		Limit(1).
-		Scan(ctx)
+	route, err := models.CaddyRoute.FindActiveForTargetDomain(
+		ctx, service.db.Executor(), scope.Target.ID, scope.Domain.ID,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		route, err = models.CaddyRoute.Create(
 			ctx,
@@ -1253,26 +1198,19 @@ func (service *DeploymentExecution) prepareCaddy(
 	if err != nil {
 		return route, nil, false, err
 	}
-	previous := make([]models.InstanceEntity, 0)
-	if err := service.db.Executor().NewSelect().Model(&previous).
-		Join("JOIN caddy_route_backends AS backend ON backend.instance_id = instances.id").
-		Where("backend.caddy_route_id = ?", route.ID).
-		Where("backend.removed_at IS NULL").Where("instances.id <> ?", scope.Instance.ID).
-		Where("instances.removed_at IS NULL").
-		OrderExpr("instances.created_at DESC").Scan(ctx); err != nil {
-		return route, nil, false, err
-	}
-	count, err := service.db.Executor().
-		NewSelect().
-		Model((*models.CaddyRouteBackendEntity)(nil)).
-		Where("caddy_route_id = ?", route.ID).
-		Where("instance_id = ?", scope.Instance.ID).
-		Where("removed_at IS NULL").
-		Count(ctx)
+	previous, err := models.Instance.PreviousForRoute(
+		ctx, service.db.Executor(), route.ID, scope.Instance.ID,
+	)
 	if err != nil {
 		return route, nil, false, err
 	}
-	if count == 0 {
+	exists, err := models.CaddyRouteBackend.ActiveExists(
+		ctx, service.db.Executor(), route.ID, scope.Instance.ID,
+	)
+	if err != nil {
+		return route, nil, false, err
+	}
+	if !exists {
 		if err := service.caddy.AddBackend(ctx, route.ID, scope.Instance.ID, 0); err != nil {
 			return route, nil, false, err
 		}
@@ -1314,15 +1252,10 @@ func (service *DeploymentExecution) markSucceeded(
 			)
 			ports = encoded
 		}
-		if _, err := tx.NewUpdate().
-			TableExpr("instances").
-			Set("external_id = ?", candidate.ID).
-			Set("state = 'serving'").
-			Set("ports = ?", ports).
-			Set("observed_at = ?", now).
-			Set("updated_at = ?", now).
-			Where("id = ?", instance.ID).
-			Exec(ctx); err != nil {
+		serving := "serving"
+		if err := models.Instance.ObserveRuntime(
+			ctx, tx, instance.ID, candidate.ID, &serving, ports, now,
+		); err != nil {
 			return err
 		}
 		observedProcesses = append(
@@ -1341,35 +1274,15 @@ func (service *DeploymentExecution) markSucceeded(
 		map[string]any{"schema_version": 2, "processes": observedProcesses},
 	)
 	observed := json.RawMessage(encodedObserved)
-	if _, err := tx.NewUpdate().
-		TableExpr("environment_target_states").
-		Set("state = 'applied'").
-		Set("observed_state = ?", observed).
-		Set("applying_revision_id = NULL").
-		Set("applied_revision_id = ?", scope.Revision.ID).
-		Set("observed_at = ?", now).
-		Set("updated_at = ?", now).
-		Where("environment_target_id = ?", scope.Target.ID).
-		Exec(ctx); err != nil {
+	if err := models.EnvironmentTargetState.MarkApplied(
+		ctx, tx, scope.Target.ID, scope.Revision.ID, observed, now,
+	); err != nil {
 		return err
 	}
-	if _, err := tx.NewUpdate().
-		TableExpr("deployments").
-		Set("status = 'succeeded'").
-		Set("current_step = 'serving'").
-		Set("finished_at = ?", now).
-		Set("error = NULL").
-		Set("updated_at = ?", now).
-		Where("id = ?", scope.Deployment.ID).
-		Where("status = 'running'").
-		Exec(ctx); err != nil {
+	if err := models.Deployment.MarkSucceeded(ctx, tx, scope.Deployment.ID, now); err != nil {
 		return err
 	}
-	remaining, err := tx.NewSelect().
-		TableExpr("deployments").
-		Where("change_id = ?", scope.Deployment.ChangeID).
-		Where("status <> 'succeeded'").
-		Count(ctx)
+	remaining, err := models.Deployment.RemainingForChange(ctx, tx, scope.Deployment.ChangeID)
 	if err != nil {
 		return err
 	}
@@ -1453,15 +1366,7 @@ func (service *DeploymentExecution) previousFormation(
 	if len(deploymentIDs) == 0 {
 		return []models.InstanceEntity{}, nil
 	}
-	instances := make([]models.InstanceEntity, 0)
-	err := service.db.Executor().
-		NewSelect().
-		Model(&instances).
-		Where("deployment_id IN (?)", bun.In(deploymentIDs)).
-		Where("removed_at IS NULL").
-		OrderExpr("created_at, process_kind, process_name, replica_key").
-		Scan(ctx)
-	return instances, err
+	return models.Instance.ActiveForDeployments(ctx, service.db.Executor(), deploymentIDs)
 }
 
 func (service *DeploymentExecution) recordEvent(
@@ -1470,13 +1375,10 @@ func (service *DeploymentExecution) recordEvent(
 	eventType, status, step, message string,
 	operationErr error,
 ) error {
-	var sequence int64
-	if err := service.db.Executor().
-		NewSelect().
-		TableExpr("deployment_events").
-		ColumnExpr("COALESCE(MAX(sequence), 0) + 1").
-		Where("deployment_id = ?", deploymentID).
-		Scan(ctx, &sequence); err != nil {
+	sequence, err := models.DeploymentEvent.NextSequence(
+		ctx, service.db.Executor(), deploymentID,
+	)
+	if err != nil {
 		return err
 	}
 	failure := sql.NullString{}
@@ -1487,7 +1389,7 @@ func (service *DeploymentExecution) recordEvent(
 		}
 		failure = sql.NullString{String: value, Valid: true}
 	}
-	_, err := models.DeploymentEvent.Create(
+	_, err = models.DeploymentEvent.Create(
 		ctx,
 		service.db.Executor(),
 		models.CreateDeploymentEventData{

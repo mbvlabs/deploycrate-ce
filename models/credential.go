@@ -139,6 +139,37 @@ func (c credential) Find(
 	return entity, nil
 }
 
+func (c credential) MarkUsed(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("credentials").
+		Set("last_used_at = ?", at).
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Where("archived_at IS NULL").
+		Exec(ctx)
+	return err
+}
+
+func (c credential) Archive(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("credentials").
+		Set("archived_at = ?", at).
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
 type CreateCredentialData struct {
 	Name       string
 	Provider   string

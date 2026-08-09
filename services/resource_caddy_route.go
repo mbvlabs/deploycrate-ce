@@ -116,21 +116,12 @@ func (service CaddyRouteService) ValidateResourcePublication(
 			"hostname must be a valid fully qualified domain name",
 		)
 	}
-	conflicts, err := service.db.Executor().NewSelect().TableExpr("environment_domains").
-		Where("lower(hostname) = ?", hostname).Where("archived_at IS NULL").Count(ctx)
-	if err != nil {
-		return err
-	}
-	if conflicts == 0 {
-		query := service.db.Executor().NewSelect().TableExpr("resource_endpoints").
-			Where("archived_at IS NULL").
-			Where("settings ->> 'address_source' = ?", models.ResourceEndpointAddressCaddy).
-			Where("lower(address) = ?", hostname)
-		if endpointID != uuid.Nil {
-			query = query.Where("id <> ?", endpointID)
-		}
-		conflicts, err = query.Count(ctx)
-	}
+	conflicts, err := models.ResourceEndpoint.CaddyHostnameConflicts(
+		ctx,
+		service.db.Executor(),
+		hostname,
+		endpointID,
+	)
 	if err != nil {
 		return err
 	}
@@ -463,14 +454,12 @@ func (service CaddyRouteService) managedResourceEndpoints(
 	ctx context.Context,
 	resourceID uuid.UUID,
 ) ([]managedResourceEndpoint, error) {
-	endpoints := make([]models.ResourceEndpointEntity, 0)
-	query := service.db.Executor().NewSelect().Model(&endpoints).
-		Where("archived_at IS NULL").
-		Where("settings -> 'caddy' ->> 'managed' = 'true'")
-	if resourceID != uuid.Nil {
-		query = query.Where("resource_id = ?", resourceID)
-	}
-	if err := query.OrderExpr("created_at").Scan(ctx); err != nil {
+	endpoints, err := models.ResourceEndpoint.ManagedActive(
+		ctx,
+		service.db.Executor(),
+		resourceID,
+	)
+	if err != nil {
 		return nil, err
 	}
 	result := make([]managedResourceEndpoint, 0, len(endpoints))

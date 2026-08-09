@@ -44,25 +44,14 @@ func (service *WorkloadReconciliation) Reconcile(ctx context.Context) error {
 	if err := service.reconcileReleaseCommands(ctx); err != nil {
 		return err
 	}
-	var unresolved []models.DeploymentEntity
-	if err := service.db.Executor().NewSelect().Model(&unresolved).
-		Join("JOIN releases AS release ON release.id = deployments.release_id").
-		Join("JOIN environments AS environment ON environment.id = release.environment_id").
-		Join("JOIN applications AS application ON application.id = environment.application_id").
-		Where("application.slug <> ?", models.SystemApplicationSlug).
-		Where("deployments.status IN ('queued', 'running')").
-		OrderExpr("deployments.created_at").Scan(ctx); err != nil {
+	unresolved, err := models.Deployment.UnresolvedWorkloads(ctx, service.db.Executor())
+	if err != nil {
 		return fmt.Errorf("load unresolved workload Deployments: %w", err)
 	}
 	for _, deployment := range unresolved {
-		instances := make([]models.InstanceEntity, 0)
-		err := service.db.Executor().
-			NewSelect().
-			Model(&instances).
-			Where("deployment_id = ?", deployment.ID).
-			Where("removed_at IS NULL").
-			OrderExpr("process_kind, process_name, replica_key").
-			Scan(ctx)
+		instances, err := models.Instance.ActiveForDeployment(
+			ctx, service.db.Executor(), deployment.ID,
+		)
 		if err != nil {
 			slog.Error(
 				"workload startup reconciliation could not load candidate",
@@ -119,16 +108,10 @@ func (service *WorkloadReconciliation) Reconcile(ctx context.Context) error {
 					ports = encodedPorts
 				}
 				now := time.Now().UTC()
-				_, _ = service.db.Executor().
-					NewUpdate().
-					TableExpr("instances").
-					Set("external_id = ?", state.ID).
-					Set("state = ?", map[bool]string{true: "running", false: "failed"}[state.Running]).
-					Set("ports = ?", ports).
-					Set("observed_at = ?", now).
-					Set("updated_at = ?", now).
-					Where("id = ?", instance.ID).
-					Exec(ctx)
+				observedState := map[bool]string{true: "running", false: "failed"}[state.Running]
+				_ = models.Instance.ObserveRuntime(
+					ctx, service.db.Executor(), instance.ID, state.ID, &observedState, ports, now,
+				)
 			}
 		}
 		if _, insertErr := service.queue.Insert(
@@ -149,14 +132,8 @@ func (service *WorkloadReconciliation) Reconcile(ctx context.Context) error {
 		return err
 	}
 
-	var routes []models.CaddyRouteEntity
-	if err := service.db.Executor().NewSelect().Model(&routes).
-		Join("JOIN releases AS release ON release.id = caddy_routes.release_id").
-		Join("JOIN environments AS environment ON environment.id = release.environment_id").
-		Join("JOIN applications AS application ON application.id = environment.application_id").
-		Where("application.slug <> ?", models.SystemApplicationSlug).
-		Where("caddy_routes.removed_at IS NULL").
-		Where("caddy_routes.state IN ('pending', 'applied')").Scan(ctx); err != nil {
+	routes, err := models.CaddyRoute.ActiveWorkloadRoutes(ctx, service.db.Executor())
+	if err != nil {
 		return fmt.Errorf("load active workload Caddy routes: %w", err)
 	}
 	for _, route := range routes {
@@ -177,13 +154,8 @@ func (service *WorkloadReconciliation) Reconcile(ctx context.Context) error {
 }
 
 func (service *WorkloadReconciliation) reconcileReleaseCommands(ctx context.Context) error {
-	executions := make([]models.ReleaseCommandExecutionEntity, 0)
-	if err := service.db.Executor().
-		NewSelect().
-		Model(&executions).
-		Where("status = 'running'").
-		OrderExpr("created_at").
-		Scan(ctx); err != nil {
+	executions, err := models.ReleaseCommandExecution.Running(ctx, service.db.Executor())
+	if err != nil {
 		return fmt.Errorf("load interrupted release commands: %w", err)
 	}
 	for _, execution := range executions {
@@ -254,17 +226,8 @@ func (service *WorkloadReconciliation) reconcileReleaseCommands(ctx context.Cont
 }
 
 func (service *WorkloadReconciliation) reconcileServingInstances(ctx context.Context) error {
-	var instances []models.InstanceEntity
-	if err := service.db.Executor().NewSelect().Model(&instances).
-		Join("JOIN deployments AS deployment ON deployment.id = instances.deployment_id AND deployment.status = 'succeeded'").
-		Join("JOIN releases AS release ON release.id = instances.release_id").
-		Join("JOIN environments AS environment ON environment.id = release.environment_id").
-		Join("JOIN applications AS application ON application.id = environment.application_id").
-		Where("application.slug <> ?", models.SystemApplicationSlug).
-		Where("EXISTS (SELECT 1 FROM instances web JOIN caddy_route_backends backend ON backend.instance_id = web.id AND backend.removed_at IS NULL AND backend.weight = 100 JOIN caddy_routes route ON route.id = backend.caddy_route_id AND route.removed_at IS NULL WHERE web.deployment_id = instances.deployment_id AND web.process_kind = 'web' AND route.environment_target_id = instances.environment_target_id)").
-		Where("instances.state = 'serving'").
-		Where("instances.removed_at IS NULL").
-		OrderExpr("instances.created_at").Scan(ctx); err != nil {
+	instances, err := models.Instance.ServingForReconciliation(ctx, service.db.Executor())
+	if err != nil {
 		return err
 	}
 	for _, instance := range instances {
@@ -326,15 +289,9 @@ func (service *WorkloadReconciliation) reconcileServingInstances(ctx context.Con
 				ports = encodedPorts
 			}
 			now := time.Now().UTC()
-			_, _ = service.db.Executor().
-				NewUpdate().
-				TableExpr("instances").
-				Set("external_id = ?", state.ID).
-				Set("ports = ?", ports).
-				Set("observed_at = ?", now).
-				Set("updated_at = ?", now).
-				Where("id = ?", instance.ID).
-				Exec(ctx)
+			_ = models.Instance.ObserveRuntime(
+				ctx, service.db.Executor(), instance.ID, state.ID, nil, ports, now,
+			)
 			continue
 		}
 		if err := service.queueMissingServingRecovery(ctx, instance); err != nil {
@@ -366,11 +323,9 @@ func (service *WorkloadReconciliation) queueMissingServingRecovery(
 	if _, err := models.Environment.Lock(ctx, tx, release.EnvironmentID); err != nil {
 		return err
 	}
-	unresolved, err := tx.NewSelect().
-		Model((*models.DeploymentEntity)(nil)).
-		Where("environment_target_id = ?", instance.EnvironmentTargetID).
-		Where("status IN ('queued', 'running')").
-		Count(ctx)
+	unresolved, err := models.Deployment.ActiveCountForTarget(
+		ctx, tx, instance.EnvironmentTargetID,
+	)
 	if err != nil || unresolved != 0 {
 		return err
 	}
@@ -378,11 +333,8 @@ func (service *WorkloadReconciliation) queueMissingServingRecovery(
 	if err != nil {
 		return err
 	}
-	var revision models.EnvironmentStateRevisionEntity
-	if err := tx.NewSelect().Model(&revision).
-		Join("JOIN change_state_revisions AS association ON association.environment_state_revision_id = environment_state_revisions.id").
-		Where("association.change_id = ?", previous.ChangeID).
-		Where("association.role = 'result'").Limit(1).Scan(ctx); err != nil {
+	revision, err := models.EnvironmentStateRevision.FindResultForChange(ctx, tx, previous.ChangeID)
+	if err != nil {
 		return err
 	}
 	now := time.Now().UTC()
@@ -446,35 +398,14 @@ func (service *WorkloadReconciliation) queueMissingServingRecovery(
 	); err != nil {
 		return err
 	}
-	if _, err := tx.NewUpdate().
-		TableExpr("instances").
-		Set("state = 'failed'").
-		Set("updated_at = ?", now).
-		Where("id = ?", instance.ID).
-		Exec(ctx); err != nil {
+	if err := models.Instance.MarkState(ctx, tx, instance.ID, "failed", now); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
 func (service *WorkloadReconciliation) cleanupOldBackends(ctx context.Context) error {
-	var rows []struct {
-		RouteID      uuid.UUID `bun:"route_id"`
-		InstanceID   uuid.UUID `bun:"instance_id"`
-		DeploymentID uuid.UUID `bun:"deployment_id"`
-		ServerID     uuid.UUID `bun:"server_id"`
-	}
-	err := service.db.Executor().NewSelect().TableExpr("caddy_route_backends AS backend").
-		ColumnExpr("backend.caddy_route_id AS route_id, instance.id AS instance_id, instance.deployment_id AS deployment_id, target.server_id AS server_id").
-		Join("JOIN caddy_routes AS route ON route.id = backend.caddy_route_id AND route.removed_at IS NULL").
-		Join("JOIN releases AS release ON release.id = route.release_id").
-		Join("JOIN environments AS environment ON environment.id = release.environment_id").
-		Join("JOIN applications AS application ON application.id = environment.application_id").
-		Join("JOIN instances AS instance ON instance.id = backend.instance_id AND instance.removed_at IS NULL").
-		Join("JOIN environment_targets AS target ON target.id = instance.environment_target_id").
-		Join("JOIN deployments AS deployment ON deployment.id = instance.deployment_id AND deployment.status NOT IN ('queued', 'running')").
-		Where("application.slug <> ?", models.SystemApplicationSlug).
-		Where("backend.removed_at IS NULL").Where("backend.weight = 0").Scan(ctx, &rows)
+	rows, err := models.CaddyRouteBackend.RetiredWorkloads(ctx, service.db.Executor())
 	if err != nil {
 		return err
 	}
@@ -494,14 +425,7 @@ func (service *WorkloadReconciliation) cleanupOldBackends(ctx context.Context) e
 			continue
 		}
 		now := time.Now().UTC()
-		_, _ = service.db.Executor().
-			NewUpdate().
-			TableExpr("instances").
-			Set("state = 'removed'").
-			Set("removed_at = ?", now).
-			Set("updated_at = ?", now).
-			Where("id = ?", row.InstanceID).
-			Exec(ctx)
+		_ = models.Instance.MarkRemoved(ctx, service.db.Executor(), row.InstanceID, now)
 	}
 	return nil
 }
@@ -516,42 +440,7 @@ func cleanupUnroutedWorkloadInstances(
 	workloads *WorkloadExecution,
 	environmentTargetID uuid.UUID,
 ) error {
-	var rows []struct {
-		InstanceID   uuid.UUID `bun:"instance_id"`
-		DeploymentID uuid.UUID `bun:"deployment_id"`
-		ServerID     uuid.UUID `bun:"server_id"`
-	}
-	query := db.Executor().NewSelect().TableExpr("instances AS instance").
-		ColumnExpr("instance.id AS instance_id, instance.deployment_id AS deployment_id, target.server_id AS server_id").
-		Join("JOIN deployments AS deployment ON deployment.id = instance.deployment_id AND deployment.status NOT IN ('queued', 'running')").
-		Join("JOIN releases AS release ON release.id = instance.release_id").
-		Join("JOIN environments AS environment ON environment.id = release.environment_id").
-		Join("JOIN applications AS application ON application.id = environment.application_id").
-		Join("JOIN environment_targets AS target ON target.id = instance.environment_target_id").
-		Where("application.slug <> ?", models.SystemApplicationSlug).
-		Where("instance.removed_at IS NULL").
-		Where(`NOT EXISTS (
-			SELECT 1 FROM caddy_route_backends AS own_backend
-			JOIN caddy_routes AS own_route ON own_route.id = own_backend.caddy_route_id AND own_route.removed_at IS NULL
-			WHERE own_backend.instance_id = instance.id AND own_backend.removed_at IS NULL
-		)`).
-		Where(`(deployment.status = 'failed' OR (NOT EXISTS (
-			SELECT 1 FROM caddy_routes own_active_route
-			JOIN caddy_route_backends own_active_backend ON own_active_backend.caddy_route_id = own_active_route.id
-			JOIN instances own_active_web ON own_active_web.id = own_active_backend.instance_id
-			WHERE own_active_web.deployment_id = instance.deployment_id AND own_active_web.process_kind = 'web'
-			AND own_active_route.removed_at IS NULL AND own_active_backend.removed_at IS NULL AND own_active_backend.weight = 100
-		) AND EXISTS (
-			SELECT 1 FROM caddy_routes AS active_route
-			JOIN caddy_route_backends AS active_backend ON active_backend.caddy_route_id = active_route.id
-			JOIN instances AS active_instance ON active_instance.id = active_backend.instance_id AND active_instance.removed_at IS NULL
-			WHERE active_route.environment_target_id = instance.environment_target_id AND active_route.removed_at IS NULL
-			AND active_backend.removed_at IS NULL AND active_backend.weight = 100 AND active_instance.id <> instance.id
-		)))`)
-	if environmentTargetID != uuid.Nil {
-		query = query.Where("instance.environment_target_id = ?", environmentTargetID)
-	}
-	err := query.Scan(ctx, &rows)
+	rows, err := models.Instance.UnroutedWorkloads(ctx, db.Executor(), environmentTargetID)
 	if err != nil {
 		return err
 	}
@@ -568,14 +457,7 @@ func cleanupUnroutedWorkloadInstances(
 			continue
 		}
 		now := time.Now().UTC()
-		_, _ = db.Executor().
-			NewUpdate().
-			TableExpr("instances").
-			Set("state = 'removed'").
-			Set("removed_at = ?", now).
-			Set("updated_at = ?", now).
-			Where("id = ?", row.InstanceID).
-			Exec(ctx)
+		_ = models.Instance.MarkRemoved(ctx, db.Executor(), row.InstanceID, now)
 	}
 	return nil
 }

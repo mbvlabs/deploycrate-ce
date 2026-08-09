@@ -50,23 +50,8 @@ type DNSConnections struct {
 	config config.Config
 }
 
-type DNSConnectionSummary struct {
-	ID           uuid.UUID    `json:"id"           bun:"id"`
-	Name         string       `json:"name"         bun:"name"`
-	Provider     string       `json:"provider"     bun:"provider"`
-	AccountID    string       `json:"accountId"    bun:"account_external_id"`
-	VerifiedAt   sql.NullTime `json:"verifiedAt"   bun:"verified_at"`
-	LastSyncedAt sql.NullTime `json:"lastSyncedAt" bun:"last_synced_at"`
-	ArchivedAt   sql.NullTime `json:"archivedAt"   bun:"archived_at"`
-	ActiveZones  int          `json:"activeZones"  bun:"active_zones"`
-	BindingCount int          `json:"bindingCount" bun:"binding_count"`
-}
-
-type DNSZoneSummary struct {
-	ID     uuid.UUID `json:"id"     bun:"id"`
-	Name   string    `json:"name"   bun:"name"`
-	Status string    `json:"status" bun:"status"`
-}
+type DNSConnectionSummary = models.DNSConnectionSummary
+type DNSZoneSummary = models.DNSZoneSummary
 
 func NewDNSConnections(
 	db storage.Pool,
@@ -77,44 +62,21 @@ func NewDNSConnections(
 }
 
 func (service *DNSConnections) List(ctx context.Context) ([]DNSConnectionSummary, error) {
-	items := make([]DNSConnectionSummary, 0)
-	err := service.db.Executor().NewSelect().TableExpr("dns_connections AS connection").
-		ColumnExpr("connection.id, connection.name, connection.provider, connection.account_external_id, connection.verified_at, connection.last_synced_at, connection.archived_at").
-		ColumnExpr("COUNT(DISTINCT zone.id) FILTER (WHERE zone.archived_at IS NULL AND zone.status = 'active') AS active_zones").
-		ColumnExpr("COUNT(DISTINCT binding.id) FILTER (WHERE binding.archived_at IS NULL) AS binding_count").
-		Join("LEFT JOIN dns_zones AS zone ON zone.dns_connection_id = connection.id").
-		Join("LEFT JOIN environment_dns_bindings AS binding ON binding.dns_zone_id = zone.id").
-		Where("connection.archived_at IS NULL").
-		Group("connection.id").OrderExpr("lower(connection.name)").Scan(ctx, &items)
-	return items, err
+	return models.DNSConnection.Summaries(ctx, service.db.Executor())
 }
 
 func (service *DNSConnections) Find(
 	ctx context.Context,
 	id uuid.UUID,
 ) (DNSConnectionSummary, error) {
-	var item DNSConnectionSummary
-	err := service.db.Executor().NewSelect().TableExpr("dns_connections AS connection").
-		ColumnExpr("connection.id, connection.name, connection.provider, connection.account_external_id, connection.verified_at, connection.last_synced_at, connection.archived_at").
-		ColumnExpr("COUNT(DISTINCT zone.id) FILTER (WHERE zone.archived_at IS NULL AND zone.status = 'active') AS active_zones").
-		ColumnExpr("COUNT(DISTINCT binding.id) FILTER (WHERE binding.archived_at IS NULL) AS binding_count").
-		Join("LEFT JOIN dns_zones AS zone ON zone.dns_connection_id = connection.id").
-		Join("LEFT JOIN environment_dns_bindings AS binding ON binding.dns_zone_id = zone.id").
-		Where("connection.archived_at IS NULL").
-		Where("connection.id = ?", id).Group("connection.id").Scan(ctx, &item)
-	return item, err
+	return models.DNSConnection.Summary(ctx, service.db.Executor(), id)
 }
 
 func (service *DNSConnections) Zones(
 	ctx context.Context,
 	connectionID uuid.UUID,
 ) ([]DNSZoneSummary, error) {
-	zones := make([]DNSZoneSummary, 0)
-	err := service.db.Executor().NewSelect().TableExpr("dns_zones AS zone").
-		ColumnExpr("zone.id, zone.name, zone.status").
-		Where("zone.dns_connection_id = ?", connectionID).
-		Where("zone.archived_at IS NULL").OrderExpr("zone.name").Scan(ctx, &zones)
-	return zones, err
+	return models.DNSZone.SummariesForConnection(ctx, service.db.Executor(), connectionID)
 }
 
 func (service *DNSConnections) Create(
@@ -310,13 +272,7 @@ func (service *DNSConnections) Archive(ctx context.Context, id uuid.UUID) error 
 	if err != nil || connection.ArchivedAt.Valid {
 		return errors.New("DNS connection is unavailable")
 	}
-	count, err := service.db.Executor().
-		NewSelect().
-		TableExpr("environment_dns_bindings AS binding").
-		Join("JOIN dns_zones AS zone ON zone.id = binding.dns_zone_id").
-		Where("zone.dns_connection_id = ?", id).
-		Where("binding.archived_at IS NULL").
-		Count(ctx)
+	count, err := models.DNSConnection.ActiveBindingCount(ctx, service.db.Executor(), id)
 	if err != nil {
 		return err
 	}

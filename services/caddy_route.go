@@ -72,11 +72,6 @@ func (service CaddyRouteService) reconcileResourceRouteCandidates(ctx context.Co
 }
 
 func (service CaddyRouteService) Reconcile(ctx context.Context, routeID uuid.UUID) (string, error) {
-	type backendRow struct {
-		Weight int32           `bun:"weight"`
-		Ports  json.RawMessage `bun:"ports"`
-	}
-
 	route, err := models.CaddyRoute.Find(ctx, service.db.Executor(), routeID)
 	if err != nil {
 		return "", fmt.Errorf("load Caddy route desired state: %w", err)
@@ -95,32 +90,13 @@ func (service CaddyRouteService) Reconcile(ctx context.Context, routeID uuid.UUI
 	if domain.ArchivedAt.Valid {
 		return "", errors.New("cannot reconcile a Caddy route for an archived domain")
 	}
-	var healthPath string
-	err = service.db.Executor().NewSelect().TableExpr("caddy_route_backends AS backend").
-		ColumnExpr("COALESCE(process.value ->> 'health_path', runtime.settings ->> 'health_path', '')").
-		Join("JOIN instances AS instance ON instance.id = backend.instance_id AND instance.process_kind = 'web'").
-		Join("JOIN deployments AS deployment ON deployment.id = instance.deployment_id").
-		Join("LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(deployment.process_configuration) = 'array' THEN deployment.process_configuration ELSE '[]'::jsonb END) AS process(value) ON process.value ->> 'kind' = 'web'").
-		Join("LEFT JOIN LATERAL (SELECT settings FROM runtime_configurations WHERE environment_id = ? ORDER BY created_at DESC LIMIT 1) AS runtime ON TRUE", domain.EnvironmentID).
-		Where("backend.caddy_route_id = ?", routeID).
-		Where("backend.removed_at IS NULL").
-		OrderExpr("backend.weight DESC, backend.id DESC").Limit(1).
-		Scan(ctx, &healthPath)
+	healthPath, err := models.CaddyRoute.DesiredHealthPath(ctx, service.db.Executor(), routeID, domain.EnvironmentID)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("load Environment route health path: %w", err)
 	}
 
-	var rows []backendRow
-	if err := service.db.Executor().NewSelect().
-		TableExpr("caddy_route_backends AS backend").
-		ColumnExpr("backend.weight AS weight").
-		ColumnExpr("instance.ports AS ports").
-		Join("JOIN instances AS instance ON instance.id = backend.instance_id").
-		Where("backend.caddy_route_id = ?", routeID).
-		Where("backend.removed_at IS NULL").
-		Where("instance.removed_at IS NULL").
-		OrderExpr("backend.id ASC").
-		Scan(ctx, &rows); err != nil {
+	rows, err := models.CaddyRouteBackend.DesiredForRoute(ctx, service.db.Executor(), routeID)
+	if err != nil {
 		return "", fmt.Errorf("load Caddy route backends: %w", err)
 	}
 	if len(rows) == 0 {
@@ -222,20 +198,12 @@ func (service CaddyRouteService) SwitchTraffic(
 		}
 	}()
 
-	var route models.CaddyRouteEntity
-	if err := tx.NewSelect().Model(&route).
-		Where("id = ?", routeID).
-		Where("removed_at IS NULL").
-		For("UPDATE").
-		Scan(ctx); err != nil {
+	route, err := models.CaddyRoute.LockActive(ctx, tx, routeID)
+	if err != nil {
 		return fmt.Errorf("lock Caddy route for traffic switch: %w", err)
 	}
-	var backends []models.CaddyRouteBackendEntity
-	if err := tx.NewSelect().Model(&backends).
-		Where("caddy_route_id = ?", routeID).
-		Where("removed_at IS NULL").
-		For("UPDATE").
-		Scan(ctx); err != nil {
+	backends, err := models.CaddyRouteBackend.LockActiveForRoute(ctx, tx, routeID)
+	if err != nil {
 		return fmt.Errorf("lock Caddy route backends: %w", err)
 	}
 	if len(backends) != len(weights) {
@@ -294,23 +262,15 @@ func (service CaddyRouteService) AddBackend(
 		}
 	}()
 
-	var route models.CaddyRouteEntity
-	if err := tx.NewSelect().Model(&route).
-		Where("id = ?", routeID).
-		Where("removed_at IS NULL").
-		For("UPDATE").
-		Scan(ctx); err != nil {
+	_, err = models.CaddyRoute.LockActive(ctx, tx, routeID)
+	if err != nil {
 		return fmt.Errorf("lock Caddy route for backend addition: %w", err)
 	}
-	count, err := tx.NewSelect().Model((*models.CaddyRouteBackendEntity)(nil)).
-		Where("caddy_route_id = ?", routeID).
-		Where("instance_id = ?", instanceID).
-		Where("removed_at IS NULL").
-		Count(ctx)
+	exists, err := models.CaddyRouteBackend.ActiveExists(ctx, tx, routeID, instanceID)
 	if err != nil {
 		return fmt.Errorf("inspect existing Caddy backend: %w", err)
 	}
-	if count != 0 {
+	if exists {
 		return fmt.Errorf("instance %s is already an active Caddy backend", instanceID)
 	}
 	if _, err := models.CaddyRouteBackend.Create(ctx, tx, models.CreateCaddyRouteBackendData{
@@ -344,27 +304,15 @@ func (service CaddyRouteService) RemoveBackend(
 		}
 	}()
 
-	var route models.CaddyRouteEntity
-	if err := tx.NewSelect().Model(&route).
-		Where("id = ?", routeID).
-		Where("removed_at IS NULL").
-		For("UPDATE").
-		Scan(ctx); err != nil {
+	_, err = models.CaddyRoute.LockActive(ctx, tx, routeID)
+	if err != nil {
 		return fmt.Errorf("lock Caddy route for backend removal: %w", err)
 	}
-	var backend models.CaddyRouteBackendEntity
-	if err := tx.NewSelect().Model(&backend).
-		Where("caddy_route_id = ?", routeID).
-		Where("instance_id = ?", instanceID).
-		Where("removed_at IS NULL").
-		For("UPDATE").
-		Scan(ctx); err != nil {
+	backend, err := models.CaddyRouteBackend.LockActive(ctx, tx, routeID, instanceID)
+	if err != nil {
 		return fmt.Errorf("load Caddy backend for removal: %w", err)
 	}
-	activeCount, err := tx.NewSelect().Model((*models.CaddyRouteBackendEntity)(nil)).
-		Where("caddy_route_id = ?", routeID).
-		Where("removed_at IS NULL").
-		Count(ctx)
+	activeCount, err := models.CaddyRouteBackend.ActiveCount(ctx, tx, routeID)
 	if err != nil {
 		return fmt.Errorf("count active Caddy backends: %w", err)
 	}
@@ -577,42 +525,8 @@ func (service CaddyRouteService) RouteDetail(
 func (service CaddyRouteService) ManagementSnapshot(
 	ctx context.Context,
 ) (ManagedCaddyRouteSnapshot, error) {
-	type routeRow struct {
-		ID                  uuid.UUID    `bun:"id"`
-		ExternalID          string       `bun:"external_id"`
-		State               string       `bun:"state"`
-		Hostname            string       `bun:"hostname"`
-		ApplicationName     string       `bun:"application_name"`
-		EnvironmentName     string       `bun:"environment_name"`
-		EnvironmentID       uuid.UUID    `bun:"environment_id"`
-		EnvironmentDomainID uuid.UUID    `bun:"environment_domain_id"`
-		EnvironmentTargetID uuid.UUID    `bun:"environment_target_id"`
-		ReleaseID           uuid.UUID    `bun:"release_id"`
-		ReleaseLabel        string       `bun:"release_label"`
-		ServerName          string       `bun:"server_name"`
-		HealthPath          string       `bun:"health_path"`
-		AppliedAt           sql.NullTime `bun:"applied_at"`
-		ObservedAt          sql.NullTime `bun:"observed_at"`
-	}
-	var routeRows []routeRow
-	if err := service.db.Executor().NewSelect().
-		TableExpr("caddy_routes AS route").
-		ColumnExpr("route.id, route.external_id, route.state, route.environment_domain_id, route.environment_target_id, route.release_id, route.applied_at, route.observed_at").
-		ColumnExpr("domain.hostname, environment.id AS environment_id, environment.name AS environment_name, application.name AS application_name").
-		ColumnExpr("server.name AS server_name").
-		ColumnExpr("COALESCE(NULLIF(release.version, ''), release.artifact_reference) AS release_label").
-		ColumnExpr("COALESCE(process.health_path, configuration.settings ->> 'health_path', '/api/health') AS health_path").
-		Join("JOIN environment_domains AS domain ON domain.id = route.environment_domain_id").
-		Join("JOIN environments AS environment ON environment.id = domain.environment_id").
-		Join("JOIN applications AS application ON application.id = environment.application_id").
-		Join("JOIN environment_targets AS target ON target.id = route.environment_target_id").
-		Join("JOIN servers AS server ON server.id = target.server_id").
-		Join("JOIN releases AS release ON release.id = route.release_id").
-		Join("LEFT JOIN LATERAL (SELECT process.value ->> 'health_path' AS health_path FROM caddy_route_backends backend JOIN instances instance ON instance.id = backend.instance_id AND instance.process_kind = 'web' JOIN deployments deployment ON deployment.id = instance.deployment_id LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(deployment.process_configuration) = 'array' THEN deployment.process_configuration ELSE '[]'::jsonb END) AS process(value) ON process.value ->> 'kind' = 'web' WHERE backend.caddy_route_id = route.id AND backend.removed_at IS NULL ORDER BY backend.weight DESC, backend.id DESC LIMIT 1) AS process ON TRUE").
-		Join("LEFT JOIN LATERAL (SELECT settings FROM runtime_configurations WHERE environment_id = environment.id ORDER BY created_at DESC LIMIT 1) AS configuration ON TRUE").
-		Where("route.removed_at IS NULL OR route.state = 'removal_pending'").
-		OrderExpr("domain.hostname ASC").
-		Scan(ctx, &routeRows); err != nil {
+	routeRows, err := models.CaddyRoute.ManagementRows(ctx, service.db.Executor())
+	if err != nil {
 		return ManagedCaddyRouteSnapshot{}, fmt.Errorf("load managed Caddy routes: %w", err)
 	}
 
@@ -640,26 +554,10 @@ func (service CaddyRouteService) ManagementSnapshot(
 		})
 	}
 
-	type backendRow struct {
-		CaddyRouteID uuid.UUID       `bun:"caddy_route_id"`
-		InstanceID   uuid.UUID       `bun:"instance_id"`
-		ExternalID   string          `bun:"external_id"`
-		Slot         string          `bun:"slot"`
-		State        string          `bun:"state"`
-		Ports        json.RawMessage `bun:"ports"`
-		Weight       int32           `bun:"weight"`
-	}
-	var backendRows []backendRow
+	var backendRows []models.ManagedCaddyBackendRow
 	if len(routes) != 0 {
-		if err := service.db.Executor().NewSelect().
-			TableExpr("caddy_route_backends AS backend").
-			ColumnExpr("backend.caddy_route_id, backend.instance_id, backend.weight").
-			ColumnExpr("instance.external_id, instance.slot, instance.state, instance.ports").
-			Join("JOIN instances AS instance ON instance.id = backend.instance_id").
-			Where("backend.removed_at IS NULL").
-			Where("backend.caddy_route_id IN (?)", service.db.Executor().NewSelect().TableExpr("caddy_routes").Column("id").Where("removed_at IS NULL OR state = 'removal_pending'")).
-			OrderExpr("backend.id ASC").
-			Scan(ctx, &backendRows); err != nil {
+		backendRows, err = models.CaddyRouteBackend.ManagementRows(ctx, service.db.Executor())
+		if err != nil {
 			return ManagedCaddyRouteSnapshot{}, fmt.Errorf(
 				"load managed Caddy route backends: %w",
 				err,
@@ -687,71 +585,23 @@ func (service CaddyRouteService) ManagementSnapshot(
 func (service CaddyRouteService) managementOptions(
 	ctx context.Context,
 ) (ManagedCaddyRouteOptions, error) {
-	type domainRow struct {
-		ID              uuid.UUID `bun:"id"`
-		Hostname        string    `bun:"hostname"`
-		EnvironmentID   uuid.UUID `bun:"environment_id"`
-		EnvironmentName string    `bun:"environment_name"`
-		ApplicationName string    `bun:"application_name"`
-	}
-	var domainRows []domainRow
-	if err := service.db.Executor().NewSelect().TableExpr("environment_domains AS domain").
-		ColumnExpr("domain.id, domain.hostname, domain.environment_id, environment.name AS environment_name, application.name AS application_name").
-		Join("JOIN environments AS environment ON environment.id = domain.environment_id").
-		Join("JOIN applications AS application ON application.id = environment.application_id").
-		Where("domain.archived_at IS NULL").
-		Where("environment.archived_at IS NULL").Where("application.archived_at IS NULL").
-		OrderExpr("application.name, environment.name, domain.hostname").
-		Scan(ctx, &domainRows); err != nil {
+	domainRows, err := models.EnvironmentDomain.CaddyManagementRows(ctx, service.db.Executor())
+	if err != nil {
 		return ManagedCaddyRouteOptions{}, fmt.Errorf("load Caddy route domain options: %w", err)
 	}
 
-	type targetRow struct {
-		ID            uuid.UUID `bun:"id"`
-		EnvironmentID uuid.UUID `bun:"environment_id"`
-		ServerName    string    `bun:"server_name"`
-	}
-	var targetRows []targetRow
-	if err := service.db.Executor().NewSelect().TableExpr("environment_targets AS target").
-		ColumnExpr("target.id, target.environment_id, server.name AS server_name").
-		Join("JOIN servers AS server ON server.id = target.server_id").
-		Where("target.detached_at IS NULL").
-		Where("server.archived_at IS NULL").
-		OrderExpr("server.name").Scan(ctx, &targetRows); err != nil {
+	targetRows, err := models.EnvironmentTarget.CaddyManagementRows(ctx, service.db.Executor())
+	if err != nil {
 		return ManagedCaddyRouteOptions{}, fmt.Errorf("load Caddy route target options: %w", err)
 	}
 
-	type releaseRow struct {
-		ID                uuid.UUID `bun:"id"`
-		EnvironmentID     uuid.UUID `bun:"environment_id"`
-		Label             string    `bun:"label"`
-		ArtifactReference string    `bun:"artifact_reference"`
-	}
-	var releaseRows []releaseRow
-	if err := service.db.Executor().NewSelect().TableExpr("releases AS release").
-		ColumnExpr("release.id, release.environment_id, COALESCE(NULLIF(release.version, ''), release.artifact_reference) AS label, release.artifact_reference").
-		OrderExpr("release.created_at DESC").Scan(ctx, &releaseRows); err != nil {
+	releaseRows, err := models.Release.CaddyManagementRows(ctx, service.db.Executor())
+	if err != nil {
 		return ManagedCaddyRouteOptions{}, fmt.Errorf("load Caddy route release options: %w", err)
 	}
 
-	type instanceRow struct {
-		ID                  uuid.UUID       `bun:"id"`
-		EnvironmentID       uuid.UUID       `bun:"environment_id"`
-		EnvironmentTargetID uuid.UUID       `bun:"environment_target_id"`
-		ReleaseID           uuid.UUID       `bun:"release_id"`
-		ExternalID          string          `bun:"external_id"`
-		Slot                string          `bun:"slot"`
-		State               string          `bun:"state"`
-		Ports               json.RawMessage `bun:"ports"`
-	}
-	var instanceRows []instanceRow
-	if err := service.db.Executor().NewSelect().TableExpr("instances AS instance").
-		ColumnExpr("instance.id, target.environment_id, instance.environment_target_id, instance.release_id, instance.external_id, instance.slot, instance.state, instance.ports").
-		Join("JOIN environment_targets AS target ON target.id = instance.environment_target_id").
-		Where("instance.removed_at IS NULL").
-		Where("instance.state IN ('candidate', 'running', 'serving')").
-		Where("target.detached_at IS NULL").
-		OrderExpr("instance.created_at DESC").Scan(ctx, &instanceRows); err != nil {
+	instanceRows, err := models.Instance.CaddyManagementRows(ctx, service.db.Executor())
+	if err != nil {
 		return ManagedCaddyRouteOptions{}, fmt.Errorf("load Caddy route instance options: %w", err)
 	}
 
@@ -880,13 +730,8 @@ func (service CaddyRouteService) UpdateManaged(
 		return fmt.Errorf("begin Caddy route update: %w", err)
 	}
 	defer tx.Rollback()
-	var current models.CaddyRouteEntity
-	if err := tx.NewSelect().
-		Model(&current).
-		Where("id = ?", routeID).
-		Where("removed_at IS NULL").
-		For("UPDATE").
-		Scan(ctx); err != nil {
+	current, err := models.CaddyRoute.LockActive(ctx, tx, routeID)
+	if err != nil {
 		return fmt.Errorf("load Caddy route for update: %w", err)
 	}
 	if err := validateManagedCaddyRoute(ctx, tx, routeID, input); err != nil {
@@ -912,13 +757,7 @@ func (service CaddyRouteService) UpdateManaged(
 		return fmt.Errorf("update Caddy route desired state: %w", err)
 	}
 	now := time.Now().UTC()
-	if _, err := tx.NewUpdate().
-		TableExpr("caddy_route_backends").
-		Set("removed_at = ?", now).
-		Set("updated_at = ?", now).
-		Where("caddy_route_id = ?", routeID).
-		Where("removed_at IS NULL").
-		Exec(ctx); err != nil {
+	if err := models.CaddyRouteBackend.RetireActiveForRoute(ctx, tx, routeID, now); err != nil {
 		return fmt.Errorf("retire previous Caddy route backends: %w", err)
 	}
 	for _, backend := range input.Backends {
@@ -949,13 +788,8 @@ func (service CaddyRouteService) DestroyManaged(ctx context.Context, routeID uui
 		return fmt.Errorf("begin Caddy route removal: %w", err)
 	}
 	defer tx.Rollback()
-	var route models.CaddyRouteEntity
-	if err := tx.NewSelect().
-		Model(&route).
-		Where("id = ?", routeID).
-		Where("state <> 'removed'").
-		For("UPDATE").
-		Scan(ctx); err != nil {
+	route, err := models.CaddyRoute.LockNotRemoved(ctx, tx, routeID)
+	if err != nil {
 		return fmt.Errorf("load Caddy route for removal: %w", err)
 	}
 	now := route.RemovedAt
@@ -978,13 +812,7 @@ func (service CaddyRouteService) DestroyManaged(ctx context.Context, routeID uui
 		); err != nil {
 			return fmt.Errorf("mark Caddy route for removal: %w", err)
 		}
-		if _, err := tx.NewUpdate().
-			TableExpr("caddy_route_backends").
-			Set("removed_at = ?", now.Time).
-			Set("updated_at = ?", now.Time).
-			Where("caddy_route_id = ?", routeID).
-			Where("removed_at IS NULL").
-			Exec(ctx); err != nil {
+		if err := models.CaddyRouteBackend.RetireActiveForRoute(ctx, tx, routeID, now.Time); err != nil {
 			return fmt.Errorf("retire Caddy route backends: %w", err)
 		}
 	}
@@ -1046,67 +874,31 @@ func validateManagedCaddyRoute(
 	if total != 100 {
 		return fmt.Errorf("Caddy backend weights must total 100, got %d", total)
 	}
-	count, err := exec.NewSelect().
-		TableExpr("caddy_routes").
-		Where("external_id = ?", input.ExternalID).
-		Where("removed_at IS NULL").
-		Where("id <> ?", routeID).
-		Count(ctx)
-	if err != nil {
-		return fmt.Errorf("check Caddy route identifier: %w", err)
+	instanceIDs := make([]uuid.UUID, 0, len(seen))
+	for instanceID := range seen {
+		instanceIDs = append(instanceIDs, instanceID)
 	}
-	if count != 0 {
+	check, err := models.CaddyRoute.CheckManagedReferences(
+		ctx, exec, routeID, input.ExternalID, input.EnvironmentDomainID,
+		input.EnvironmentTargetID, input.ReleaseID, instanceIDs,
+	)
+	if err != nil {
+		return fmt.Errorf("check Caddy route references: %w", err)
+	}
+	if !check.ExternalIDAvailable {
 		return fmt.Errorf("Caddy route identifier %q is already in use", input.ExternalID)
 	}
-	count, err = exec.NewSelect().
-		TableExpr("caddy_routes").
-		Where("environment_domain_id = ?", input.EnvironmentDomainID).
-		Where("removed_at IS NULL").
-		Where("id <> ?", routeID).
-		Count(ctx)
-	if err != nil {
-		return fmt.Errorf("check Caddy route domain: %w", err)
-	}
-	if count != 0 {
+	if !check.DomainAvailable {
 		return errors.New("the selected domain already has an active Caddy route")
 	}
-	var environmentID uuid.UUID
-	if err := exec.NewSelect().
-		TableExpr("environment_domains").
-		Column("environment_id").
-		Where("id = ?", input.EnvironmentDomainID).
-		Where("archived_at IS NULL").
-		Scan(ctx, &environmentID); err != nil {
-		return fmt.Errorf("load Caddy route environment: %w", err)
-	}
-	count, err = exec.NewSelect().
-		TableExpr("environment_targets").
-		Where("id = ?", input.EnvironmentTargetID).
-		Where("environment_id = ?", environmentID).
-		Where("detached_at IS NULL").
-		Count(ctx)
-	if err != nil || count != 1 {
+	if !check.TargetMatches {
 		return fmt.Errorf("Caddy target must belong to the selected domain's Environment")
 	}
-	count, err = exec.NewSelect().
-		TableExpr("releases").
-		Where("id = ?", input.ReleaseID).
-		Where("environment_id = ?", environmentID).
-		Count(ctx)
-	if err != nil || count != 1 {
+	if !check.ReleaseMatches {
 		return fmt.Errorf("Caddy release must belong to the selected domain's Environment")
 	}
 	for instanceID := range seen {
-		count, err = exec.NewSelect().
-			TableExpr("instances AS instance").
-			Join("JOIN environment_targets AS target ON target.id = instance.environment_target_id").
-			Where("instance.id = ?", instanceID).
-			Where("instance.environment_target_id = ?", input.EnvironmentTargetID).
-			Where("target.environment_id = ?", environmentID).
-			Where("instance.removed_at IS NULL").
-			Where("instance.state IN ('candidate', 'running', 'serving')").
-			Count(ctx)
-		if err != nil || count != 1 {
+		if !check.ActiveInstances[instanceID] {
 			return fmt.Errorf(
 				"Caddy backend instance %s must be active on the selected target",
 				instanceID,

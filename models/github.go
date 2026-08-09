@@ -240,6 +240,34 @@ func (githubApp) Find(
 	return entity, err
 }
 
+func (githubApp) LockInstance(
+	ctx context.Context,
+	db storage.Executor,
+	instanceID uuid.UUID,
+) error {
+	_, err := db.ExecContext(
+		ctx,
+		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+		"github-app:"+instanceID.String(),
+	)
+	return err
+}
+
+func (githubApp) MarkVerified(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("github_apps").
+		Set("verified_at = ?", at).
+		Set("updated_at = ?", at).
+		Where("id = ? AND archived_at IS NULL", id).
+		Exec(ctx)
+	return err
+}
+
 func (githubApp) Archive(ctx context.Context, db storage.Executor, id uuid.UUID) error {
 	now := time.Now().UTC()
 	_, err := db.NewUpdate().
@@ -403,6 +431,36 @@ func (githubInstallation) Archive(ctx context.Context, db storage.Executor, id u
 	return err
 }
 
+func (githubInstallation) ArchiveByExternal(
+	ctx context.Context,
+	db storage.Executor,
+	externalID int64,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("github_installations").
+		Set("archived_at = ?", at).
+		Set("updated_at = ?", at).
+		Where("external_id = ?", externalID).
+		Exec(ctx)
+	return err
+}
+
+func (githubInstallation) SuspendByExternal(
+	ctx context.Context,
+	db storage.Executor,
+	externalID int64,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("github_installations").
+		Set("suspended_at = ?", at).
+		Set("updated_at = ?", at).
+		Where("external_id = ? AND archived_at IS NULL", externalID).
+		Exec(ctx)
+	return err
+}
+
 func (githubInstallation) ActiveSourceCount(
 	ctx context.Context,
 	db storage.Executor,
@@ -523,6 +581,21 @@ func (githubRepository) FindByExternal(
 	return entity, err
 }
 
+func (githubRepository) FindActiveByEnvironmentSource(
+	ctx context.Context,
+	db storage.Executor,
+	environmentSourceID uuid.UUID,
+) (GitHubRepositoryEntity, error) {
+	var entity GitHubRepositoryEntity
+	err := db.NewSelect().
+		Model(&entity).
+		Join("JOIN github_environment_sources AS binding ON binding.github_repository_id = github_repositories.id").
+		Where("binding.environment_source_id = ?", environmentSourceID).
+		Where("github_repositories.removed_at IS NULL").
+		Scan(ctx)
+	return entity, err
+}
+
 func (githubRepository) ListActive(
 	ctx context.Context,
 	db storage.Executor,
@@ -536,6 +609,18 @@ func (githubRepository) ListActive(
 		OrderExpr("full_name ASC").
 		Scan(ctx)
 	return entities, err
+}
+
+func (githubRepository) ActiveCountForInstallation(
+	ctx context.Context,
+	db storage.Executor,
+	installationID uuid.UUID,
+) (int, error) {
+	return db.NewSelect().
+		TableExpr("github_repositories").
+		Where("github_installation_id = ?", installationID).
+		Where("removed_at IS NULL").
+		Count(ctx)
 }
 
 func (githubEnvironmentSource) Create(
@@ -651,6 +736,19 @@ func (githubWebhookDelivery) CreateOrFind(
 	}
 	_, err = db.NewInsert().Model(&entity).Exec(ctx)
 	return entity, false, err
+}
+
+func (githubWebhookDelivery) LockDeliveryID(
+	ctx context.Context,
+	db storage.Executor,
+	deliveryID string,
+) error {
+	_, err := db.ExecContext(
+		ctx,
+		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+		"github-delivery:"+deliveryID,
+	)
+	return err
 }
 
 func (githubWebhookDelivery) Lock(

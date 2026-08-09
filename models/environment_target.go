@@ -23,6 +23,27 @@ type EnvironmentTargetEntity struct {
 	ServerID      uuid.UUID    `bun:"server_id,type:uuid"`
 }
 
+type DNSServerAddress struct {
+	ID   uuid.UUID `bun:"id"`
+	Kind string    `bun:"kind"`
+	IPv4 string    `bun:"ipv4_address"`
+	Addr string    `bun:"address"`
+}
+
+func (environmentTarget) ActiveDNSServerAddresses(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) ([]DNSServerAddress, error) {
+	servers := make([]DNSServerAddress, 0)
+	err := db.NewSelect().TableExpr("environment_targets AS target").
+		ColumnExpr("server.id, server.kind, server.ipv4_address, server.address").
+		Join("JOIN servers AS server ON server.id = target.server_id AND server.archived_at IS NULL").
+		Where("target.environment_id = ?", environmentID).
+		Where("target.detached_at IS NULL").OrderExpr("server.ipv4_address").Scan(ctx, &servers)
+	return servers, err
+}
+
 func (e *EnvironmentTargetEntity) Validate() error {
 	return nil
 }

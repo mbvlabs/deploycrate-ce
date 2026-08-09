@@ -31,6 +31,62 @@ type ResourceEntity struct {
 	Installation          ResourceInstallationEntity `bun:"rel:has-one,join:id=resource_id"`
 }
 
+type PostgreSQLResourceBackupTarget struct {
+	ResourceID           uuid.UUID `bun:"resource_id"`
+	InstallationID       uuid.UUID `bun:"installation_id"`
+	ServerID             uuid.UUID `bun:"server_id"`
+	ContainerName        string    `bun:"container_name"`
+	Username             string    `bun:"username"`
+	AdministratorPayload []byte    `bun:"administrator_payload"`
+	SystemManaged        bool      `bun:"system_managed"`
+}
+
+func (resource) PostgreSQLBackupTarget(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+) (PostgreSQLResourceBackupTarget, error) {
+	var target PostgreSQLResourceBackupTarget
+	err := db.NewSelect().
+		TableExpr("resources AS resource").
+		ColumnExpr("resource.id AS resource_id, installation.id AS installation_id, installation.server_id, installation.container_name").
+		ColumnExpr("resource.system_managed").
+		ColumnExpr("administrator.username, administrator.enc_payload AS administrator_payload").
+		Join("JOIN resource_installations AS installation ON installation.resource_id = resource.id AND installation.archived_at IS NULL").
+		Join("JOIN resource_credentials AS administrator ON administrator.resource_id = resource.id AND administrator.metadata ->> 'purpose' = 'administrator' AND administrator.archived_at IS NULL").
+		Where("resource.id = ?", resourceID).
+		Where("resource.configuration ->> 'engine' = 'postgresql'").
+		Where("resource.archived_at IS NULL").
+		Scan(ctx, &target)
+	return target, err
+}
+
+func (resource) ActiveOrdinaryExists(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+) (bool, error) {
+	count, err := db.NewSelect().TableExpr("resources").
+		Where("id = ?", resourceID).
+		Where("system_managed = FALSE").
+		Where("archived_at IS NULL").Count(ctx)
+	return count == 1, err
+}
+
+func (resource) LockActiveOrdinary(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+) (ResourceEntity, error) {
+	var entity ResourceEntity
+	err := db.NewSelect().Model(&entity).
+		Where("id = ?", resourceID).
+		Where("archived_at IS NULL").
+		Where("system_managed = FALSE").
+		For("UPDATE").Scan(ctx)
+	return entity, err
+}
+
 type ResourceConfiguration struct {
 	Engine          string                       `json:"engine"`
 	Databases       []ResourceDatabaseDefinition `json:"databases,omitempty"`

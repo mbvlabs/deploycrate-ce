@@ -107,6 +107,50 @@ func (wgp wireGuardPeer) FindActiveForServer(
 	return entity, nil
 }
 
+func (wireGuardPeer) FindActiveByPrivateAddress(
+	ctx context.Context,
+	db storage.Executor,
+	privateAddress string,
+) (WireGuardPeerEntity, error) {
+	var entity WireGuardPeerEntity
+	err := db.NewSelect().
+		Model(&entity).
+		Where("private_address = ?", privateAddress).
+		Where("retired_at IS NULL").
+		Scan(ctx)
+	return entity, err
+}
+
+type ActiveWorkerWireGuardPeer struct {
+	ServerID       uuid.UUID `bun:"server_id"`
+	PublicKey      string    `bun:"public_key"`
+	PrivateAddress string    `bun:"private_address"`
+	Endpoint       string    `bun:"endpoint"`
+}
+
+func (wireGuardPeer) ActiveWorkerPeers(
+	ctx context.Context,
+	db storage.Executor,
+	excludeServerID, includeUnconfiguredServerID uuid.UUID,
+) ([]ActiveWorkerWireGuardPeer, error) {
+	rows := make([]ActiveWorkerWireGuardPeer, 0)
+	query := db.NewSelect().
+		TableExpr("wireguard_peers AS peer").
+		ColumnExpr("peer.server_id, peer.public_key, host(peer.private_address) AS private_address, COALESCE(peer.endpoint, '') AS endpoint").
+		Join("JOIN servers AS server ON server.id = peer.server_id").
+		Where("peer.retired_at IS NULL").
+		Where("server.kind = 'worker'").
+		Where("server.archived_at IS NULL").
+		Where("peer.server_id <> ?", excludeServerID)
+	if includeUnconfiguredServerID == uuid.Nil {
+		query = query.Where("server.is_configured = TRUE")
+	} else {
+		query = query.Where("(server.is_configured = TRUE OR server.id = ?)", includeUnconfiguredServerID)
+	}
+	err := query.OrderExpr("peer.private_address").Scan(ctx, &rows)
+	return rows, err
+}
+
 type CreateWireGuardPeerData struct {
 	PublicKey      string
 	EncPrivateKey  []byte

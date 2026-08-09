@@ -135,6 +135,20 @@ func (resourceRestore) Find(
 	return entity, nil
 }
 
+func (resourceRestore) FindBySafetyBackup(
+	ctx context.Context,
+	db storage.Executor,
+	backupID uuid.UUID,
+) (ResourceRestoreEntity, error) {
+	var entity ResourceRestoreEntity
+	err := db.NewSelect().
+		Model(&entity).
+		Where("resource_restore.safety_backup_id = ?", backupID).
+		Where("resource_restore.status = ?", ResourceRestoreStatusSafetyBackup).
+		Scan(ctx)
+	return entity, err
+}
+
 func (resourceRestore) FindForUpdate(
 	ctx context.Context,
 	db storage.Executor,

@@ -51,6 +51,34 @@ func (cr caddyRoute) Find(
 	return entity, nil
 }
 
+func (caddyRoute) ActiveWorkloadRoutes(
+	ctx context.Context,
+	db storage.Executor,
+) ([]CaddyRouteEntity, error) {
+	routes := make([]CaddyRouteEntity, 0)
+	err := db.NewSelect().Model(&routes).
+		Join("JOIN releases AS release ON release.id = caddy_routes.release_id").
+		Join("JOIN environments AS environment ON environment.id = release.environment_id").
+		Join("JOIN applications AS application ON application.id = environment.application_id").
+		Where("application.slug <> ?", SystemApplicationSlug).
+		Where("caddy_routes.removed_at IS NULL").
+		Where("caddy_routes.state IN ('pending', 'applied')").Scan(ctx)
+	return routes, err
+}
+
+func (caddyRoute) FindActiveForTargetDomain(
+	ctx context.Context,
+	db storage.Executor,
+	targetID, domainID uuid.UUID,
+) (CaddyRouteEntity, error) {
+	var route CaddyRouteEntity
+	err := db.NewSelect().Model(&route).
+		Where("environment_target_id = ?", targetID).
+		Where("environment_domain_id = ?", domainID).
+		Where("removed_at IS NULL").OrderExpr("created_at").Limit(1).Scan(ctx)
+	return route, err
+}
+
 type CreateCaddyRouteData struct {
 	ExternalID          string
 	State               CaddyRouteStateEnum

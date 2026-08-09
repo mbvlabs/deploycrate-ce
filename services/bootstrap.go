@@ -163,26 +163,20 @@ func (service BootstrapService) reconcileRegistryContainer(ctx context.Context) 
 	if err != nil {
 		return err
 	}
-	var installation models.ResourceInstallationEntity
-	if err := service.db.Executor().
-		NewSelect().
-		Model(&installation).
-		Where("resource_id = ?", registry.ResourceID).
-		Where("archived_at IS NULL").
-		Limit(1).
-		Scan(ctx); err != nil {
+	installation, err := models.ResourceInstallation.FindActiveForResource(
+		ctx,
+		service.db.Executor(),
+		registry.ResourceID,
+	)
+	if err != nil {
 		return fmt.Errorf("load managed registry installation: %w", err)
 	}
-	var mounts []struct {
-		Name      string `bun:"name"`
-		MountPath string `bun:"mount_path"`
-		ReadOnly  bool   `bun:"read_only"`
-	}
-	if err := service.db.Executor().NewSelect().TableExpr("resource_volume_mounts AS mount").
-		ColumnExpr("volume.name, mount.mount_path, mount.read_only").
-		Join("JOIN resource_volumes AS volume ON volume.id = mount.resource_volume_id AND volume.archived_at IS NULL").
-		Where("mount.resource_installation_id = ?", installation.ID).
-		Where("mount.archived_at IS NULL").Scan(ctx, &mounts); err != nil {
+	mounts, err := models.ResourceVolumeMount.ActiveWithVolumeForInstallation(
+		ctx,
+		service.db.Executor(),
+		installation.ID,
+	)
+	if err != nil {
 		return fmt.Errorf("load managed registry volume: %w", err)
 	}
 	volumeMounts := make([]containerclient.VolumeMount, 0, len(mounts))
@@ -252,21 +246,7 @@ type managedRegistry struct {
 }
 
 func loadManagedRegistry(ctx context.Context, db storage.Executor) (managedRegistry, error) {
-	var row struct {
-		ResourceID         uuid.UUID       `bun:"resource_id"`
-		ResourceEndpointID uuid.UUID       `bun:"resource_endpoint_id"`
-		Configuration      json.RawMessage `bun:"configuration"`
-		Username           string          `bun:"username"`
-		CredentialMetadata json.RawMessage `bun:"credential_metadata"`
-	}
-	err := db.NewSelect().TableExpr("registry_resources AS registry").
-		ColumnExpr("registry.resource_id, registry.configuration").
-		ColumnExpr("endpoint.id AS resource_endpoint_id").
-		ColumnExpr("credential.username, credential.metadata AS credential_metadata").
-		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.configuration ->> 'engine' = 'registry' AND resource.system_managed = TRUE AND resource.archived_at IS NULL").
-		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = resource.id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL").
-		Join("JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.archived_at IS NULL").
-		Scan(ctx, &row)
+	row, err := models.RegistryResource.FindManagedAccess(ctx, db)
 	if err != nil {
 		return managedRegistry{}, fmt.Errorf("load managed Registry: %w", err)
 	}

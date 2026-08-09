@@ -73,6 +73,159 @@ func (i instance) Find(
 	return entity, nil
 }
 
+func (instance) ActiveForDeployment(
+	ctx context.Context,
+	db storage.Executor,
+	deploymentID uuid.UUID,
+) ([]InstanceEntity, error) {
+	items := make([]InstanceEntity, 0)
+	err := db.NewSelect().Model(&items).
+		Where("deployment_id = ?", deploymentID).
+		Where("removed_at IS NULL").
+		OrderExpr("process_kind, process_name, replica_key").Scan(ctx)
+	return items, err
+}
+
+func (instance) MarkNonServingFailedForDeployment(
+	ctx context.Context, db storage.Executor, deploymentID uuid.UUID, at time.Time,
+) error {
+	_, err := db.NewUpdate().TableExpr("instances").
+		Set("state = 'failed'").Set("updated_at = ?", at).
+		Where("deployment_id = ?", deploymentID).Where("state <> 'serving'").Exec(ctx)
+	return err
+}
+
+func (instance) MarkState(
+	ctx context.Context, db storage.Executor, id uuid.UUID, state string, at time.Time,
+) error {
+	_, err := db.NewUpdate().TableExpr("instances").
+		Set("state = ?", state).Set("updated_at = ?", at).
+		Where("id = ?", id).Exec(ctx)
+	return err
+}
+
+func (instance) MarkRemoved(
+	ctx context.Context, db storage.Executor, id uuid.UUID, at time.Time,
+) error {
+	_, err := db.NewUpdate().TableExpr("instances").
+		Set("state = 'removed'").Set("removed_at = ?", at).Set("updated_at = ?", at).
+		Where("id = ?", id).Exec(ctx)
+	return err
+}
+
+func (instance) ActiveForDeployments(
+	ctx context.Context,
+	db storage.Executor,
+	deploymentIDs []uuid.UUID,
+) ([]InstanceEntity, error) {
+	items := make([]InstanceEntity, 0)
+	if len(deploymentIDs) == 0 {
+		return items, nil
+	}
+	err := db.NewSelect().Model(&items).
+		Where("deployment_id IN (?)", bun.In(deploymentIDs)).Where("removed_at IS NULL").
+		OrderExpr("created_at, process_kind, process_name, replica_key").Scan(ctx)
+	return items, err
+}
+
+func (instance) PreviousForRoute(
+	ctx context.Context,
+	db storage.Executor,
+	routeID, excludeInstanceID uuid.UUID,
+) ([]InstanceEntity, error) {
+	items := make([]InstanceEntity, 0)
+	err := db.NewSelect().Model(&items).
+		Join("JOIN caddy_route_backends AS backend ON backend.instance_id = instances.id").
+		Where("backend.caddy_route_id = ?", routeID).
+		Where("backend.removed_at IS NULL").Where("instances.id <> ?", excludeInstanceID).
+		Where("instances.removed_at IS NULL").OrderExpr("instances.created_at DESC").Scan(ctx)
+	return items, err
+}
+
+func (instance) ServingForReconciliation(
+	ctx context.Context,
+	db storage.Executor,
+) ([]InstanceEntity, error) {
+	items := make([]InstanceEntity, 0)
+	err := db.NewSelect().Model(&items).
+		Join("JOIN deployments AS deployment ON deployment.id = instances.deployment_id AND deployment.status = 'succeeded'").
+		Join("JOIN releases AS release ON release.id = instances.release_id").
+		Join("JOIN environments AS environment ON environment.id = release.environment_id").
+		Join("JOIN applications AS application ON application.id = environment.application_id").
+		Where("application.slug <> ?", SystemApplicationSlug).
+		Where("EXISTS (SELECT 1 FROM instances web JOIN caddy_route_backends backend ON backend.instance_id = web.id AND backend.removed_at IS NULL AND backend.weight = 100 JOIN caddy_routes route ON route.id = backend.caddy_route_id AND route.removed_at IS NULL WHERE web.deployment_id = instances.deployment_id AND web.process_kind = 'web' AND route.environment_target_id = instances.environment_target_id)").
+		Where("instances.state = 'serving'").Where("instances.removed_at IS NULL").
+		OrderExpr("instances.created_at").Scan(ctx)
+	return items, err
+}
+
+func (instance) ObserveRuntime(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	externalID string,
+	state *string,
+	ports json.RawMessage,
+	at time.Time,
+) error {
+	query := db.NewUpdate().TableExpr("instances").
+		Set("external_id = ?", externalID).
+		Set("ports = ?", ports).
+		Set("observed_at = ?", at).
+		Set("updated_at = ?", at)
+	if state != nil {
+		query = query.Set("state = ?", *state)
+	}
+	_, err := query.Where("id = ?", id).Exec(ctx)
+	return err
+}
+
+type UnroutedWorkloadInstance struct {
+	InstanceID   uuid.UUID `bun:"instance_id"`
+	DeploymentID uuid.UUID `bun:"deployment_id"`
+	ServerID     uuid.UUID `bun:"server_id"`
+}
+
+func (instance) UnroutedWorkloads(
+	ctx context.Context,
+	db storage.Executor,
+	environmentTargetID uuid.UUID,
+) ([]UnroutedWorkloadInstance, error) {
+	rows := make([]UnroutedWorkloadInstance, 0)
+	query := db.NewSelect().TableExpr("instances AS instance").
+		ColumnExpr("instance.id AS instance_id, instance.deployment_id AS deployment_id, target.server_id AS server_id").
+		Join("JOIN deployments AS deployment ON deployment.id = instance.deployment_id AND deployment.status NOT IN ('queued', 'running')").
+		Join("JOIN releases AS release ON release.id = instance.release_id").
+		Join("JOIN environments AS environment ON environment.id = release.environment_id").
+		Join("JOIN applications AS application ON application.id = environment.application_id").
+		Join("JOIN environment_targets AS target ON target.id = instance.environment_target_id").
+		Where("application.slug <> ?", SystemApplicationSlug).
+		Where("instance.removed_at IS NULL").
+		Where(`NOT EXISTS (
+			SELECT 1 FROM caddy_route_backends AS own_backend
+			JOIN caddy_routes AS own_route ON own_route.id = own_backend.caddy_route_id AND own_route.removed_at IS NULL
+			WHERE own_backend.instance_id = instance.id AND own_backend.removed_at IS NULL
+		)`).
+		Where(`(deployment.status = 'failed' OR (NOT EXISTS (
+			SELECT 1 FROM caddy_routes own_active_route
+			JOIN caddy_route_backends own_active_backend ON own_active_backend.caddy_route_id = own_active_route.id
+			JOIN instances own_active_web ON own_active_web.id = own_active_backend.instance_id
+			WHERE own_active_web.deployment_id = instance.deployment_id AND own_active_web.process_kind = 'web'
+			AND own_active_route.removed_at IS NULL AND own_active_backend.removed_at IS NULL AND own_active_backend.weight = 100
+		) AND EXISTS (
+			SELECT 1 FROM caddy_routes AS active_route
+			JOIN caddy_route_backends AS active_backend ON active_backend.caddy_route_id = active_route.id
+			JOIN instances AS active_instance ON active_instance.id = active_backend.instance_id AND active_instance.removed_at IS NULL
+			WHERE active_route.environment_target_id = instance.environment_target_id AND active_route.removed_at IS NULL
+			AND active_backend.removed_at IS NULL AND active_backend.weight = 100 AND active_instance.id <> instance.id
+		)))`)
+	if environmentTargetID != uuid.Nil {
+		query = query.Where("instance.environment_target_id = ?", environmentTargetID)
+	}
+	err := query.Scan(ctx, &rows)
+	return rows, err
+}
+
 type CreateInstanceData struct {
 	ExternalID          string
 	Slot                string

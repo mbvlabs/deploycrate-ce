@@ -1059,11 +1059,11 @@ func (service *BuildExecution) loadGitHubSource(
 	ctx context.Context,
 	build models.BuildEntity,
 ) (models.GitHubRepositoryEntity, models.GitHubInstallationEntity, error) {
-	var repository models.GitHubRepositoryEntity
-	err := service.db.Executor().NewSelect().Model(&repository).
-		Join("JOIN github_environment_sources AS binding ON binding.github_repository_id = github_repositories.id").
-		Where("binding.environment_source_id = ?", build.EnvironmentSourceID).
-		Where("github_repositories.removed_at IS NULL").Scan(ctx)
+	repository, err := models.GitHubRepository.FindActiveByEnvironmentSource(
+		ctx,
+		service.db.Executor(),
+		build.EnvironmentSourceID,
+	)
 	if err != nil {
 		return repository, models.GitHubInstallationEntity{}, err
 	}
@@ -1092,18 +1092,7 @@ func (service *BuildExecution) RegistryCredentials(
 	registryID, credentialID uuid.UUID,
 	expectedEndpoint string,
 ) (registryclient.Credentials, error) {
-	var registry struct {
-		Provider, Endpoint             string
-		EndpointCount, CredentialCount int
-	}
-	err := service.db.Executor().NewSelect().TableExpr("registry_resources AS registry").
-		ColumnExpr("registry.provider").
-		ColumnExpr("CASE WHEN resource.system_managed THEN COALESCE(NULLIF(registry.configuration ->> 'route_host', ''), endpoint.address) WHEN endpoint.port IN (80, 443) THEN endpoint.address ELSE endpoint.address || ':' || endpoint.port::text END AS endpoint").
-		ColumnExpr("(SELECT count(*) FROM resource_endpoints candidate WHERE candidate.resource_id = registry.resource_id AND candidate.archived_at IS NULL) AS endpoint_count").
-		ColumnExpr("(SELECT count(*) FROM resource_credentials candidate WHERE candidate.resource_id = registry.resource_id AND candidate.archived_at IS NULL) AS credential_count").
-		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.archived_at IS NULL").
-		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = registry.resource_id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL").
-		Where("registry.resource_id = ?", registryID).Scan(ctx, &registry)
+	registry, err := models.RegistryResource.Snapshot(ctx, service.db.Executor(), registryID)
 	if err != nil || registry.Provider != "distribution" || registry.Endpoint != expectedEndpoint ||
 		registry.EndpointCount != 1 ||
 		registry.CredentialCount != 1 {

@@ -54,6 +54,136 @@ type EnvironmentDNSBindingEntity struct {
 	DNSZoneID              uuid.UUID      `bun:"dns_zone_id,type:uuid"`
 }
 
+type EnvironmentDNSStatusRow struct {
+	BindingID         uuid.UUID      `bun:"binding_id"`
+	ZoneID            uuid.UUID      `bun:"zone_id"`
+	ZoneName          string         `bun:"zone_name"`
+	ConnectionName    string         `bun:"connection_name"`
+	State             string         `bun:"state"`
+	Generation        int64          `bun:"generation"`
+	AppliedGeneration int64          `bun:"applied_generation"`
+	LastError         sql.NullString `bun:"last_error"`
+	AppliedAt         sql.NullTime   `bun:"applied_at"`
+}
+
+type DNSReconciliationScope struct {
+	BindingID           uuid.UUID    `bun:"binding_id"`
+	Generation          int64        `bun:"generation"`
+	State               string       `bun:"state"`
+	AdoptionConfirmed   sql.NullTime `bun:"adoption_confirmed_at"`
+	DeployAfterApply    bool         `bun:"deploy_after_apply"`
+	DeploymentActorID   *uuid.UUID   `bun:"deployment_actor_id"`
+	DeploymentTrigger   string       `bun:"deployment_trigger_type"`
+	DeploymentReference string       `bun:"deployment_reference"`
+	DeploymentSentAt    sql.NullTime `bun:"deployment_dispatched_at"`
+	DomainID            uuid.UUID    `bun:"domain_id"`
+	Hostname            string       `bun:"hostname"`
+	EnvironmentID       uuid.UUID    `bun:"environment_id"`
+	ApplicationID       uuid.UUID    `bun:"application_id"`
+	ZoneID              uuid.UUID    `bun:"zone_id"`
+	ZoneExternalID      string       `bun:"zone_external_id"`
+	ConnectionID        uuid.UUID    `bun:"connection_id"`
+	CredentialPayload   []byte       `bun:"credential_payload"`
+}
+
+func (environmentDNSBinding) StatusForEnvironment(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) (EnvironmentDNSStatusRow, error) {
+	var row EnvironmentDNSStatusRow
+	err := db.NewSelect().TableExpr("environment_dns_bindings AS binding").
+		ColumnExpr("binding.id AS binding_id, zone.id AS zone_id, zone.name AS zone_name, connection.name AS connection_name").
+		ColumnExpr("binding.state, binding.generation, binding.applied_generation, binding.last_error, binding.applied_at").
+		Join("JOIN environment_domains AS domain ON domain.id = binding.environment_domain_id AND domain.archived_at IS NULL").
+		Join("JOIN dns_zones AS zone ON zone.id = binding.dns_zone_id").
+		Join("JOIN dns_connections AS connection ON connection.id = zone.dns_connection_id").
+		Where("domain.environment_id = ?", environmentID).
+		Where("binding.archived_at IS NULL").Limit(1).Scan(ctx, &row)
+	return row, err
+}
+
+func (environmentDNSBinding) ReconciliationScope(
+	ctx context.Context,
+	db storage.Executor,
+	bindingID uuid.UUID,
+) (DNSReconciliationScope, error) {
+	var scope DNSReconciliationScope
+	err := db.NewSelect().TableExpr("environment_dns_bindings AS binding").
+		ColumnExpr("binding.id AS binding_id, binding.generation, binding.state, binding.adoption_confirmed_at, binding.deploy_after_apply, binding.deployment_actor_id, binding.deployment_trigger_type, binding.deployment_reference, binding.deployment_dispatched_at").
+		ColumnExpr("domain.id AS domain_id, domain.hostname, domain.environment_id, environment.application_id").
+		ColumnExpr("zone.id AS zone_id, zone.external_id AS zone_external_id, connection.id AS connection_id, credential.enc_payload AS credential_payload").
+		Join("JOIN environment_domains AS domain ON domain.id = binding.environment_domain_id").
+		Join("JOIN environments AS environment ON environment.id = domain.environment_id").
+		Join("JOIN dns_zones AS zone ON zone.id = binding.dns_zone_id").
+		Join("JOIN dns_connections AS connection ON connection.id = zone.dns_connection_id AND connection.archived_at IS NULL").
+		Join("JOIN credentials AS credential ON credential.id = connection.credential_id AND credential.archived_at IS NULL").
+		Where("binding.id = ?", bindingID).Where("binding.archived_at IS NULL").Scan(ctx, &scope)
+	return scope, err
+}
+
+func (environmentDNSBinding) ArchiveGeneration(
+	ctx context.Context, db storage.Executor, id uuid.UUID, generation int64, at time.Time,
+) error {
+	_, err := db.NewUpdate().TableExpr("environment_dns_bindings").
+		Set("updated_at = ?", at).Set("archived_at = ?", at).Set("last_error = NULL").
+		Where("id = ?", id).Where("generation = ?", generation).Exec(ctx)
+	return err
+}
+
+func (environmentDNSBinding) MarkApplied(
+	ctx context.Context, db storage.Executor, id uuid.UUID, generation int64, at time.Time,
+) (bool, error) {
+	result, err := db.NewUpdate().TableExpr("environment_dns_bindings").
+		Set("updated_at = ?", at).Set("state = ?", EnvironmentDNSApplied).
+		Set("applied_generation = generation").Set("applied_at = ?", at).Set("last_error = NULL").
+		Where("id = ?", id).Where("generation = ?", generation).Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows == 1, err
+}
+
+func (environmentDNSBinding) MarkDeploymentDispatched(
+	ctx context.Context, db storage.Executor, id uuid.UUID, generation int64, at time.Time,
+) error {
+	_, err := db.NewUpdate().TableExpr("environment_dns_bindings").
+		Set("updated_at = ?", at).Set("deployment_dispatched_at = ?", at).
+		Where("id = ?", id).Where("generation = ?", generation).
+		Where("deployment_dispatched_at IS NULL").Exec(ctx)
+	return err
+}
+
+func (environmentDNSBinding) MarkReconciling(
+	ctx context.Context, db storage.Executor, id uuid.UUID, generation int64, at time.Time,
+) (bool, error) {
+	result, err := db.NewUpdate().TableExpr("environment_dns_bindings").
+		Set("updated_at = ?", at).Set("state = ?", EnvironmentDNSReconciling).
+		Set("last_error = NULL").Where("id = ?", id).Where("generation = ?", generation).
+		Where("state IN ('pending', 'failed', 'conflict', 'reconciling')").Exec(ctx)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows == 1, err
+}
+
+func (environmentDNSBinding) MarkState(
+	ctx context.Context, db storage.Executor, id uuid.UUID, generation int64, state, message string, at time.Time,
+) error {
+	query := db.NewUpdate().TableExpr("environment_dns_bindings").
+		Set("updated_at = ?", at).Set("state = ?", state).
+		Where("id = ?", id).Where("generation = ?", generation)
+	if message == "" {
+		query = query.Set("last_error = NULL")
+	} else {
+		query = query.Set("last_error = ?", message)
+	}
+	_, err := query.Exec(ctx)
+	return err
+}
+
 func (entity *EnvironmentDNSBindingEntity) Validate() error {
 	builder := validation.NewBuilder()
 	if !slices.Contains(environmentDNSStates, entity.State) {

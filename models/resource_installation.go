@@ -88,6 +88,22 @@ func (ri resourceInstallation) Find(
 	return entity, nil
 }
 
+func (ri resourceInstallation) FindActiveForResource(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+) (ResourceInstallationEntity, error) {
+	var entity ResourceInstallationEntity
+	err := db.NewSelect().
+		Model(&entity).
+		Where("resource_id = ?", resourceID).
+		Where("archived_at IS NULL").
+		OrderExpr("created_at").
+		Limit(1).
+		Scan(ctx)
+	return entity, err
+}
+
 type CreateResourceInstallationData struct {
 	ID                   uuid.UUID
 	ImageReference       string

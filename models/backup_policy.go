@@ -201,6 +201,45 @@ type BackupPolicySchedule struct {
 	NextRunAt time.Time `bun:"next_run_at"`
 }
 
+func (bp backupPolicy) FindActiveDatabasePolicy(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+	databaseName string,
+) (ScheduledBackupPolicy, error) {
+	var policyID uuid.UUID
+	if err := db.NewSelect().
+		TableExpr("backup_policies AS policy").
+		ColumnExpr("policy.id").
+		Where("policy.target_type = 'resource'").
+		Where("policy.resource_id = ?", resourceID).
+		Where("policy.target ->> 'database' = ?", databaseName).
+		Where("policy.archived_at IS NULL AND policy.activated_at IS NOT NULL").
+		Limit(1).
+		Scan(ctx, &policyID); err != nil {
+		return ScheduledBackupPolicy{}, err
+	}
+	return bp.FindScheduled(ctx, db, policyID)
+}
+
+func (backupPolicy) FindForResourceDatabase(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+	databaseName string,
+) (BackupPolicyEntity, error) {
+	var policy BackupPolicyEntity
+	err := db.NewSelect().
+		Model(&policy).
+		Where("resource_id = ?", resourceID).
+		Where("target_type = 'resource'").
+		Where("target ->> 'database' = ?", databaseName).
+		Where("archived_at IS NULL").
+		Limit(1).
+		Scan(ctx)
+	return policy, err
+}
+
 func (bp backupPolicy) ActiveSchedules(
 	ctx context.Context,
 	db storage.Executor,

@@ -89,6 +89,64 @@ func (r release) LatestBuildForEnvironment(
 	return entity, nil
 }
 
+func (release) LatestForEnvironment(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) (ReleaseEntity, error) {
+	var entity ReleaseEntity
+	err := db.NewSelect().
+		Model(&entity).
+		Where("environment_id = ?", environmentID).
+		OrderExpr("created_at DESC").
+		Limit(1).
+		Scan(ctx)
+	return entity, err
+}
+
+type ActiveReleaseOperations struct {
+	Commands    int
+	Deployments int
+}
+
+func (release) LockOrchestration(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) error {
+	_, err := db.ExecContext(
+		ctx,
+		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
+		"release-orchestration:"+environmentID.String(),
+	)
+	return err
+}
+
+func (release) ActiveOperationsExcluding(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID, releaseID, changeID uuid.UUID,
+) (ActiveReleaseOperations, error) {
+	commands, err := db.NewSelect().
+		TableExpr("release_command_executions AS execution").
+		Join("JOIN releases AS release ON release.id = execution.release_id").
+		Where("release.environment_id = ?", environmentID).
+		Where("execution.release_id <> ?", releaseID).
+		Where("execution.status IN ('queued', 'running')").
+		Count(ctx)
+	if err != nil {
+		return ActiveReleaseOperations{}, err
+	}
+	deployments, err := db.NewSelect().
+		TableExpr("deployments AS deployment").
+		Join("JOIN releases AS release ON release.id = deployment.release_id").
+		Where("release.environment_id = ?", environmentID).
+		Where("deployment.change_id <> ?", changeID).
+		Where("deployment.status IN ('queued', 'running')").
+		Count(ctx)
+	return ActiveReleaseOperations{Commands: commands, Deployments: deployments}, err
+}
+
 type CreateReleaseData struct {
 	Version              sql.NullString
 	SourceRevision       sql.NullString

@@ -30,6 +30,27 @@ type ServerNetworkEntity struct {
 	PrivateNetworkID uuid.UUID       `bun:"private_network_id,type:uuid"`
 }
 
+type ResourcePrivateNetworkAttachment struct {
+	Address       string          `bun:"address"`
+	Configuration json.RawMessage `bun:"configuration"`
+}
+
+func (serverNetwork) ResourceAttachment(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID, privateNetworkID uuid.UUID,
+) (ResourcePrivateNetworkAttachment, error) {
+	var attachment ResourcePrivateNetworkAttachment
+	err := db.NewSelect().TableExpr("server_networks AS attachment").
+		ColumnExpr("COALESCE(attachment.configuration ->> 'address', '') AS address, installation.configuration AS configuration").
+		Join("JOIN resource_installations AS installation ON installation.server_id = attachment.server_id AND installation.resource_id = ? AND installation.archived_at IS NULL", resourceID).
+		Join("JOIN private_networks AS network ON network.id = attachment.private_network_id AND network.archived_at IS NULL").
+		Where("attachment.private_network_id = ?", privateNetworkID).
+		Where("attachment.driver = 'wireguard'").Where("attachment.removed_at IS NULL").
+		Limit(1).Scan(ctx, &attachment)
+	return attachment, err
+}
+
 func (e *ServerNetworkEntity) Validate() error {
 	return nil
 }
@@ -48,6 +69,20 @@ func (sn serverNetwork) Find(
 	}
 
 	return entity, nil
+}
+
+func (serverNetwork) ActiveExists(
+	ctx context.Context,
+	db storage.Executor,
+	serverID, privateNetworkID uuid.UUID,
+) (bool, error) {
+	count, err := db.NewSelect().
+		Model((*ServerNetworkEntity)(nil)).
+		Where("server_id = ?", serverID).
+		Where("private_network_id = ?", privateNetworkID).
+		Where("removed_at IS NULL").
+		Count(ctx)
+	return count > 0, err
 }
 
 type CreateServerNetworkData struct {

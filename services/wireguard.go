@@ -2,20 +2,19 @@ package services
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/netip"
 	"strings"
 
 	"deploycrate-ce/internal/storage"
 	internalwireguard "deploycrate-ce/internal/wireguard"
+	"deploycrate-ce/models"
 )
 
 const WireGuardMeshCIDR = internalwireguard.MeshCIDR
 const WireGuardNodeCIDR = internalwireguard.NodeCIDR
 const WireGuardDeviceCIDR = internalwireguard.DeviceCIDR
 const WireGuardPrivateAddress = internalwireguard.ControlPlaneAddress
-const wireGuardAddressAllocationLock = "deploycrate-wireguard-address-allocation"
 
 type WireGuardDesiredPeer struct {
 	PublicKey           string
@@ -56,23 +55,7 @@ func BuildWireGuardDesiredState(peers []WireGuardDesiredPeer) (WireGuardDesiredS
 }
 
 func nextWireGuardPrivateAddress(pool string, existing []string) (string, error) {
-	network := netip.MustParsePrefix(pool)
-	mesh := netip.MustParsePrefix(WireGuardMeshCIDR)
-	used := make(map[netip.Addr]struct{}, len(existing)+1)
-	used[netip.MustParseAddr(WireGuardPrivateAddress)] = struct{}{}
-	for _, value := range existing {
-		address, err := netip.ParseAddr(strings.TrimSpace(value))
-		if err != nil || !address.Is4() || !mesh.Contains(address) {
-			return "", fmt.Errorf("invalid allocated WireGuard address %q", value)
-		}
-		used[address] = struct{}{}
-	}
-	for address := network.Addr().Next(); network.Contains(address) && network.Contains(address.Next()); address = address.Next() {
-		if _, exists := used[address]; !exists {
-			return address.String(), nil
-		}
-	}
-	return "", errors.New("WireGuard address pool is exhausted")
+	return models.WireGuardAddress.Next(pool, existing)
 }
 
 func NextWireGuardNodeAddress(existing []string) (string, error) {
@@ -88,19 +71,7 @@ func allocateWireGuardPrivateAddress(
 	db storage.Executor,
 	pool string,
 ) (string, error) {
-	if _, err := db.ExecContext(
-		ctx,
-		"SELECT pg_advisory_xact_lock(hashtext(?))",
-		wireGuardAddressAllocationLock,
-	); err != nil {
-		return "", fmt.Errorf("lock WireGuard address allocation: %w", err)
-	}
-	allocated := make([]string, 0)
-	if err := db.NewSelect().TableExpr("wireguard_address_reservations").
-		Column("private_address").OrderExpr("private_address").Scan(ctx, &allocated); err != nil {
-		return "", fmt.Errorf("load WireGuard address reservations: %w", err)
-	}
-	return nextWireGuardPrivateAddress(pool, allocated)
+	return models.WireGuardAddress.Allocate(ctx, db, pool)
 }
 
 func AllocateWireGuardNodeAddress(ctx context.Context, db storage.Executor) (string, error) {

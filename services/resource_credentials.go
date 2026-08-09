@@ -11,6 +11,7 @@ import (
 	"deploycrate-ce/config"
 	"deploycrate-ce/internal/secretcrypto"
 	"deploycrate-ce/internal/storage"
+	"deploycrate-ce/models"
 
 	"github.com/google/uuid"
 )
@@ -64,22 +65,13 @@ func (service *ResourceCredentials) reveal(
 		return RevealedResourceCredential{}, err
 	}
 
-	var row struct {
-		ID         uuid.UUID      `bun:"id"`
-		Name       string         `bun:"name"`
-		Username   sql.NullString `bun:"username"`
-		EncPayload []byte         `bun:"enc_payload"`
-	}
-	err := service.db.Executor().NewSelect().
-		TableExpr("resource_credentials AS credential").
-		ColumnExpr("credential.id, credential.name, credential.username, credential.enc_payload").
-		Join("JOIN resources AS resource ON resource.id = credential.resource_id AND resource.archived_at IS NULL").
-		Where("resource.id = ?", resourceID).
-		Where("resource.system_managed = ?", systemManaged).
-		Where("credential.id = ?", credentialID).
-		Where("credential.archived_at IS NULL").
-		Limit(1).
-		Scan(ctx, &row)
+	row, err := models.ResourceCredential.FindActiveForResource(
+		ctx,
+		service.db.Executor(),
+		resourceID,
+		credentialID,
+		systemManaged,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RevealedResourceCredential{}, ErrResourceCredentialUnavailable
 	}

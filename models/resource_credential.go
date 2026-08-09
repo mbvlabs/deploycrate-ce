@@ -71,6 +71,38 @@ func (rc resourceCredential) Find(
 	return entity, nil
 }
 
+func (rc resourceCredential) FindActiveForResource(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID, credentialID uuid.UUID,
+	systemManaged bool,
+) (ResourceCredentialEntity, error) {
+	var entity ResourceCredentialEntity
+	err := db.NewSelect().
+		Model(&entity).
+		Join("JOIN resources AS resource ON resource.id = resource_credentials.resource_id AND resource.archived_at IS NULL").
+		Where("resource_credentials.id = ?", credentialID).
+		Where("resource_credentials.resource_id = ?", resourceID).
+		Where("resource_credentials.archived_at IS NULL").
+		Where("resource.system_managed = ?", systemManaged).
+		Limit(1).
+		Scan(ctx)
+	return entity, err
+}
+
+func (resourceCredential) ActiveAdministratorCount(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+) (int, error) {
+	return db.NewSelect().
+		TableExpr("resource_credentials").
+		Where("resource_id = ?", resourceID).
+		Where("metadata ->> 'purpose' = 'administrator'").
+		Where("archived_at IS NULL").
+		Count(ctx)
+}
+
 type CreateResourceCredentialData struct {
 	Name       string
 	Username   sql.NullString

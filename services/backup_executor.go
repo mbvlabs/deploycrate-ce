@@ -215,12 +215,12 @@ func (service *BackupExecutor) Execute(ctx context.Context, backupID uuid.UUID) 
 	}); err != nil {
 		return fmt.Errorf("record uploaded backup: %w", err)
 	}
-	if _, err := tx.NewUpdate().Table("credentials").
-		Set("last_used_at = ?", time.Now().UTC()).
-		Set("updated_at = ?", time.Now().UTC()).
-		Where("id = ?", scope.DestinationCredentialID).
-		Where("archived_at IS NULL").
-		Exec(ctx); err != nil {
+	if err := models.Credential.MarkUsed(
+		ctx,
+		tx,
+		scope.DestinationCredentialID,
+		time.Now().UTC(),
+	); err != nil {
 		return fmt.Errorf("record backup destination use: %w", err)
 	}
 	if err := models.ChangeTask.MarkCompleted(
@@ -359,24 +359,7 @@ func (service *BackupExecutor) postgreSQLTargetForDatabase(
 	resourceID uuid.UUID,
 	databaseName string,
 ) (PostgreSQLBackupTarget, error) {
-	var target struct {
-		ResourceID           uuid.UUID `bun:"resource_id"`
-		InstallationID       uuid.UUID `bun:"installation_id"`
-		ServerID             uuid.UUID `bun:"server_id"`
-		ContainerName        string    `bun:"container_name"`
-		Username             string    `bun:"username"`
-		AdministratorPayload []byte    `bun:"administrator_payload"`
-		SystemManaged        bool      `bun:"system_managed"`
-	}
-	err := service.db.Executor().NewSelect().TableExpr("resources AS resource").
-		ColumnExpr("resource.id AS resource_id, installation.id AS installation_id, installation.server_id, installation.container_name").
-		ColumnExpr("resource.system_managed").
-		ColumnExpr("administrator.username, administrator.enc_payload AS administrator_payload").
-		Join("JOIN resource_installations AS installation ON installation.resource_id = resource.id AND installation.archived_at IS NULL").
-		Join("JOIN resource_credentials AS administrator ON administrator.resource_id = resource.id AND administrator.metadata ->> 'purpose' = 'administrator' AND administrator.archived_at IS NULL").
-		Where("resource.id = ?", resourceID).
-		Where("resource.configuration ->> 'engine' = 'postgresql'").
-		Where("resource.archived_at IS NULL").Scan(ctx, &target)
+	target, err := models.Resource.PostgreSQLBackupTarget(ctx, service.db.Executor(), resourceID)
 	if err != nil {
 		return PostgreSQLBackupTarget{}, err
 	}

@@ -30,6 +30,18 @@ type DeploymentEventEntity struct {
 	ChangeTaskAttemptID *uuid.UUID      `bun:"change_task_attempt_id,type:uuid"`
 }
 
+func (deploymentEvent) NextSequence(
+	ctx context.Context,
+	db storage.Executor,
+	deploymentID uuid.UUID,
+) (int64, error) {
+	var sequence int64
+	err := db.NewSelect().TableExpr("deployment_events").
+		ColumnExpr("COALESCE(MAX(sequence), 0) + 1").
+		Where("deployment_id = ?", deploymentID).Scan(ctx, &sequence)
+	return sequence, err
+}
+
 func (e *DeploymentEventEntity) Validate() error {
 	return nil
 }

@@ -89,6 +89,52 @@ func (e environment) Lock(
 	return entity, nil
 }
 
+func (environment) EnsureSlugAvailable(
+	ctx context.Context,
+	db storage.Executor,
+	applicationID uuid.UUID,
+	slug string,
+) (bool, error) {
+	if err := lockUnique(ctx, db, "environment-slug:"+applicationID.String()+":"+slug); err != nil {
+		return false, err
+	}
+	count, err := db.NewSelect().TableExpr("environments").
+		Where("application_id = ?", applicationID).
+		Where("slug = ?", slug).Where("archived_at IS NULL").Count(ctx)
+	return count == 0, err
+}
+
+func (environment) ActiveIDsForApplication(
+	ctx context.Context,
+	db storage.Executor,
+	applicationID uuid.UUID,
+) ([]uuid.UUID, error) {
+	ids := make([]uuid.UUID, 0)
+	err := db.NewSelect().TableExpr("environments AS environment").ColumnExpr("environment.id").
+		Where("environment.application_id = ?", applicationID).
+		Where("environment.archived_at IS NULL").
+		OrderExpr("CASE environment.kind WHEN 'staging' THEN 0 WHEN 'production' THEN 1 ELSE 2 END, environment.name").
+		Scan(ctx, &ids)
+	return ids, err
+}
+
+func (environment) DeleteIncompleteSources(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) error {
+	for _, table := range []string{"github_environment_sources", "buildpack_configurations", "image_configurations"} {
+		if _, err := db.NewDelete().TableExpr(table).
+			Where("environment_source_id IN (SELECT id FROM environment_sources WHERE environment_id = ?)", environmentID).
+			Exec(ctx); err != nil {
+			return err
+		}
+	}
+	_, err := db.NewDelete().TableExpr("environment_sources").
+		Where("environment_id = ?", environmentID).Exec(ctx)
+	return err
+}
+
 func (e environment) SetupComplete(
 	ctx context.Context,
 	db storage.Executor,

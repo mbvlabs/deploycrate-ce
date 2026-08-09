@@ -57,17 +57,7 @@ type ExternalRegistryResourceInput struct {
 	AccessToken string
 }
 
-type RegistryResourceSummary struct {
-	ID             uuid.UUID `json:"id"             bun:"id"`
-	Name           string    `json:"name"           bun:"name"`
-	Slug           string    `json:"slug"           bun:"slug"`
-	Provider       string    `json:"provider"       bun:"provider"`
-	Endpoint       string    `json:"endpoint"       bun:"endpoint"`
-	Username       string    `json:"username"       bun:"username"`
-	CredentialName string    `json:"credentialName" bun:"credential_name"`
-	Managed        bool      `json:"managed"        bun:"managed"`
-	CreatedAt      time.Time `json:"createdAt"      bun:"created_at"`
-}
+type RegistryResourceSummary = models.RegistryResourceSummary
 
 type ManagedRegistryCredentials struct {
 	Endpoint string `json:"endpoint"`
@@ -81,35 +71,14 @@ type RegistryRepositorySummary struct {
 }
 
 func (service *RegistryResources) List(ctx context.Context) ([]RegistryResourceSummary, error) {
-	registries := make([]RegistryResourceSummary, 0)
-	err := service.db.Executor().NewSelect().TableExpr("registry_resources AS registry").
-		ColumnExpr("resource.id, resource.name, resource.slug, registry.provider, resource.created_at").
-		ColumnExpr("CASE WHEN resource.system_managed THEN COALESCE(NULLIF(registry.configuration ->> 'route_host', ''), endpoint.address) WHEN endpoint.port IN (80, 443) THEN endpoint.address ELSE endpoint.address || ':' || endpoint.port::text END AS endpoint").
-		ColumnExpr("credential.name AS credential_name, COALESCE(credential.username, '') AS username").
-		ColumnExpr("resource.system_managed AS managed").
-		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.configuration ->> 'engine' = 'registry' AND resource.archived_at IS NULL").
-		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = resource.id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL").
-		Join("JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.archived_at IS NULL").
-		OrderExpr("resource.name ASC").Scan(ctx, &registries)
-	return registries, err
+	return models.RegistryResource.Summaries(ctx, service.db.Executor())
 }
 
 func (service *RegistryResources) Find(
 	ctx context.Context,
 	resourceID uuid.UUID,
 ) (RegistryResourceSummary, error) {
-	var registry RegistryResourceSummary
-	err := service.db.Executor().NewSelect().TableExpr("registry_resources AS registry").
-		ColumnExpr("resource.id, resource.name, resource.slug, registry.provider, resource.created_at").
-		ColumnExpr("CASE WHEN resource.system_managed THEN COALESCE(NULLIF(registry.configuration ->> 'route_host', ''), endpoint.address) WHEN endpoint.port IN (80, 443) THEN endpoint.address ELSE endpoint.address || ':' || endpoint.port::text END AS endpoint").
-		ColumnExpr("credential.name AS credential_name, COALESCE(credential.username, '') AS username").
-		ColumnExpr("resource.system_managed AS managed").
-		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.configuration ->> 'engine' = 'registry' AND resource.archived_at IS NULL").
-		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = resource.id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL").
-		Join("JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.archived_at IS NULL").
-		Where("resource.id = ?", resourceID).
-		Limit(1).
-		Scan(ctx, &registry)
+	registry, err := models.RegistryResource.Summary(ctx, service.db.Executor(), resourceID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return RegistryResourceSummary{}, models.ErrNotFound
 	}
@@ -208,24 +177,13 @@ func (service *RegistryResources) publisherCredentials(
 	resourceID uuid.UUID,
 	managedOnly bool,
 ) (ManagedRegistryCredentials, error) {
-	query := service.db.Executor().NewSelect().
-		TableExpr("registry_resources AS registry").
-		ColumnExpr("CASE WHEN resource.system_managed THEN COALESCE(NULLIF(registry.configuration ->> 'route_host', ''), endpoint.address) WHEN endpoint.port IN (80, 443) THEN endpoint.address ELSE endpoint.address || ':' || endpoint.port::text END AS endpoint").
-		ColumnExpr("credential.username, credential.enc_payload").
-		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.archived_at IS NULL").
-		Join("JOIN resource_endpoints AS endpoint ON endpoint.resource_id = resource.id AND endpoint.role = 'primary' AND endpoint.archived_at IS NULL").
-		Join("JOIN resource_credentials AS credential ON credential.resource_id = resource.id AND credential.archived_at IS NULL").
-		Where("registry.resource_id = ?", resourceID).
-		Where("credential.name = ?", "Registry publisher")
-	if managedOnly {
-		query = query.Where("resource.system_managed = TRUE")
-	}
-	var row struct {
-		Endpoint   string         `bun:"endpoint"`
-		Username   sql.NullString `bun:"username"`
-		EncPayload []byte         `bun:"enc_payload"`
-	}
-	if err := query.Limit(1).Scan(ctx, &row); err != nil {
+	row, err := models.RegistryResource.PublisherCredential(
+		ctx,
+		service.db.Executor(),
+		resourceID,
+		managedOnly,
+	)
+	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return ManagedRegistryCredentials{}, ErrManagedRegistryUnavailable
 		}
@@ -334,20 +292,10 @@ func (service *RegistryResources) CreateExternal(
 		return models.RegistryResourceEntity{}, err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(
-		ctx,
-		"SELECT pg_advisory_xact_lock(hashtextextended(?, 0))",
-		"registry-endpoint:"+input.Endpoint,
-	); err != nil {
+	if err := models.RegistryResource.LockEndpoint(ctx, tx, input.Endpoint); err != nil {
 		return models.RegistryResourceEntity{}, err
 	}
-	count, err := tx.NewSelect().
-		TableExpr("resource_endpoints AS endpoint").
-		Join("JOIN resources AS resource ON resource.id = endpoint.resource_id AND resource.configuration ->> 'engine' = 'registry' AND resource.archived_at IS NULL").
-		Where("lower(endpoint.address) = lower(?)", host).
-		Where("endpoint.port = ?", port).
-		Where("endpoint.archived_at IS NULL").
-		Count(ctx)
+	count, err := models.RegistryResource.EndpointConflictCount(ctx, tx, host, port)
 	if err != nil {
 		return models.RegistryResourceEntity{}, err
 	}
@@ -433,12 +381,11 @@ func (service *RegistryResources) ArchiveExternal(ctx context.Context, resourceI
 	if resource.Engine() != "registry" || resource.SystemManaged {
 		return errors.New("the DeployCrate-managed Registry cannot be archived here")
 	}
-	references, err := service.db.Executor().NewSelect().TableExpr("environment_sources AS source").
-		Join("LEFT JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = source.id").
-		Join("LEFT JOIN image_configurations AS image ON image.environment_source_id = source.id").
-		Where("source.archived_at IS NULL").
-		Where("COALESCE(buildpack.registry_resource_id, image.registry_resource_id) = ?", resource.ID).
-		Count(ctx)
+	references, err := models.RegistryResource.ActiveSourceReferenceCount(
+		ctx,
+		service.db.Executor(),
+		resource.ID,
+	)
 	if err != nil {
 		return err
 	}
@@ -451,22 +398,7 @@ func (service *RegistryResources) ArchiveExternal(ctx context.Context, resourceI
 	}
 	defer tx.Rollback()
 	now := time.Now().UTC()
-	if _, err := tx.NewUpdate().
-		TableExpr("resource_credentials").
-		Set("archived_at = ?", now).
-		Set("updated_at = ?", now).
-		Where("resource_id = ?", resource.ID).
-		Where("archived_at IS NULL").
-		Exec(ctx); err != nil {
-		return err
-	}
-	if _, err := tx.NewUpdate().
-		TableExpr("resource_endpoints").
-		Set("archived_at = ?", now).
-		Set("updated_at = ?", now).
-		Where("resource_id = ?", resource.ID).
-		Where("archived_at IS NULL").
-		Exec(ctx); err != nil {
+	if err := models.RegistryResource.ArchiveDependents(ctx, tx, resource.ID, now); err != nil {
 		return err
 	}
 	resource.ArchivedAt = sql.NullTime{Time: now, Valid: true}

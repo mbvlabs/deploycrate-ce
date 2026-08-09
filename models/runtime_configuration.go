@@ -99,6 +99,17 @@ func (rc runtimeConfiguration) Find(
 	return entity, nil
 }
 
+func (runtimeConfiguration) FindForEnvironment(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) (RuntimeConfigurationEntity, error) {
+	var entity RuntimeConfigurationEntity
+	err := db.NewSelect().Model(&entity).
+		Where("environment_id = ?", environmentID).Limit(1).Scan(ctx)
+	return entity, err
+}
+
 type CreateRuntimeConfigurationData struct {
 	Runtime        string
 	ResourceLimits json.RawMessage
