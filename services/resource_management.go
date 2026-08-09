@@ -89,6 +89,12 @@ type ResourceCredentialInput struct {
 	SecretValues map[string]string
 }
 
+type CreateResourceDatabaseInput struct {
+	Database     models.ResourceDatabaseDefinition
+	CredentialID *uuid.UUID
+	Credential   *ResourceCredentialInput
+}
+
 func resourceCredentialMetadataPurpose(metadata json.RawMessage) string {
 	var value struct {
 		Purpose string `json:"purpose"`
@@ -103,6 +109,22 @@ func resourceCredentialMetadataDatabase(metadata json.RawMessage) string {
 	}
 	_ = json.Unmarshal(metadata, &value)
 	return strings.TrimSpace(value.Database)
+}
+
+func resourceCredentialMetadataForDatabase(
+	metadata json.RawMessage,
+	database string,
+) (json.RawMessage, error) {
+	values := make(map[string]any)
+	if len(metadata) > 0 && json.Unmarshal(metadata, &values) != nil {
+		return nil, domainError("credential.metadata", "invalid", "credential metadata must be valid JSON")
+	}
+	if values == nil {
+		values = make(map[string]any)
+	}
+	values["purpose"] = "application"
+	values["database"] = strings.TrimSpace(database)
+	return json.Marshal(values)
 }
 
 func resourceCredentialMetadataEnvironmentID(metadata json.RawMessage) uuid.UUID {
@@ -1386,11 +1408,19 @@ func (service *ResourceManagement) postgreSQLAdministratorConnection(
 func (service *ResourceManagement) CreateDatabase(
 	ctx context.Context,
 	resourceID uuid.UUID,
-	database models.ResourceDatabaseDefinition,
-) (models.ResourceEntity, error) {
+	input CreateResourceDatabaseInput,
+) (result models.ResourceEntity, err error) {
+	database := input.Database
 	database.Name = strings.TrimSpace(database.Name)
 	database.Encoding = strings.TrimSpace(database.Encoding)
 	database.Collation = strings.TrimSpace(database.Collation)
+	if (input.CredentialID == nil) == (input.Credential == nil) {
+		return models.ResourceEntity{}, domainError(
+			"credential",
+			"required",
+			"select an existing application credential or create a new one",
+		)
+	}
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {
 		return models.ResourceEntity{}, err
@@ -1419,7 +1449,7 @@ func (service *ResourceManagement) CreateDatabase(
 	if err != nil {
 		return models.ResourceEntity{}, err
 	}
-	created, err := service.postgres.CreateDatabase(
+	createdDatabase, err := service.postgres.CreateDatabase(
 		ctx,
 		connection,
 		database.Name,
@@ -1429,6 +1459,57 @@ func (service *ResourceManagement) CreateDatabase(
 	if err != nil {
 		return models.ResourceEntity{}, err
 	}
+	completed := false
+	var reconciledCredential *models.ResourceCredentialEntity
+	var previousCredential *models.ResourceCredentialEntity
+	defer func() {
+		if completed {
+			return
+		}
+		compensationContext := context.WithoutCancel(ctx)
+		compensationErrors := make([]error, 0, 3)
+		if previousCredential != nil && reconciledCredential != nil {
+			compensationErrors = append(
+				compensationErrors,
+				service.reconcilePostgreSQLCredential(
+					compensationContext,
+					service.db.Executor(),
+					resource,
+					*previousCredential,
+					reconciledCredential,
+				),
+			)
+		}
+		if createdDatabase {
+			compensationErrors = append(
+				compensationErrors,
+				service.postgres.DropDatabase(compensationContext, connection, database.Name),
+			)
+		}
+		if previousCredential == nil && reconciledCredential != nil &&
+			reconciledCredential.Username.Valid {
+			if !createdDatabase {
+				compensationErrors = append(
+					compensationErrors,
+					service.postgres.RevokeLoginRoleDatabase(
+						compensationContext,
+						connection,
+						database.Name,
+						reconciledCredential.Username.String,
+					),
+				)
+			}
+			compensationErrors = append(
+				compensationErrors,
+				service.postgres.DropLoginRole(
+					compensationContext,
+					connection,
+					reconciledCredential.Username.String,
+				),
+			)
+		}
+		err = errors.Join(err, errors.Join(compensationErrors...))
+	}()
 	configuration := resource.ParsedConfiguration()
 	configuration.Databases = append(configuration.Databases, database)
 	encoded, err := json.Marshal(configuration)
@@ -1446,31 +1527,118 @@ func (service *ResourceManagement) CreateDatabase(
 		ArchivedAt:            resource.ArchivedAt,
 	})
 	if err != nil {
-		if created {
-			return models.ResourceEntity{}, errors.Join(
-				err,
-				service.postgres.DropDatabase(
-					context.WithoutCancel(ctx),
-					connection,
-					database.Name,
-				),
+		return models.ResourceEntity{}, err
+	}
+	resource = updated
+	if input.CredentialID != nil {
+		var current models.ResourceCredentialEntity
+		findErr := tx.NewSelect().Model(&current).
+			Where("id = ?", *input.CredentialID).
+			Where("resource_id = ?", resource.ID).
+			Where("archived_at IS NULL").
+			For("UPDATE").
+			Scan(ctx)
+		if errors.Is(findErr, sql.ErrNoRows) {
+			return models.ResourceEntity{}, domainError(
+				"credentialId",
+				"unavailable",
+				"selected application credential is unavailable",
 			)
 		}
-		return models.ResourceEntity{}, err
+		if findErr != nil {
+			return models.ResourceEntity{}, findErr
+		}
+		if resourceCredentialMetadataPurpose(current.Metadata) != "application" {
+			return models.ResourceEntity{}, domainError(
+				"credentialId",
+				"application",
+				"only application credentials can be attached to a Database",
+			)
+		}
+		metadata, metadataErr := resourceCredentialMetadataForDatabase(
+			current.Metadata,
+			database.Name,
+		)
+		if metadataErr != nil {
+			return models.ResourceEntity{}, metadataErr
+		}
+		candidate := current
+		candidate.Metadata = metadata
+		credentialInput := ResourceCredentialInput{
+			Name: current.Name, Username: current.Username.String,
+			Metadata: metadata,
+		}
+		if validationErr := service.validatePostgreSQLCredential(
+			ctx,
+			tx,
+			resource,
+			credentialInput,
+			&current.ID,
+		); validationErr != nil {
+			return models.ResourceEntity{}, validationErr
+		}
+		if reconcileErr := service.reconcilePostgreSQLCredential(
+			ctx,
+			tx,
+			resource,
+			candidate,
+			&current,
+		); reconcileErr != nil {
+			return models.ResourceEntity{}, reconcileErr
+		}
+		reconciledCredential = &candidate
+		previousCredential = &current
+		if _, updateErr := models.ResourceCredential.Update(
+			ctx,
+			tx,
+			models.UpdateResourceCredentialData{
+				ID: current.ID, Name: current.Name, Username: current.Username,
+				Metadata: metadata, EncPayload: current.EncPayload, Digest: current.Digest,
+				ArchivedAt: current.ArchivedAt, ResourceID: resource.ID,
+			},
+		); updateErr != nil {
+			return models.ResourceEntity{}, mapResourceConflict(updateErr)
+		}
+	} else {
+		credentialInput := *input.Credential
+		metadata, metadataErr := resourceCredentialMetadataForDatabase(
+			credentialInput.Metadata,
+			database.Name,
+		)
+		if metadataErr != nil {
+			return models.ResourceEntity{}, metadataErr
+		}
+		credentialInput.Metadata = metadata
+		createdCredential, createCredentialErr := service.createCredential(
+			ctx,
+			tx,
+			resource,
+			credentialInput,
+		)
+		if createCredentialErr != nil {
+			return models.ResourceEntity{}, prefixResourceValidation(
+				createCredentialErr,
+				"credential",
+			)
+		}
+		if reconcileErr := service.reconcilePostgreSQLCredential(
+			ctx,
+			tx,
+			resource,
+			createdCredential,
+			nil,
+		); reconcileErr != nil {
+			return models.ResourceEntity{}, prefixResourceValidation(
+				reconcileErr,
+				"credential",
+			)
+		}
+		reconciledCredential = &createdCredential
 	}
 	if err := tx.Commit(); err != nil {
-		if created {
-			return models.ResourceEntity{}, errors.Join(
-				err,
-				service.postgres.DropDatabase(
-					context.WithoutCancel(ctx),
-					connection,
-					database.Name,
-				),
-			)
-		}
 		return models.ResourceEntity{}, err
 	}
+	completed = true
 	return updated, nil
 }
 

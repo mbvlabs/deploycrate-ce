@@ -671,9 +671,11 @@ func (controller Resources) CreateCredential(etx *echo.Context) error {
 }
 
 type resourceDatabasePayload struct {
-	Name      string `json:"name"`
-	Encoding  string `json:"encoding"`
-	Collation string `json:"collation"`
+	Name         string                     `json:"name"`
+	Encoding     string                     `json:"encoding"`
+	Collation    string                     `json:"collation"`
+	CredentialID string                     `json:"credentialId"`
+	Credential   *resourceCredentialPayload `json:"credential"`
 }
 
 func (controller Resources) CreateDatabase(etx *echo.Context) error {
@@ -683,15 +685,38 @@ func (controller Resources) CreateDatabase(etx *echo.Context) error {
 		err = etx.Bind(&payload)
 	}
 	if err == nil {
-		_, err = controller.service.CreateDatabase(
-			etx.Request().Context(),
-			resourceID,
-			models.ResourceDatabaseDefinition{
-				Name: payload.Name, Encoding: payload.Encoding, Collation: payload.Collation,
-			},
-		)
+		credentialID, credentialIDErr := optionalUUID(payload.CredentialID)
+		if credentialIDErr != nil {
+			err = domainPayloadError("credentialId", "credential is invalid")
+		} else {
+			input := services.CreateResourceDatabaseInput{
+				Database: models.ResourceDatabaseDefinition{
+					Name: payload.Name, Encoding: payload.Encoding, Collation: payload.Collation,
+				},
+				CredentialID: credentialID,
+			}
+			if payload.Credential != nil {
+				var credential services.ResourceCredentialInput
+				credential, err = payload.Credential.serviceInput()
+				if err == nil {
+					input.Credential = &credential
+				}
+			}
+			if err == nil {
+				_, err = controller.service.CreateDatabase(
+					etx.Request().Context(),
+					resourceID,
+					input,
+				)
+			}
+		}
 	}
-	return controller.finishChildMutation(etx, resourceID, err, "Database created")
+	return controller.finishChildMutation(
+		etx,
+		resourceID,
+		err,
+		"Database and credential access created",
+	)
 }
 
 func (controller Resources) UpdateCredential(etx *echo.Context) error {

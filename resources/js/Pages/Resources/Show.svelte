@@ -489,7 +489,7 @@
   let credentialRevealError = $state("");
   let credentialRevealProcessing = $state(false);
   let revealedCredential = $state<RevealedCredential | null>(null);
-  let database = $state({ name: "", encoding: "UTF8", collation: "" });
+  let database = $state(initialDatabase());
   let privateAccessNetworkId = $state("");
   let device = $state({ name: "", deviceId: "" });
   let volume = $state(initialVolume());
@@ -564,6 +564,20 @@
   }
   function initialSelectedBackupDatabase() {
     return selectedDatabase;
+  }
+  function initialDatabase() {
+    return {
+      name: "",
+      encoding: "UTF8",
+      collation: "",
+      credentialMode: applicationCredentials.length > 0 ? "existing" : "new",
+      credentialId: applicationCredentials[0]?.id ?? "",
+      credential: {
+        name: "Application user",
+        username: "",
+        secretValues: {} as Record<string, string>,
+      },
+    };
   }
   function initialVolume() {
     return {
@@ -652,18 +666,38 @@
   function createDatabase() {
     if (dialogAction) return;
     dialogAction = "database";
+    const payload = {
+      name: database.name,
+      encoding: database.encoding,
+      collation: database.collation,
+      credentialId:
+        database.credentialMode === "existing" ? database.credentialId : "",
+      credential:
+        database.credentialMode === "new"
+          ? {
+              name: database.credential.name,
+              username: database.credential.username,
+              metadata: { purpose: "application", database: database.name },
+              secretValues: database.credential.secretValues,
+            }
+          : null,
+    };
     router.post(
       actionURL(routes.resourceDatabaseCreateForResource(resource.id)),
-      database,
+      payload,
       {
         onSuccess: () => {
           databaseDialogOpen = false;
-          database = { name: "", encoding: "UTF8", collation: "" };
+          database = initialDatabase();
         },
         onError: () => (databaseDialogOpen = true),
         onFinish: () => (dialogAction = ""),
       },
     );
+  }
+  function openDatabaseDialog() {
+    database = initialDatabase();
+    databaseDialogOpen = true;
   }
   function openEndpointDialog(item: any = null) {
     editingEndpointId = item?.id ?? "";
@@ -1566,10 +1600,8 @@
       <Card.Root>
         <Card.Header>
           <Card.Action
-            ><Button
-              size="sm"
-              variant="outline"
-              onclick={() => (databaseDialogOpen = true)}>Add Database</Button
+            ><Button size="sm" variant="outline" onclick={openDatabaseDialog}
+              >Add Database</Button
             ></Card.Action
           >
           <Card.Title>Databases</Card.Title>
@@ -1590,8 +1622,9 @@
                     ><Table.Head>Database</Table.Head><Table.Head
                       >Encoding</Table.Head
                     ><Table.Head>Collation</Table.Head><Table.Head
-                      >Endpoints</Table.Head
-                    ><Table.Head class="text-right">Backups</Table.Head
+                      >Attached credentials</Table.Head
+                    ><Table.Head>Endpoints</Table.Head><Table.Head
+                      class="text-right">Backups</Table.Head
                     ></Table.Row
                   ></Table.Header
                 >
@@ -1600,12 +1633,23 @@
                     {@const backup = backups.databases.find(
                       (detail) => detail.databaseName === item.name,
                     )}
+                    {@const attachedCredentials = applicationCredentials.filter(
+                      (credential: any) =>
+                        credential.metadata?.database === item.name,
+                    )}
                     <Table.Row>
                       <Table.Cell class="font-mono font-medium"
                         >{item.name}</Table.Cell
                       >
                       <Table.Cell>{item.encoding || "Default"}</Table.Cell>
                       <Table.Cell>{item.collation || "Default"}</Table.Cell>
+                      <Table.Cell
+                        >{attachedCredentials.length > 0
+                          ? attachedCredentials
+                              .map((credential: any) => credential.name)
+                              .join(", ")
+                          : "None"}</Table.Cell
+                      >
                       <Table.Cell>{resource.endpoints.length}</Table.Cell>
                       <Table.Cell class="text-right">
                         {#if backup?.policy}
@@ -3154,7 +3198,7 @@
   </Dialog.Root>
 
   <Dialog.Root bind:open={databaseDialogOpen}>
-    <Dialog.Content class="sm:max-w-xl">
+    <Dialog.Content class="sm:max-w-2xl">
       <form
         class="space-y-5"
         onsubmit={(event) => {
@@ -3164,8 +3208,8 @@
       >
         <Dialog.Header
           ><Dialog.Title>Add Database</Dialog.Title><Dialog.Description
-            >Create a logical Database in the running Resource and record it in
-            Resource configuration.</Dialog.Description
+            >Create a logical Database and attach the only application
+            credential that should receive access in one setup flow.</Dialog.Description
           ></Dialog.Header
         >
         <div class="grid gap-4 sm:grid-cols-2">
@@ -3183,6 +3227,80 @@
               placeholder="Default"
             /></FormField
           >
+          <div class="sm:col-span-2 border-t border-border pt-4">
+            <FormField label="Credential setup" error={errors.credential}
+              ><NativeSelect.Root
+                bind:value={database.credentialMode}
+                class="w-full"
+              >
+                {#if applicationCredentials.length > 0}<NativeSelect.Option
+                    value="existing"
+                    >Attach an existing credential</NativeSelect.Option
+                  >{/if}<NativeSelect.Option value="new"
+                  >Create a new credential</NativeSelect.Option
+                >
+              </NativeSelect.Root></FormField
+            >
+          </div>
+          {#if database.credentialMode === "existing"}
+            <div class="sm:col-span-2 space-y-3">
+              <FormField
+                label="Application credential"
+                error={errors.credentialId}
+              >
+                <NativeSelect.Root
+                  bind:value={database.credentialId}
+                  class="w-full"
+                  required
+                >
+                  <NativeSelect.Option value=""
+                    >Select a credential</NativeSelect.Option
+                  >
+                  {#each applicationCredentials as item (item.id)}
+                    <NativeSelect.Option value={item.id}
+                      >{item.name} · {item.username}{item.metadata?.database
+                        ? ` · currently ${item.metadata.database}`
+                        : ""}</NativeSelect.Option
+                    >
+                  {/each}
+                </NativeSelect.Root>
+              </FormField>
+              <p class="text-xs text-muted-foreground">
+                Attaching an existing credential moves its PostgreSQL access
+                from its current Database to this new Database.
+              </p>
+            </div>
+          {:else}
+            <FormField label="Credential name" error={errors["credential.name"]}
+              ><Input
+                bind:value={database.credential.name}
+                required
+              /></FormField
+            >
+            <FormField label="Username" error={errors["credential.username"]}
+              ><Input
+                bind:value={database.credential.username}
+                autocomplete="username"
+                required
+              /></FormField
+            >
+            {#each definition.credentialFields as field (field.name)}
+              <FormField
+                label={field.label}
+                error={errors[`credential.secretValues.${field.name}`]}
+              >
+                <Input
+                  type={field.secret ? "password" : "text"}
+                  value={database.credential.secretValues[field.name] ?? ""}
+                  oninput={(event) =>
+                    (database.credential.secretValues[field.name] =
+                      event.currentTarget.value)}
+                  required={field.required}
+                  autocomplete="new-password"
+                />
+              </FormField>
+            {/each}
+          {/if}
         </div>
         <Dialog.Footer
           ><Button
@@ -3192,9 +3310,12 @@
             onclick={() => (databaseDialogOpen = false)}>Cancel</Button
           ><Button
             type="submit"
-            disabled={dialogAction === "database"}
+            disabled={dialogAction === "database" ||
+              (database.credentialMode === "existing" &&
+                !database.credentialId)}
             aria-busy={dialogAction === "database"}
-            >{#if dialogAction === "database"}<Spinner />{/if}Create Database</Button
+            >{#if dialogAction === "database"}<Spinner />{/if}Create Database
+            and attach credential</Button
           ></Dialog.Footer
         >
       </form>

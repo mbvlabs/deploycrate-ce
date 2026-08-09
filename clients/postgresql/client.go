@@ -144,6 +144,14 @@ func (Client) DropDatabase(ctx context.Context, connection Connection, database 
 	return nil
 }
 
+func (Client) DropLoginRole(
+	ctx context.Context,
+	connection Connection,
+	username string,
+) error {
+	return dropLoginRole(ctx, connection, username)
+}
+
 func validateDatabaseName(database string) error {
 	database = strings.TrimSpace(database)
 	if database == "" || len([]byte(database)) > 63 || strings.ContainsRune(database, '\x00') {
@@ -454,6 +462,7 @@ func (Client) GrantLoginRoleDatabase(
 	databaseIdentifier := pgx.Identifier{database}.Sanitize()
 	administratorIdentifier := pgx.Identifier{strings.TrimSpace(connection.Username)}.Sanitize()
 	statements := []string{
+		"REVOKE CONNECT ON DATABASE " + databaseIdentifier + " FROM PUBLIC",
 		"GRANT ALL PRIVILEGES ON DATABASE " + databaseIdentifier + " TO " + identifier,
 		"GRANT ALL PRIVILEGES ON SCHEMA public TO " + identifier,
 		"GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO " + identifier,
