@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	clickhouseclient "deploycrate-ce/clients/clickhouse"
 	"deploycrate-ce/internal/inertia"
 	"deploycrate-ce/internal/request"
 	"deploycrate-ce/internal/validation"
@@ -870,14 +869,14 @@ func (c Environments) showSection(etx *echo.Context, section string) error {
 	if openTelemetryErr != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
-	applicationTelemetry := clickhouseclient.ApplicationTelemetry{
-		History: []clickhouseclient.ApplicationTelemetryPoint{},
-		Database: clickhouseclient.DatabaseTelemetry{
-			History: []clickhouseclient.DatabaseTelemetryPoint{},
+	applicationTelemetry := services.ApplicationTelemetry{
+		History: []services.ApplicationTelemetryPoint{},
+		Database: services.DatabaseTelemetry{
+			History: []services.DatabaseTelemetryPoint{},
 		},
-		RecentTraces: []clickhouseclient.TraceSummary{},
-		Routes:       []clickhouseclient.RouteTelemetry{},
-		Queries:      []clickhouseclient.QueryTelemetry{},
+		RecentTraces: []services.TraceSummary{},
+		Routes:       []services.RouteTelemetry{},
+		Queries:      []services.QueryTelemetry{},
 	}
 	if section == "telemetry" && openTelemetryAvailable {
 		applicationTelemetry, err = c.appTelemetrySvc.Snapshot(

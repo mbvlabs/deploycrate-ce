@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	clickhouseclient "deploycrate-ce/clients/clickhouse"
 	"deploycrate-ce/config"
+	clickhouseclient "deploycrate-ce/database/clickhouse"
 )
 
 var ErrInvalidTraceID = errors.New("trace ID is invalid")
@@ -80,15 +80,15 @@ func NewSystemApplicationTelemetry(
 func (service *SystemApplicationTelemetry) Snapshot(
 	ctx context.Context,
 	telemetryRange TelemetryRange,
-) (clickhouseclient.ApplicationTelemetry, error) {
-	client, err := service.resource.Client(ctx)
+) (ApplicationTelemetry, error) {
+	client, err := service.resource.Queries(ctx)
 	if err != nil {
-		return clickhouseclient.ApplicationTelemetry{}, err
+		return ApplicationTelemetry{}, err
 	}
-	return client.ApplicationTelemetry(
+	return loadApplicationTelemetry(
 		ctx,
-		service.serviceName,
-		service.namespace,
+		client,
+		clickhouseclient.ServiceTelemetryScope(service.serviceName, service.namespace),
 		time.Now().UTC().Add(-telemetryRange.Duration()),
 		telemetryRange.Bucket(),
 	)
@@ -97,12 +97,12 @@ func (service *SystemApplicationTelemetry) Snapshot(
 func (service *SystemApplicationTelemetry) Trace(
 	ctx context.Context,
 	traceID string,
-) ([]clickhouseclient.TraceSpan, error) {
+) ([]TraceSpan, error) {
 	traceID = strings.ToLower(strings.TrimSpace(traceID))
 	if len(traceID) != 32 || strings.Trim(traceID, "0123456789abcdef") != "" {
 		return nil, ErrInvalidTraceID
 	}
-	client, err := service.resource.Client(ctx)
+	client, err := service.resource.Queries(ctx)
 	if err != nil {
 		return nil, err
 	}

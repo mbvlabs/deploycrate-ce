@@ -5,23 +5,36 @@ import (
 
 	clickhouseclient "deploycrate-ce/clients/clickhouse"
 	"deploycrate-ce/config"
+	clickhouse "deploycrate-ce/database/clickhouse"
 )
 
 type ClickHouseResource struct {
-	configuration config.ClickHouse
+	client  clickhouseclient.Client
+	queries clickhouse.Queries
 }
 
 func NewClickHouseResource(configuration config.Config) *ClickHouseResource {
+	clickHouse := configuration.ClickHouse
 	return &ClickHouseResource{
-		configuration: configuration.ClickHouse,
+		client: clickhouseclient.New(
+			clickHouse.GetURL(),
+			clickHouse.Database,
+			clickHouse.User,
+			clickHouse.Password,
+		),
+		queries: clickhouse.NewQueries(
+			clickHouse.GetURL(),
+			clickHouse.Database,
+			clickHouse.User,
+			clickHouse.Password,
+		),
 	}
 }
 
 func (resource *ClickHouseResource) Client(_ context.Context) (clickhouseclient.Client, error) {
-	return clickhouseclient.New(
-		resource.configuration.GetURL(),
-		resource.configuration.Database,
-		resource.configuration.User,
-		resource.configuration.Password,
-	), nil
+	return resource.client, nil
+}
+
+func (resource *ClickHouseResource) Queries(_ context.Context) (clickhouse.Queries, error) {
+	return resource.queries, nil
 }

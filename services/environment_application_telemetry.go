@@ -7,7 +7,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	clickhouseclient "deploycrate-ce/clients/clickhouse"
+	clickhouseclient "deploycrate-ce/database/clickhouse"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
 
@@ -58,17 +58,18 @@ func (service *EnvironmentApplicationTelemetry) Snapshot(
 	applicationID uuid.UUID,
 	environmentID uuid.UUID,
 	telemetryRange TelemetryRange,
-) (clickhouseclient.ApplicationTelemetry, error) {
+) (ApplicationTelemetry, error) {
 	if err := service.ensureEnabled(ctx, applicationID, environmentID); err != nil {
-		return clickhouseclient.ApplicationTelemetry{}, err
+		return ApplicationTelemetry{}, err
 	}
-	client, err := service.resource.Client(ctx)
+	client, err := service.resource.Queries(ctx)
 	if err != nil {
-		return clickhouseclient.ApplicationTelemetry{}, err
+		return ApplicationTelemetry{}, err
 	}
-	return client.EnvironmentApplicationTelemetry(
+	return loadApplicationTelemetry(
 		ctx,
-		environmentID.String(),
+		client,
+		clickhouseclient.EnvironmentTelemetryScope(environmentID.String()),
 		time.Now().UTC().Add(-telemetryRange.Duration()),
 		telemetryRange.Bucket(),
 	)
@@ -79,19 +80,21 @@ func (service *EnvironmentApplicationTelemetry) SlowQueries(
 	applicationID uuid.UUID,
 	environmentID uuid.UUID,
 	telemetryRange TelemetryRange,
-) ([]clickhouseclient.QueryTelemetry, error) {
+) ([]QueryTelemetry, error) {
 	if err := service.ensureEnabled(ctx, applicationID, environmentID); err != nil {
 		return nil, err
 	}
-	client, err := service.resource.Client(ctx)
+	client, err := service.resource.Queries(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return client.EnvironmentSlowQueries(
+	queries, _, err := client.SlowQueries(
 		ctx,
-		environmentID.String(),
+		clickhouseclient.EnvironmentTelemetryScope(environmentID.String()),
 		time.Now().UTC().Add(-telemetryRange.Duration()),
+		25,
 	)
+	return queries, err
 }
 
 func (service *EnvironmentApplicationTelemetry) Logs(
@@ -113,7 +116,7 @@ func (service *EnvironmentApplicationTelemetry) Logs(
 	if utf8.RuneCountInString(search) > maxSystemLogSearch {
 		return SystemLogSnapshot{}, ErrInvalidSystemLogSearch
 	}
-	client, err := service.resource.Client(ctx)
+	client, err := service.resource.Queries(ctx)
 	if err != nil {
 		return SystemLogSnapshot{}, err
 	}
@@ -140,7 +143,7 @@ func (service *EnvironmentApplicationTelemetry) Trace(
 	applicationID uuid.UUID,
 	environmentID uuid.UUID,
 	traceID string,
-) ([]clickhouseclient.TraceSpan, error) {
+) ([]TraceSpan, error) {
 	if err := service.ensureEnabled(ctx, applicationID, environmentID); err != nil {
 		return nil, err
 	}
@@ -148,7 +151,7 @@ func (service *EnvironmentApplicationTelemetry) Trace(
 	if len(traceID) != 32 || strings.Trim(traceID, "0123456789abcdef") != "" {
 		return nil, ErrInvalidTraceID
 	}
-	client, err := service.resource.Client(ctx)
+	client, err := service.resource.Queries(ctx)
 	if err != nil {
 		return nil, err
 	}

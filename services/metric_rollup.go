@@ -11,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-	clickhouseclient "deploycrate-ce/clients/clickhouse"
 	prometheusclient "deploycrate-ce/clients/prometheus"
 	"deploycrate-ce/config"
+	clickhouseclient "deploycrate-ce/database/clickhouse"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
 	"deploycrate-ce/telemetry"
@@ -398,7 +398,7 @@ func (service MetricRollupService) Collect(ctx context.Context) (resultErr error
 			rollups = append(rollups, *rollup)
 		}
 	}
-	client, err := service.clickhouse.Client(ctx)
+	client, err := service.clickhouse.Queries(ctx)
 	if err != nil {
 		return errors.Join(append(queryErrors, err)...)
 	}
@@ -581,7 +581,7 @@ func (service MetricRollupService) hostTelemetry(
 	if !service.enabled || server == "" {
 		return result, nil
 	}
-	client, err := service.clickhouse.Client(ctx)
+	client, err := service.clickhouse.Queries(ctx)
 	if err != nil {
 		return result, err
 	}
@@ -703,7 +703,7 @@ func (service MetricRollupService) SystemTelemetry(
 	if !service.enabled {
 		return result, errors.Join(hostErr, inventoryErr)
 	}
-	client, err := service.clickhouse.Client(ctx)
+	client, err := service.clickhouse.Queries(ctx)
 	if err != nil {
 		return result, errors.Join(hostErr, inventoryErr, err)
 	}
@@ -864,7 +864,7 @@ func (service MetricRollupService) EnvironmentTelemetry(
 	if err != nil {
 		return result, err
 	}
-	client, err := service.clickhouse.Client(ctx)
+	client, err := service.clickhouse.Queries(ctx)
 	if err != nil {
 		return result, err
 	}
@@ -895,7 +895,7 @@ func (service MetricRollupService) EnvironmentTelemetry(
 
 func (service MetricRollupService) environmentHostUsage(
 	ctx context.Context,
-	client clickhouseclient.Client,
+	client clickhouseclient.Queries,
 	serverID uuid.UUID,
 ) EnvironmentHostUsage {
 	usage := EnvironmentHostUsage{}

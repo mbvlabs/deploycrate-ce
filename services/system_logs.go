@@ -10,8 +10,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	clickhouseclient "deploycrate-ce/clients/clickhouse"
 	"deploycrate-ce/config"
+	clickhouseclient "deploycrate-ce/database/clickhouse"
 )
 
 const (
@@ -77,7 +77,7 @@ func (service *SystemLogs) Snapshot(
 	if utf8.RuneCountInString(search) > maxSystemLogSearch {
 		return SystemLogSnapshot{}, ErrInvalidSystemLogSearch
 	}
-	client, err := service.resource.Client(ctx)
+	client, err := service.resource.Queries(ctx)
 	if err != nil {
 		return SystemLogSnapshot{}, err
 	}

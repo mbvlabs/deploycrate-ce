@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"time"
 
-	clickhouseclient "deploycrate-ce/clients/clickhouse"
+	clickhouseclient "deploycrate-ce/database/clickhouse"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
 
@@ -76,7 +76,7 @@ func (service *EnvironmentLogs) Snapshot(
 	if err != nil {
 		return EnvironmentLogSnapshot{}, err
 	}
-	client, err := service.resource.Client(ctx)
+	client, err := service.resource.Queries(ctx)
 	if err != nil {
 		return EnvironmentLogSnapshot{}, err
 	}

@@ -36,7 +36,7 @@ func (service *ClickHouseBackup) Export(
 	ctx context.Context,
 	destination string,
 ) (ClickHouseBackupArtifact, error) {
-	client, err := service.resource.Client(ctx)
+	client, err := service.resource.Queries(ctx)
 	if err != nil {
 		return ClickHouseBackupArtifact{}, err
 	}
