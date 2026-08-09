@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -231,8 +230,11 @@ func (service *ServerManagement) Prune(
 	if len(scopes) == 0 {
 		return errors.New("at least one prune scope is required")
 	}
-	for _, scope := range scopes {
-		if !slices.Contains([]string{"containers", "images", "volumes"}, scope) {
+	resources := make([]string, len(scopes))
+	for index, scope := range scopes {
+		var ok bool
+		resources[index], ok = dockerPruneResource(scope)
+		if !ok {
 			return fmt.Errorf("unsupported prune scope %q", scope)
 		}
 	}
@@ -240,10 +242,10 @@ func (service *ServerManagement) Prune(
 	if err != nil {
 		return err
 	}
-	for _, scope := range scopes {
+	for _, resource := range resources {
 		if target.Remote {
-			arguments := []string{scope, "prune", "--force"}
-			if scope == "images" {
+			arguments := []string{resource, "prune", "--force"}
+			if resource == "image" {
 				arguments = append(arguments, "--all")
 			}
 			if _, err := service.servers.RunRootCommand(
@@ -257,11 +259,24 @@ func (service *ServerManagement) Prune(
 			}
 			continue
 		}
-		if _, err := hostcommand.Run(ctx, scope+"-prune"); err != nil {
+		if _, err := hostcommand.Run(ctx, resource+"-prune"); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func dockerPruneResource(scope string) (string, bool) {
+	switch scope {
+	case "containers":
+		return "container", true
+	case "images":
+		return "image", true
+	case "volumes":
+		return "volume", true
+	default:
+		return "", false
+	}
 }
 
 func (service *ServerManagement) CheckUpdates(
