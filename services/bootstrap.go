@@ -334,9 +334,10 @@ func bootstrapServerCapabilities(
 			"name":    "docker",
 			"version": input.DockerEngineVersion,
 		},
-		"buildpacks": map[string]string{
-			"tool":    "pack",
-			"version": input.BuildpacksPackVersion,
+		"buildpacks": map[string]any{
+			"tool":     "pack",
+			"version":  input.BuildpacksPackVersion,
+			"runtimes": []string{"go"},
 		},
 		"filesystem_backups": map[string]string{
 			"tool":    "restic",

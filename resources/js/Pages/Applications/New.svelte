@@ -3,6 +3,10 @@
   import { Button } from "@/Components/ui/button";
   import * as Card from "@/Components/ui/card";
   import BulkEnvironmentSecretsDialog from "@/Components/BulkEnvironmentSecretsDialog.svelte";
+  import BuildpackSettingsEditor, {
+    type BuildpackSettings,
+    type BuildServer,
+  } from "@/Components/BuildpackSettingsEditor.svelte";
   import EnvironmentProcessEditor, {
     type ProcessInput,
   } from "@/Components/EnvironmentProcessEditor.svelte";
@@ -61,7 +65,7 @@
     githubRepositoryId: string;
     reference: string;
     autoBuild: boolean;
-    buildFrontendAssets: boolean;
+    buildpackSettings: BuildpackSettings;
     contextPath: string;
     registryResourceId: string;
     imageRepository: string;
@@ -80,7 +84,7 @@
     installations: Installation[];
     repositories: Repository[];
     registries: Registry[];
-    buildServers: Server[];
+    buildServers: BuildServer[];
     servers: Server[];
     resources: ResourceOption[];
     dnsZones: DNSZone[];
@@ -126,11 +130,17 @@
       githubRepositoryId: "",
       reference: "",
       autoBuild: false,
-      buildFrontendAssets: false,
+      buildpackSettings: {
+        schema_version: 3,
+        runtime: "go",
+        frontend: null,
+      },
       contextPath: ".",
       registryResourceId: registries[0]?.id ?? "",
       imageRepository: "",
-      buildServerId: buildServers[0]?.id ?? "",
+      buildServerId:
+        buildServers.find((server) => server.buildpacks.includes("go"))?.id ??
+        "",
       serverIds: [],
       hostname: "",
       dnsMode: "manual",
@@ -320,12 +330,7 @@
       autoBuild: environment.autoBuild,
       contextPath: environment.contextPath,
       builderReference: "",
-      buildpackSettings: {
-        schema_version: 2,
-        frontend: environment.buildFrontendAssets
-          ? { runtime: "node", script: "build" }
-          : null,
-      },
+      buildpackSettings: environment.buildpackSettings,
       registryResourceId: environment.registryResourceId,
       imageRepository: environment.imageRepository,
       buildServerId: environment.buildServerId,
@@ -478,23 +483,11 @@
                 required
               /></FormField
             >
-            <FormField label="Build server"
-              ><NativeSelect.Root
-                value={environment.buildServerId}
-                onchange={(event) =>
-                  (environment.buildServerId = event.currentTarget.value)}
-                class="w-full"
-                required
-                ><NativeSelect.Option value=""
-                  >Select a Build Server</NativeSelect.Option
-                >{#each buildServers as server (server.id)}<NativeSelect.Option
-                    value={server.id}
-                    >{server.name} · {server.kind === "worker"
-                      ? server.address
-                      : "Control plane"}</NativeSelect.Option
-                  >{/each}</NativeSelect.Root
-              ></FormField
-            >
+            <BuildpackSettingsEditor
+              bind:settings={environment.buildpackSettings}
+              bind:buildServerId={environment.buildServerId}
+              {buildServers}
+            />
             <FormField label="Build context"
               ><Input
                 value={environment.contextPath}
@@ -534,21 +527,6 @@
                 onCheckedChange={(selected) =>
                   (environment.autoBuild = selected)}
               /> Build automatically on matching pushes</label
-            >
-            <label
-              class="flex items-start gap-3 border border-border p-4 sm:col-span-2"
-              ><Checkbox
-                class="mt-1"
-                checked={environment.buildFrontendAssets}
-                onCheckedChange={(selected) =>
-                  (environment.buildFrontendAssets = selected)}
-              /><span
-                ><span class="block text-sm font-medium"
-                  >Build Node frontend assets</span
-                ><span class="mt-1 block text-xs text-muted-foreground"
-                  >Requires a supported lockfile and build script.</span
-                ></span
-              ></label
             >
           </section>
         {:else}
@@ -680,7 +658,8 @@
           <p class="text-sm font-medium">Processes</p>
           <EnvironmentProcessEditor
             bind:processes={environment.processes}
-            showGoTargets={environment.sourceType === "buildpacks"}
+            showGoTargets={environment.sourceType === "buildpacks" &&
+              environment.buildpackSettings.runtime === "go"}
           />
         </section>
 

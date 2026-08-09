@@ -331,6 +331,12 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	if err != nil {
 		return fail(fmt.Errorf("load selected Build Server: %w", err))
 	}
+	if _, err := buildpacksclient.ProfileForArchitecture(
+		string(snapshot.parsedSettings.Runtime),
+		buildTarget.Server.Architecture.String,
+	); err != nil {
+		return fail(err)
+	}
 	if err := progress("loading_source", "Loading the GitHub source configuration"); err != nil {
 		return err
 	}
@@ -422,7 +428,7 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	recordTiming("source extraction", extractionStarted)
 	if err := progress(
 		"validating_context",
-		"Validating the configured Go Buildpacks context",
+		"Validating the configured Buildpacks context",
 	); err != nil {
 		return err
 	}
@@ -433,9 +439,11 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 		}
 		return fail(err)
 	}
-	if err := sudo.CommandContext(ctx, "/usr/bin/test", "-f", filepath.Join(contextPath, "go.mod")).
-		Run(); err != nil {
-		return fail(errors.New("Go Buildpacks context must contain go.mod"))
+	if snapshot.parsedSettings.Runtime == models.BuildpackRuntimeGo {
+		if err := sudo.CommandContext(ctx, "/usr/bin/test", "-f", filepath.Join(contextPath, "go.mod")).
+			Run(); err != nil {
+			return fail(errors.New("Go Buildpacks context must contain go.mod"))
+		}
 	}
 	buildCtx, cancel := context.WithTimeout(ctx, buildTimeout)
 	defer cancel()
@@ -531,8 +539,10 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 		return err
 	}
 	frontendScript := ""
+	frontendDirectory := ""
 	if snapshot.parsedSettings.Frontend != nil {
 		frontendScript = snapshot.parsedSettings.Frontend.Script
+		frontendDirectory = snapshot.parsedSettings.Frontend.Directory
 	}
 	packStarted := time.Now()
 	buildSpec := buildpacksclient.BuildSpec{
@@ -547,6 +557,8 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 		DockerEnvironment:  dockerEnvironment,
 		BPGOTargets:        snapshot.BPGOTargets,
 		FrontendScript:     frontendScript,
+		FrontendDirectory:  frontendDirectory,
+		Runtime:            string(snapshot.parsedSettings.Runtime),
 		Output:             logger,
 	}
 	if buildTarget.Remote {
@@ -685,15 +697,17 @@ func (service *BuildExecution) buildRemote(
 	); err != nil {
 		return fmt.Errorf("stage source on selected Build Server: %w", err)
 	}
-	if _, err := service.servers.RunRootCommand(
-		ctx,
-		target,
-		nil,
-		"/usr/bin/test",
-		"-f",
-		filepath.Join(contextPath, "go.mod"),
-	); err != nil {
-		return errors.New("Go Buildpacks context must contain go.mod on the selected Build Server")
+	if snapshot.parsedSettings.Runtime == models.BuildpackRuntimeGo {
+		if _, err := service.servers.RunRootCommand(
+			ctx,
+			target,
+			nil,
+			"/usr/bin/test",
+			"-f",
+			filepath.Join(contextPath, "go.mod"),
+		); err != nil {
+			return errors.New("Go Buildpacks context must contain go.mod on the selected Build Server")
+		}
 	}
 
 	assetsBuildpack := ""
@@ -837,19 +851,11 @@ func remotePackArguments(
 	spec buildpacksclient.BuildSpec,
 	contextPath, reportDirectory, assetsBuildpack string,
 ) ([]string, error) {
-	builder, err := buildpacksclient.PinnedBuilderForArchitecture(architecture)
+	profile, err := buildpacksclient.ProfileForArchitecture(spec.Runtime, architecture)
 	if err != nil {
 		return nil, err
 	}
-	goBuildpack, err := buildpacksclient.PinnedGoBuildpackForArchitecture(architecture)
-	if err != nil {
-		return nil, err
-	}
-	runImage, err := buildpacksclient.PinnedRunImageForArchitecture(architecture)
-	if err != nil {
-		return nil, err
-	}
-	arguments := []string{"build", spec.Image, "--path", contextPath, "--builder", builder}
+	arguments := []string{"build", spec.Image, "--path", contextPath, "--builder", profile.Builder}
 	if assetsBuildpack != "" {
 		arguments = append(
 			arguments,
@@ -859,15 +865,17 @@ func remotePackArguments(
 			assetsBuildpack,
 			"--env",
 			"BP_DEPLOYCRATE_FRONTEND_SCRIPT="+spec.FrontendScript,
+			"--env",
+			"BP_DEPLOYCRATE_FRONTEND_DIRECTORY="+spec.FrontendDirectory,
 		)
 	}
 	arguments = append(
 		arguments,
 		"--buildpack",
-		goBuildpack,
+		profile.Buildpack,
 		"--trust-extra-buildpacks",
 		"--run-image",
-		runImage,
+		profile.RunImage,
 		"--publish",
 		"--cache",
 		"type=build;format=volume;name="+spec.BuildCache,
@@ -879,6 +887,9 @@ func remotePackArguments(
 		"--report-output-dir",
 		reportDirectory,
 	)
+	for _, environment := range profile.Environment {
+		arguments = append(arguments, "--env", environment)
+	}
 	if spec.PreviousImage != "" {
 		arguments = append(arguments, "--previous-image", spec.PreviousImage)
 	}
@@ -1027,18 +1038,18 @@ func parseBuildSnapshot(build models.BuildEntity) (buildSnapshot, error) {
 		)
 	}
 	if snapshot.BuilderReference != nil && strings.TrimSpace(*snapshot.BuilderReference) != "" {
-		builder, err := buildpacksclient.PinnedBuilder()
-		if err != nil || strings.TrimSpace(*snapshot.BuilderReference) != builder {
-			return snapshot, errors.New("custom Buildpacks builders are not supported")
-		}
-	}
-	if snapshot.BPGOTargets != "" &&
-		(!goTargetsPattern.MatchString(snapshot.BPGOTargets) || strings.Contains(snapshot.BPGOTargets, "..")) {
-		return snapshot, errors.New("BP_GO_TARGETS is invalid")
+		return snapshot, errors.New("custom Buildpacks builders are not supported")
 	}
 	settings, err := models.ParseBuildpackSettings(snapshot.Settings)
 	if err != nil {
 		return snapshot, fmt.Errorf("Buildpacks settings are invalid: %w", err)
+	}
+	if settings.Runtime != models.BuildpackRuntimeGo && snapshot.BPGOTargets != "" {
+		return snapshot, errors.New("BP_GO_TARGETS is available only for the Go runtime")
+	}
+	if snapshot.BPGOTargets != "" &&
+		(!goTargetsPattern.MatchString(snapshot.BPGOTargets) || strings.Contains(snapshot.BPGOTargets, "..")) {
+		return snapshot, errors.New("BP_GO_TARGETS is invalid")
 	}
 	snapshot.parsedSettings = settings
 	return snapshot, nil

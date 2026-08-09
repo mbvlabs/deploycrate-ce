@@ -1,6 +1,9 @@
 <script lang="ts">
   import { Link, useForm } from "@inertiajs/svelte";
-  import { untrack } from "svelte";
+  import BuildpackSettingsEditor, {
+    type BuildpackSettings,
+    type BuildServer,
+  } from "@/Components/BuildpackSettingsEditor.svelte";
   import { Button } from "@/Components/ui/button";
   import * as Card from "@/Components/ui/card";
   import FormField from "@/Components/FormField.svelte";
@@ -15,13 +18,6 @@
     fullName: string;
   };
   type Registry = { id: string; name: string; endpoint: string };
-  type BuildServer = {
-    id: string;
-    name: string;
-    kind: string;
-    address: string;
-  };
-  type FrontendSettings = { runtime: "node"; script: "build" };
   let {
     auth,
     application,
@@ -57,9 +53,6 @@
         }
       : null,
   );
-  let buildFrontendAssets = $state(
-    untrack(() => Boolean(application.buildpackSettings?.frontend)),
-  );
   const form = useForm(() => ({
     sourceType: application.sourceType ?? "buildpacks",
     applicationName: "",
@@ -78,10 +71,17 @@
     contextPath: application.contextPath,
     builderReference: "",
     buildpackSettings: {
-      schema_version: 2,
-      frontend: (application.buildpackSettings?.frontend ??
-        null) as FrontendSettings | null,
-    },
+      schema_version: 3,
+      runtime:
+        application.runtime || application.buildpackSettings?.runtime || "go",
+      frontend: application.buildpackSettings?.frontend
+        ? {
+            runtime: "node",
+            directory: application.buildpackSettings.frontend.directory ?? ".",
+            script: application.buildpackSettings.frontend.script ?? "build",
+          }
+        : null,
+    } as BuildpackSettings,
     registryResourceId: application.registryId,
     imageRepository: application.imageRepository,
     buildServerId:
@@ -97,9 +97,6 @@
   );
   function submit(event: SubmitEvent) {
     event.preventDefault();
-    $form.buildpackSettings.frontend = buildFrontendAssets
-      ? { runtime: "node", script: "build" }
-      : null;
     $form.patch(updateUrl);
   }
 </script>
@@ -164,29 +161,14 @@
           ><FormField label="Build context"
             ><Input bind:value={$form.contextPath} required /></FormField
           >
-          <FormField label="Build Server"
-            ><NativeSelect.Root
-              bind:value={$form.buildServerId}
-              class="w-full"
-              required
-              >{#each options.buildServers as server (server.id)}<NativeSelect.Option
-                  value={server.id}
-                  >{server.name} · {server.kind === "worker"
-                    ? server.address
-                    : "Control plane"}</NativeSelect.Option
-                >{/each}</NativeSelect.Root
-            ></FormField
-          >
+          <BuildpackSettingsEditor
+            bind:settings={$form.buildpackSettings}
+            bind:buildServerId={$form.buildServerId}
+            buildServers={options.buildServers}
+            runtimeLocked={Boolean(application.setupComplete)}
+          />
           <FormField label="Output image repository"
             ><Input bind:value={$form.imageRepository} required /></FormField
-          >
-          <label class="flex gap-3 border border-border p-4"
-            ><Checkbox class="mt-1" bind:checked={buildFrontendAssets} /><span
-              ><span class="font-medium">Build Node frontend assets</span><span
-                class="mt-1 block text-xs text-muted-foreground"
-                >Build frontend assets before the Go Buildpacks build.</span
-              ></span
-            ></label
           >
           <label class="flex items-center gap-2 text-sm"
             ><Checkbox bind:checked={$form.autoBuild} /> Build automatically</label

@@ -10,6 +10,22 @@
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
   import { routes } from "@/routes";
 
+  type BuildpackRuntime = "go" | "rails" | "laravel" | "django";
+  const buildpackOptions: Array<[BuildpackRuntime, string, string]> = [
+    ["go", "Go", "Go modules and Paketo process targets"],
+    ["rails", "Rails", "Ruby and Rails applications (amd64)"],
+    [
+      "laravel",
+      "Laravel",
+      "PHP, Composer, NGINX, and public/ web root (amd64)",
+    ],
+    [
+      "django",
+      "Django",
+      "Python applications using requirements.txt or pyproject.toml",
+    ],
+  ];
+
   let { auth }: { auth: { email: string } } = $props();
   const form = useForm(() => ({
     name: "",
@@ -25,10 +41,22 @@
       database: false,
       repository: false,
       telemetry: true,
+      buildpacks: { runtimes: ["go"] as BuildpackRuntime[] },
     },
   }));
+  let buildpackSelections = $state<Record<BuildpackRuntime, boolean>>({
+    go: true,
+    rails: false,
+    laravel: false,
+    django: false,
+  });
   function submit(event: SubmitEvent) {
     event.preventDefault();
+    $form.capabilities.buildpacks.runtimes = $form.capabilities.build
+      ? buildpackOptions
+          .filter(([runtime]) => buildpackSelections[runtime])
+          .map(([runtime]) => runtime)
+      : [];
     $form.post(routes.nodeCreate());
   }
 </script>
@@ -131,6 +159,34 @@
                   ></span
                 ></label
               >
+              {#if $form.capabilities.build}
+                <div
+                  class="grid gap-3 border border-border/70 bg-muted/20 p-3 sm:col-span-2 sm:grid-cols-2"
+                >
+                  <div class="sm:col-span-2">
+                    <p class="text-sm font-medium">Buildpack runtimes</p>
+                    <p class="mt-1 text-xs text-muted-foreground">
+                      Select every application framework this Node may build.
+                    </p>
+                  </div>
+                  {#each buildpackOptions as [runtime, label, description] (runtime)}
+                    <label
+                      class="flex cursor-pointer items-start gap-3 border border-border p-3"
+                    >
+                      <Checkbox
+                        class="mt-1"
+                        bind:checked={buildpackSelections[runtime]}
+                      />
+                      <span>
+                        <span class="block text-sm font-medium">{label}</span>
+                        <span class="mt-1 block text-xs text-muted-foreground"
+                          >{description}</span
+                        >
+                      </span>
+                    </label>
+                  {/each}
+                </div>
+              {/if}
               <label
                 class="flex cursor-pointer items-start gap-3 border border-border p-3"
                 ><Checkbox

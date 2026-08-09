@@ -873,9 +873,11 @@ func (service *DeploymentExecution) loadScope(
 		Where("environment_id = ?", scope.Environment.ID).
 		Limit(1).
 		Scan(ctx)
-	if err != nil || scope.Runtime.Runtime != "go" ||
+	if err != nil ||
+		!models.IsSupportedBuildpackRuntime(models.BuildpackRuntime(scope.Runtime.Runtime)) ||
+		scope.Runtime.Runtime != scope.State.Runtime.Runtime ||
 		scope.Runtime.RestartPolicy != "unless-stopped" {
-		return scope, errors.New("Deployment Go runtime configuration is unavailable")
+		return scope, errors.New("Deployment runtime configuration is unavailable or mismatched")
 	}
 	if scope.Release.RegistryResourceID != nil && scope.Release.RegistryCredentialID != nil &&
 		scope.Release.RegistryEndpoint.Valid {

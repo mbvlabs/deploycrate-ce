@@ -3,6 +3,7 @@ package services
 import (
 	"context"
 	"database/sql"
+	buildpacksclient "deploycrate-ce/clients/buildpacks"
 	"deploycrate-ce/config"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
@@ -64,10 +65,12 @@ type ApplicationSetupOptions struct {
 }
 
 type ApplicationBuildServerOption struct {
-	ID      uuid.UUID `json:"id"      bun:"id"`
-	Name    string    `json:"name"    bun:"name"`
-	Kind    string    `json:"kind"    bun:"kind"`
-	Address string    `json:"address" bun:"address"`
+	ID           uuid.UUID                 `json:"id"         bun:"id"`
+	Name         string                    `json:"name"       bun:"name"`
+	Kind         string                    `json:"kind"       bun:"kind"`
+	Address      string                    `json:"address"    bun:"address"`
+	Architecture string                    `json:"architecture" bun:"architecture"`
+	Buildpacks   []models.BuildpackRuntime `json:"buildpacks" bun:"-"`
 }
 
 type RegistryResourceOption struct {
@@ -102,6 +105,7 @@ type ApplicationDetails struct {
 	EnvironmentSlug              string          `json:"environmentSlug"                        bun:"environment_slug"`
 	EnvironmentKind              string          `json:"environmentKind"                        bun:"environment_kind"`
 	SetupComplete                bool            `json:"setupComplete"                          bun:"setup_complete"`
+	Runtime                      string          `json:"runtime"                                bun:"runtime"`
 	EnvironmentSourceID          uuid.UUID       `json:"environmentSourceId"                    bun:"environment_source_id"`
 	SourceType                   string          `json:"sourceType"                             bun:"source_type"`
 	RepositoryID                 uuid.UUID       `json:"repositoryId"                           bun:"repository_id"`
@@ -414,6 +418,21 @@ func (service *ApplicationSetup) prepareEnvironment(
 		if err != nil {
 			return preparedApplicationEnvironment{}, err
 		}
+		settings, settingsErr := models.ParseBuildpackSettings(data.BuildpackSettings)
+		if settingsErr != nil {
+			return preparedApplicationEnvironment{}, errors.Join(models.ErrDomainValidation, settingsErr)
+		}
+		server, capabilityErr := models.RequireServerBuildpackCapability(
+			ctx, service.db.Executor(), data.BuildServerID, settings.Runtime,
+		)
+		if capabilityErr != nil {
+			return preparedApplicationEnvironment{}, capabilityErr
+		}
+		if _, profileErr := buildpacksclient.ProfileForArchitecture(
+			string(settings.Runtime), server.Architecture.String,
+		); profileErr != nil {
+			return preparedApplicationEnvironment{}, errors.Join(models.ErrDomainValidation, profileErr)
+		}
 	}
 	if err := validateRegistrySelection(
 		ctx,
@@ -563,15 +582,28 @@ func (service *ApplicationSetup) Options(ctx context.Context) (ApplicationSetupO
 		return ApplicationSetupOptions{}, err
 	}
 
-	buildServers := make([]ApplicationBuildServerOption, 0)
+	type buildServerRow struct {
+		ApplicationBuildServerOption
+		Capabilities json.RawMessage `bun:"capabilities"`
+	}
+	rows := make([]buildServerRow, 0)
 	if err := service.db.Executor().NewSelect().TableExpr("servers AS server").
-		ColumnExpr("server.id, server.name, server.kind, server.address").
+		ColumnExpr("server.id, server.name, server.kind, server.address, COALESCE(server.architecture, '') AS architecture, server.capabilities").
 		Where("server.archived_at IS NULL").Where("server.is_configured = TRUE").
 		Where("server.kind IN ('self_hosted', 'worker')").
 		Where("server.capabilities @> '{\"build\":true}'::jsonb").
 		OrderExpr("CASE WHEN server.kind = 'self_hosted' THEN 0 ELSE 1 END, server.name").
-		Scan(ctx, &buildServers); err != nil {
+		Scan(ctx, &rows); err != nil {
 		return ApplicationSetupOptions{}, err
+	}
+	buildServers := make([]ApplicationBuildServerOption, 0, len(rows))
+	for _, row := range rows {
+		capabilities, parseErr := models.ParseServerCapabilities(row.Capabilities)
+		if parseErr != nil {
+			continue
+		}
+		row.Buildpacks = capabilities.Buildpacks.Runtimes
+		buildServers = append(buildServers, row.ApplicationBuildServerOption)
 	}
 
 	return ApplicationSetupOptions{
@@ -755,6 +787,7 @@ func (service *ApplicationSetup) details(
 		ColumnExpr("source.reference").
 		ColumnExpr("source.auto_build").
 		ColumnExpr("CASE WHEN source.kind = 'image' THEN 'image' ELSE 'buildpacks' END AS source_type").
+		ColumnExpr("COALESCE(runtime.runtime, '') AS runtime").
 		ColumnExpr("repository.id AS repository_id").
 		ColumnExpr("COALESCE(repository.full_name, source.repository) AS repository_full_name").
 		ColumnExpr("repository.removed_at AS repository_removed_at").
@@ -778,6 +811,7 @@ func (service *ApplicationSetup) details(
 		Join("LEFT JOIN github_installations AS installation ON installation.id = repository.github_installation_id").
 		Join("LEFT JOIN buildpack_configurations AS buildpack ON buildpack.environment_source_id = source.id").
 		Join("LEFT JOIN image_configurations AS image ON image.environment_source_id = source.id").
+		Join("LEFT JOIN runtime_configurations AS runtime ON runtime.environment_id = environment.id").
 		Join("LEFT JOIN servers AS build_server ON build_server.id = buildpack.server_id").
 		Join("JOIN registry_resources AS registry ON registry.resource_id = COALESCE(buildpack.registry_resource_id, image.registry_resource_id)").
 		Join("JOIN resources AS registry_resource ON registry_resource.id = registry.resource_id").
@@ -914,6 +948,24 @@ func (service *ApplicationSetup) updateSource(
 	}
 	if len(data.BuildpackSettings) == 0 {
 		data.BuildpackSettings = models.DefaultBuildpackSettings()
+	}
+	if data.SourceType == "buildpacks" {
+		requestedSettings, settingsErr := models.ParseBuildpackSettings(data.BuildpackSettings)
+		if settingsErr != nil {
+			return errors.Join(models.ErrDomainValidation, settingsErr)
+		}
+		if details.SetupComplete {
+			configuredRuntime := models.BuildpackRuntime(details.Runtime)
+			if !models.IsSupportedBuildpackRuntime(configuredRuntime) {
+				return errors.New("Environment runtime configuration is unavailable")
+			}
+			if requestedSettings.Runtime != configuredRuntime {
+				return errors.Join(
+					models.ErrDomainValidation,
+					errors.New("Buildpacks runtime cannot change after Environment setup"),
+				)
+			}
+		}
 	}
 	tx, err := service.db.BeginTx(ctx, nil)
 	if err != nil {

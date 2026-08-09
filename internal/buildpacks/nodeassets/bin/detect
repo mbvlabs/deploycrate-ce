@@ -6,12 +6,22 @@ if [[ -z "${BP_DEPLOYCRATE_FRONTEND_SCRIPT:-}" ]]; then
   exit 100
 fi
 
-if [[ ! -f package.json ]]; then
-  echo "DeployCrate Node Assets requires package.json" >&2
+asset_directory="${BP_DEPLOYCRATE_FRONTEND_DIRECTORY:-.}"
+if [[ "${asset_directory}" == /* || "${asset_directory}" == ".." || "${asset_directory}" == ../* || "${asset_directory}" == */../* ]]; then
+  echo "DeployCrate frontend directory must stay inside the build context" >&2
+  exit 1
+fi
+if ! cd "${asset_directory}"; then
+  echo "DeployCrate frontend directory does not exist: ${asset_directory}" >&2
   exit 1
 fi
 
-supported_lockfiles=(package-lock.json npm-shrinkwrap.json pnpm-lock.yaml bun.lock bun.lockb)
+if [[ ! -f package.json ]]; then
+  echo "DeployCrate Node Assets requires package.json in ${asset_directory}" >&2
+  exit 1
+fi
+
+supported_lockfiles=(package-lock.json npm-shrinkwrap.json pnpm-lock.yaml yarn.lock bun.lock bun.lockb)
 found_lockfiles=()
 for lockfile in "${supported_lockfiles[@]}"; do
   if [[ -f "${lockfile}" ]]; then
@@ -20,7 +30,7 @@ for lockfile in "${supported_lockfiles[@]}"; do
 done
 
 if (( ${#found_lockfiles[@]} == 0 )); then
-  echo "DeployCrate Node Assets requires one lockfile: package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, bun.lock, or bun.lockb" >&2
+  echo "DeployCrate Node Assets requires one lockfile: package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, yarn.lock, bun.lock, or bun.lockb" >&2
   exit 1
 fi
 if (( ${#found_lockfiles[@]} > 1 )); then

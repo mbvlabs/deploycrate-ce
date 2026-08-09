@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strings"
 
 	"github.com/google/uuid"
 )
@@ -22,15 +24,42 @@ const (
 )
 
 type ServerCapabilities struct {
-	Build      bool `json:"build"`
-	Runtime    bool `json:"runtime"`
-	Resource   bool `json:"resource"`
-	Database   bool `json:"database"`
-	Repository bool `json:"repository"`
-	Telemetry  bool `json:"telemetry"`
+	Build      bool                       `json:"build"`
+	Runtime    bool                       `json:"runtime"`
+	Resource   bool                       `json:"resource"`
+	Database   bool                       `json:"database"`
+	Repository bool                       `json:"repository"`
+	Telemetry  bool                       `json:"telemetry"`
+	Buildpacks ServerBuildpacksCapability `json:"buildpacks"`
+}
+
+type ServerBuildpacksCapability struct {
+	Tool     string             `json:"tool,omitempty"`
+	Version  string             `json:"version,omitempty"`
+	Runtimes []BuildpackRuntime `json:"runtimes,omitempty"`
+}
+
+func (capabilities ServerCapabilities) normalized() ServerCapabilities {
+	if capabilities.Build && len(capabilities.Buildpacks.Runtimes) == 0 {
+		capabilities.Buildpacks.Runtimes = []BuildpackRuntime{BuildpackRuntimeGo}
+	}
+	runtimes := make([]BuildpackRuntime, 0, len(capabilities.Buildpacks.Runtimes))
+	seen := make(map[BuildpackRuntime]struct{}, len(capabilities.Buildpacks.Runtimes))
+	for _, runtime := range capabilities.Buildpacks.Runtimes {
+		runtime = BuildpackRuntime(strings.ToLower(strings.TrimSpace(string(runtime))))
+		if _, exists := seen[runtime]; exists {
+			continue
+		}
+		seen[runtime] = struct{}{}
+		runtimes = append(runtimes, runtime)
+	}
+	slices.Sort(runtimes)
+	capabilities.Buildpacks.Runtimes = runtimes
+	return capabilities
 }
 
 func (capabilities ServerCapabilities) Validate() error {
+	capabilities = capabilities.normalized()
 	if !capabilities.Telemetry {
 		return errors.New("managed nodes must collect telemetry")
 	}
@@ -39,10 +68,19 @@ func (capabilities ServerCapabilities) Validate() error {
 		!capabilities.Repository {
 		return errors.New("select at least one node workload capability")
 	}
+	for _, runtime := range capabilities.Buildpacks.Runtimes {
+		if !IsSupportedBuildpackRuntime(runtime) {
+			return fmt.Errorf("unsupported Buildpack runtime %q", runtime)
+		}
+	}
+	if !capabilities.Build && len(capabilities.Buildpacks.Runtimes) > 0 {
+		return errors.New("Buildpack runtimes require the build capability")
+	}
 	return nil
 }
 
 func (capabilities ServerCapabilities) JSON() (json.RawMessage, error) {
+	capabilities = capabilities.normalized()
 	if err := capabilities.Validate(); err != nil {
 		return nil, err
 	}
@@ -54,7 +92,13 @@ func ParseServerCapabilities(value json.RawMessage) (ServerCapabilities, error) 
 	if err := json.Unmarshal(value, &capabilities); err != nil {
 		return ServerCapabilities{}, err
 	}
+	capabilities = capabilities.normalized()
 	return capabilities, capabilities.Validate()
+}
+
+func (capabilities ServerCapabilities) SupportsBuildpack(runtime BuildpackRuntime) bool {
+	capabilities = capabilities.normalized()
+	return capabilities.Build && slices.Contains(capabilities.Buildpacks.Runtimes, runtime)
 }
 
 func (capabilities ServerCapabilities) Supports(capability ServerCapability) bool {
@@ -72,6 +116,26 @@ func (capabilities ServerCapabilities) Supports(capability ServerCapability) boo
 	default:
 		return false
 	}
+}
+
+func RequireServerBuildpackCapability(
+	ctx context.Context,
+	db storage.Executor,
+	serverID uuid.UUID,
+	runtime BuildpackRuntime,
+) (ServerEntity, error) {
+	server, err := RequireServerCapability(ctx, db, serverID, ServerCapabilityBuild)
+	if err != nil {
+		return ServerEntity{}, err
+	}
+	capabilities, err := ParseServerCapabilities(server.Capabilities)
+	if err != nil || !capabilities.SupportsBuildpack(runtime) {
+		return ServerEntity{}, errors.Join(
+			ErrDomainValidation,
+			fmt.Errorf("Server does not support the %s Buildpack runtime", runtime),
+		)
+	}
+	return server, nil
 }
 
 func RequireServerCapability(

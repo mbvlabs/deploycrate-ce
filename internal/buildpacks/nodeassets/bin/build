@@ -7,12 +7,21 @@ if [[ ! "${script}" =~ ^[A-Za-z0-9][A-Za-z0-9:_-]{0,63}$ ]]; then
   echo "DeployCrate frontend script must be a package script name" >&2
   exit 1
 fi
+asset_directory="${BP_DEPLOYCRATE_FRONTEND_DIRECTORY:-.}"
+if [[ "${asset_directory}" == /* || "${asset_directory}" == ".." || "${asset_directory}" == ../* || "${asset_directory}" == */../* ]]; then
+  echo "DeployCrate frontend directory must stay inside the build context" >&2
+  exit 1
+fi
+if ! cd "${asset_directory}"; then
+  echo "DeployCrate frontend directory does not exist: ${asset_directory}" >&2
+  exit 1
+fi
 if [[ ! -f package.json ]]; then
-  echo "DeployCrate Node Assets requires package.json" >&2
+  echo "DeployCrate Node Assets requires package.json in ${asset_directory}" >&2
   exit 1
 fi
 
-supported_lockfiles=(package-lock.json npm-shrinkwrap.json pnpm-lock.yaml bun.lock bun.lockb)
+supported_lockfiles=(package-lock.json npm-shrinkwrap.json pnpm-lock.yaml yarn.lock bun.lock bun.lockb)
 found_lockfiles=()
 for candidate in "${supported_lockfiles[@]}"; do
   if [[ -f "${candidate}" ]]; then
@@ -20,7 +29,7 @@ for candidate in "${supported_lockfiles[@]}"; do
   fi
 done
 if (( ${#found_lockfiles[@]} == 0 )); then
-  echo "DeployCrate Node Assets requires one lockfile: package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, bun.lock, or bun.lockb" >&2
+  echo "DeployCrate Node Assets requires one lockfile: package-lock.json, npm-shrinkwrap.json, pnpm-lock.yaml, yarn.lock, bun.lock, or bun.lockb" >&2
   exit 1
 fi
 if (( ${#found_lockfiles[@]} > 1 )); then
@@ -34,6 +43,7 @@ lockfile="${found_lockfiles[0]}"
 case "${lockfile}" in
   package-lock.json|npm-shrinkwrap.json) manager="npm" ;;
   pnpm-lock.yaml) manager="pnpm" ;;
+  yarn.lock) manager="yarn" ;;
   bun.lock|bun.lockb) manager="bun" ;;
   *) echo "DeployCrate Node Assets could not identify the package manager" >&2; exit 1 ;;
 esac
@@ -52,13 +62,13 @@ fi
 
 manager_version="${default_version}"
 if ! package_manager_result="$(node -e 'const manifest = require("./package.json"); if (!Object.prototype.hasOwnProperty.call(manifest, "packageManager")) { process.stdout.write("0"); } else if (typeof manifest.packageManager === "string") { process.stdout.write(`1${manifest.packageManager.trim()}`); } else { process.exit(1); }')"; then
-  echo "package.json packageManager must pin an exact npm, pnpm, or bun version" >&2
+  echo "package.json packageManager must pin an exact npm, pnpm, yarn, or bun version" >&2
   exit 1
 fi
 if [[ "${package_manager_result:0:1}" == "1" ]]; then
   package_manager="${package_manager_result:1}"
   if [[ ! "${package_manager}" =~ ^([A-Za-z0-9_-]+)@([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)(\+sha(224|512)\.[0-9A-Za-z+/=_-]+)?$ ]]; then
-    echo "package.json packageManager must pin an exact npm, pnpm, or bun version" >&2
+    echo "package.json packageManager must pin an exact npm, pnpm, yarn, or bun version" >&2
     exit 1
   fi
   declared_manager="${BASH_REMATCH[1]}"
@@ -77,6 +87,10 @@ case "${manager}" in
   pnpm)
     install_command="pnpm install --frozen-lockfile"
     build_command="pnpm run ${script}"
+    ;;
+  yarn)
+    install_command="yarn install --frozen-lockfile"
+    build_command="yarn run ${script}"
     ;;
   bun)
     install_command="bun install --frozen-lockfile"
@@ -107,6 +121,7 @@ export npm_config_cache="${cache_layer}/bootstrap"
 case "${manager}" in
   npm) export npm_config_cache="${cache_layer}/store" ;;
   pnpm) export npm_config_store_dir="${cache_layer}/store" ;;
+  yarn) export YARN_CACHE_FOLDER="${cache_layer}/store" ;;
   bun) export BUN_INSTALL_CACHE_DIR="${cache_layer}/store" ;;
 esac
 
@@ -148,6 +163,10 @@ case "${manager}" in
   pnpm)
     pnpm install --frozen-lockfile
     pnpm run "${script}"
+    ;;
+  yarn)
+    yarn install --frozen-lockfile
+    yarn run "${script}"
     ;;
   bun)
     bun install --frozen-lockfile

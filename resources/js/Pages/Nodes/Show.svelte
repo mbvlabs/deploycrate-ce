@@ -1,5 +1,6 @@
 <script lang="ts">
   import { router, useForm } from "@inertiajs/svelte";
+  import { untrack } from "svelte";
   import * as Alert from "@/Components/ui/alert";
   import { Button } from "@/Components/ui/button";
   import * as Card from "@/Components/ui/card";
@@ -10,6 +11,16 @@
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
   import { routes } from "@/routes";
 
+  type BuildpackRuntime = "go" | "rails" | "laravel" | "django";
+  type NodeCapabilities = {
+    build: boolean;
+    runtime: boolean;
+    resource: boolean;
+    database: boolean;
+    repository: boolean;
+    telemetry: boolean;
+    buildpacks?: { runtimes?: BuildpackRuntime[] };
+  };
   type Node = {
     id: string;
     serverId: string;
@@ -28,11 +39,43 @@
     startedAt: string | null;
     completedAt: string | null;
     configured: boolean;
-    capabilities: Record<string, boolean>;
+    capabilities: NodeCapabilities;
   };
+  const capabilityOptions = [
+    ["build", "Builds"],
+    ["runtime", "Applications"],
+    ["resource", "Resources"],
+    ["database", "Databases"],
+    ["repository", "Repositories"],
+  ] as const;
+  const buildpackOptions: Array<[BuildpackRuntime, string]> = [
+    ["go", "Go"],
+    ["rails", "Rails (amd64)"],
+    ["laravel", "Laravel (amd64)"],
+    ["django", "Django"],
+  ];
   let { auth, node }: { auth: { email: string }; node: Node } = $props();
   let confirmed = $state(false);
   let retrying = $state(false);
+  let capabilitiesEditing = $state(false);
+  let buildpackSelections = $state<Record<BuildpackRuntime, boolean>>(
+    untrack(() => ({
+      go: node.capabilities.buildpacks?.runtimes?.includes("go") ?? false,
+      rails: node.capabilities.buildpacks?.runtimes?.includes("rails") ?? false,
+      laravel:
+        node.capabilities.buildpacks?.runtimes?.includes("laravel") ?? false,
+      django:
+        node.capabilities.buildpacks?.runtimes?.includes("django") ?? false,
+    })),
+  );
+  const capabilitiesForm = useForm(() => ({
+    build: node.capabilities.build,
+    runtime: node.capabilities.runtime,
+    resource: node.capabilities.resource,
+    database: node.capabilities.database,
+    repository: node.capabilities.repository,
+    buildpacks: [] as BuildpackRuntime[],
+  }));
   const confirmForm = useForm(() => ({ fingerprint: node.fingerprint }));
   function confirm() {
     $confirmForm.post(routes.nodeConfirm(node.id));
@@ -47,6 +90,15 @@
   }
   function timestamp(value: string | null) {
     return value ? new Date(value).toLocaleString() : "Not yet";
+  }
+  function applyCapabilities(event: SubmitEvent) {
+    event.preventDefault();
+    $capabilitiesForm.buildpacks = buildpackOptions
+      .filter(([runtime]) => buildpackSelections[runtime])
+      .map(([runtime]) => runtime);
+    $capabilitiesForm.post(routes.nodeCapabilities(node.id), {
+      onSuccess: () => (capabilitiesEditing = false),
+    });
   }
   const progressValue = $derived(
     node.state === "ready"
@@ -162,16 +214,90 @@
         ></Card.Root
       >
       <Card.Root
-        ><Card.Header
-          ><Card.Title>Capabilities</Card.Title><Card.Description
-            >Workloads this node may accept.</Card.Description
-          ></Card.Header
-        ><Card.Content class="flex flex-wrap gap-2"
-          >{#each Object.entries(node.capabilities).filter(([key, enabled]) => key !== "telemetry" && enabled) as [capability] (capability)}<span
-              class="border border-border px-2 py-1 text-xs capitalize"
-              >{capability}</span
-            >{/each}</Card.Content
-        ></Card.Root
+        ><Card.Header class="flex-row items-start justify-between gap-4"
+          ><div>
+            <Card.Title>Capabilities</Card.Title><Card.Description
+              >Workloads and Buildpack runtimes this node may accept.</Card.Description
+            >
+          </div>
+          {#if node.configured && node.state === "ready" && !capabilitiesEditing}<Button
+              variant="outline"
+              size="sm"
+              onclick={() => (capabilitiesEditing = true)}>Manage</Button
+            >{/if}</Card.Header
+        ><Card.Content>
+          {#if capabilitiesEditing}
+            <form class="space-y-4" onsubmit={applyCapabilities}>
+              <div class="grid gap-3 sm:grid-cols-2">
+                {#each capabilityOptions as [key, label] (key)}
+                  <label
+                    class="flex items-center gap-3 border border-border p-3 text-sm"
+                  >
+                    <Checkbox
+                      bind:checked={$capabilitiesForm[key]}
+                      disabled={node.capabilities[key]}
+                    />
+                    <span>{label}</span>
+                  </label>
+                {/each}
+              </div>
+              {#if $capabilitiesForm.build}
+                <div>
+                  <p class="text-sm font-medium">Buildpack runtimes</p>
+                  <div class="mt-2 grid gap-3 sm:grid-cols-2">
+                    {#each buildpackOptions as [runtime, label] (runtime)}
+                      <label
+                        class="flex items-center gap-3 border border-border p-3 text-sm"
+                      >
+                        <Checkbox
+                          bind:checked={buildpackSelections[runtime]}
+                          disabled={node.capabilities.buildpacks?.runtimes?.includes(
+                            runtime,
+                          )}
+                        />
+                        <span>{label}</span>
+                      </label>
+                    {/each}
+                  </div>
+                </div>
+              {/if}
+              <p class="text-xs text-muted-foreground">
+                Provisioned capabilities and Buildpack runtimes cannot be
+                removed.
+              </p>
+              <div class="flex gap-2">
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={$capabilitiesForm.processing}
+                  aria-busy={$capabilitiesForm.processing}
+                  >{#if $capabilitiesForm.processing}<Spinner />{/if}Save
+                  capabilities</Button
+                >
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onclick={() => (capabilitiesEditing = false)}>Cancel</Button
+                >
+              </div>
+            </form>
+          {:else}
+            <div class="flex flex-wrap gap-2">
+              {#each capabilityOptions.filter(([key]) => node.capabilities[key]) as [key, label] (key)}
+                <span class="border border-border px-2 py-1 text-xs"
+                  >{label}</span
+                >
+              {/each}
+              {#each node.capabilities.buildpacks?.runtimes ?? [] as runtime (runtime)}
+                <span
+                  class="border border-primary/40 bg-primary/5 px-2 py-1 text-xs capitalize"
+                  >{runtime} Buildpack</span
+                >
+              {/each}
+            </div>
+          {/if}
+        </Card.Content></Card.Root
       >
       <Card.Root
         ><Card.Header

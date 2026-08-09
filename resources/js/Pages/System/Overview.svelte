@@ -137,6 +137,13 @@
     ["database", "Database"],
     ["repository", "Repository"],
   ] as const;
+  type BuildpackRuntime = "go" | "rails" | "laravel" | "django";
+  const buildpackOptions: Array<[BuildpackRuntime, string]> = [
+    ["go", "Go"],
+    ["rails", "Rails (amd64)"],
+    ["laravel", "Laravel (amd64)"],
+    ["django", "Django"],
+  ];
 
   let {
     auth,
@@ -243,7 +250,27 @@
     resource: capabilityEnabled("resource"),
     database: capabilityEnabled("database"),
     repository: capabilityEnabled("repository"),
+    buildpacks: [] as BuildpackRuntime[],
   }));
+
+  function configuredBuildpacks(): BuildpackRuntime[] {
+    const buildpacks = system.serverCapabilities?.buildpacks;
+    if (!buildpacks || typeof buildpacks !== "object")
+      return capabilityEnabled("build") ? ["go"] : [];
+    const runtimes = (buildpacks as { runtimes?: unknown }).runtimes;
+    return Array.isArray(runtimes)
+      ? runtimes.filter((runtime): runtime is BuildpackRuntime =>
+          buildpackOptions.some(([candidate]) => candidate === runtime),
+        )
+      : [];
+  }
+
+  let buildpackSelections = $state<Record<BuildpackRuntime, boolean>>({
+    go: configuredBuildpacks().includes("go"),
+    rails: configuredBuildpacks().includes("rails"),
+    laravel: configuredBuildpacks().includes("laravel"),
+    django: configuredBuildpacks().includes("django"),
+  });
 
   function capabilityEnabled(key: string): boolean {
     return system.serverCapabilities?.[key] === true;
@@ -325,13 +352,17 @@
 
   function confirmReboot() {
     rebooting = true;
-    router.post(routes.systemHostReboot(), {}, {
-      only: ["flash"],
-      onFinish: () => {
-        rebooting = false;
-        rebootOpen = false;
+    router.post(
+      routes.systemHostReboot(),
+      {},
+      {
+        only: ["flash"],
+        onFinish: () => {
+          rebooting = false;
+          rebootOpen = false;
+        },
       },
-    });
+    );
   }
 
   const pruneEnabled = $derived(
@@ -344,17 +375,24 @@
       .map(([scope]) => scope);
     if (scopes.length === 0) return;
     pruning = true;
-    router.post(routes.systemHostPrune(), { scopes }, {
-      only: ["containers", "images", "flash"],
-      onFinish: () => {
-        pruning = false;
-        pruneOpen = false;
+    router.post(
+      routes.systemHostPrune(),
+      { scopes },
+      {
+        only: ["containers", "images", "flash"],
+        onFinish: () => {
+          pruning = false;
+          pruneOpen = false;
+        },
       },
-    });
+    );
   }
 
   function applyCapabilities(event: SubmitEvent) {
     event.preventDefault();
+    $capabilitiesForm.buildpacks = buildpackOptions
+      .filter(([runtime]) => buildpackSelections[runtime])
+      .map(([runtime]) => runtime);
     $capabilitiesForm.post(routes.systemHostCapabilities(), {
       only: ["system", "flash"],
       onSuccess: () => (capabilitiesEditing = false),
@@ -363,18 +401,26 @@
 
   function checkUpdates() {
     updatesBusy = "check";
-    router.post(routes.systemHostUpdatesCheck(), {}, {
-      only: ["updates", "flash"],
-      onFinish: () => (updatesBusy = ""),
-    });
+    router.post(
+      routes.systemHostUpdatesCheck(),
+      {},
+      {
+        only: ["updates", "flash"],
+        onFinish: () => (updatesBusy = ""),
+      },
+    );
   }
 
   function applyUpdates() {
     updatesBusy = "apply";
-    router.post(routes.systemHostUpdatesApply(), {}, {
-      only: ["updates", "flash"],
-      onFinish: () => (updatesBusy = ""),
-    });
+    router.post(
+      routes.systemHostUpdatesApply(),
+      {},
+      {
+        only: ["updates", "flash"],
+        onFinish: () => (updatesBusy = ""),
+      },
+    );
   }
 
   $effect(() => {
@@ -588,6 +634,30 @@
                         <span>{label}</span>
                       </label>
                     {/each}
+                    {#if $capabilitiesForm.build}
+                      <div
+                        class="grid gap-3 sm:col-span-2 sm:grid-cols-2 xl:col-span-5 xl:grid-cols-4"
+                      >
+                        <p
+                          class="text-xs font-medium uppercase tracking-[0.14em] text-muted-foreground sm:col-span-2 xl:col-span-4"
+                        >
+                          Buildpack runtimes
+                        </p>
+                        {#each buildpackOptions as [runtime, label] (runtime)}
+                          <label
+                            class="flex items-center gap-3 border border-border/70 bg-muted/20 p-3 text-sm"
+                          >
+                            <Checkbox
+                              bind:checked={buildpackSelections[runtime]}
+                              disabled={configuredBuildpacks().includes(
+                                runtime,
+                              )}
+                            />
+                            <span>{label}</span>
+                          </label>
+                        {/each}
+                      </div>
+                    {/if}
                     <p
                       class="text-xs text-muted-foreground sm:col-span-2 xl:col-span-5"
                     >
@@ -677,9 +747,11 @@
                   Containers
                 </h4>
                 {#if containers.length === 0}
-                  <Empty.Root class="mt-4 border border-dashed border-border py-8"
+                  <Empty.Root
+                    class="mt-4 border border-dashed border-border py-8"
                     ><Empty.Header
-                      ><Empty.Media variant="icon"><ContainerIcon /></Empty.Media
+                      ><Empty.Media variant="icon"
+                        ><ContainerIcon /></Empty.Media
                       ><Empty.Title>No containers</Empty.Title
                       ><Empty.Description
                         >Containers running on this host will appear here.</Empty.Description
@@ -708,7 +780,9 @@
                             <Table.Cell class="font-medium">
                               {container.name}
                             </Table.Cell>
-                            <Table.Cell class="max-w-56 break-all font-mono text-xs">
+                            <Table.Cell
+                              class="max-w-56 break-all font-mono text-xs"
+                            >
                               {container.image}
                             </Table.Cell>
                             <Table.Cell>
@@ -729,7 +803,8 @@
                                   title="Start"
                                   aria-label="Start {container.name}"
                                   disabled={!actions.start || !!busy}
-                                  onclick={() => containerControl("start", container)}
+                                  onclick={() =>
+                                    containerControl("start", container)}
                                 >
                                   <BoxIcon class="size-4" />
                                 </Button>
@@ -740,7 +815,8 @@
                                   title="Stop"
                                   aria-label="Stop {container.name}"
                                   disabled={!actions.stop || !!busy}
-                                  onclick={() => containerControl("stop", container)}
+                                  onclick={() =>
+                                    containerControl("stop", container)}
                                 >
                                   <SquareTerminalIcon class="size-4" />
                                 </Button>
@@ -751,7 +827,8 @@
                                   title="Restart"
                                   aria-label="Restart {container.name}"
                                   disabled={!actions.restart || !!busy}
-                                  onclick={() => containerControl("restart", container)}
+                                  onclick={() =>
+                                    containerControl("restart", container)}
                                 >
                                   <RotateCcwIcon class="size-4" />
                                 </Button>
@@ -777,7 +854,8 @@
                                   title="Remove"
                                   aria-label="Remove {container.name}"
                                   disabled={!!busy}
-                                  onclick={() => containerControl("remove", container)}
+                                  onclick={() =>
+                                    containerControl("remove", container)}
                                 >
                                   <Trash2Icon class="size-4" />
                                 </Button>
@@ -798,11 +876,11 @@
                   Images
                 </h4>
                 {#if images.length === 0}
-                  <Empty.Root class="mt-4 border border-dashed border-border py-8"
+                  <Empty.Root
+                    class="mt-4 border border-dashed border-border py-8"
                     ><Empty.Header
                       ><Empty.Media variant="icon"><BoxIcon /></Empty.Media
-                      ><Empty.Title>No images</Empty.Title
-                      ><Empty.Description
+                      ><Empty.Title>No images</Empty.Title><Empty.Description
                         >Images pulled to this host will appear here.</Empty.Description
                       ></Empty.Header
                     ></Empty.Root
@@ -823,13 +901,16 @@
                       <Table.Body>
                         {#each images as image (`${image.id}\u0000${image.repository}\u0000${image.tag}`)}
                           <Table.Row>
-                            <Table.Cell class="max-w-96 break-all font-mono text-xs">
+                            <Table.Cell
+                              class="max-w-96 break-all font-mono text-xs"
+                            >
                               {image.repository}
                             </Table.Cell>
                             <Table.Cell class="font-mono text-xs">
                               {image.tag}
                             </Table.Cell>
-                            <Table.Cell class="text-xs">{image.size}</Table.Cell>
+                            <Table.Cell class="text-xs">{image.size}</Table.Cell
+                            >
                             <Table.Cell class="text-right">
                               <Button
                                 size="icon"
@@ -890,7 +971,10 @@
         </Accordion.Content>
       </Accordion.Item>
 
-      <Accordion.Item value="resource" class="min-w-0 border border-border px-5">
+      <Accordion.Item
+        value="resource"
+        class="min-w-0 border border-border px-5"
+      >
         <Accordion.Trigger class="py-5 hover:no-underline">
           <div class="flex w-full items-center justify-between gap-6">
             <div>
@@ -1132,7 +1216,10 @@
         </Accordion.Content>
       </Accordion.Item>
 
-      <Accordion.Item value="deployments" class="min-w-0 border border-border px-5">
+      <Accordion.Item
+        value="deployments"
+        class="min-w-0 border border-border px-5"
+      >
         <Accordion.Trigger class="py-5 hover:no-underline">
           <div class="flex w-full items-center justify-between gap-6">
             <div>
@@ -1198,7 +1285,10 @@
         </Accordion.Content>
       </Accordion.Item>
 
-      <Accordion.Item value="host-updates" class="min-w-0 border border-border px-5">
+      <Accordion.Item
+        value="host-updates"
+        class="min-w-0 border border-border px-5"
+      >
         <Accordion.Trigger class="py-5 hover:no-underline">
           <div class="flex w-full items-center justify-between gap-6">
             <div>
@@ -1234,7 +1324,9 @@
             <Button
               size="sm"
               onclick={applyUpdates}
-              disabled={!!updatesBusy || updates === null || updates.total === 0}
+              disabled={!!updatesBusy ||
+                updates === null ||
+                updates.total === 0}
               aria-busy={updatesBusy === "apply"}
             >
               {#if updatesBusy === "apply"}<Spinner />{/if}
@@ -1257,8 +1349,7 @@
             {#if updates === null}
               <Empty.Root class="border border-dashed border-border py-8"
                 ><Empty.Header
-                  ><Empty.Title>No check run yet</Empty.Title
-                  ><Empty.Description
+                  ><Empty.Title>No check run yet</Empty.Title><Empty.Description
                     >Run a check to see which operating system package updates
                     are available.</Empty.Description
                   ></Empty.Header
@@ -1304,8 +1395,8 @@
               {#if updates.rebootRequired}
                 <Alert.Root variant="default" class="mt-4"
                   ><Alert.Title>Reboot required</Alert.Title><Alert.Description
-                    >The applied kernel or system libraries will not take
-                    effect until the server is rebooted.</Alert.Description
+                    >The applied kernel or system libraries will not take effect
+                    until the server is rebooted.</Alert.Description
                   ></Alert.Root
                 >
               {/if}
@@ -1325,12 +1416,13 @@
         </Dialog.Description>
       </Dialog.Header>
       <ScrollArea.Root class="max-h-96">
-        <pre class="whitespace-pre-wrap bg-muted/30 p-4 font-mono text-xs leading-5">
-          {containerLogs}</pre
-        >
+        <pre
+          class="whitespace-pre-wrap bg-muted/30 p-4 font-mono text-xs leading-5">
+          {containerLogs}</pre>
       </ScrollArea.Root>
       <Dialog.Footer
-        ><Button onclick={() => (logsOpen = false)}>Close</Button></Dialog.Footer
+        ><Button onclick={() => (logsOpen = false)}>Close</Button
+        ></Dialog.Footer
       >
     </Dialog.Content>
   </Dialog.Root>

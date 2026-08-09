@@ -207,6 +207,7 @@ type EnvironmentSetupOptions struct {
 }
 
 type EnvironmentEditConfiguration struct {
+	Runtime       models.BuildpackRuntime          `json:"runtime"`
 	Name          string                           `json:"name"`
 	Slug          string                           `json:"slug"`
 	Kind          string                           `json:"kind"`
@@ -1059,6 +1060,7 @@ func (service *EnvironmentSetup) EditData(
 	return EnvironmentEditData{
 		Overview: overview,
 		Configuration: EnvironmentEditConfiguration{
+			Runtime:       models.BuildpackRuntime(state.Runtime.Runtime),
 			Name:          overview.Environment.Name,
 			Slug:          overview.Environment.Slug,
 			Kind:          overview.Environment.Kind,
@@ -1298,13 +1300,6 @@ func (service *EnvironmentSetup) Complete(
 	input EnvironmentSetupInput,
 ) (EnvironmentSetupResult, error) {
 	input.HealthPath = strings.TrimSpace(input.HealthPath)
-	processes := normalizedProcessFormation(input.Processes, input.ContainerPort, input.HealthPath)
-	processes = deriveGoProcessCommands(processes)
-	input.Processes = processes
-	goTargets := goProcessTargetsFromProcesses(processes)
-	if err := validateEnvironmentSetupInput(input); err != nil {
-		return EnvironmentSetupResult{}, err
-	}
 	source, repository, installation, err := service.loadSource(ctx, applicationID, environmentID)
 	if err != nil {
 		return EnvironmentSetupResult{}, err
@@ -1314,6 +1309,23 @@ func (service *EnvironmentSetup) Complete(
 			models.ErrDomainValidation,
 			errors.New("Environment is unavailable or setup is already complete"),
 		)
+	}
+	runtime := models.BuildpackRuntimeGo
+	if source.Kind != "image" {
+		settings, settingsErr := models.ParseBuildpackSettings(source.BuildpackSettings)
+		if settingsErr != nil {
+			return EnvironmentSetupResult{}, errors.Join(models.ErrDomainValidation, settingsErr)
+		}
+		runtime = settings.Runtime
+	}
+	processes := normalizedProcessFormation(input.Processes, input.ContainerPort, input.HealthPath)
+	if runtime == models.BuildpackRuntimeGo {
+		processes = deriveGoProcessCommands(processes)
+	}
+	input.Processes = processes
+	goTargets := goProcessTargetsFromProcesses(processes)
+	if err := validateEnvironmentSetupInput(input, runtime); err != nil {
+		return EnvironmentSetupResult{}, err
 	}
 	managedDNS := strings.EqualFold(strings.TrimSpace(input.DNS.Mode), DNSModeCloudflare)
 	deployNow := input.Deploy && !managedDNS
@@ -1427,11 +1439,11 @@ func (service *EnvironmentSetup) Complete(
 			errors.New("Environment is unavailable or setup is already complete"),
 		)
 	}
-	runtimeSettings, _ := json.Marshal(
-		map[string]any{"schema_version": 3, "bp_go_targets": goTargets},
-	)
+	runtimeSettings, _ := json.Marshal(map[string]any{
+		"schema_version": 4, "bp_go_targets": goTargets,
+	})
 	if _, err := models.RuntimeConfiguration.Create(ctx, tx, models.CreateRuntimeConfigurationData{
-		Runtime:        "go",
+		Runtime:        string(runtime),
 		ResourceLimits: json.RawMessage(`{}`),
 		RestartPolicy:  "unless-stopped",
 		Settings:       runtimeSettings,
@@ -1611,7 +1623,7 @@ func (service *EnvironmentSetup) Complete(
 	state := models.EnvironmentDesiredState{
 		SchemaVersion: models.EnvironmentStateSchemaVersion,
 		Runtime: models.EnvironmentRuntimeState{
-			Runtime:       "go",
+			Runtime:       string(runtime),
 			BPGOTargets:   goTargets,
 			RestartPolicy: "unless-stopped",
 		},
@@ -2975,8 +2987,16 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	input.Slug = slug.Make(strings.TrimSpace(input.Slug))
 	input.Kind = strings.TrimSpace(input.Kind)
 	input.HealthPath = strings.TrimSpace(input.HealthPath)
+	var currentRuntime models.RuntimeConfigurationEntity
+	if err := service.db.Executor().NewSelect().Model(&currentRuntime).
+		Where("environment_id = ?", environmentID).Limit(1).Scan(ctx); err != nil {
+		return err
+	}
+	runtime := models.BuildpackRuntime(currentRuntime.Runtime)
 	processes := normalizedProcessFormation(input.Processes, input.ContainerPort, input.HealthPath)
-	processes = deriveGoProcessCommands(processes)
+	if runtime == models.BuildpackRuntimeGo {
+		processes = deriveGoProcessCommands(processes)
+	}
 	input.Processes = processes
 	goTargets := goProcessTargetsFromProcesses(processes)
 	if input.Name == "" || input.Slug == "" || input.Kind == "" {
@@ -2994,7 +3014,7 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 		Resources:     input.Resources,
 		DNS:           input.DNS,
 	}
-	if err := validateEnvironmentSetupInput(configuration); err != nil {
+	if err := validateEnvironmentSetupInput(configuration, runtime); err != nil {
 		return err
 	}
 	serverIDs := normalizedEnvironmentServerIDs(configuration)
@@ -3185,19 +3205,19 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	}); err != nil {
 		return err
 	}
-	var runtime models.RuntimeConfigurationEntity
+	var persistedRuntime models.RuntimeConfigurationEntity
 	if err := tx.NewSelect().
-		Model(&runtime).
+		Model(&persistedRuntime).
 		Where("environment_id = ?", environmentID).
 		Limit(1).
 		Scan(ctx); err != nil {
 		return err
 	}
-	runtimeSettings, _ := json.Marshal(
-		map[string]any{"schema_version": 3, "bp_go_targets": goTargets},
-	)
+	runtimeSettings, _ := json.Marshal(map[string]any{
+		"schema_version": 4, "bp_go_targets": goTargets,
+	})
 	if _, err := models.RuntimeConfiguration.Update(ctx, tx, models.UpdateRuntimeConfigurationData{
-		ID: runtime.ID, Runtime: "go", ResourceLimits: runtime.ResourceLimits,
+		ID: persistedRuntime.ID, Runtime: string(runtime), ResourceLimits: persistedRuntime.ResourceLimits,
 		RestartPolicy: "unless-stopped", Settings: runtimeSettings, EnvironmentID: environmentID,
 	}); err != nil {
 		return err
@@ -3403,7 +3423,7 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	state := models.EnvironmentDesiredState{
 		SchemaVersion: models.EnvironmentStateSchemaVersion,
 		Runtime: models.EnvironmentRuntimeState{
-			Runtime: "go", BPGOTargets: goTargets, RestartPolicy: "unless-stopped",
+			Runtime: string(runtime), BPGOTargets: goTargets, RestartPolicy: "unless-stopped",
 		},
 		Processes: processStatesFromInputs(processes),
 		Domain: models.EnvironmentDomainState{
@@ -3895,7 +3915,10 @@ func (service *EnvironmentSetup) RetryDeployment(
 	return deployment, nil
 }
 
-func validateEnvironmentSetupInput(input EnvironmentSetupInput) error {
+func validateEnvironmentSetupInput(
+	input EnvironmentSetupInput,
+	runtime models.BuildpackRuntime,
+) error {
 	builder := validation.NewBuilder()
 	if _, err := models.ValidateEnvironmentProcessFormation(
 		normalizedProcessFormation(input.Processes, input.ContainerPort, input.HealthPath),
@@ -3903,6 +3926,10 @@ func validateEnvironmentSetupInput(input EnvironmentSetupInput) error {
 		return err
 	}
 	goTargets := goProcessTargetsFromProcesses(input.Processes)
+	if runtime != models.BuildpackRuntimeGo && len(goTargets) > 0 {
+		builder.Add("processes", "target", "Go targets require the Go runtime")
+		return builder.Err()
+	}
 	if err := models.ValidateGoProcessTargets(goTargets); err != nil {
 		builder.Add("processes", "target", err.Error())
 	}

@@ -122,11 +122,9 @@ func (bc buildpackConfiguration) Create(
 	if err := validation.Validate(&entity); err != nil {
 		return BuildpackConfigurationEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if _, err := RequireServerCapability(
-		ctx,
-		db,
-		entity.ServerID,
-		ServerCapabilityBuild,
+	settings, _ := ParseBuildpackSettings(entity.Settings)
+	if _, err := RequireServerBuildpackCapability(
+		ctx, db, entity.ServerID, settings.Runtime,
 	); err != nil {
 		return BuildpackConfigurationEntity{}, err
 	}
@@ -170,11 +168,9 @@ func (bc buildpackConfiguration) Update(
 	if err := validation.Validate(&entity); err != nil {
 		return BuildpackConfigurationEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if _, err := RequireServerCapability(
-		ctx,
-		db,
-		entity.ServerID,
-		ServerCapabilityBuild,
+	settings, _ := ParseBuildpackSettings(entity.Settings)
+	if _, err := RequireServerBuildpackCapability(
+		ctx, db, entity.ServerID, settings.Runtime,
 	); err != nil {
 		return BuildpackConfigurationEntity{}, err
 	}

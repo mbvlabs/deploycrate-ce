@@ -19,11 +19,12 @@ import (
 )
 
 type Nodes struct {
-	service *services.NodeEnrollment
+	service    *services.NodeEnrollment
+	management *services.ServerManagement
 }
 
-func NewNodes(service *services.NodeEnrollment) Nodes {
-	return Nodes{service: service}
+func NewNodes(service *services.NodeEnrollment, management *services.ServerManagement) Nodes {
+	return Nodes{service: service, management: management}
 }
 
 func (controller Nodes) RegisterRoutes(r *router.Router) error {
@@ -41,6 +42,7 @@ func (controller Nodes) RegisterRoutes(r *router.Router) error {
 		{http.MethodGet, routes.NodeShow, controller.Show},
 		{http.MethodPost, routes.NodeConfirm, controller.Confirm},
 		{http.MethodPost, routes.NodeRetry, controller.Retry},
+		{http.MethodPost, routes.NodeCapabilities, controller.UpdateCapabilities},
 	}
 	var errs []error
 	for _, definition := range definitions {
@@ -53,6 +55,47 @@ func (controller Nodes) RegisterRoutes(r *router.Router) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+type updateNodeCapabilitiesPayload struct {
+	Build      bool                      `json:"build"`
+	Runtime    bool                      `json:"runtime"`
+	Resource   bool                      `json:"resource"`
+	Database   bool                      `json:"database"`
+	Repository bool                      `json:"repository"`
+	Buildpacks []models.BuildpackRuntime `json:"buildpacks"`
+}
+
+func (controller Nodes) UpdateCapabilities(etx *echo.Context) error {
+	id, err := uuid.Parse(etx.Param("id"))
+	var payload updateNodeCapabilitiesPayload
+	var detail services.NodeEnrollmentDetail
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	if err == nil {
+		detail, err = controller.service.Get(etx.Request().Context(), id)
+	}
+	if err == nil && (!detail.Server.IsConfigured || detail.Enrollment.State != "ready") {
+		err = errors.New("Node must be ready before capabilities can be updated")
+	}
+	if err == nil {
+		err = controller.management.ProvisionCapabilities(
+			etx.Request().Context(),
+			detail.Server.ID,
+			models.ServerCapabilities{
+				Build: payload.Build, Runtime: payload.Runtime, Resource: payload.Resource,
+				Database: payload.Database, Repository: payload.Repository, Telemetry: true,
+				Buildpacks: models.ServerBuildpacksCapability{Runtimes: payload.Buildpacks},
+			},
+		)
+	}
+	if err != nil {
+		_ = cookies.AddFlash(etx, cookies.FlashError, err.Error())
+	} else {
+		_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Node capabilities updated")
+	}
+	return inertia.Redirect(etx, routes.NodeShow.URL(id), http.StatusSeeOther)
 }
 
 func (controller Nodes) Index(etx *echo.Context) error {

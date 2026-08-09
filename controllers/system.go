@@ -370,11 +370,12 @@ func (s System) HostPrune(etx *echo.Context) error {
 }
 
 type hostCapabilitiesPayload struct {
-	Build      bool `json:"build"`
-	Runtime    bool `json:"runtime"`
-	Resource   bool `json:"resource"`
-	Database   bool `json:"database"`
-	Repository bool `json:"repository"`
+	Build      bool                      `json:"build"`
+	Runtime    bool                      `json:"runtime"`
+	Resource   bool                      `json:"resource"`
+	Database   bool                      `json:"database"`
+	Repository bool                      `json:"repository"`
+	Buildpacks []models.BuildpackRuntime `json:"buildpacks"`
 }
 
 func (s System) HostCapabilitiesUpdate(etx *echo.Context) error {
@@ -394,6 +395,7 @@ func (s System) HostCapabilitiesUpdate(etx *echo.Context) error {
 				Database:   payload.Database,
 				Repository: payload.Repository,
 				Telemetry:  true,
+				Buildpacks: models.ServerBuildpacksCapability{Runtimes: payload.Buildpacks},
 			},
 		)
 	}

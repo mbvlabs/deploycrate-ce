@@ -3,6 +3,10 @@
   import { untrack } from "svelte";
 
   import BulkEnvironmentSecretsDialog from "@/Components/BulkEnvironmentSecretsDialog.svelte";
+  import BuildpackSettingsEditor, {
+    type BuildpackSettings,
+    type BuildServer,
+  } from "@/Components/BuildpackSettingsEditor.svelte";
   import EnvironmentProcessEditor, {
     type ProcessInput,
   } from "@/Components/EnvironmentProcessEditor.svelte";
@@ -60,7 +64,7 @@
     installations: Installation[];
     repositories: Repository[];
     registries: Registry[];
-    buildServers: Server[];
+    buildServers: BuildServer[];
     servers: Server[];
     resources: ResourceOption[];
     dnsZones: DNSZone[];
@@ -97,11 +101,21 @@
   let githubRepositoryId = $state("");
   let reference = $state("");
   let autoBuild = $state(false);
-  let buildFrontendAssets = $state(false);
+  let buildpackSettings = $state<BuildpackSettings>({
+    schema_version: 3,
+    runtime: "go",
+    frontend: null,
+  });
   let contextPath = $state(".");
   let registryResourceId = $state(untrack(() => registries[0]?.id ?? ""));
   let imageRepository = $state("");
-  let buildServerId = $state(untrack(() => buildServers[0]?.id ?? ""));
+  let buildServerId = $state(
+    untrack(
+      () =>
+        buildServers.find((server) => server.buildpacks.includes("go"))?.id ??
+        "",
+    ),
+  );
   let serverIds = $state<string[]>([]);
   let hostname = $state("");
   let dnsMode = $state<"manual" | "cloudflare">("manual");
@@ -266,12 +280,7 @@
         autoBuild,
         contextPath,
         builderReference: "",
-        buildpackSettings: {
-          schema_version: 2,
-          frontend: buildFrontendAssets
-            ? { runtime: "node", script: "build" }
-            : null,
-        },
+        buildpackSettings,
         registryResourceId,
         imageRepository,
         buildServerId,
@@ -435,21 +444,11 @@
                 required
               /></FormField
             >
-            <FormField label="Build server"
-              ><NativeSelect.Root
-                bind:value={buildServerId}
-                class="w-full"
-                required
-                ><NativeSelect.Option value=""
-                  >Select a Build Server</NativeSelect.Option
-                >{#each buildServers as server (server.id)}<NativeSelect.Option
-                    value={server.id}
-                    >{server.name} · {server.kind === "worker"
-                      ? server.address
-                      : "Control plane"}</NativeSelect.Option
-                  >{/each}</NativeSelect.Root
-              ></FormField
-            >
+            <BuildpackSettingsEditor
+              bind:settings={buildpackSettings}
+              bind:buildServerId
+              {buildServers}
+            />
             <FormField label="Build context"
               ><Input
                 bind:value={contextPath}
@@ -480,16 +479,6 @@
             <label class="flex items-center gap-2 self-end pb-2 text-sm"
               ><Checkbox bind:checked={autoBuild} /> Build automatically on matching
               pushes</label
-            >
-            <label
-              class="flex items-start gap-3 border border-border p-4 sm:col-span-2"
-              ><Checkbox class="mt-1" bind:checked={buildFrontendAssets} /><span
-                ><span class="block text-sm font-medium"
-                  >Build Node frontend assets</span
-                ><span class="mt-1 block text-xs text-muted-foreground"
-                  >Requires a supported lockfile and build script.</span
-                ></span
-              ></label
             >
           </div>
         {:else}
@@ -602,7 +591,8 @@
       <Card.Content
         ><EnvironmentProcessEditor
           bind:processes
-          showGoTargets={sourceType === "buildpacks"}
+          showGoTargets={sourceType === "buildpacks" &&
+            buildpackSettings.runtime === "go"}
         /></Card.Content
       >
     </Card.Root>

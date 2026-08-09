@@ -76,6 +76,7 @@ export const routes = {
   homePage: () => '/',
   networkWireGuardDeviceDestroy: (id: string) => `/networks/wireguard-devices/${id}`,
   networks: () => '/networks',
+  nodeCapabilities: (id: string) => `/nodes/${id}/capabilities`,
   nodeConfirm: (id: string) => `/nodes/${id}/confirm`,
   nodeCreate: () => '/nodes',
   nodeNew: () => '/nodes/new',

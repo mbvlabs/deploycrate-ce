@@ -46,6 +46,7 @@
   };
   type Server = { id: string; name: string; kind: string; address: string };
   type Configuration = {
+    runtime: "go" | "rails" | "laravel" | "django";
     name: string;
     slug: string;
     kind: string;
@@ -97,8 +98,7 @@
   const availableResources = $derived(
     options.resources.filter(
       (resource) =>
-        !resource.serverId ||
-        $form.serverIds.includes(resource.serverId),
+        !resource.serverId || $form.serverIds.includes(resource.serverId),
     ),
   );
 
@@ -380,7 +380,8 @@
         ><EnvironmentProcessEditor
           bind:processes={$form.processes}
           errors={$form.errors}
-          showGoTargets={environment.sourceType === "buildpacks"}
+          showGoTargets={environment.sourceType === "buildpacks" &&
+            configuration.runtime === "go"}
         /></Card.Content
       >
     </Card.Root>

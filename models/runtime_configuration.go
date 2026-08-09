@@ -29,8 +29,8 @@ func (e *RuntimeConfigurationEntity) Validate() error {
 	e.Runtime = strings.ToLower(strings.TrimSpace(e.Runtime))
 	e.RestartPolicy = strings.ToLower(strings.TrimSpace(e.RestartPolicy))
 	builder := validation.NewBuilder()
-	if e.Runtime != "go" {
-		builder.Add("runtime", "unsupported", "only the Go runtime is supported")
+	if !IsSupportedBuildpackRuntime(BuildpackRuntime(e.Runtime)) {
+		builder.Add("runtime", "unsupported", "runtime must be go, rails, laravel, or django")
 	}
 	if e.RestartPolicy != "unless-stopped" {
 		builder.Add("restartPolicy", "unsupported", "restart policy must be unless-stopped")

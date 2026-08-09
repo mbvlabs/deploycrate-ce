@@ -158,13 +158,16 @@ func validateEnvironmentDesiredState(state *EnvironmentDesiredState) error {
 			"Environment state schema version is unsupported",
 		)
 	}
-	if strings.TrimSpace(state.Runtime.Runtime) != "go" {
-		builder.Add("runtime.runtime", "unsupported", "only the Go runtime is supported")
+	state.Runtime.Runtime = strings.ToLower(strings.TrimSpace(state.Runtime.Runtime))
+	if !IsSupportedBuildpackRuntime(BuildpackRuntime(state.Runtime.Runtime)) {
+		builder.Add("runtime.runtime", "unsupported", "runtime must be go, rails, laravel, or django")
 	}
 	if state.Runtime.RestartPolicy != "unless-stopped" {
 		builder.Add("runtime.restartPolicy", "unsupported", "restart policy must be unless-stopped")
 	}
-	if err := ValidateGoProcessTargets(state.Runtime.BPGOTargets); err != nil {
+	if state.Runtime.Runtime != string(BuildpackRuntimeGo) && len(state.Runtime.BPGOTargets) > 0 {
+		builder.Add("runtime.bpGoTargets", "unsupported", "Go process targets require the Go runtime")
+	} else if err := ValidateGoProcessTargets(state.Runtime.BPGOTargets); err != nil {
 		builder.Add("runtime.bpGoTargets", "invalid", err.Error())
 	}
 	processInputs := make([]EnvironmentProcessInput, 0, len(state.Processes))

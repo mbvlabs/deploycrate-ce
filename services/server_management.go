@@ -365,6 +365,16 @@ func (service *ServerManagement) ProvisionCapabilities(
 			),
 		)
 	}
+	for _, runtime := range current.Buildpacks.Runtimes {
+		if !capabilities.SupportsBuildpack(runtime) {
+			return errors.Join(
+				models.ErrDomainValidation,
+				fmt.Errorf("provisioned Buildpack runtime cannot be removed: %s", runtime),
+			)
+		}
+	}
+	capabilities.Buildpacks.Tool = current.Buildpacks.Tool
+	capabilities.Buildpacks.Version = current.Buildpacks.Version
 	requested := make([]string, 0, 5)
 	for _, capability := range []struct {
 		key   string
@@ -403,6 +413,22 @@ func (service *ServerManagement) ProvisionCapabilities(
 	encoded, err := capabilities.JSON()
 	if err != nil {
 		return err
+	}
+	var currentDocument, nextDocument map[string]json.RawMessage
+	if err := json.Unmarshal(target.Server.Capabilities, &currentDocument); err != nil {
+		return fmt.Errorf("decode current Server capability metadata: %w", err)
+	}
+	if err := json.Unmarshal(encoded, &nextDocument); err != nil {
+		return fmt.Errorf("decode requested Server capabilities: %w", err)
+	}
+	for key, value := range currentDocument {
+		if _, managed := nextDocument[key]; !managed {
+			nextDocument[key] = value
+		}
+	}
+	encoded, err = json.Marshal(nextDocument)
+	if err != nil {
+		return fmt.Errorf("encode merged Server capabilities: %w", err)
 	}
 	return models.Server.UpdateCapabilities(ctx, service.db.Executor(), serverID, encoded)
 }
