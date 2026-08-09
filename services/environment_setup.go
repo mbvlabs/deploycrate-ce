@@ -230,6 +230,7 @@ type EnvironmentEditInput struct {
 	Name          string
 	Slug          string
 	Kind          string
+	ServerIDs     []uuid.UUID
 	Hostname      string
 	ContainerPort int32
 	HealthPath    string
@@ -2985,6 +2986,7 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 		)
 	}
 	configuration := EnvironmentSetupInput{
+		ServerIDs:     input.ServerIDs,
 		Hostname:      input.Hostname,
 		ContainerPort: input.ContainerPort,
 		HealthPath:    input.HealthPath,
@@ -2993,6 +2995,11 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 		DNS:           input.DNS,
 	}
 	if err := validateEnvironmentSetupInput(configuration); err != nil {
+		return err
+	}
+	serverIDs := normalizedEnvironmentServerIDs(configuration)
+	placements, selectedNetworkID, err := service.runtimePlacements(ctx, serverIDs)
+	if err != nil {
 		return err
 	}
 	var networkID uuid.UUID
@@ -3009,9 +3016,31 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	if err != nil {
 		return err
 	}
-	serverIDs := make([]uuid.UUID, 0, len(targets))
+	if selectedNetworkID != networkID {
+		return errors.Join(
+			models.ErrDomainValidation,
+			validation.ValidationErrors{{
+				Field:   "serverIds",
+				Code:    "network",
+				Message: "selected runtime Server targets must use the Environment private network",
+			}},
+		)
+	}
+	selectedServers := make(map[uuid.UUID]struct{}, len(serverIDs))
+	for _, serverID := range serverIDs {
+		selectedServers[serverID] = struct{}{}
+	}
 	for _, target := range targets {
-		serverIDs = append(serverIDs, target.ServerID)
+		if _, selected := selectedServers[target.ServerID]; !selected {
+			return errors.Join(
+				models.ErrDomainValidation,
+				validation.ValidationErrors{{
+					Field:   "serverIds",
+					Code:    "removal_unsupported",
+					Message: "existing runtime Server targets cannot be removed yet",
+				}},
+			)
+		}
 	}
 	preparedResources, err := service.prepareResources(
 		ctx,
@@ -3068,6 +3097,64 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 		return errors.New(
 			"stop active Build, release command, and Deployment work before editing the Environment",
 		)
+	}
+	currentTargets, err := models.EnvironmentTarget.ActiveForEnvironmentAll(ctx, tx, environmentID)
+	if err != nil {
+		return err
+	}
+	currentServers := make(map[uuid.UUID]struct{}, len(currentTargets))
+	for _, target := range currentTargets {
+		currentServers[target.ServerID] = struct{}{}
+		if _, selected := selectedServers[target.ServerID]; !selected {
+			return errors.Join(
+				models.ErrDomainValidation,
+				validation.ValidationErrors{{
+					Field:   "serverIds",
+					Code:    "removal_unsupported",
+					Message: "existing runtime Server targets cannot be removed yet",
+				}},
+			)
+		}
+	}
+	placementsByServer := make(map[uuid.UUID]preparedRuntimePlacement, len(placements))
+	for _, placement := range placements {
+		placementsByServer[placement.serverID] = placement
+	}
+	newTargets := make([]models.EnvironmentTargetEntity, 0, len(serverIDs)-len(currentTargets))
+	for _, serverID := range serverIDs {
+		if _, exists := currentServers[serverID]; exists {
+			continue
+		}
+		placement := placementsByServer[serverID]
+		target, createErr := models.EnvironmentTarget.Create(
+			ctx,
+			tx,
+			models.CreateEnvironmentTargetData{
+				AttachedAt:    time.Now().UTC(),
+				EnvironmentID: environmentID,
+				ServerID:      serverID,
+			},
+		)
+		if createErr != nil {
+			return createErr
+		}
+		if _, createErr := models.EnvironmentTargetNetwork.Create(
+			ctx,
+			tx,
+			models.CreateEnvironmentTargetNetworkData{
+				Driver:              placement.network.Driver,
+				ExternalID:          placement.network.ExternalID,
+				Configuration:       placement.network.Configuration,
+				State:               "applied",
+				AppliedAt:           placement.network.AppliedAt,
+				ObservedAt:          placement.network.ObservedAt,
+				EnvironmentTargetID: target.ID,
+				PrivateNetworkID:    networkID,
+			},
+		); createErr != nil {
+			return createErr
+		}
+		newTargets = append(newTargets, target)
 	}
 	if _, err := tx.ExecContext(
 		ctx,
@@ -3141,7 +3228,7 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	}
 	_, err = service.dns.ConfigureTx(
 		ctx, tx, updatedDomain, input.DNS,
-		domain.Hostname != updatedDomain.Hostname, false, false, nil,
+		domain.Hostname != updatedDomain.Hostname || len(newTargets) > 0, false, false, nil,
 	)
 	if err != nil {
 		return err
@@ -3345,6 +3432,20 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 		Role: "result", ChangeID: change.ID, EnvironmentStateRevisionID: revision.ID,
 	}); err != nil {
 		return err
+	}
+	for _, target := range newTargets {
+		if _, err := models.EnvironmentTargetState.Create(
+			ctx,
+			tx,
+			models.CreateEnvironmentTargetStateData{
+				ObservedState:       json.RawMessage(`{}`),
+				State:               "pending",
+				EnvironmentTargetID: target.ID,
+				DesiredRevisionID:   &revision.ID,
+			},
+		); err != nil {
+			return err
+		}
 	}
 	if _, err := tx.NewUpdate().TableExpr("environment_target_states AS state").
 		Set("desired_revision_id = ?", revision.ID).

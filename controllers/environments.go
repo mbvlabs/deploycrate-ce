@@ -1006,6 +1006,7 @@ type environmentEditPayload struct {
 	Name          string                                   `json:"name"`
 	Slug          string                                   `json:"slug"`
 	Kind          string                                   `json:"kind"`
+	ServerIDs     []string                                 `json:"serverIds"`
 	Hostname      string                                   `json:"hostname"`
 	ContainerPort int32                                    `json:"containerPort"`
 	HealthPath    string                                   `json:"healthPath"`
@@ -1019,8 +1020,27 @@ func (c Environments) Update(etx *echo.Context) error {
 	params, err := environmentPathParams(etx)
 	var payload environmentEditPayload
 	var dnsZoneID *uuid.UUID
+	serverIDs := make([]uuid.UUID, 0)
 	if err == nil {
 		err = etx.Bind(&payload)
+	}
+	if err == nil {
+		serverIDs = make([]uuid.UUID, 0, len(payload.ServerIDs))
+		for _, value := range payload.ServerIDs {
+			serverID, parseErr := uuid.Parse(value)
+			if parseErr != nil {
+				err = errors.Join(
+					models.ErrDomainValidation,
+					validation.ValidationErrors{{
+						Field:   "serverIds",
+						Code:    "invalid",
+						Message: "select valid runtime Server targets",
+					}},
+				)
+				break
+			}
+			serverIDs = append(serverIDs, serverID)
+		}
 	}
 	if err == nil {
 		if strings.EqualFold(strings.TrimSpace(payload.DNSMode), services.DNSModeCloudflare) {
@@ -1048,6 +1068,7 @@ func (c Environments) Update(etx *echo.Context) error {
 					Name:          payload.Name,
 					Slug:          payload.Slug,
 					Kind:          payload.Kind,
+					ServerIDs:     serverIDs,
 					Hostname:      payload.Hostname,
 					ContainerPort: payload.ContainerPort,
 					HealthPath:    payload.HealthPath,
@@ -1074,6 +1095,7 @@ func (c Environments) Update(etx *echo.Context) error {
 				configuration.Name = payload.Name
 				configuration.Slug = payload.Slug
 				configuration.Kind = payload.Kind
+				configuration.ServerIDs = serverIDs
 				configuration.Hostname = payload.Hostname
 				configuration.ContainerPort = payload.ContainerPort
 				configuration.HealthPath = payload.HealthPath

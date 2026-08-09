@@ -1,5 +1,6 @@
 <script lang="ts">
   import { Link, useForm } from "@inertiajs/svelte";
+  import { untrack } from "svelte";
 
   import { Button } from "@/Components/ui/button";
   import * as Card from "@/Components/ui/card";
@@ -8,6 +9,7 @@
     type ProcessInput,
   } from "@/Components/EnvironmentProcessEditor.svelte";
   import FormField from "@/Components/FormField.svelte";
+  import { Checkbox } from "@/Components/ui/checkbox";
   import { Input } from "@/Components/ui/input";
   import * as NativeSelect from "@/Components/ui/native-select";
   import { Spinner } from "@/Components/ui/spinner";
@@ -42,6 +44,7 @@
     connectionId: string;
     connectionName: string;
   };
+  type Server = { id: string; name: string; kind: string; address: string };
   type Configuration = {
     name: string;
     slug: string;
@@ -60,6 +63,7 @@
     applicationId: string;
     applicationName: string;
     sourceType: "buildpacks" | "image";
+    runtimeServerIds: string[];
     environment: { id: string; name: string; kind: string };
     repository: string;
     reference: string;
@@ -75,9 +79,16 @@
     auth: { email: string };
     environment: Environment;
     configuration: Configuration;
-    options: { resources: ResourceOption[]; dnsZones: DNSZone[] };
+    options: {
+      resources: ResourceOption[];
+      servers: Server[];
+      dnsZones: DNSZone[];
+    };
   } = $props();
   let selectedResource = $state("");
+  const originalServerIds = new Set(
+    untrack(() => environment.runtimeServerIds),
+  );
   const form = useForm(() => ({
     ...configuration,
     dnsZoneId: configuration.dnsZoneId ?? "",
@@ -87,9 +98,29 @@
     options.resources.filter(
       (resource) =>
         !resource.serverId ||
-        configuration.serverIds.includes(resource.serverId),
+        $form.serverIds.includes(resource.serverId),
     ),
   );
+
+  function toggleServer(serverId: string, selected: boolean) {
+    if (originalServerIds.has(serverId) && !selected) return;
+    const serverIds = selected
+      ? [...new Set([...$form.serverIds, serverId])]
+      : $form.serverIds.filter((candidate) => candidate !== serverId);
+    $form.serverIds = serverIds;
+    const available = new Set(
+      options.resources
+        .filter(
+          (resource) =>
+            !resource.serverId || serverIds.includes(resource.serverId),
+        )
+        .map((resource) => resource.id),
+    );
+    $form.resources = $form.resources.filter((resource) =>
+      available.has(resource.resourceId),
+    );
+    selectedResource = "";
+  }
 
   function attachedResourceOption(resource: ResourceInput) {
     return (
@@ -294,23 +325,47 @@
 
     <Card.Root>
       <Card.Header
-        ><Card.Title>Runtime</Card.Title><Card.Description
-          >Edit the Environment runtime values.</Card.Description
+        ><Card.Title>Runtime targets</Card.Title><Card.Description
+          >Deploy each Release to every selected Server.</Card.Description
         ></Card.Header
       >
-      <Card.Content class="grid gap-5 sm:grid-cols-2">
-        <div class="sm:col-span-2">
-          <FormField label="Runtime Server targets"
-            ><Input
-              value={configuration.serverNames.join(", ")}
-              readonly
-            /></FormField
+      <Card.Content class="space-y-4">
+        {#if options.servers.length === 0}<p
+            class="text-sm text-muted-foreground"
           >
-          <p class="mt-2 text-xs text-muted-foreground">
-            Runtime placement is fixed after setup. Create a new Environment to
-            change its Server targets.
-          </p>
-        </div>
+            No additional runtime Servers are available.
+          </p>{:else}<div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {#each options.servers as server (server.id)}
+              <label
+                class={`flex gap-3 border p-4 transition-colors ${originalServerIds.has(server.id) ? "cursor-default border-primary/60 bg-primary/5" : "cursor-pointer hover:border-primary/60"} ${$form.serverIds.includes(server.id) ? "border-primary bg-primary/5" : "border-border"}`}
+              >
+                <Checkbox
+                  class="mt-1"
+                  checked={$form.serverIds.includes(server.id)}
+                  disabled={originalServerIds.has(server.id)}
+                  onCheckedChange={(selected) =>
+                    toggleServer(server.id, selected === true)}
+                />
+                <span>
+                  <span class="block text-sm font-medium">{server.name}</span>
+                  <span class="mt-1 block text-xs text-muted-foreground">
+                    {server.kind === "worker"
+                      ? server.address
+                      : "Control plane"}{originalServerIds.has(server.id)
+                      ? " · attached"
+                      : ""}
+                  </span>
+                </span>
+              </label>
+            {/each}
+          </div>{/if}
+        {#if $form.errors.serverIds}<p class="text-sm text-destructive">
+            {$form.errors.serverIds}
+          </p>{/if}
+        <p class="text-xs text-muted-foreground">
+          Existing targets stay attached. Newly selected targets join the next
+          rollout. Removing targets will be added with workload draining later.
+        </p>
       </Card.Content>
     </Card.Root>
 
