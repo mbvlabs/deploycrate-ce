@@ -1,0 +1,906 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>DeployCrate — Efficient environment overview concept</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --page: #0a0d0c;
+        --surface: #111614;
+        --surface-raised: #151a17;
+        --surface-soft: #0e1311;
+        --line: #2a312d;
+        --line-strong: #3a443e;
+        --ink: #e5e8df;
+        --muted: #8c978f;
+        --faint: #616b65;
+        --mint: #59dfbc;
+        --mint-soft: #112d27;
+        --amber: #efbd55;
+        --amber-soft: #302817;
+        --red: #ff6c5b;
+        --red-soft: #351b1a;
+        --accent: #ff5f45;
+        --accent-soft: #291713;
+        --shadow: 0 22px 80px rgb(0 0 0 / 28%);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html {
+        min-width: 320px;
+        background: var(--page);
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at 26% 0%, rgb(47 32 22 / 24%), transparent 32rem),
+          radial-gradient(circle at 88% 22%, rgb(21 69 57 / 12%), transparent 28rem),
+          var(--page);
+        color: var(--ink);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+          "Liberation Mono", monospace;
+        font-size: 14px;
+        line-height: 1.45;
+      }
+
+      button,
+      a {
+        font: inherit;
+      }
+
+      button {
+        color: inherit;
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      .shell {
+        width: min(1220px, calc(100% - 40px));
+        margin: 0 auto;
+        padding: 38px 0 64px;
+      }
+
+      .eyebrow {
+        margin: 0;
+        color: var(--accent);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.22em;
+        text-transform: uppercase;
+      }
+
+      .page-header {
+        display: flex;
+        align-items: end;
+        justify-content: space-between;
+        gap: 24px;
+        margin: 18px 0 30px;
+      }
+
+      .title-line {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: clamp(28px, 4vw, 38px);
+        letter-spacing: -0.04em;
+        line-height: 1.1;
+      }
+
+      .actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .button {
+        display: inline-flex;
+        min-height: 36px;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        border: 1px solid var(--line);
+        background: var(--surface);
+        padding: 8px 12px;
+        color: var(--ink);
+        cursor: pointer;
+        transition: 140ms ease;
+      }
+
+      .button:hover {
+        border-color: var(--line-strong);
+        background: var(--surface-raised);
+      }
+
+      .button.primary {
+        border-color: #b64130;
+        background: #b64130;
+        color: white;
+      }
+
+      .button.primary:hover {
+        background: #c94a37;
+      }
+
+      .button.quiet {
+        min-height: 30px;
+        padding: 5px 9px;
+        background: transparent;
+        font-size: 12px;
+      }
+
+      .button.icon {
+        width: 36px;
+        padding: 0;
+        font-size: 18px;
+      }
+
+      .badge {
+        display: inline-flex;
+        width: max-content;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid var(--line-strong);
+        padding: 3px 7px;
+        color: var(--muted);
+        font-size: 11px;
+        line-height: 1.1;
+        white-space: nowrap;
+      }
+
+      .badge::before {
+        width: 6px;
+        height: 6px;
+        background: currentColor;
+        border-radius: 50%;
+        content: "";
+      }
+
+      .badge.good {
+        border-color: #2e715f;
+        background: var(--mint-soft);
+        color: var(--mint);
+      }
+
+      .badge.neutral::before {
+        display: none;
+      }
+
+      .badge.task {
+        border-color: #67552a;
+        background: var(--amber-soft);
+        color: var(--amber);
+      }
+
+      .card {
+        border: 1px solid var(--line);
+        background: rgb(17 22 20 / 92%);
+        box-shadow: var(--shadow);
+      }
+
+      .status-strip {
+        display: grid;
+        grid-template-columns: minmax(250px, 1.4fr) repeat(3, minmax(140px, 0.72fr));
+        margin-bottom: 16px;
+      }
+
+      .status-cell {
+        min-width: 0;
+        padding: 18px 20px;
+      }
+
+      .status-cell + .status-cell {
+        border-left: 1px solid var(--line);
+      }
+
+      .status-label {
+        margin: 0 0 9px;
+        color: var(--muted);
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+      }
+
+      .status-value {
+        display: flex;
+        align-items: baseline;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin: 0;
+        font-size: 18px;
+        font-weight: 700;
+        letter-spacing: -0.03em;
+      }
+
+      .status-value.large {
+        font-size: 22px;
+      }
+
+      .status-meta {
+        margin: 5px 0 0;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .delta-up {
+        color: var(--amber);
+      }
+
+      .delta-down {
+        color: var(--mint);
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1.75fr) minmax(280px, 0.75fr);
+        gap: 16px;
+        align-items: start;
+      }
+
+      .card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        min-height: 72px;
+        border-bottom: 1px solid var(--line);
+        padding: 16px 18px;
+      }
+
+      .card-heading {
+        display: flex;
+        min-width: 0;
+        align-items: center;
+        gap: 11px;
+      }
+
+      .icon-box {
+        display: grid;
+        width: 32px;
+        height: 32px;
+        flex: 0 0 auto;
+        place-items: center;
+        background: #0c1210;
+        color: var(--muted);
+      }
+
+      .icon-box svg {
+        width: 16px;
+        height: 16px;
+        fill: none;
+        stroke: currentColor;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        stroke-width: 1.6;
+      }
+
+      h2,
+      h3,
+      p {
+        overflow-wrap: anywhere;
+      }
+
+      h2 {
+        margin: 0;
+        font-size: 15px;
+        letter-spacing: -0.01em;
+      }
+
+      .description {
+        margin: 2px 0 0;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .workload-head,
+      .workload-row {
+        display: grid;
+        grid-template-columns: minmax(150px, 1.15fr) 106px minmax(170px, 1.25fr) minmax(145px, 0.9fr) auto;
+        gap: 14px;
+        align-items: center;
+      }
+
+      .workload-head {
+        border-bottom: 1px solid var(--line);
+        padding: 10px 18px;
+        color: var(--faint);
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 0.15em;
+        text-transform: uppercase;
+      }
+
+      .workload-row {
+        min-height: 98px;
+        padding: 15px 18px;
+      }
+
+      .workload-row + .workload-row {
+        border-top: 1px solid var(--line);
+      }
+
+      .workload-name {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .process-icon {
+        display: grid;
+        width: 30px;
+        height: 30px;
+        flex: 0 0 auto;
+        place-items: center;
+        border: 1px solid var(--line);
+        background: var(--surface-soft);
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .primary-text {
+        margin: 0;
+        color: var(--ink);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .secondary-text {
+        margin: 3px 0 0;
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      .health {
+        display: grid;
+        gap: 6px;
+      }
+
+      .health strong {
+        font-size: 15px;
+      }
+
+      .health strong span {
+        color: var(--muted);
+        font-weight: 400;
+      }
+
+      .mini-bar {
+        width: 58px;
+        height: 3px;
+        background: #29302c;
+      }
+
+      .mini-bar span {
+        display: block;
+        width: 100%;
+        height: 100%;
+        background: var(--mint);
+      }
+
+      code {
+        color: #bdc7c0;
+        font-family: inherit;
+        font-size: 11px;
+      }
+
+      .row-actions {
+        display: flex;
+        justify-content: end;
+      }
+
+      details {
+        border-top: 1px solid var(--line);
+      }
+
+      summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+        padding: 13px 18px;
+        color: var(--muted);
+        cursor: pointer;
+        font-size: 12px;
+        list-style: none;
+      }
+
+      summary::-webkit-details-marker {
+        display: none;
+      }
+
+      summary::after {
+        content: "+";
+        color: var(--ink);
+        font-size: 17px;
+      }
+
+      details[open] summary::after {
+        content: "−";
+      }
+
+      .release-task {
+        display: grid;
+        grid-template-columns: minmax(150px, 1.15fr) 106px minmax(170px, 1.25fr) minmax(145px, 0.9fr) auto;
+        gap: 14px;
+        align-items: center;
+        border-top: 1px solid var(--line);
+        background: #121510;
+        padding: 13px 18px;
+      }
+
+      .details-panel {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1px;
+        background: var(--line);
+      }
+
+      .detail-cell {
+        min-width: 0;
+        background: var(--surface-soft);
+        padding: 14px 18px;
+      }
+
+      .detail-cell span {
+        display: block;
+        margin-bottom: 4px;
+        color: var(--faint);
+        font-size: 9px;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }
+
+      .detail-cell code {
+        font-size: 12px;
+      }
+
+      .side-stack {
+        display: grid;
+        gap: 16px;
+      }
+
+      .resource-list {
+        display: grid;
+        gap: 8px;
+        padding: 14px;
+      }
+
+      .resource {
+        display: flex;
+        align-items: center;
+        gap: 11px;
+        border: 1px solid var(--line);
+        background: var(--surface-soft);
+        padding: 12px;
+      }
+
+      .resource .resource-meta {
+        min-width: 0;
+        flex: 1;
+      }
+
+      .resource .primary-text,
+      .resource .secondary-text {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
+      .resource-state {
+        width: 7px;
+        height: 7px;
+        flex: 0 0 auto;
+        border-radius: 50%;
+        background: var(--mint);
+        box-shadow: 0 0 0 3px rgb(89 223 188 / 9%);
+      }
+
+      .config-list {
+        margin: 0;
+        padding: 4px 18px 16px;
+      }
+
+      .config-row {
+        display: grid;
+        grid-template-columns: 96px minmax(0, 1fr);
+        gap: 14px;
+        border-bottom: 1px solid var(--line);
+        padding: 11px 0;
+      }
+
+      .config-row:last-child {
+        border-bottom: 0;
+      }
+
+      dt {
+        color: var(--muted);
+        font-size: 11px;
+      }
+
+      dd {
+        min-width: 0;
+        margin: 0;
+        text-align: right;
+        font-size: 11px;
+        overflow-wrap: anywhere;
+      }
+
+      .footnote {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin: 12px 2px 0;
+        color: var(--faint);
+        font-size: 10px;
+      }
+
+      .toast {
+        position: fixed;
+        right: 20px;
+        bottom: 20px;
+        z-index: 5;
+        border: 1px solid #2e715f;
+        background: #10221d;
+        padding: 11px 14px;
+        color: var(--mint);
+        opacity: 0;
+        pointer-events: none;
+        transform: translateY(8px);
+        transition: 180ms ease;
+      }
+
+      .toast.visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      @media (max-width: 980px) {
+        .status-strip {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .status-cell:nth-child(3) {
+          border-top: 1px solid var(--line);
+          border-left: 0;
+        }
+
+        .status-cell:nth-child(4) {
+          border-top: 1px solid var(--line);
+        }
+
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        .side-stack {
+          grid-template-columns: 1fr 1fr;
+        }
+      }
+
+      @media (max-width: 760px) {
+        .shell {
+          width: min(100% - 24px, 680px);
+          padding-top: 24px;
+        }
+
+        .page-header {
+          align-items: start;
+          flex-direction: column;
+        }
+
+        .actions {
+          width: 100%;
+        }
+
+        .actions .button:not(.icon) {
+          flex: 1;
+        }
+
+        .workload-head {
+          display: none;
+        }
+
+        .workload-row {
+          grid-template-columns: 1fr 1fr;
+          gap: 16px 12px;
+        }
+
+        .workload-name {
+          grid-column: 1 / -1;
+        }
+
+        .row-actions {
+          justify-content: start;
+        }
+
+        .release-task {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .release-task > :first-child {
+          grid-column: 1 / -1;
+        }
+
+        .release-task > :last-child {
+          display: none;
+        }
+      }
+
+      @media (max-width: 560px) {
+        .status-strip,
+        .side-stack,
+        .details-panel {
+          grid-template-columns: 1fr;
+        }
+
+        .status-cell + .status-cell,
+        .status-cell:nth-child(4) {
+          border-top: 1px solid var(--line);
+          border-left: 0;
+        }
+
+        .workload-row {
+          grid-template-columns: 1fr;
+        }
+
+        .workload-name {
+          grid-column: auto;
+        }
+
+        .release-task {
+          grid-template-columns: 1fr;
+        }
+
+        .config-row {
+          grid-template-columns: 1fr;
+          gap: 3px;
+        }
+
+        dd {
+          text-align: left;
+        }
+
+        .footnote {
+          align-items: start;
+          flex-direction: column;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <p class="eyebrow">MBV Blog · Production</p>
+
+      <header class="page-header">
+        <div class="title-line">
+          <h1>Production</h1>
+          <span class="badge good">Ready</span>
+        </div>
+        <div class="actions" aria-label="Environment actions">
+          <a class="button" href="#workloads">View logs</a>
+          <button class="button primary" data-action="deploy">Deploy</button>
+          <button class="button icon" aria-label="More environment actions">···</button>
+        </div>
+      </header>
+
+      <section class="card status-strip" aria-label="Environment status">
+        <div class="status-cell">
+          <p class="status-label">Latest deployment</p>
+          <p class="status-value">
+            <span class="badge good">Succeeded</span>
+            <code>c24834b2-984</code>
+          </p>
+          <p class="status-meta">Serving for 7 minutes · OCI release 4d91a27c</p>
+        </div>
+        <div class="status-cell">
+          <p class="status-label">Workloads</p>
+          <p class="status-value large">2<span style="color: var(--muted); font-size: 14px">/2 serving</span></p>
+          <p class="status-meta">All desired replicas are live</p>
+        </div>
+        <div class="status-cell">
+          <p class="status-label">CPU</p>
+          <p class="status-value large">0.00 <span style="font-size: 13px">cores</span></p>
+          <p class="status-meta delta-up">↑ 15.5% over the last hour</p>
+        </div>
+        <div class="status-cell">
+          <p class="status-label">Memory</p>
+          <p class="status-value large">64.6 <span style="font-size: 13px">MB</span></p>
+          <p class="status-meta delta-down">↓ 3.4% over the last hour</p>
+        </div>
+      </section>
+
+      <div class="layout">
+        <section class="card" id="workloads">
+          <header class="card-header">
+            <div class="card-heading">
+              <span class="icon-box" aria-hidden="true">
+                <svg viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="7" rx="1"/><rect x="4" y="14" width="16" height="7" rx="1"/><path d="M8 6.5h.01M8 17.5h.01"/></svg>
+              </span>
+              <div>
+                <h2>Workloads</h2>
+                <p class="description">Desired configuration and live runtime, together.</p>
+              </div>
+            </div>
+            <span class="badge good">2 serving</span>
+          </header>
+
+          <div class="workload-head" aria-hidden="true">
+            <span>Process</span><span>Capacity</span><span>Runtime</span><span>Endpoint</span><span>Controls</span>
+          </div>
+
+          <article class="workload-row">
+            <div class="workload-name">
+              <span class="process-icon">↗</span>
+              <div>
+                <p class="primary-text">web</p>
+                <p class="secondary-text">Web service · <code>01b9efae-348</code></p>
+              </div>
+            </div>
+            <div class="health">
+              <strong>1<span>/1 live</span></strong>
+              <span class="mini-bar" aria-label="One of one replicas live"><span></span></span>
+            </div>
+            <div>
+              <p class="primary-text">OCI image default</p>
+              <p class="secondary-text">Port 8080 · Health <code>/api/health</code></p>
+            </div>
+            <div>
+              <p class="primary-text">127.0.0.1:32976</p>
+              <p class="secondary-text"><span class="badge good">Serving</span></p>
+            </div>
+            <div class="row-actions">
+              <button class="button quiet" data-action="restart">Restart</button>
+            </div>
+          </article>
+
+          <article class="workload-row">
+            <div class="workload-name">
+              <span class="process-icon">⌁</span>
+              <div>
+                <p class="primary-text">background-worker</p>
+                <p class="secondary-text">Worker · <code>8f94ad20-116</code></p>
+              </div>
+            </div>
+            <div class="health">
+              <strong>1<span>/1 live</span></strong>
+              <span class="mini-bar" aria-label="One of one replicas live"><span></span></span>
+            </div>
+            <div>
+              <p class="primary-text"><code>worker</code></p>
+              <p class="secondary-text">Continuous process</p>
+            </div>
+            <div>
+              <p class="primary-text">Private</p>
+              <p class="secondary-text"><span class="badge good">Serving</span></p>
+            </div>
+            <div class="row-actions">
+              <button class="button quiet" data-action="restart">Restart</button>
+            </div>
+          </article>
+
+          <div class="release-task">
+            <div class="workload-name">
+              <span class="process-icon">✓</span>
+              <div>
+                <p class="primary-text">Release task</p>
+                <p class="secondary-text">Runs once before rollout</p>
+              </div>
+            </div>
+            <span class="badge task">On deploy</span>
+            <div>
+              <p class="primary-text"><code>migrate</code></p>
+              <p class="secondary-text">Latest run succeeded</p>
+            </div>
+            <p class="secondary-text">900s timeout</p>
+            <span aria-hidden="true"></span>
+          </div>
+
+          <details>
+            <summary>Deployment and instance identifiers</summary>
+            <div class="details-panel">
+              <div class="detail-cell"><span>Deployment</span><code>c24834b2-984</code></div>
+              <div class="detail-cell"><span>Release</span><code>4d91a27c-042</code></div>
+              <div class="detail-cell"><span>Target</span><code>local-docker</code></div>
+            </div>
+          </details>
+        </section>
+
+        <aside class="side-stack" aria-label="Environment details">
+          <section class="card">
+            <header class="card-header">
+              <div class="card-heading">
+                <span class="icon-box" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
+                </span>
+                <div>
+                  <h2>Connected resources</h2>
+                  <p class="description">2 services available.</p>
+                </div>
+              </div>
+            </header>
+            <div class="resource-list">
+              <a class="resource" href="#resource-opentelemetry">
+                <span class="resource-state" aria-label="Connected"></span>
+                <span class="resource-meta">
+                  <span class="primary-text">OPENTELEMETRY</span>
+                  <span class="secondary-text">DeployCrate Telemetry</span>
+                </span>
+                <span style="color: var(--faint)" aria-hidden="true">›</span>
+              </a>
+              <a class="resource" href="#resource-postgresql">
+                <span class="resource-state" aria-label="Connected"></span>
+                <span class="resource-meta">
+                  <span class="primary-text">POSTGRESQL</span>
+                  <span class="secondary-text">MBV Blog DB</span>
+                </span>
+                <span style="color: var(--faint)" aria-hidden="true">›</span>
+              </a>
+            </div>
+          </section>
+
+          <section class="card">
+            <header class="card-header">
+              <div class="card-heading">
+                <span class="icon-box" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/><circle cx="12" cy="12" r="3"/></svg>
+                </span>
+                <div>
+                  <h2>Deployment configuration</h2>
+                  <p class="description">Inputs for the next rollout.</p>
+                </div>
+              </div>
+            </header>
+            <dl class="config-list">
+              <div class="config-row"><dt>Source</dt><dd>OCI image</dd></div>
+              <div class="config-row"><dt>Target</dt><dd>local-docker</dd></div>
+              <div class="config-row"><dt>Strategy</dt><dd>Rolling · zero downtime</dd></div>
+              <div class="config-row"><dt>Updated</dt><dd>8/9/2026, 11:45 PM</dd></div>
+            </dl>
+          </section>
+        </aside>
+      </div>
+
+      <div class="footnote">
+        <span>Telemetry observed 8/9/2026, 11:45 PM</span>
+        <a href="#telemetry" style="color: var(--muted)">View telemetry history →</a>
+      </div>
+    </main>
+
+    <div class="toast" role="status" aria-live="polite"></div>
+    <script>
+      const toast = document.querySelector(".toast");
+      let toastTimer;
+
+      function announce(message) {
+        toast.textContent = message;
+        toast.classList.add("visible");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => toast.classList.remove("visible"), 2200);
+      }
+
+      document.querySelectorAll("[data-action='restart']").forEach((button) => {
+        button.addEventListener("click", () => announce("Restart queued for this workload"));
+      });
+
+      document.querySelector("[data-action='deploy']").addEventListener("click", () => {
+        announce("Deployment queued");
+      });
+    </script>
+  </body>
+</html>
