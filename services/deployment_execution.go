@@ -22,6 +22,8 @@ import (
 	"github.com/uptrace/bun"
 )
 
+const maximumManagedWorkloadNameLength = 128
+
 type PermanentDeploymentError struct{ Err error }
 
 func (failure *PermanentDeploymentError) Error() string { return failure.Err.Error() }
@@ -43,6 +45,24 @@ type deploymentScope struct {
 	RegistryID           uuid.UUID
 	RegistryCredentialID uuid.UUID
 	RegistryEndpoint     string
+}
+
+func managedWorkloadName(scope deploymentScope, instance models.InstanceEntity) string {
+	readable := strings.Join([]string{
+		scope.Application.Slug,
+		scope.Environment.Slug,
+		instance.ProcessName,
+		strings.ReplaceAll(instance.ReplicaKey, "/", "-"),
+	}, "-")
+	identifier := instance.ID.String()
+	maximumReadableLength := maximumManagedWorkloadNameLength - len(identifier) - 1
+	if len(readable) > maximumReadableLength {
+		readable = strings.TrimRight(readable[:maximumReadableLength], "-._")
+	}
+	if readable == "" {
+		readable = "workload"
+	}
+	return readable + "-" + identifier
 }
 
 type DeploymentExecution struct {
@@ -281,11 +301,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 					ProcessName:    instance.ProcessName,
 					ProcessKind:    instance.ProcessKind,
 					ProcessReplica: instance.ReplicaKey,
-					ContainerName: scope.Application.Slug + "-" + scope.Environment.Slug + "-" + scope.Environment.ID.String() + "-" + scope.Deployment.ID.String() + "-" + instance.ProcessName + "-" + strings.ReplaceAll(
-						instance.ReplicaKey,
-						"/",
-						"-",
-					),
+					ContainerName:  managedWorkloadName(scope, instance),
 					ImageReference: scope.Release.ArtifactReference,
 					NetworkName:    networkName,
 					RestartPolicy:  "unless-stopped",

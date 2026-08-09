@@ -130,6 +130,14 @@
     updates: ServerUpdate[];
   };
 
+  const capabilityOptions = [
+    ["build", "Build"],
+    ["runtime", "Runtime"],
+    ["resource", "Resource"],
+    ["database", "Database"],
+    ["repository", "Repository"],
+  ] as const;
+
   let {
     auth,
     system,
@@ -241,15 +249,16 @@
     return system.serverCapabilities?.[key] === true;
   }
 
-  const containerActions = $derived(
-    (container: ServerContainer) =>
-      ({
-        start: container.state !== "running",
-        stop: container.state === "running",
-        restart: container.state === "running",
-        remove: true,
-      }) as Record<string, boolean>,
-  );
+  function containerActions(
+    container: ServerContainer,
+  ): Record<string, boolean> {
+    return {
+      start: container.state !== "running",
+      stop: container.state === "running",
+      restart: container.state === "running",
+      remove: true,
+    };
+  }
 
   function perform(operation: string, data: Record<string, string>) {
     busy = `${operation}:${data.container ?? data.reference ?? ""}`;
@@ -282,7 +291,7 @@
       routes.systemHostContainersLogs(),
       { container: container.name, tail: 200 },
       {
-        only: ["containerLogs", "containerLogsFor"],
+        only: ["containerLogs", "containerLogsFor", "flash"],
         onFinish: () => (logBusy = ""),
       },
     );
@@ -568,20 +577,23 @@
                     class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5"
                     onsubmit={applyCapabilities}
                   >
-                    {#each [
-                      ["build", "Build"],
-                      ["runtime", "Runtime"],
-                      ["resource", "Resource"],
-                      ["database", "Database"],
-                      ["repository", "Repository"],
-                    ] as [key, label]}
+                    {#each capabilityOptions as [key, label] (key)}
                       <label
                         class="flex items-center gap-3 border border-border/70 bg-muted/20 p-3 text-sm"
                       >
-                        <Checkbox bind:checked={$capabilitiesForm[key]} />
+                        <Checkbox
+                          bind:checked={$capabilitiesForm[key]}
+                          disabled={capabilityEnabled(key)}
+                        />
                         <span>{label}</span>
                       </label>
                     {/each}
+                    <p
+                      class="text-xs text-muted-foreground sm:col-span-2 xl:col-span-5"
+                    >
+                      Provisioned capabilities cannot be removed from a
+                      configured server.
+                    </p>
                     <div
                       class="flex items-center gap-2 sm:col-span-2 xl:col-span-5"
                     >
@@ -809,7 +821,7 @@
                         </Table.Row>
                       </Table.Header>
                       <Table.Body>
-                        {#each images as image (image.id)}
+                        {#each images as image (`${image.id}\u0000${image.repository}\u0000${image.tag}`)}
                           <Table.Row>
                             <Table.Cell class="max-w-96 break-all font-mono text-xs">
                               {image.repository}

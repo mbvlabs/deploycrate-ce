@@ -332,6 +332,39 @@ func (service *ServerManagement) ProvisionCapabilities(
 	if err := capabilities.Validate(); err != nil {
 		return errors.Join(models.ErrDomainValidation, err)
 	}
+	target, err := service.servers.TargetAny(ctx, serverID)
+	if err != nil {
+		return err
+	}
+	current, err := models.ParseServerCapabilities(target.Server.Capabilities)
+	if err != nil {
+		return fmt.Errorf("parse current Server capabilities: %w", err)
+	}
+	removed := make([]string, 0, 5)
+	for _, capability := range []struct {
+		key     string
+		current bool
+		next    bool
+	}{
+		{"build", current.Build, capabilities.Build},
+		{"runtime", current.Runtime, capabilities.Runtime},
+		{"resource", current.Resource, capabilities.Resource},
+		{"database", current.Database, capabilities.Database},
+		{"repository", current.Repository, capabilities.Repository},
+	} {
+		if capability.current && !capability.next {
+			removed = append(removed, capability.key)
+		}
+	}
+	if len(removed) > 0 {
+		return errors.Join(
+			models.ErrDomainValidation,
+			fmt.Errorf(
+				"provisioned Server capabilities cannot be removed: %s",
+				strings.Join(removed, ", "),
+			),
+		)
+	}
 	requested := make([]string, 0, 5)
 	for _, capability := range []struct {
 		key   string
@@ -346,10 +379,6 @@ func (service *ServerManagement) ProvisionCapabilities(
 		if capability.value {
 			requested = append(requested, capability.key)
 		}
-	}
-	target, err := service.servers.TargetAny(ctx, serverID)
-	if err != nil {
-		return err
 	}
 	if target.Remote {
 		script := append(
