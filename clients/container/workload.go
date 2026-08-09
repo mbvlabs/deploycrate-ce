@@ -29,6 +29,7 @@ const (
 	labelProcessName            = "com.deploycrate.process.name"
 	labelProcessKind            = "com.deploycrate.process.kind"
 	labelProcessReplica         = "com.deploycrate.process.replica"
+	labelOpenTelemetryEnabled   = "com.deploycrate.opentelemetry.enabled"
 	labelReleaseCommand         = "com.deploycrate.release-command"
 	labelNetworkOwner           = "com.deploycrate.environment"
 	labelResourceInstallation   = "com.deploycrate.resource-installation"
@@ -45,24 +46,25 @@ const (
 )
 
 type WorkloadRunSpec struct {
-	ApplicationID     uuid.UUID
-	EnvironmentID     uuid.UUID
-	TargetID          uuid.UUID
-	DeploymentID      uuid.UUID
-	InstanceID        uuid.UUID
-	ReleaseID         uuid.UUID
-	ProcessName       string
-	ProcessKind       string
-	ProcessReplica    string
-	ContainerName     string
-	ImageReference    string
-	NetworkName       string
-	RestartPolicy     string
-	PublishAddress    string
-	ContainerPort     int32
-	Environment       map[string]string
-	Command           []string
-	DockerEnvironment []string
+	ApplicationID        uuid.UUID
+	EnvironmentID        uuid.UUID
+	TargetID             uuid.UUID
+	DeploymentID         uuid.UUID
+	InstanceID           uuid.UUID
+	ReleaseID            uuid.UUID
+	ProcessName          string
+	ProcessKind          string
+	ProcessReplica       string
+	ContainerName        string
+	ImageReference       string
+	NetworkName          string
+	RestartPolicy        string
+	PublishAddress       string
+	ContainerPort        int32
+	Environment          map[string]string
+	Command              []string
+	OpenTelemetryEnabled bool
+	DockerEnvironment    []string
 }
 
 type WorkloadState struct {
@@ -96,6 +98,7 @@ type OneOffRunSpec struct {
 	Stdout                    io.Writer
 	Stderr                    io.Writer
 	Created                   func(string) error
+	OpenTelemetryEnabled      bool
 }
 
 type OneOffRunResult struct {
@@ -403,6 +406,7 @@ func PrepareWorkloadRun(spec WorkloadRunSpec) (PreparedWorkloadRun, error) {
 		"--label", labelProcessName + "=" + spec.ProcessName,
 		"--label", labelProcessKind + "=" + spec.ProcessKind,
 		"--label", labelProcessReplica + "=" + spec.ProcessReplica,
+		"--label", labelOpenTelemetryEnabled + "=" + strconv.FormatBool(spec.OpenTelemetryEnabled),
 		"--network", spec.NetworkName, "--restart", spec.RestartPolicy}
 	if spec.ProcessKind == "web" {
 		arguments = append(
@@ -585,6 +589,8 @@ func PrepareOneOffCreate(spec OneOffRunSpec) (PreparedWorkloadRun, error) {
 		labelProcessKind + "=release",
 		"--label",
 		labelProcessReplica + "=" + strconv.Itoa(int(spec.Attempt)),
+		"--label",
+		labelOpenTelemetryEnabled + "=" + strconv.FormatBool(spec.OpenTelemetryEnabled),
 		"--network",
 		spec.NetworkName,
 	}

@@ -127,7 +127,7 @@ func DefaultSteps(operations Operations) []Step {
 			nil,
 		),
 		scriptSetupStep(
-			"docker-29-6-2-journald-v2",
+			"docker-29-6-2-telemetry-log-routing-v1",
 			"Install and configure the pinned Docker toolchain",
 			"docker.sh",
 			func(cfg Config) map[string]string {
@@ -158,7 +158,7 @@ func DefaultSteps(operations Operations) []Step {
 		),
 		clickHouseMigrationStep(operations.RunClickHouseMigrations),
 		scriptSetupStep(
-			"otel-collector-"+OpenTelemetryCollectorVersion+"-authenticated-otlp-v5",
+			"otel-collector-"+OpenTelemetryCollectorVersion+"-deduplicate-workload-logs-v1",
 			"Install durable logs, traces, and metrics collection",
 			"otel-collector.sh",
 			func(cfg Config) map[string]string {

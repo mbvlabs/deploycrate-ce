@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page, router } from "@inertiajs/svelte";
   import SearchIcon from "@lucide/svelte/icons/search";
+  import LogEntry from "@/Components/Applications/Environments/LogEntry.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import TelemetryHistory from "@/Components/System/TelemetryHistory.svelte";
   import { Button } from "@/Components/ui/button";
@@ -96,7 +97,9 @@
     expandedSlowQueries !== null && expandedSlowQueriesKey === slowQueriesKey,
   );
   const slowQueries = $derived(
-    slowQueriesExpanded ? (expandedSlowQueries ?? []) : (telemetry.queries ?? []),
+    slowQueriesExpanded
+      ? (expandedSlowQueries ?? [])
+      : (telemetry.queries ?? []),
   );
   const trafficSeries = $derived<ChartSeries[]>([
     {
@@ -651,74 +654,42 @@
         class="max-h-[42rem] min-h-48 overflow-auto border border-border bg-muted/10"
       >
         {#each logs as log (log.id)}
-          <article
-            class="border-b border-border p-3 last:border-b-0 hover:bg-muted/20"
-          >
-            <header
-              class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground"
-            >
-              <StatusBadge status={logStatus(log)} label={logLevel(log)} />
-              <time
-                datetime={log.occurredAt}
-                title={new Date(log.occurredAt).toISOString()}
-                >{stamp(log.occurredAt)}</time
-              >
-              <span aria-hidden="true">·</span>
-              <span>{log.service || log.processName || "application"}</span>
-              {#if log.processKind}
-                <span aria-hidden="true">·</span><span
-                  >{log.processKind}{log.processReplica
-                    ? ` ${log.processReplica}`
-                    : ""}</span
-                >
-              {/if}
-              {#if log.traceId}
-                <span aria-hidden="true">·</span><span>trace</span>
-                <Button
-                  variant="link"
-                  size="xs"
-                  class="h-auto p-0 font-mono text-[10px]"
-                  onclick={() => focusTrace(log.traceId)}
-                  >{short(log.traceId)}</Button
-                >
-              {/if}
-              {#if log.spanId}
-                <span aria-hidden="true">·</span><span class="font-mono"
-                  >span {short(log.spanId)}</span
-                >
-              {/if}
-            </header>
-            <pre
-              class={cn(
-                "mt-2 whitespace-pre-wrap break-words border-l-2 border-transparent pl-3 font-mono text-xs leading-5",
-                {
-                  "border-warning":
-                    log.severityNumber >= 13 && log.severityNumber < 17,
-                  "border-destructive": log.severityNumber >= 17,
-                },
-              )}>{logMessage(log)}</pre>
-            {#if logContext(log).length}
-              <dl
-                class="mt-3 grid gap-x-5 gap-y-1 border-t border-border/70 pt-2 text-[10px] sm:grid-cols-2 xl:grid-cols-3"
-              >
-                {#each logContext(log) as [key, value] (key)}
-                  <div
-                    class="grid min-w-0 grid-cols-[minmax(5rem,auto)_1fr] gap-2"
-                  >
-                    <dt
-                      class="truncate font-mono text-muted-foreground"
-                      title={key}
-                    >
-                      {key}
-                    </dt>
-                    <dd class="break-all font-mono text-foreground/80">
-                      {value}
-                    </dd>
-                  </div>
-                {/each}
-              </dl>
-            {/if}
-          </article>
+          <LogEntry
+            occurredAt={log.occurredAt}
+            message={logMessage(log)}
+            status={logStatus(log)}
+            statusLabel={logLevel(log)}
+            source={log.service || log.processName || "application"}
+            metadata={[
+              ...(log.processKind
+                ? [
+                    {
+                      label: "Process",
+                      value: `${log.processKind}${log.processName ? ` · ${log.processName}` : ""}${log.processReplica ? ` · ${log.processReplica}` : ""}`,
+                    },
+                  ]
+                : []),
+              ...(log.scope ? [{ label: "Scope", value: log.scope }] : []),
+              ...(log.source
+                ? [
+                    {
+                      label: "Source",
+                      value: `${log.source}${log.line ? `:${log.line}` : ""}`,
+                      mono: true,
+                    },
+                  ]
+                : []),
+              ...(log.instance
+                ? [{ label: "Instance", value: log.instance, mono: true }]
+                : []),
+              ...(log.spanId
+                ? [{ label: "Span", value: short(log.spanId), mono: true }]
+                : []),
+            ]}
+            attributes={logContext(log)}
+            traceId={log.traceId}
+            ontrace={() => focusTrace(log.traceId)}
+          />
         {:else}
           <p class="p-4 text-sm text-muted-foreground">
             {logsLoaded
@@ -1023,11 +994,15 @@
                           ? ` · ${query.operation}`
                           : ""}
                       </Table.Cell>
-                      <Table.Cell class="max-w-[42rem] whitespace-pre-wrap break-words font-mono font-medium">
+                      <Table.Cell
+                        class="max-w-[42rem] whitespace-pre-wrap break-words font-mono font-medium"
+                      >
                         {query.query}
                       </Table.Cell>
                       <Table.Cell>{query.executions}</Table.Cell>
-                      <Table.Cell>{formatDuration(query.p95DurationMs)}</Table.Cell>
+                      <Table.Cell
+                        >{formatDuration(query.p95DurationMs)}</Table.Cell
+                      >
                     </Table.Row>
                   {/each}
                 </Table.Body>
@@ -1041,11 +1016,11 @@
                   onclick={toggleSlowQueries}
                   disabled={slowQueriesLoading}
                   aria-expanded={slowQueriesExpanded}
-                >{slowQueriesExpanded
-                  ? "Show top 10"
-                  : slowQueriesLoading
-                    ? "Loading top 25..."
-                    : "Show top 25"}</Button
+                  >{slowQueriesExpanded
+                    ? "Show top 10"
+                    : slowQueriesLoading
+                      ? "Loading top 25..."
+                      : "Show top 25"}</Button
                 >
               </div>
             {/if}
@@ -1058,7 +1033,8 @@
                 <Empty.Title>No query text yet</Empty.Title>
                 <Empty.Description
                   >Slow queries appear when instrumented spans include
-                  <span class="font-mono">db.query.text</span>.</Empty.Description
+                  <span class="font-mono">db.query.text</span
+                  >.</Empty.Description
                 >
               </Empty.Header>
             </Empty.Root>

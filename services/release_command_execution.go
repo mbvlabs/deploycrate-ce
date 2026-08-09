@@ -360,12 +360,13 @@ func (service *ReleaseCommandExecution) Execute(ctx context.Context, executionID
 			ContainerName: "dc-release-" + release.ID.String() + "-" + fmt.Sprint(
 				execution.Attempt,
 			),
-			ImageReference: release.ArtifactReference,
-			NetworkName:    networkName,
-			Environment:    environment,
-			Command:        append([]string{configuration.Command}, configuration.Arguments...),
-			Stdout:         releaseCommandStreamWriter{logger: logger, stream: "stdout"},
-			Stderr:         releaseCommandStreamWriter{logger: logger, stream: "stderr"},
+			ImageReference:       release.ArtifactReference,
+			NetworkName:          networkName,
+			Environment:          environment,
+			Command:              append([]string{configuration.Command}, configuration.Arguments...),
+			OpenTelemetryEnabled: scope.OpenTelemetryEnabled,
+			Stdout:               releaseCommandStreamWriter{logger: logger, stream: "stdout"},
+			Stderr:               releaseCommandStreamWriter{logger: logger, stream: "stderr"},
 			Created: func(identifier string) error {
 				_, err := service.db.Executor().
 					NewUpdate().
@@ -532,6 +533,18 @@ func (service *ReleaseCommandExecution) loadScope(
 		Revision:      revision,
 		State:         state,
 		ApplicationID: environment.ApplicationID,
+	}
+	scope.OpenTelemetryEnabled, err = models.EnvironmentResource.HasActiveEngineForEnvironment(
+		ctx,
+		service.db.Executor(),
+		environment.ID,
+		openTelemetryResourceEngine,
+	)
+	if err != nil {
+		return release, revision, target, deploymentScope{}, fmt.Errorf(
+			"load Environment OpenTelemetry state: %w",
+			err,
+		)
 	}
 	if release.RegistryResourceID != nil && release.RegistryCredentialID != nil &&
 		release.RegistryEndpoint.Valid {

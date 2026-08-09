@@ -13,6 +13,7 @@
   import ConfirmActionDialog from "@/Components/ConfirmActionDialog.svelte";
   import DataField from "@/Components/DataField.svelte";
   import EnvironmentDeleteDialog from "@/Components/EnvironmentDeleteDialog.svelte";
+  import LogEntry from "@/Components/Applications/Environments/LogEntry.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import OpenTelemetry from "@/Components/Applications/Environments/OpenTelemetry.svelte";
   import TelemetryHistory from "@/Components/Applications/Environments/TelemetryHistory.svelte";
@@ -168,11 +169,7 @@
       : null,
   );
   const telemetryMode = $derived(
-    openTelemetryAvailable &&
-      new URLSearchParams($page.url.split("?")[1] ?? "").get("source") ===
-        "opentelemetry"
-      ? "opentelemetry"
-      : "standard",
+    openTelemetryAvailable ? "opentelemetry" : "standard",
   );
   const environmentMemorySeries = $derived.by(() => {
     const totals: Record<
@@ -1208,7 +1205,7 @@
           </div>
         </Card.Header>
         <Card.Content class="space-y-2">
-          {#each environment.instances as instance}
+          {#each environment.instances as instance (instance.id)}
             <div
               class="grid items-center gap-2 border border-border/70 bg-card/40 p-3 text-sm sm:grid-cols-[minmax(0,1fr)_8rem_8rem_minmax(0,1fr)]"
             >
@@ -1411,28 +1408,20 @@
       >
         <div>
           <p
-            class="mb-2 text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground"
+            class="text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground"
           >
-            Telemetry source
+            Collection mode
           </p>
-          <div class="flex flex-wrap gap-1" aria-label="Telemetry source">
-            <Button
-              size="sm"
-              variant={telemetryMode === "standard" ? "default" : "outline"}
-              aria-pressed={telemetryMode === "standard"}
-              href={telemetryHref(telemetryRange, "standard")}>Standard</Button
-            >
-            {#if openTelemetryAvailable}
-              <Button
-                size="sm"
-                variant={telemetryMode === "opentelemetry"
-                  ? "default"
-                  : "outline"}
-                aria-pressed={telemetryMode === "opentelemetry"}
-                href={telemetryHref(telemetryRange, "opentelemetry")}
-                >OpenTelemetry</Button
-              >
-            {/if}
+          <div class="mt-2 flex flex-wrap items-center gap-2">
+            <StatusBadge
+              status="active"
+              label={openTelemetryAvailable ? "OpenTelemetry" : "Standard"}
+            />
+            <p class="text-xs text-muted-foreground">
+              {openTelemetryAvailable
+                ? "Structured application signals; container stdout is not stored a second time."
+                : "Container stdout and stderr with host resource metrics."}
+            </p>
           </div>
         </div>
         <div
@@ -1570,34 +1559,32 @@
                 <div
                   bind:this={environmentLogViewport}
                   onscroll={updateEnvironmentLogFollow}
-                  class="max-h-[32rem] min-h-48 overflow-auto border border-border bg-black/35 p-3 font-mono text-[11px] leading-relaxed"
+                  class="max-h-[42rem] min-h-48 overflow-auto border border-border bg-muted/10"
                 >
                   {#each logStream.logs as log (log.id)}
-                    <div
-                      class={cn(
-                        "grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 py-1",
-                        { "text-destructive": log.stream === "stderr" },
-                      )}
-                    >
-                      <span
-                        class="select-none whitespace-nowrap text-muted-foreground"
-                        >{stamp(log.occurredAt)}</span
-                      >
-                      <div class="min-w-0">
-                        <p
-                          class="select-none text-[10px] text-muted-foreground"
-                        >
-                          {log.stream} · {log.processKind || "process"}
-                          {log.processName || "unknown"}{log.processReplica
-                            ? ` · ${log.processReplica}`
-                            : ""} · {log.container || "container"} · deployment {short(
-                            log.deployment,
-                          )} · instance {short(log.instance)}
-                        </p>
-                        <pre
-                          class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
-                      </div>
-                    </div>
+                    <LogEntry
+                      occurredAt={log.occurredAt}
+                      message={log.message}
+                      status={log.stream === "stderr" ? "warning" : "info"}
+                      statusLabel={log.stream || "stdout"}
+                      source={`${log.processKind || "process"} · ${log.processName || "unknown"}${log.processReplica ? ` · ${log.processReplica}` : ""}`}
+                      metadata={[
+                        {
+                          label: "Container",
+                          value: log.container || "unknown",
+                        },
+                        {
+                          label: "Deployment",
+                          value: short(log.deployment),
+                          mono: true,
+                        },
+                        {
+                          label: "Instance",
+                          value: short(log.instance),
+                          mono: true,
+                        },
+                      ]}
+                    />
                   {:else}
                     <p class="text-muted-foreground">
                       {logStream.loaded
@@ -1637,13 +1624,13 @@
             changed only from their Resource.</Card.Description
           ></Card.Header
         ><Card.Content class="space-y-3"
-          >{#each environment.variables as variable}<div
+          >{#each environment.variables as variable (variable.key)}<div
               class="grid gap-1 border border-border p-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]"
             >
               <p class="font-mono text-sm">{variable.key}</p>
               <p class="break-all font-mono text-sm">{variable.value}</p>
               <p class="text-xs text-muted-foreground">{variable.source}</p>
-            </div>{/each}{#each environment.secrets as secret}<div
+            </div>{/each}{#each environment.secrets as secret (secret.id)}<div
               class="flex flex-col gap-4 border border-border p-3 sm:flex-row sm:items-center sm:justify-between"
             >
               <div>
@@ -1720,7 +1707,7 @@
             {#if buildStream.connectionError}<p class="text-xs text-warning">
                 {buildStream.connectionError}
               </p>{/if}
-            {#each builds as build}
+            {#each builds as build (build.id)}
               <div
                 class={cn(
                   "border text-sm",
@@ -1852,7 +1839,7 @@
               >
                 {deploymentStream.connectionError}
               </p>{/if}
-            {#each releases as release}
+            {#each releases as release (release.id)}
               <div
                 class={cn(
                   "border text-sm",
@@ -1962,7 +1949,7 @@
                               })}
                             aria-label="Release command retry target"
                           >
-                            {#each environment.runtimeTargetIds as targetId, index}<option
+                            {#each environment.runtimeTargetIds as targetId, index (targetId)}<option
                                 value={targetId}
                                 >{environment.runtimeServers[index]}</option
                               >{/each}
@@ -2015,7 +2002,7 @@
                         class="h-9 min-w-0 flex-1 border border-input bg-background px-2 text-xs"
                         bind:value={selectedDeploymentId}
                       >
-                        {#each deploymentsFor(expandedReleaseId) as deployment}
+                        {#each deploymentsFor(expandedReleaseId) as deployment (deployment.id)}
                           <option value={deployment.id}>
                             {short(deployment.id)} · {deployment.status}{deployment.attempt >
                             1

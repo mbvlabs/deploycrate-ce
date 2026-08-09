@@ -45,6 +45,7 @@ type deploymentScope struct {
 	RegistryID           uuid.UUID
 	RegistryCredentialID uuid.UUID
 	RegistryEndpoint     string
+	OpenTelemetryEnabled bool
 }
 
 func managedWorkloadName(scope deploymentScope, instance models.InstanceEntity) string {
@@ -292,22 +293,23 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 				ctx,
 				scope.Target.ServerID,
 				containerclient.WorkloadRunSpec{
-					ApplicationID:  scope.ApplicationID,
-					EnvironmentID:  scope.Environment.ID,
-					TargetID:       scope.Target.ID,
-					DeploymentID:   scope.Deployment.ID,
-					InstanceID:     instance.ID,
-					ReleaseID:      scope.Release.ID,
-					ProcessName:    instance.ProcessName,
-					ProcessKind:    instance.ProcessKind,
-					ProcessReplica: instance.ReplicaKey,
-					ContainerName:  managedWorkloadName(scope, instance),
-					ImageReference: scope.Release.ArtifactReference,
-					NetworkName:    networkName,
-					RestartPolicy:  "unless-stopped",
-					ContainerPort:  process.ContainerPort,
-					Environment:    environment,
-					Command:        command,
+					ApplicationID:        scope.ApplicationID,
+					EnvironmentID:        scope.Environment.ID,
+					TargetID:             scope.Target.ID,
+					DeploymentID:         scope.Deployment.ID,
+					InstanceID:           instance.ID,
+					ReleaseID:            scope.Release.ID,
+					ProcessName:          instance.ProcessName,
+					ProcessKind:          instance.ProcessKind,
+					ProcessReplica:       instance.ReplicaKey,
+					ContainerName:        managedWorkloadName(scope, instance),
+					ImageReference:       scope.Release.ArtifactReference,
+					NetworkName:          networkName,
+					RestartPolicy:        "unless-stopped",
+					ContainerPort:        process.ContainerPort,
+					Environment:          environment,
+					Command:              command,
+					OpenTelemetryEnabled: scope.OpenTelemetryEnabled,
 				},
 				credentials,
 			)
@@ -742,6 +744,15 @@ func (service *DeploymentExecution) loadScope(
 		return scope, errors.New("Deployment Environment setup is incomplete")
 	}
 	scope.ApplicationID = scope.Environment.ApplicationID
+	scope.OpenTelemetryEnabled, err = models.EnvironmentResource.HasActiveEngineForEnvironment(
+		ctx,
+		service.db.Executor(),
+		scope.Environment.ID,
+		openTelemetryResourceEngine,
+	)
+	if err != nil {
+		return scope, fmt.Errorf("load Environment OpenTelemetry state: %w", err)
+	}
 	scope.Application, err = models.Application.FindIncludingSystem(
 		ctx,
 		service.db.Executor(),

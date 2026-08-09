@@ -50,7 +50,7 @@ cat > /etc/docker/daemon.json <<'EOF'
   "log-driver": "journald",
   "log-opts": {
     "tag": "{{.Name}}",
-    "labels": "com.deploycrate.application,com.deploycrate.environment,com.deploycrate.target,com.deploycrate.deployment,com.deploycrate.instance,com.deploycrate.release,com.deploycrate.resource-installation,com.deploycrate.component"
+    "labels": "com.deploycrate.application,com.deploycrate.environment,com.deploycrate.target,com.deploycrate.deployment,com.deploycrate.instance,com.deploycrate.release,com.deploycrate.process.name,com.deploycrate.process.kind,com.deploycrate.process.replica,com.deploycrate.resource-installation,com.deploycrate.component,com.deploycrate.opentelemetry.enabled"
   },
   "live-restore": true
 }
@@ -194,6 +194,10 @@ processors:
       - set(log.attributes["deploycrate.deployment.id"], log.body["COM_DEPLOYCRATE_DEPLOYMENT"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
       - set(log.attributes["deploycrate.instance.id"], log.body["COM_DEPLOYCRATE_INSTANCE"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
       - set(log.attributes["deploycrate.release.id"], log.body["COM_DEPLOYCRATE_RELEASE"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["deploycrate.process.name"], log.body["COM_DEPLOYCRATE_PROCESS_NAME"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["deploycrate.process.kind"], log.body["COM_DEPLOYCRATE_PROCESS_KIND"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["deploycrate.process.replica"], log.body["COM_DEPLOYCRATE_PROCESS_REPLICA"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
+      - set(log.attributes["deploycrate.opentelemetry.enabled"], log.body["COM_DEPLOYCRATE_OPENTELEMETRY_ENABLED"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
       - set(log.attributes["deploycrate.log.epoch"], log.body["CONTAINER_LOG_EPOCH"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
       - set(log.attributes["deploycrate.log.ordinal"], log.body["CONTAINER_LOG_ORDINAL"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
       - set(log.attributes["container.id"], log.body["CONTAINER_ID_FULL"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
@@ -202,6 +206,10 @@ processors:
       - set(log.attributes["log.iostream"], "stdout") where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil and log.body["PRIORITY"] != "3"
       - set(log.body, log.body["MESSAGE"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil and log.body["MESSAGE"] != nil
       - replace_pattern(log.body, "\\\\x1B\\\\[[0-?]*[ -/]*[@-~]", "") where log.attributes["deploycrate.environment.id"] != nil and IsString(log.body)
+  filter/duplicate_workload_logs:
+    error_mode: ignore
+    log_conditions:
+      - 'log.attributes["deploycrate.opentelemetry.enabled"] == "true"'
   resource/node:
     attributes:
       - key: deploycrate.server.id
@@ -248,7 +256,7 @@ service:
   pipelines:
     logs/journald:
       receivers: [journald]
-      processors: [transform/workload_logs, resource/node, batch]
+      processors: [transform/workload_logs, filter/duplicate_workload_logs, resource/node, batch]
       exporters: [otlphttp/control-plane]
     logs/workloads:
       receivers: [otlp]

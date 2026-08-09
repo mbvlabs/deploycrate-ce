@@ -56,7 +56,7 @@ cat > /etc/docker/daemon.json <<'EOF'
   "log-driver": "journald",
   "log-opts": {
     "tag": "{{.Name}}",
-    "labels": "com.deploycrate.application,com.deploycrate.environment,com.deploycrate.target,com.deploycrate.deployment,com.deploycrate.instance,com.deploycrate.release,com.deploycrate.resource-installation,com.deploycrate.component"
+    "labels": "com.deploycrate.application,com.deploycrate.environment,com.deploycrate.target,com.deploycrate.deployment,com.deploycrate.instance,com.deploycrate.release,com.deploycrate.process.name,com.deploycrate.process.kind,com.deploycrate.process.replica,com.deploycrate.resource-installation,com.deploycrate.component,com.deploycrate.opentelemetry.enabled"
   },
   "live-restore": true
 }
