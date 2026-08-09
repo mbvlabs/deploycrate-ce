@@ -1,5 +1,4 @@
 <script lang="ts">
-  import ActivityIcon from "@lucide/svelte/icons/activity";
   import BoxesIcon from "@lucide/svelte/icons/boxes";
   import ContainerIcon from "@lucide/svelte/icons/container";
   import DatabaseIcon from "@lucide/svelte/icons/database";
@@ -12,12 +11,10 @@
   import * as Dialog from "@/Components/ui/dialog";
   import ConfirmActionDialog from "@/Components/ConfirmActionDialog.svelte";
   import DataField from "@/Components/DataField.svelte";
-  import EnvironmentDeleteDialog from "@/Components/EnvironmentDeleteDialog.svelte";
   import LogEntry from "@/Components/Applications/Environments/LogEntry.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import OpenTelemetry from "@/Components/Applications/Environments/OpenTelemetry.svelte";
   import TelemetryHistory from "@/Components/Applications/Environments/TelemetryHistory.svelte";
-  import UsageSummary from "@/Components/Applications/Environments/UsageSummary.svelte";
   import UsageDonut from "@/Components/System/UsageDonut.svelte";
   import BulkEnvironmentSecretsDialog from "@/Components/BulkEnvironmentSecretsDialog.svelte";
   import { Input } from "@/Components/ui/input";
@@ -148,6 +145,11 @@
         instance.state === "serving" && instance.processKind === "web",
     ) ?? null,
   );
+  const containerProcessName = $derived(
+    environment.instances.find(
+      (instance) => instance.id === container.instanceId,
+    )?.processName ?? "",
+  );
   const servingInstanceCount = $derived(
     environment.instances.filter((instance) => instance.state === "serving")
       .length,
@@ -243,6 +245,10 @@
     return `${(value / 1024 ** index).toFixed(index === 0 ? 0 : 1)} ${units[index]}`;
   };
   const formatCPU = (value: number) => `${value.toFixed(2)} cores`;
+  const formatChange = (value: number | null) =>
+    value === null
+      ? "Unavailable"
+      : `${value > 0 ? "+" : ""}${value.toFixed(1)}%`;
   const stamp = (value: string) =>
     value ? new Date(value).toLocaleString() : "Pending";
   const telemetryHref = (
@@ -902,9 +908,12 @@
         >
           {environment.applicationName} · {environment.environment.kind}
         </p>
-        <h1 class="mt-3 text-3xl font-semibold">
-          {environment.environment.name}
-        </h1>
+        <div class="mt-3 flex flex-wrap items-center gap-3">
+          <h1 class="text-3xl font-semibold">{environment.environment.name}</h1>
+          <StatusBadge
+            status={environment.deployability.deployable ? "ready" : "blocked"}
+          />
+        </div>
       </div>
       {#if section === "overview"}
         <div class="flex flex-wrap gap-2">
@@ -913,120 +922,130 @@
               aria-busy={deploymentCreationProcessing}
               onclick={buildAndDeploy}
               >{#if deploymentCreationProcessing}<Spinner />{/if}Build & deploy</Button
-            >{/if}<EnvironmentDeleteDialog
-            applicationId={environment.applicationId}
-            environmentId={environment.environment.id}
-            environmentName={environment.environment.name}
-          />
+            >{/if}
         </div>
       {/if}
     </header>
 
     {#if section === "overview"}
-      <section
-        aria-label="Environment dashboard"
-        class="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.9fr)]"
+      <Card.Root
+        class="gap-0 border-primary/25 bg-primary/[0.03] py-0"
+        aria-label="Environment status"
       >
-        <Card.Root class="min-w-0 border-primary/25 bg-primary/[0.03]">
-          <Card.Header class="border-b border-border/70">
-            <Card.Action>
-              <StatusBadge
-                status={environment.deployability.deployable
-                  ? "ready"
-                  : "blocked"}
-              />
-            </Card.Action>
-            <div class="flex items-center gap-2">
-              <div
-                class="grid size-8 place-items-center bg-primary/10 text-primary"
-              >
-                <ActivityIcon class="size-4" />
-              </div>
-              <div>
-                <Card.Title>Runtime overview</Card.Title>
-                <Card.Description>
-                  Current deployment posture for this Environment.
-                </Card.Description>
-              </div>
+        <Card.Content
+          class="grid px-0 sm:grid-cols-2 xl:grid-cols-[minmax(0,1.35fr)_repeat(3,minmax(0,1fr))]"
+        >
+          <div class="min-w-0 p-4">
+            <p
+              class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground"
+            >
+              Active deployment
+            </p>
+            <div class="mt-2 flex flex-wrap items-center gap-2">
+              <StatusBadge status={activeDeployment?.status ?? "pending"} />
+              <span class="font-mono text-xs text-muted-foreground">
+                {activeDeployment ? short(activeDeployment.id) : "None"}
+              </span>
             </div>
-          </Card.Header>
-          <Card.Content class="grid gap-3 sm:grid-cols-3">
-            <div class="border border-border/70 bg-background/55 p-3">
-              <p
-                class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground"
+            <p class="mt-2 text-xs text-muted-foreground">
+              {activeDeployment
+                ? deploymentStep(activeDeployment)
+                : "Deploy to start serving traffic"}
+            </p>
+          </div>
+          <div
+            class="min-w-0 border-t border-border/70 p-4 sm:border-l sm:border-t-0"
+          >
+            <p
+              class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground"
+            >
+              Workloads
+            </p>
+            <p class="mt-2 text-2xl font-semibold tracking-tight">
+              {servingInstanceCount}<span
+                class="text-base font-normal text-muted-foreground"
+                >/{desiredInstanceCount} serving</span
               >
-                Deployment
-              </p>
-              <div class="mt-2 flex items-center gap-2">
-                <StatusBadge status={activeDeployment?.status ?? "pending"} />
-                <span class="font-mono text-xs text-muted-foreground"
-                  >{activeDeployment
-                    ? short(activeDeployment.id)
-                    : "None"}</span
-                >
-              </div>
-              <p class="mt-2 text-xs text-muted-foreground">
-                {activeDeployment
-                  ? deploymentStep(activeDeployment)
-                  : "Deploy to start serving traffic"}
-              </p>
-            </div>
-            <div class="border border-border/70 bg-background/55 p-3">
-              <p
-                class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground"
-              >
-                Process health
-              </p>
-              <p class="mt-2 text-2xl font-semibold tracking-tight">
-                {servingInstanceCount}<span
-                  class="text-base font-normal text-muted-foreground"
-                  >/{desiredInstanceCount}</span
-                >
-              </p>
-              <p class="mt-1 text-xs text-muted-foreground">
-                serving instances
-              </p>
-            </div>
-            <div class="border border-border/70 bg-background/55 p-3">
-              <p
-                class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground"
-              >
-                Resources
-              </p>
-              <p class="mt-2 text-2xl font-semibold tracking-tight">
-                {environment.resources.length}
-              </p>
-              <p class="mt-1 text-xs text-muted-foreground">
-                connected services
-              </p>
-            </div>
-          </Card.Content>
-        </Card.Root>
+            </p>
+            <p class="mt-1 text-xs text-muted-foreground">
+              Desired process capacity
+            </p>
+          </div>
+          <div
+            class="min-w-0 border-t border-border/70 p-4 xl:border-l xl:border-t-0"
+          >
+            <p
+              class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground"
+            >
+              CPU
+            </p>
+            <p class="mt-2 text-2xl font-semibold tracking-tight">
+              {activeTelemetry?.available && activeTelemetry.cpuAvailable
+                ? formatCPU(activeTelemetry.cpuCores)
+                : "Unavailable"}
+            </p>
+            <p
+              class={cn(
+                "mt-1 text-xs",
+                usageChange?.cpu == null
+                  ? "text-muted-foreground"
+                  : usageChange.cpu > 0
+                    ? "text-warning"
+                    : "text-success",
+              )}
+            >
+              {formatChange(usageChange?.cpu ?? null)} vs last hour
+            </p>
+          </div>
+          <div
+            class="min-w-0 border-t border-border/70 p-4 sm:border-l xl:border-t-0"
+          >
+            <p
+              class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground"
+            >
+              Memory
+            </p>
+            <p class="mt-2 text-2xl font-semibold tracking-tight">
+              {activeTelemetry?.available && activeTelemetry.memoryAvailable
+                ? formatBytes(activeTelemetry.memoryBytes)
+                : "Unavailable"}
+            </p>
+            <p
+              class={cn(
+                "mt-1 text-xs",
+                usageChange?.memory == null
+                  ? "text-muted-foreground"
+                  : usageChange.memory > 0
+                    ? "text-warning"
+                    : "text-success",
+              )}
+            >
+              {formatChange(usageChange?.memory ?? null)} vs last hour
+            </p>
+          </div>
+        </Card.Content>
+        <div
+          class="flex flex-col gap-2 border-t border-border/70 px-4 py-2.5 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between"
+        >
+          <span>
+            {activeTelemetry?.observedAt
+              ? `Telemetry observed ${stamp(activeTelemetry.observedAt)}`
+              : "No telemetry is available for the active container yet."}
+          </span>
+          <Button
+            size="xs"
+            variant="ghost"
+            href={routes.environmentTelemetry(
+              environment.applicationId,
+              environment.environment.id,
+            )}>View telemetry</Button
+          >
+        </div>
+      </Card.Root>
 
-        <UsageSummary
-          cpuCores={activeTelemetry?.cpuCores ?? 0}
-          memoryBytes={activeTelemetry?.memoryBytes ?? 0}
-          cpuChange={usageChange?.cpu ?? null}
-          memoryChange={usageChange?.memory ?? null}
-          cpuAvailable={Boolean(
-            activeTelemetry?.available && activeTelemetry.cpuAvailable,
-          )}
-          memoryAvailable={Boolean(
-            activeTelemetry?.available && activeTelemetry.memoryAvailable,
-          )}
-          observedAt={activeTelemetry?.observedAt ?? ""}
-          telemetryUrl={routes.environmentTelemetry(
-            environment.applicationId,
-            environment.environment.id,
-          )}
-        />
-      </section>
-
-      <section
-        class="grid gap-4 xl:grid-cols-[minmax(0,1.35fr)_minmax(20rem,0.9fr)]"
-      >
-        <Card.Root class="min-w-0">
-          <Card.Header class="border-b border-border">
+      <section aria-label="Environment workloads">
+        <Card.Root class="h-full min-w-0 gap-0 py-0">
+          <Card.Header class="border-b border-border py-4">
             <div class="flex items-center gap-2">
               <div
                 class="grid size-8 place-items-center bg-muted text-muted-foreground"
@@ -1034,46 +1053,126 @@
                 <ServerIcon class="size-4" />
               </div>
               <div>
-                <Card.Title>Process formation</Card.Title>
-                <Card.Description
-                  >Configuration and live capacity for the next rollout.</Card.Description
-                >
+                <Card.Title>Workloads</Card.Title>
+                <Card.Description>
+                  Process configuration and live instances in one place.
+                </Card.Description>
               </div>
             </div>
           </Card.Header>
-          <Card.Content class="space-y-2">
+          <Card.Content class="px-0">
+            <div
+              class="hidden grid-cols-[minmax(0,1.05fr)_6rem_minmax(0,1.15fr)_minmax(0,1.2fr)_5rem] gap-4 border-b border-border/70 px-4 py-2 text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground lg:grid"
+              aria-hidden="true"
+            >
+              <span>Process</span><span>Capacity</span><span>Runtime</span><span
+                >Instances</span
+              ><span class="text-right">Controls</span>
+            </div>
             {#each environment.processes as process (process.name)}
+              {@const processInstances = environment.instances.filter(
+                (instance) => instance.processName === process.name,
+              )}
+              {@const servingProcessInstances = processInstances.filter(
+                (instance) => instance.state === "serving",
+              )}
               <article
-                class="grid gap-3 border border-border/70 bg-card/40 p-3 sm:grid-cols-[minmax(0,1fr)_7rem_minmax(0,1.5fr)_auto] sm:items-center"
+                class="grid gap-4 border-b border-border/70 p-4 last:border-b-0 lg:grid-cols-[minmax(0,1.05fr)_6rem_minmax(0,1.15fr)_minmax(0,1.2fr)_5rem] lg:items-center"
               >
-                <div class="min-w-0">
-                  <div class="flex items-center gap-2">
-                    <p class="truncate font-mono font-medium">{process.name}</p>
-                    <StatusBadge status={process.kind} />
+                <div class="flex min-w-0 items-center gap-3">
+                  <div
+                    class="grid size-8 shrink-0 place-items-center border border-border bg-background/50 text-muted-foreground"
+                  >
+                    {#if process.kind === "web"}
+                      <ContainerIcon class="size-4" />
+                    {:else}
+                      <ServerIcon class="size-4" />
+                    {/if}
                   </div>
+                  <div class="min-w-0">
+                    <p class="truncate font-mono text-sm font-medium">
+                      {process.name}
+                    </p>
+                    <div class="mt-1">
+                      <StatusBadge status={process.kind} />
+                    </div>
+                  </div>
+                </div>
+                <div>
+                  <p class="text-sm font-medium">
+                    {process.kind === "release"
+                      ? "Runs once"
+                      : `${servingProcessInstances.length}/${process.replicas} live`}
+                  </p>
                   <p class="mt-1 text-xs text-muted-foreground">
                     {process.kind === "release"
                       ? "One-off release command"
-                      : `${process.replicas} desired replica${process.replicas === 1 ? "" : "s"}`}
+                      : `${process.replicas} desired`}
                   </p>
                 </div>
-                <p class="text-sm font-medium">
-                  {process.kind === "release"
-                    ? "Runs once"
-                    : `${environment.instances.filter((instance) => instance.processName === process.name && instance.state === "serving").length}/${process.replicas} live`}
-                </p>
-                <p class="break-all font-mono text-xs text-muted-foreground">
-                  {process.command
-                    ? [process.command, ...process.arguments].join(" ")
-                    : "OCI image default command"}
-                </p>
-                <p class="text-xs text-muted-foreground">
-                  {process.kind === "web"
-                    ? `Port ${process.container_port}${process.health_path ? ` · ${process.health_path}` : ""}`
-                    : process.kind === "release"
-                      ? `${process.timeout_seconds}s timeout`
-                      : "Private"}
-                </p>
+                <div class="min-w-0">
+                  <p class="break-all font-mono text-xs">
+                    {process.command
+                      ? [process.command, ...process.arguments].join(" ")
+                      : "OCI image default command"}
+                  </p>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    {process.kind === "web"
+                      ? `${process.container_port ? `Port ${process.container_port}` : "Port unavailable"}${process.health_path ? ` · ${process.health_path}` : ""}`
+                      : process.kind === "release"
+                        ? process.timeout_seconds
+                          ? `${process.timeout_seconds}s timeout`
+                          : "Timeout unavailable"
+                        : "Private"}
+                  </p>
+                </div>
+                <div class="min-w-0 space-y-2">
+                  {#if process.kind === "release"}
+                    <span
+                      class="text-xs text-muted-foreground"
+                      aria-label="Not applicable">—</span
+                    >
+                  {:else if processInstances.length > 0}
+                    {#each processInstances as instance (instance.id)}
+                      <div class="min-w-0">
+                        <div class="flex flex-wrap items-center gap-2">
+                          <StatusBadge status={instance.state} />
+                          <span class="font-mono text-xs">
+                            {instance.processKind === "web" &&
+                            instance.ports?.http
+                              ? `${instance.ports.host || "127.0.0.1"}:${instance.ports.http}`
+                              : "Private"}
+                          </span>
+                        </div>
+                        <p
+                          class="mt-1 truncate font-mono text-[11px] text-muted-foreground"
+                        >
+                          {instance.replicaKey} · {short(instance.id)}
+                        </p>
+                      </div>
+                    {/each}
+                  {:else}
+                    <p class="text-xs text-muted-foreground">
+                      No instances running
+                    </p>
+                  {/if}
+                </div>
+                <div class="flex lg:justify-end">
+                  {#if process.kind === "web" && container.exists && process.name === containerProcessName}
+                    <Button
+                      class="w-fit lg:w-full"
+                      size="sm"
+                      variant="outline"
+                      disabled={containerActionProcessing}
+                      aria-busy={containerActionProcessing}
+                      onclick={container.running
+                        ? restartContainer
+                        : startContainer}
+                      >{#if containerActionProcessing}<Spinner
+                        />{/if}{container.running ? "Restart" : "Start"}</Button
+                    >
+                  {/if}
+                </div>
               </article>
             {:else}
               <p
@@ -1084,159 +1183,142 @@
             {/each}
           </Card.Content>
         </Card.Root>
+      </section>
 
-        <div class="space-y-4">
-          <Card.Root>
-            <Card.Header class="border-b border-border">
-              <div class="flex items-center gap-2">
-                <div
-                  class="grid size-8 place-items-center bg-muted text-muted-foreground"
-                >
-                  <BoxesIcon class="size-4" />
-                </div>
-                <div>
-                  <Card.Title>Resources</Card.Title><Card.Description
-                    >Services available to this Environment.</Card.Description
-                  >
+      <section
+        aria-label="Environment resources and DNS"
+        class="grid items-stretch gap-4 xl:grid-cols-2"
+      >
+        <Card.Root class="h-full gap-0 py-0">
+          <Card.Header class="border-b border-border py-4">
+            <Card.Action>
+              <StatusBadge
+                status={environment.resources.length > 0
+                  ? "available"
+                  : "pending"}
+                label={`${environment.resources.length} connected`}
+              />
+            </Card.Action>
+            <div class="flex items-center gap-2">
+              <div
+                class="grid size-8 place-items-center bg-muted text-muted-foreground"
+              >
+                <BoxesIcon class="size-4" />
+              </div>
+              <div>
+                <Card.Title>Resources</Card.Title>
+                <Card.Description>
+                  Services available to this Environment.
+                </Card.Description>
+              </div>
+            </div>
+          </Card.Header>
+          <Card.Content class="space-y-2 py-4">
+            {#each environment.resources as resource (resource.id)}
+              <div
+                class="flex items-center gap-3 border border-border/70 bg-card/40 p-3"
+              >
+                <DatabaseIcon class="size-4 shrink-0 text-muted-foreground" />
+                <div class="min-w-0">
+                  <p class="truncate font-mono text-sm font-medium">
+                    {resource.alias}
+                  </p>
+                  <p class="truncate text-xs text-muted-foreground">
+                    {resource.name} · {resource.engine}
+                  </p>
                 </div>
               </div>
-            </Card.Header>
-            <Card.Content class="space-y-2">
-              {#each environment.resources as resource (resource.id)}
-                <div
-                  class="flex items-center gap-3 border border-border/70 bg-card/40 p-3"
-                >
-                  <DatabaseIcon class="size-4 shrink-0 text-muted-foreground" />
-                  <div class="min-w-0">
-                    <p class="truncate font-mono text-sm font-medium">
-                      {resource.alias}
-                    </p>
-                    <p class="truncate text-xs text-muted-foreground">
-                      {resource.name} · {resource.engine}
-                    </p>
-                  </div>
-                </div>
-              {:else}
-                <p
-                  class="border border-dashed border-border p-4 text-sm text-muted-foreground"
-                >
-                  No resources connected.
-                </p>
-              {/each}
-            </Card.Content>
-          </Card.Root>
+            {:else}
+              <p
+                class="border border-dashed border-border p-4 text-sm text-muted-foreground"
+              >
+                No resources connected.
+              </p>
+            {/each}
+          </Card.Content>
+        </Card.Root>
 
-          <Card.Root>
-            <Card.Header>
-              <Card.Action>
-                {#if container.exists}
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={containerActionProcessing}
-                    aria-busy={containerActionProcessing}
-                    onclick={container.running
-                      ? restartContainer
-                      : startContainer}
-                    >{#if containerActionProcessing}<Spinner
-                      />{/if}{container.running ? "Restart" : "Start"}</Button
+        <Card.Root class="h-full">
+          <Card.Header
+            ><Card.Action
+              ><StatusBadge
+                status={environment.dns.state}
+                label={environment.dns.mode === "manual"
+                  ? "Manual"
+                  : environment.dns.state.replaceAll("_", " ")}
+              /></Card.Action
+            ><Card.Title>DNS</Card.Title><Card.Description
+              >{environment.dns.mode === "manual"
+                ? "DeployCrate does not change DNS records for this Environment."
+                : `${environment.dns.connectionName} · ${environment.dns.zoneName}`}</Card.Description
+            ></Card.Header
+          >
+          <Card.Content class="space-y-4">
+            {#if environment.dns.lastError}<p
+                class="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
+              >
+                {environment.dns.lastError}
+              </p>{/if}
+            {#if environment.dns.mode === "cloudflare" && !environment.dns.reconciliationQueued && ["pending", "removing"].includes(environment.dns.state)}<p
+                class="border border-border bg-muted/20 p-3 text-sm text-muted-foreground"
+              >
+                DNS changes are staged. Use the deployment action when you are
+                ready to apply DNS and deploy this desired state.
+              </p>{/if}
+            {#if environment.dns.records.length > 0}<div class="space-y-2">
+                {#each environment.dns.records as record (`${record.type}:${record.name}`)}<div
+                    class="grid gap-1 border border-border p-3 font-mono text-sm sm:grid-cols-[auto_1fr_1fr]"
                   >
-                {/if}
-              </Card.Action>
-              <div class="flex items-center gap-2">
-                <div
-                  class="grid size-8 place-items-center bg-muted text-muted-foreground"
-                >
-                  <ContainerIcon class="size-4" />
-                </div>
-                <div>
-                  <Card.Title>Web container</Card.Title><Card.Description
-                    >Serving container state and controls.</Card.Description
-                  >
-                </div>
-              </div>
-            </Card.Header>
-            <Card.Content>
-              {#if container.exists}
-                <div class="flex flex-wrap items-center gap-2">
-                  <StatusBadge
-                    status={container.running ? "running" : "stopped"}
-                    label={container.running ? "Running" : "Stopped"}
-                  /><span class="font-mono text-xs text-muted-foreground"
-                    >Instance {short(container.instanceId)} · Deployment {short(
-                      container.deploymentId,
-                    )}</span
-                  >
-                </div>
-              {:else}
+                    <span>{record.type}</span><span>{record.name}</span><span
+                      >{record.content}</span
+                    >
+                  </div>{/each}
+              </div>{/if}
+            {#if environment.dns.state === "conflict"}<div
+                class="flex flex-wrap items-center justify-between gap-3"
+              >
                 <p class="text-sm text-muted-foreground">
-                  No serving container is currently deployed.
+                  Existing records are unmanaged. Confirm adoption to replace
+                  them with this Environment's server addresses.
                 </p>
-              {/if}
-            </Card.Content>
-          </Card.Root>
-        </div>
+                <Button disabled={dnsActionProcessing} onclick={adoptDNS}
+                  >{#if dnsActionProcessing}<Spinner />{/if}Adopt and replace</Button
+                >
+              </div>{/if}
+            {#if environment.dns.state === "failed" || environment.dns.state === "removal_failed"}<div
+                class="flex flex-wrap items-center justify-between gap-3"
+              >
+                <p class="text-sm text-muted-foreground">
+                  The Environment stays saved, but deployment remains blocked
+                  until the DNS operation succeeds.
+                </p>
+                <Button
+                  variant="outline"
+                  disabled={dnsActionProcessing}
+                  onclick={retryDNS}
+                  >{#if dnsActionProcessing}<Spinner />{/if}Retry DNS</Button
+                >
+              </div>{/if}
+            {#if environment.dns.state === "applied" && !environment.dns.reconciliationQueued}<div
+                class="flex flex-wrap items-center justify-between gap-3"
+              >
+                <p class="text-sm text-muted-foreground">
+                  The DNS records are up to date. Re-sync to re-verify the
+                  current server addresses against Cloudflare.
+                </p>
+                <Button
+                  variant="outline"
+                  disabled={dnsActionProcessing}
+                  onclick={refreshDNS}
+                  >{#if dnsActionProcessing}<Spinner />{/if}Re-sync DNS</Button
+                >
+              </div>{/if}
+          </Card.Content>
+        </Card.Root>
       </section>
 
       <Card.Root>
-        <Card.Header>
-          <Card.Action>
-            <StatusBadge
-              status={servingInstanceCount > 0 ? "serving" : "pending"}
-              label={servingInstanceCount > 0
-                ? `${servingInstanceCount} serving`
-                : "Idle"}
-            />
-          </Card.Action>
-          <div class="flex items-center gap-2">
-            <div
-              class="grid size-8 place-items-center bg-muted text-muted-foreground"
-            >
-              <ServerIcon class="size-4" />
-            </div>
-            <div>
-              <Card.Title>Process instances</Card.Title>
-              <Card.Description
-                >Live workload instances across all process kinds.</Card.Description
-              >
-            </div>
-          </div>
-        </Card.Header>
-        <Card.Content class="space-y-2">
-          {#each environment.instances as instance (instance.id)}
-            <div
-              class="grid items-center gap-2 border border-border/70 bg-card/40 p-3 text-sm sm:grid-cols-[minmax(0,1fr)_8rem_8rem_minmax(0,1fr)]"
-            >
-              <div>
-                <p class="font-mono font-medium">{instance.processName}</p>
-                <p class="text-xs text-muted-foreground">
-                  {instance.replicaKey}
-                </p>
-              </div>
-              <StatusBadge status={instance.processKind} /><StatusBadge
-                status={instance.state}
-              /><span class="text-muted-foreground"
-                >{instance.processKind === "web" && instance.ports?.http
-                  ? `${instance.ports.host || "127.0.0.1"}:${instance.ports.http}`
-                  : "No public port"}</span
-              >
-            </div>
-          {:else}
-            <p class="border border-dashed border-border p-4 text-sm">
-              No instances running.
-            </p>
-          {/each}
-        </Card.Content>
-      </Card.Root>
-
-      <Card.Root>
         <Card.Header
-          ><Card.Action
-            ><StatusBadge
-              status={environment.deployability.deployable
-                ? "ready"
-                : "blocked"}
-            /></Card.Action
           ><Card.Title>Deployment configuration</Card.Title><Card.Description
             >The source and target configuration used by the next Release.</Card.Description
           ></Card.Header
@@ -1265,84 +1347,6 @@
               value={environment.deployability.missing.join(", ")}
             />{/if}</Card.Content
         >
-      </Card.Root>
-
-      <Card.Root>
-        <Card.Header
-          ><Card.Action
-            ><StatusBadge
-              status={environment.dns.state}
-              label={environment.dns.mode === "manual"
-                ? "Manual"
-                : environment.dns.state.replaceAll("_", " ")}
-            /></Card.Action
-          ><Card.Title>DNS</Card.Title><Card.Description
-            >{environment.dns.mode === "manual"
-              ? "DeployCrate does not change DNS records for this Environment."
-              : `${environment.dns.connectionName} · ${environment.dns.zoneName}`}</Card.Description
-          ></Card.Header
-        >
-        <Card.Content class="space-y-4">
-          {#if environment.dns.lastError}<p
-              class="border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive"
-            >
-              {environment.dns.lastError}
-            </p>{/if}
-          {#if environment.dns.mode === "cloudflare" && !environment.dns.reconciliationQueued && ["pending", "removing"].includes(environment.dns.state)}<p
-              class="border border-border bg-muted/20 p-3 text-sm text-muted-foreground"
-            >
-              DNS changes are staged. Use the deployment action when you are
-              ready to apply DNS and deploy this desired state.
-            </p>{/if}
-          {#if environment.dns.records.length > 0}<div class="space-y-2">
-              {#each environment.dns.records as record (`${record.type}:${record.name}`)}<div
-                  class="grid gap-1 border border-border p-3 font-mono text-sm sm:grid-cols-[auto_1fr_1fr]"
-                >
-                  <span>{record.type}</span><span>{record.name}</span><span
-                    >{record.content}</span
-                  >
-                </div>{/each}
-            </div>{/if}
-          {#if environment.dns.state === "conflict"}<div
-              class="flex flex-wrap items-center justify-between gap-3"
-            >
-              <p class="text-sm text-muted-foreground">
-                Existing records are unmanaged. Confirm adoption to replace them
-                with this Environment's server addresses.
-              </p>
-              <Button disabled={dnsActionProcessing} onclick={adoptDNS}
-                >{#if dnsActionProcessing}<Spinner />{/if}Adopt and replace</Button
-              >
-            </div>{/if}
-          {#if environment.dns.state === "failed" || environment.dns.state === "removal_failed"}<div
-              class="flex flex-wrap items-center justify-between gap-3"
-            >
-              <p class="text-sm text-muted-foreground">
-                The Environment stays saved, but deployment remains blocked
-                until the DNS operation succeeds.
-              </p>
-              <Button
-                variant="outline"
-                disabled={dnsActionProcessing}
-                onclick={retryDNS}
-                >{#if dnsActionProcessing}<Spinner />{/if}Retry DNS</Button
-              >
-            </div>{/if}
-          {#if environment.dns.state === "applied" && !environment.dns.reconciliationQueued}<div
-              class="flex flex-wrap items-center justify-between gap-3"
-            >
-              <p class="text-sm text-muted-foreground">
-                The DNS records are up to date. Re-sync to re-verify the current
-                server addresses against Cloudflare.
-              </p>
-              <Button
-                variant="outline"
-                disabled={dnsActionProcessing}
-                onclick={refreshDNS}
-                >{#if dnsActionProcessing}<Spinner />{/if}Re-sync DNS</Button
-              >
-            </div>{/if}
-        </Card.Content>
       </Card.Root>
 
       {#if environment.sourceType === "image"}
@@ -1415,11 +1419,6 @@
               status="active"
               label={openTelemetryAvailable ? "OpenTelemetry" : "Standard"}
             />
-            <p class="text-xs text-muted-foreground">
-              {openTelemetryAvailable
-                ? "Structured application signals; container stdout is not stored a second time."
-                : "Container stdout and stderr with host resource metrics."}
-            </p>
           </div>
         </div>
         <div
