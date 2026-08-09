@@ -15,7 +15,16 @@ SELECT
   ServiceName AS service,
   ResourceAttributes['deploycrate.process.name'] AS process_name,
   ResourceAttributes['deploycrate.process.kind'] AS process_kind,
-  ResourceAttributes['deploycrate.process.replica'] AS process_replica
+  ResourceAttributes['deploycrate.process.replica'] AS process_replica,
+  coalesce(
+    nullIf(LogAttributes['url.path'], ''),
+    nullIf(LogAttributes['http.target'], ''),
+    LogAttributes['http.route']
+  ) AS request_path,
+  toUInt16OrZero(coalesce(
+    nullIf(LogAttributes['http.response.status_code'], ''),
+    LogAttributes['http.status_code']
+  )) AS response_code
 FROM otel_logs
 WHERE (
     ({scope:String} = 'system' AND ServiceName = {service:String} AND SeverityNumber >= 9)
@@ -23,6 +32,13 @@ WHERE (
     ({scope:String} = 'environment' AND ResourceAttributes['deploycrate.environment.id'] = {environment:String})
   )
   AND Timestamp >= fromUnixTimestamp64Nano({since_nanoseconds:Int64})
+  AND (
+    {response_class:UInt8} = 0
+    OR intDiv(toUInt16OrZero(coalesce(
+      nullIf(LogAttributes['http.response.status_code'], ''),
+      LogAttributes['http.status_code']
+    )), 100) = {response_class:UInt8}
+  )
   AND (
     {search:String} = ''
     OR positionCaseInsensitiveUTF8(

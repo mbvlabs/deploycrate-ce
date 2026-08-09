@@ -22,6 +22,7 @@ const (
 
 var ErrInvalidSystemLogCursor = errors.New("system log cursor is invalid")
 var ErrInvalidSystemLogSearch = errors.New("system log search is too long")
+var ErrInvalidTelemetryResponseClass = errors.New("telemetry response class is invalid")
 
 type SystemLog struct {
 	ID             string            `json:"id"`
@@ -40,6 +41,8 @@ type SystemLog struct {
 	ProcessName    string            `json:"processName"`
 	ProcessKind    string            `json:"processKind"`
 	ProcessReplica string            `json:"processReplica"`
+	RequestPath    string            `json:"requestPath"`
+	ResponseCode   uint16            `json:"responseCode"`
 	OccurredAt     time.Time         `json:"occurredAt"`
 }
 
@@ -124,6 +127,7 @@ func systemLogSnapshot(
 			Instance: row.Instance, Slot: row.Slot, OccurredAt: row.Cursor.Timestamp,
 			Service: row.Service, ProcessName: row.ProcessName,
 			ProcessKind: row.ProcessKind, ProcessReplica: row.ProcessReplica,
+			RequestPath: row.RequestPath, ResponseCode: row.ResponseCode,
 		})
 	}
 	return SystemLogSnapshot{Logs: logs, NextCursor: nextCursor, HasMore: hasMore}, nil

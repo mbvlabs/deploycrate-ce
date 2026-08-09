@@ -8,6 +8,7 @@
   import * as Card from "@/Components/ui/card";
   import * as Empty from "@/Components/ui/empty";
   import { Input } from "@/Components/ui/input";
+  import * as NativeSelect from "@/Components/ui/native-select";
   import * as Table from "@/Components/ui/table";
   import { cn } from "@/lib/utils";
   import { routes } from "@/routes";
@@ -46,6 +47,7 @@
   let logConnectionError = $state("");
   let logSearchInput = $state("");
   let logSearch = $state("");
+  let logResponseClass = $state("");
   let logQueryKey = $state("");
   let followingLogs = $state(true);
   let logViewport = $state<HTMLDivElement>();
@@ -237,7 +239,14 @@
           value &&
           !key.startsWith("code.") &&
           (key !== "trace_id" || !log.traceId) &&
-          (key !== "span_id" || !log.spanId),
+          (key !== "span_id" || !log.spanId) &&
+          ![
+            "url.path",
+            "http.target",
+            "http.route",
+            "http.response.status_code",
+            "http.status_code",
+          ].includes(key),
       )
       .sort(([left], [right]) => left.localeCompare(right));
   const logMessage = (log: OpenTelemetryLog) => {
@@ -254,6 +263,7 @@
   async function loadLogs(
     range: TelemetryRange,
     search: string,
+    responseClass: string,
     signal: AbortSignal,
   ) {
     const endpoint = new URL(
@@ -262,6 +272,8 @@
     );
     endpoint.searchParams.set("range", range);
     if (search) endpoint.searchParams.set("search", search);
+    if (responseClass)
+      endpoint.searchParams.set("responseClass", responseClass);
     if (logCursor) endpoint.searchParams.set("after", logCursor);
     const response = await window.fetch(endpoint, {
       cache: "no-store",
@@ -374,7 +386,7 @@
 
   $effect(() => {
     if (activeView !== "logs") return;
-    const nextQueryKey = `${telemetryRange}:${logSearch}`;
+    const nextQueryKey = `${telemetryRange}:${logSearch}:${logResponseClass}`;
     if (nextQueryKey === logQueryKey) return;
     logQueryKey = nextQueryKey;
     logs = [];
@@ -410,6 +422,7 @@
     if (activeView !== "logs" || !logQueryKey) return;
     const range = telemetryRange;
     const search = logSearch;
+    const responseClass = logResponseClass;
     const shouldPoll = live;
     const abortController = new AbortController();
     let timer: number | undefined;
@@ -417,7 +430,12 @@
 
     async function poll() {
       try {
-        const snapshot = await loadLogs(range, search, abortController.signal);
+        const snapshot = await loadLogs(
+          range,
+          search,
+          responseClass,
+          abortController.signal,
+        );
         if (abortController.signal.aborted) return;
         retryDelay = 2000;
         if (shouldPoll)
@@ -617,9 +635,7 @@
       >
     </Card.Header>
     <Card.Content>
-      <div
-        class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"
-      >
+      <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end">
         <label
           class="grid w-full max-w-xl gap-1.5 text-xs font-medium"
           for="environment-otel-log-search"
@@ -639,7 +655,25 @@
             />
           </span>
         </label>
-        <p class="shrink-0 text-xs text-muted-foreground">
+        <label class="grid gap-1.5 text-xs font-medium">
+          <span class="text-muted-foreground">Response code</span>
+          <NativeSelect.Root
+            class="w-full sm:w-40 [&_select]:h-9 [&_select]:text-sm"
+            bind:value={logResponseClass}
+            aria-label="Filter logs by response code"
+          >
+            <NativeSelect.Option value="">All responses</NativeSelect.Option>
+            <NativeSelect.Option value="2xx">2xx success</NativeSelect.Option>
+            <NativeSelect.Option value="3xx">3xx redirect</NativeSelect.Option>
+            <NativeSelect.Option value="4xx"
+              >4xx client error</NativeSelect.Option
+            >
+            <NativeSelect.Option value="5xx"
+              >5xx server error</NativeSelect.Option
+            >
+          </NativeSelect.Root>
+        </label>
+        <p class="shrink-0 text-xs text-muted-foreground sm:ml-auto">
           {logs.length}
           {logs.length === 1 ? "entry" : "entries"}
           {#if live}<span class="ml-2 text-success">● Live polling</span>{/if}
@@ -669,7 +703,18 @@
                     },
                   ]
                 : []),
-              ...(log.scope ? [{ label: "Scope", value: log.scope }] : []),
+              ...(log.requestPath
+                ? [{ label: "Path", value: log.requestPath, mono: true }]
+                : []),
+              ...(log.responseCode
+                ? [
+                    {
+                      label: "Response",
+                      value: String(log.responseCode),
+                      mono: true,
+                    },
+                  ]
+                : []),
               ...(log.source
                 ? [
                     {
@@ -693,8 +738,8 @@
         {:else}
           <p class="p-4 text-sm text-muted-foreground">
             {logsLoaded
-              ? logSearch
-                ? `No logs in ${rangeLabel} match “${logSearch}”.`
+              ? logSearch || logResponseClass
+                ? `No logs in ${rangeLabel} match the current filters.`
                 : `No OpenTelemetry logs were collected in ${rangeLabel}.`
               : "Loading OpenTelemetry logs..."}
           </p>

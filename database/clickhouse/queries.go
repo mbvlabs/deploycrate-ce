@@ -117,6 +117,8 @@ type SystemLog struct {
 	ProcessName    string
 	ProcessKind    string
 	ProcessReplica string
+	RequestPath    string
+	ResponseCode   uint16
 }
 
 type SystemLogPage struct {
@@ -417,6 +419,7 @@ func (client Queries) SystemLogs(
 		map[string]string{"service": service, "environment": ""},
 		since,
 		search,
+		0,
 		after,
 		limit,
 	)
@@ -427,6 +430,7 @@ func (client Queries) EnvironmentTelemetryLogs(
 	environment string,
 	since time.Time,
 	search string,
+	responseClass uint8,
 	after *SystemLogCursor,
 	limit uint64,
 ) (SystemLogPage, error) {
@@ -436,6 +440,7 @@ func (client Queries) EnvironmentTelemetryLogs(
 		map[string]string{"service": "", "environment": environment},
 		since,
 		search,
+		responseClass,
 		after,
 		limit,
 	)
@@ -447,6 +452,7 @@ func (client Queries) telemetryLogs(
 	parameters map[string]string,
 	since time.Time,
 	search string,
+	responseClass uint8,
 	after *SystemLogCursor,
 	limit uint64,
 ) (SystemLogPage, error) {
@@ -454,6 +460,7 @@ func (client Queries) telemetryLogs(
 	parameters["since_nanoseconds"] = strconv.FormatInt(since.UnixNano(), 10)
 	parameters["limit"] = strconv.FormatUint(limit, 10)
 	parameters["search"] = search
+	parameters["response_class"] = strconv.FormatUint(uint64(responseClass), 10)
 	queryText := telemetryLogsInitialQuery
 	if after != nil {
 		queryText = telemetryLogsIncrementalQuery
@@ -478,6 +485,8 @@ func (client Queries) telemetryLogs(
 		ProcessName          string            `json:"process_name"`
 		ProcessKind          string            `json:"process_kind"`
 		ProcessReplica       string            `json:"process_replica"`
+		RequestPath          string            `json:"request_path"`
+		ResponseCode         uint16            `json:"response_code"`
 	}
 	rows, err := queryJSONRows[systemLogRow](ctx, client, queryText, parameters)
 	if err != nil {
@@ -507,6 +516,7 @@ func (client Queries) telemetryLogs(
 			Source: row.Source, Line: row.Line, Instance: row.Instance, Slot: row.Slot,
 			Service: row.Service, ProcessName: row.ProcessName,
 			ProcessKind: row.ProcessKind, ProcessReplica: row.ProcessReplica,
+			RequestPath: row.RequestPath, ResponseCode: row.ResponseCode,
 		})
 	}
 	if after == nil {

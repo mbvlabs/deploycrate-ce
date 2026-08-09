@@ -366,6 +366,8 @@ export type OpenTelemetryLog = {
   processName: string;
   processKind: string;
   processReplica: string;
+  requestPath: string;
+  responseCode: number;
   occurredAt: string;
 };
 

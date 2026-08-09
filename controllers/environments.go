@@ -187,9 +187,11 @@ func (c Environments) TelemetryLogs(etx *echo.Context) error {
 		etx.QueryParam("after"),
 		services.ParseTelemetryRange(etx.QueryParam("range")),
 		etx.QueryParam("search"),
+		etx.QueryParam("responseClass"),
 	)
 	if errors.Is(err, services.ErrInvalidSystemLogCursor) ||
-		errors.Is(err, services.ErrInvalidSystemLogSearch) {
+		errors.Is(err, services.ErrInvalidSystemLogSearch) ||
+		errors.Is(err, services.ErrInvalidTelemetryResponseClass) {
 		return etx.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 	if errors.Is(err, sql.ErrNoRows) {

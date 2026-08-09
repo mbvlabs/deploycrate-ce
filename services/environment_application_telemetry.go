@@ -107,6 +107,7 @@ func (service *EnvironmentApplicationTelemetry) Logs(
 	after string,
 	telemetryRange TelemetryRange,
 	search string,
+	responseClass string,
 ) (SystemLogSnapshot, error) {
 	if err := service.ensureEnabled(ctx, applicationID, environmentID); err != nil {
 		return SystemLogSnapshot{}, err
@@ -118,6 +119,10 @@ func (service *EnvironmentApplicationTelemetry) Logs(
 	search = strings.TrimSpace(search)
 	if utf8.RuneCountInString(search) > maxSystemLogSearch {
 		return SystemLogSnapshot{}, ErrInvalidSystemLogSearch
+	}
+	class, ok := map[string]uint8{"": 0, "2xx": 2, "3xx": 3, "4xx": 4, "5xx": 5}[responseClass]
+	if !ok {
+		return SystemLogSnapshot{}, ErrInvalidTelemetryResponseClass
 	}
 	client, err := service.resource.Queries(ctx)
 	if err != nil {
@@ -132,6 +137,7 @@ func (service *EnvironmentApplicationTelemetry) Logs(
 		environmentID.String(),
 		time.Now().UTC().Add(-telemetryRange.Duration()),
 		search,
+		class,
 		cursor,
 		limit,
 	)
