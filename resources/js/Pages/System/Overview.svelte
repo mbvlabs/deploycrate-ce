@@ -258,11 +258,11 @@
     if (!buildpacks || typeof buildpacks !== "object")
       return capabilityEnabled("build") ? ["go"] : [];
     const runtimes = (buildpacks as { runtimes?: unknown }).runtimes;
-    return Array.isArray(runtimes)
-      ? runtimes.filter((runtime): runtime is BuildpackRuntime =>
-          buildpackOptions.some(([candidate]) => candidate === runtime),
-        )
-      : [];
+    if (!Array.isArray(runtimes) || runtimes.length === 0)
+      return capabilityEnabled("build") ? ["go"] : [];
+    return runtimes.filter((runtime): runtime is BuildpackRuntime =>
+      buildpackOptions.some(([candidate]) => candidate === runtime),
+    );
   }
 
   let buildpackSelections = $state<Record<BuildpackRuntime, boolean>>({
