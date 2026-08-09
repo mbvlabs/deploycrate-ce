@@ -32,6 +32,7 @@ type deploymentScope struct {
 	Release              models.ReleaseEntity
 	Target               models.EnvironmentTargetEntity
 	Environment          models.EnvironmentEntity
+	Application          models.ApplicationEntity
 	Revision             models.EnvironmentStateRevisionEntity
 	State                models.EnvironmentDesiredState
 	Instance             models.InstanceEntity
@@ -280,7 +281,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 					ProcessName:    instance.ProcessName,
 					ProcessKind:    instance.ProcessKind,
 					ProcessReplica: instance.ReplicaKey,
-					ContainerName: "dc-app-" + scope.Environment.ID.String() + "-" + scope.Deployment.ID.String() + "-" + instance.ProcessName + "-" + strings.ReplaceAll(
+					ContainerName: scope.Application.Slug + "-" + scope.Environment.Slug + "-" + scope.Environment.ID.String() + "-" + scope.Deployment.ID.String() + "-" + instance.ProcessName + "-" + strings.ReplaceAll(
 						instance.ReplicaKey,
 						"/",
 						"-",
@@ -725,6 +726,14 @@ func (service *DeploymentExecution) loadScope(
 		return scope, errors.New("Deployment Environment setup is incomplete")
 	}
 	scope.ApplicationID = scope.Environment.ApplicationID
+	scope.Application, err = models.Application.FindIncludingSystem(
+		ctx,
+		service.db.Executor(),
+		scope.ApplicationID,
+	)
+	if err != nil || scope.Application.Slug == "" {
+		return scope, errors.New("Deployment Application is unavailable")
+	}
 	err = service.db.Executor().NewSelect().Model(&scope.Revision).
 		Join("JOIN change_state_revisions AS association ON association.environment_state_revision_id = environment_state_revisions.id").
 		Where("association.change_id = ?", deployment.ChangeID).

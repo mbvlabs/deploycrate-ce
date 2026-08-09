@@ -53,6 +53,14 @@ func (a application) Find(
 	return entity, nil
 }
 
+func (a application) FindIncludingSystem(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (ApplicationEntity, error) {
+	return a.findIncludingSystem(ctx, db, id)
+}
+
 func (a application) findIncludingSystem(
 	ctx context.Context,
 	db storage.Executor,
