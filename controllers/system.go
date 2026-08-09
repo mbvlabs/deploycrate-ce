@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strings"
 
 	"deploycrate-ce/internal/inertia"
+	"deploycrate-ce/internal/request"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
 	"deploycrate-ce/models"
@@ -32,6 +34,7 @@ type System struct {
 	backups      *services.DatabaseBackups
 	resources    *services.ResourceManagement
 	caddy        services.CaddyRouteService
+	management   *services.ServerManagement
 }
 
 func NewSystem(
@@ -45,6 +48,7 @@ func NewSystem(
 	backups *services.DatabaseBackups,
 	resources *services.ResourceManagement,
 	caddy services.CaddyRouteService,
+	management *services.ServerManagement,
 ) System {
 	return System{
 		db:           db,
@@ -57,6 +61,7 @@ func NewSystem(
 		backups:      backups,
 		resources:    resources,
 		caddy:        caddy,
+		management:   management,
 	}
 }
 
@@ -118,6 +123,46 @@ func (s System) RegisterRoutes(r *router.Router) error {
 			route:   routes.SystemResourceWireGuardDeviceDestroy,
 			handler: s.DestroyResourceWireGuardDevice,
 		},
+		{
+			method:  http.MethodPost,
+			route:   routes.SystemHostContainersControl,
+			handler: s.HostContainersControl,
+		},
+		{
+			method:  http.MethodPost,
+			route:   routes.SystemHostContainersLogs,
+			handler: s.HostContainersLogs,
+		},
+		{
+			method:  http.MethodPost,
+			route:   routes.SystemHostImagesRemove,
+			handler: s.HostImagesRemove,
+		},
+		{
+			method:  http.MethodPost,
+			route:   routes.SystemHostPrune,
+			handler: s.HostPrune,
+		},
+		{
+			method:  http.MethodPost,
+			route:   routes.SystemHostCapabilities,
+			handler: s.HostCapabilitiesUpdate,
+		},
+		{
+			method:  http.MethodPost,
+			route:   routes.SystemHostReboot,
+			handler: s.HostReboot,
+		},
+		{
+			method:  http.MethodPost,
+			route:   routes.SystemHostUpdatesCheck,
+			handler: s.HostUpdatesCheck,
+		},
+		{
+			method:  http.MethodPost,
+			route:   routes.SystemHostUpdatesApply,
+			handler: s.HostUpdatesApply,
+		},
 	}
 
 	errList := make([]error, 0, len(routesToRegister))
@@ -142,6 +187,10 @@ func (s System) RegisterRoutes(r *router.Router) error {
 }
 
 func (s System) Overview(etx *echo.Context) error {
+	return s.renderOverview(etx, nil)
+}
+
+func (s System) renderOverview(etx *echo.Context, extra inertia.Props) error {
 	overview, err := models.Application.FindSystemOverview(
 		etx.Request().Context(),
 		s.db.Executor(),
@@ -163,13 +212,264 @@ func (s System) Overview(etx *echo.Context) error {
 	if err != nil {
 		return s.renderLoadError(etx, "backup health", err)
 	}
-	return inertia.Page(etx, "System/Overview", inertia.Props{
+	props := inertia.Props{
 		"auth":      s.authProps(etx),
 		"system":    overview,
 		"resources": resources,
 		"health":    s.health.Run(etx.Request().Context()),
 		"backups":   backups,
-	})
+	}
+	s.hostProps(etx, overview, props)
+	if extra != nil {
+		maps.Copy(props, extra)
+	}
+	return inertia.Page(etx, "System/Overview", props)
+}
+
+func (s System) hostProps(
+	etx *echo.Context,
+	overview models.SystemOverview,
+	props inertia.Props,
+) {
+	ctx := etx.Request().Context()
+	serverID, err := uuid.Parse(overview.ServerID)
+	if err != nil {
+		props["containers"] = []services.ServerContainer{}
+		props["images"] = []services.ServerImage{}
+		props["updates"] = nil
+		return
+	}
+	containers, err := s.management.ListContainers(ctx, serverID)
+	if err != nil {
+		containers = nil
+	}
+	images, err := s.management.ListImages(ctx, serverID)
+	if err != nil {
+		images = nil
+	}
+	if containers == nil {
+		props["containers"] = []services.ServerContainer{}
+	} else {
+		props["containers"] = containers
+	}
+	if images == nil {
+		props["images"] = []services.ServerImage{}
+	} else {
+		props["images"] = images
+	}
+	props["updates"] = nil
+}
+
+func (s System) systemServerID(etx *echo.Context) (uuid.UUID, error) {
+	overview, err := models.Application.FindSystemOverview(
+		etx.Request().Context(),
+		s.db.Executor(),
+	)
+	if err != nil {
+		return uuid.Nil, err
+	}
+	serverID, err := uuid.Parse(overview.ServerID)
+	if err != nil {
+		return uuid.Nil, errors.New("no Server is associated with this system")
+	}
+	return serverID, nil
+}
+
+type hostContainerControlPayload struct {
+	Operation string `json:"operation"`
+	Container string `json:"container"`
+}
+
+func (s System) HostContainersControl(etx *echo.Context) error {
+	serverID, err := s.systemServerID(etx)
+	var payload hostContainerControlPayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	if err == nil {
+		err = s.management.ContainerControl(
+			etx.Request().Context(),
+			serverID,
+			payload.Operation,
+			payload.Container,
+		)
+	}
+	message := "Container " + payload.Operation + " queued"
+	return s.hostActionResult(etx, err, message, inertia.Props{})
+}
+
+type hostContainerLogsPayload struct {
+	Container string `json:"container"`
+	Tail      int    `json:"tail"`
+}
+
+func (s System) HostContainersLogs(etx *echo.Context) error {
+	serverID, err := s.systemServerID(etx)
+	var payload hostContainerLogsPayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	if err == nil && payload.Tail == 0 {
+		payload.Tail = 200
+	}
+	var logs string
+	if err == nil {
+		logs, err = s.management.ContainerLogs(
+			etx.Request().Context(),
+			serverID,
+			payload.Container,
+			payload.Tail,
+		)
+	}
+	extra := inertia.Props{}
+	if err == nil {
+		extra["containerLogs"] = logs
+		extra["containerLogsFor"] = payload.Container
+	}
+	return s.hostActionResult(etx, err, "", extra)
+}
+
+type hostImageRemovePayload struct {
+	Reference string `json:"reference"`
+}
+
+func (s System) HostImagesRemove(etx *echo.Context) error {
+	serverID, err := s.systemServerID(etx)
+	var payload hostImageRemovePayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	if err == nil {
+		err = s.management.ImageRemove(
+			etx.Request().Context(),
+			serverID,
+			payload.Reference,
+		)
+	}
+	return s.hostActionResult(etx, err, "Image removed", inertia.Props{})
+}
+
+type hostPrunePayload struct {
+	Scopes []string `json:"scopes"`
+}
+
+func (s System) HostPrune(etx *echo.Context) error {
+	serverID, err := s.systemServerID(etx)
+	var payload hostPrunePayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	if err == nil {
+		err = s.management.Prune(
+			etx.Request().Context(),
+			serverID,
+			payload.Scopes,
+		)
+	}
+	return s.hostActionResult(etx, err, "Pruning complete", inertia.Props{})
+}
+
+type hostCapabilitiesPayload struct {
+	Build      bool `json:"build"`
+	Runtime    bool `json:"runtime"`
+	Resource   bool `json:"resource"`
+	Database   bool `json:"database"`
+	Repository bool `json:"repository"`
+}
+
+func (s System) HostCapabilitiesUpdate(etx *echo.Context) error {
+	serverID, err := s.systemServerID(etx)
+	var payload hostCapabilitiesPayload
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	if err == nil {
+		err = s.management.ProvisionCapabilities(
+			etx.Request().Context(),
+			serverID,
+			models.ServerCapabilities{
+				Build:      payload.Build,
+				Runtime:    payload.Runtime,
+				Resource:   payload.Resource,
+				Database:   payload.Database,
+				Repository: payload.Repository,
+				Telemetry:  true,
+			},
+		)
+	}
+	return s.hostActionResult(etx, err, "Host capabilities updated", inertia.Props{})
+}
+
+func (s System) HostReboot(etx *echo.Context) error {
+	serverID, err := s.systemServerID(etx)
+	if err == nil {
+		err = s.management.Reboot(etx.Request().Context(), serverID)
+	}
+	return s.hostActionResult(etx, err, "Server reboot initiated", inertia.Props{})
+}
+
+func (s System) HostUpdatesCheck(etx *echo.Context) error {
+	serverID, err := s.systemServerID(etx)
+	var state services.ServerUpdateState
+	if err == nil {
+		state, err = s.management.CheckUpdates(etx.Request().Context(), serverID)
+	}
+	extra := inertia.Props{}
+	if err == nil {
+		extra["updates"] = state
+	}
+	return s.hostActionResult(etx, err, "Update check completed", extra)
+}
+
+func (s System) HostUpdatesApply(etx *echo.Context) error {
+	serverID, err := s.systemServerID(etx)
+	var state services.ServerUpdateState
+	if err == nil {
+		state, err = s.management.ApplyUpdates(etx.Request().Context(), serverID)
+	}
+	message := "Host updates applied"
+	if err == nil && state.RebootRequired {
+		message += "; a reboot is required"
+	}
+	extra := inertia.Props{}
+	if err == nil {
+		extra["updates"] = state
+	}
+	return s.hostActionResult(etx, err, message, extra)
+}
+
+func (s System) hostActionResult(
+	etx *echo.Context,
+	err error,
+	successMessage string,
+	extra inertia.Props,
+) error {
+	extra = maps.Clone(extra)
+	if err != nil {
+		extra["flash"] = systemFlashProps(etx, cookies.FlashError, err.Error())
+	} else if successMessage != "" {
+		extra["flash"] = systemFlashProps(etx, cookies.FlashSuccess, successMessage)
+	}
+	return s.renderOverview(etx, extra)
+}
+
+func systemFlashProps(
+	etx *echo.Context,
+	flashType cookies.FlashType,
+	message string,
+) []inertia.Props {
+	flashes := request.ExtractContext[[]cookies.FlashMessage](
+		etx.Request().Context(),
+		request.SessionFlashesKey,
+	)
+	props := make([]inertia.Props, 0, len(flashes)+1)
+	for _, flash := range flashes {
+		props = append(props, inertia.Props{"type": flash.Type, "message": flash.Message})
+	}
+	if message != "" {
+		props = append(props, inertia.Props{"type": flashType, "message": message})
+	}
+	return props
 }
 
 func (s System) Telemetry(etx *echo.Context) error {

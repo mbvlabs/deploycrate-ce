@@ -262,6 +262,94 @@ func RunHostCommand(arguments []string) error {
 			return errors.New("usage: host-resource-access container-volume-remove VOLUME_NAME")
 		}
 		return removeContainerVolume(arguments[1])
+	case "container-list":
+		if len(arguments) != 1 {
+			return errors.New("usage: host-resource-access container-list")
+		}
+		output, err := listAllContainers()
+		if err != nil {
+			return err
+		}
+		fmt.Println(output)
+		return nil
+	case "container-logs-all":
+		if len(arguments) != 3 {
+			return errors.New(
+				"usage: host-resource-access container-logs-all CONTAINER_NAME TAIL",
+			)
+		}
+		tail, err := strconv.Atoi(arguments[2])
+		if err != nil {
+			return errors.New("container log tail must be a number")
+		}
+		return printContainerLogsByName(arguments[1], tail)
+	case "container-operate":
+		if len(arguments) != 3 {
+			return errors.New(
+				"usage: host-resource-access container-operate (start|stop|restart|remove) CONTAINER_NAME",
+			)
+		}
+		return controlContainerByName(arguments[1], arguments[2])
+	case "image-list":
+		if len(arguments) != 1 {
+			return errors.New("usage: host-resource-access image-list")
+		}
+		output, err := listAllImages()
+		if err != nil {
+			return err
+		}
+		fmt.Println(output)
+		return nil
+	case "image-remove":
+		if len(arguments) != 2 {
+			return errors.New("usage: host-resource-access image-remove IMAGE_REFERENCE")
+		}
+		return removeImage(arguments[1])
+	case "container-prune":
+		if len(arguments) != 1 {
+			return errors.New("usage: host-resource-access container-prune")
+		}
+		return run(dockerExecutable, "container", "prune", "--force")
+	case "image-prune":
+		if len(arguments) != 1 {
+			return errors.New("usage: host-resource-access image-prune")
+		}
+		return run(dockerExecutable, "image", "prune", "--force", "--all")
+	case "volume-prune":
+		if len(arguments) != 1 {
+			return errors.New("usage: host-resource-access volume-prune")
+		}
+		return run(dockerExecutable, "volume", "prune", "--force")
+	case "host-update-check":
+		if len(arguments) != 1 {
+			return errors.New("usage: host-resource-access host-update-check")
+		}
+		output, err := checkHostUpdates()
+		if err != nil {
+			return err
+		}
+		fmt.Println(output)
+		return nil
+	case "host-update-apply":
+		if len(arguments) != 1 {
+			return errors.New("usage: host-resource-access host-update-apply")
+		}
+		output, err := applyHostUpdates()
+		if err != nil {
+			return err
+		}
+		fmt.Println(output)
+		return nil
+	case "host-reboot":
+		if len(arguments) != 1 {
+			return errors.New("usage: host-resource-access host-reboot")
+		}
+		return rebootHost()
+	case "capability-apply":
+		if len(arguments) < 2 {
+			return errors.New("usage: host-resource-access capability-apply CAPABILITY...")
+		}
+		return applyCapabilities(arguments[1:])
 	case "node-telemetry-target":
 		if len(arguments) != 3 {
 			return errors.New(

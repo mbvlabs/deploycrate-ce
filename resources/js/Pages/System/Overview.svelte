@@ -1,12 +1,26 @@
 <script lang="ts">
-  import { Link } from "@inertiajs/svelte";
+  import BoxIcon from "@lucide/svelte/icons/box";
+  import ContainerIcon from "@lucide/svelte/icons/container";
+  import DownloadIcon from "@lucide/svelte/icons/download";
+  import PowerIcon from "@lucide/svelte/icons/power";
+  import RefreshCwIcon from "@lucide/svelte/icons/refresh-cw";
+  import RotateCcwIcon from "@lucide/svelte/icons/rotate-ccw";
+  import SquareTerminalIcon from "@lucide/svelte/icons/square-terminal";
+  import Trash2Icon from "@lucide/svelte/icons/trash-2";
+  import { Link, router, useForm } from "@inertiajs/svelte";
 
   import * as Accordion from "@/Components/ui/accordion";
   import * as Alert from "@/Components/ui/alert";
   import { Button } from "@/Components/ui/button";
+  import { Checkbox } from "@/Components/ui/checkbox";
+  import * as Dialog from "@/Components/ui/dialog";
   import * as Empty from "@/Components/ui/empty";
+  import * as ScrollArea from "@/Components/ui/scroll-area";
   import { Separator } from "@/Components/ui/separator";
+  import ConfirmActionDialog from "@/Components/ConfirmActionDialog.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
+  import { Spinner } from "@/Components/ui/spinner";
+  import * as Table from "@/Components/ui/table";
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
   import { routes } from "@/routes";
 
@@ -88,18 +102,56 @@
     activeOrRetrying: boolean;
   };
 
+  type ServerContainer = {
+    id: string;
+    name: string;
+    image: string;
+    state: string;
+    status: string;
+    ports: string;
+  };
+
+  type ServerImage = {
+    id: string;
+    repository: string;
+    tag: string;
+    size: string;
+  };
+
+  type ServerUpdate = {
+    name: string;
+    installed: string;
+    available: string;
+  };
+
+  type ServerUpdateState = {
+    rebootRequired: boolean;
+    total: number;
+    updates: ServerUpdate[];
+  };
+
   let {
     auth,
     system,
     resources,
     health,
     backups,
+    containers,
+    images,
+    updates,
+    containerLogs,
+    containerLogsFor,
   }: {
     auth: { email: string };
     system: SystemOverview;
     resources: SystemResource[];
     health: SystemHealth;
     backups: BackupHealthPolicy[];
+    containers: ServerContainer[];
+    images: ServerImage[];
+    updates: ServerUpdateState | null;
+    containerLogs?: string;
+    containerLogsFor?: string;
   } = $props();
   let openSections = $state([
     "network",
@@ -161,6 +213,164 @@
       system.operatingSystem ||
       "Unknown",
   );
+
+  let busy = $state("");
+  let logsOpen = $state(false);
+  let logBusy = $state("");
+  let removeContainer: ServerContainer | null = $state(null);
+  let removeContainerOpen = $state(false);
+  let removeImage: ServerImage | null = $state(null);
+  let removeImageOpen = $state(false);
+  let rebootOpen = $state(false);
+  let rebooting = $state(false);
+  let pruneOpen = $state(false);
+  let pruning = $state(false);
+  let pruneScopes = $state({ containers: true, images: true, volumes: false });
+  let updatesBusy = $state("");
+  let capabilitiesEditing = $state(false);
+
+  const capabilitiesForm = useForm(() => ({
+    build: capabilityEnabled("build"),
+    runtime: capabilityEnabled("runtime"),
+    resource: capabilityEnabled("resource"),
+    database: capabilityEnabled("database"),
+    repository: capabilityEnabled("repository"),
+  }));
+
+  function capabilityEnabled(key: string): boolean {
+    return system.serverCapabilities?.[key] === true;
+  }
+
+  const containerActions = $derived(
+    (container: ServerContainer) =>
+      ({
+        start: container.state !== "running",
+        stop: container.state === "running",
+        restart: container.state === "running",
+        remove: true,
+      }) as Record<string, boolean>,
+  );
+
+  function perform(operation: string, data: Record<string, string>) {
+    busy = `${operation}:${data.container ?? data.reference ?? ""}`;
+    router.post(routes.systemHostContainersControl(), data, {
+      only: ["containers", "flash"],
+      onFinish: () => (busy = ""),
+    });
+  }
+
+  function containerControl(operation: string, container: ServerContainer) {
+    if (operation === "remove") {
+      removeContainer = container;
+      removeContainerOpen = true;
+      return;
+    }
+    perform(operation, { operation, container: container.name });
+  }
+
+  function confirmRemoveContainer() {
+    if (!removeContainer) return;
+    const container = removeContainer;
+    removeContainer = null;
+    removeContainerOpen = false;
+    perform("remove", { operation: "remove", container: container.name });
+  }
+
+  function fetchLogs(container: ServerContainer) {
+    logBusy = container.name;
+    router.post(
+      routes.systemHostContainersLogs(),
+      { container: container.name, tail: 200 },
+      {
+        only: ["containerLogs", "containerLogsFor"],
+        onFinish: () => (logBusy = ""),
+      },
+    );
+  }
+
+  function openRemoveImage(image: ServerImage) {
+    removeImage = image;
+    removeImageOpen = true;
+  }
+
+  function confirmRemoveImage() {
+    if (!removeImage) return;
+    const image = removeImage;
+    removeImage = null;
+    removeImageOpen = false;
+    busy = `image:${image.repository}:${image.tag}`;
+    router.post(
+      routes.systemHostImagesRemove(),
+      {
+        reference:
+          image.repository === "<none>"
+            ? image.id
+            : `${image.repository}:${image.tag}`,
+      },
+      {
+        only: ["images", "flash"],
+        onFinish: () => (busy = ""),
+      },
+    );
+  }
+
+  function confirmReboot() {
+    rebooting = true;
+    router.post(routes.systemHostReboot(), {}, {
+      only: ["flash"],
+      onFinish: () => {
+        rebooting = false;
+        rebootOpen = false;
+      },
+    });
+  }
+
+  const pruneEnabled = $derived(
+    Object.values(pruneScopes).some((enabled) => enabled),
+  );
+
+  function confirmPrune() {
+    const scopes = Object.entries(pruneScopes)
+      .filter(([, enabled]) => enabled)
+      .map(([scope]) => scope);
+    if (scopes.length === 0) return;
+    pruning = true;
+    router.post(routes.systemHostPrune(), { scopes }, {
+      only: ["containers", "images", "flash"],
+      onFinish: () => {
+        pruning = false;
+        pruneOpen = false;
+      },
+    });
+  }
+
+  function applyCapabilities(event: SubmitEvent) {
+    event.preventDefault();
+    $capabilitiesForm.post(routes.systemHostCapabilities(), {
+      only: ["system", "flash"],
+      onSuccess: () => (capabilitiesEditing = false),
+    });
+  }
+
+  function checkUpdates() {
+    updatesBusy = "check";
+    router.post(routes.systemHostUpdatesCheck(), {}, {
+      only: ["updates", "flash"],
+      onFinish: () => (updatesBusy = ""),
+    });
+  }
+
+  function applyUpdates() {
+    updatesBusy = "apply";
+    router.post(routes.systemHostUpdatesApply(), {}, {
+      only: ["updates", "flash"],
+      onFinish: () => (updatesBusy = ""),
+    });
+  }
+
+  $effect(() => {
+    if (containerLogsFor) logsOpen = true;
+  });
 </script>
 
 <svelte:head>
@@ -199,7 +409,7 @@
       bind:value={openSections}
       class="grid gap-3"
     >
-      <Accordion.Item value="network" class="border border-border px-5">
+      <Accordion.Item value="network" class="min-w-0 border border-border px-5">
         <Accordion.Trigger class="py-5 hover:no-underline">
           <div class="flex w-full items-center justify-between gap-6">
             <div>
@@ -243,7 +453,7 @@
         </Accordion.Content>
       </Accordion.Item>
 
-      <Accordion.Item value="runtime" class="border border-border px-5">
+      <Accordion.Item value="runtime" class="min-w-0 border border-border px-5">
         <Accordion.Trigger class="py-5 hover:no-underline">
           <div class="flex w-full items-center justify-between gap-6">
             <div>
@@ -337,12 +547,64 @@
                 </div>
               </dl>
               <div class="mt-6">
-                <h4
-                  class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground"
-                >
-                  Capabilities
-                </h4>
-                {#if capabilityEntries.length}
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                  <h4
+                    class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground"
+                  >
+                    Capabilities
+                  </h4>
+                  {#if !capabilitiesEditing}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onclick={() => (capabilitiesEditing = true)}
+                    >
+                      Manage capabilities
+                    </Button>
+                  {/if}
+                </div>
+                {#if capabilitiesEditing}
+                  <form
+                    class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-5"
+                    onsubmit={applyCapabilities}
+                  >
+                    {#each [
+                      ["build", "Build"],
+                      ["runtime", "Runtime"],
+                      ["resource", "Resource"],
+                      ["database", "Database"],
+                      ["repository", "Repository"],
+                    ] as [key, label]}
+                      <label
+                        class="flex items-center gap-3 border border-border/70 bg-muted/20 p-3 text-sm"
+                      >
+                        <Checkbox bind:checked={$capabilitiesForm[key]} />
+                        <span>{label}</span>
+                      </label>
+                    {/each}
+                    <div
+                      class="flex items-center gap-2 sm:col-span-2 xl:col-span-5"
+                    >
+                      <Button
+                        type="submit"
+                        size="sm"
+                        disabled={$capabilitiesForm.processing}
+                        aria-busy={$capabilitiesForm.processing}
+                      >
+                        {#if $capabilitiesForm.processing}<Spinner />{/if}
+                        Save capabilities
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        type="button"
+                        onclick={() => (capabilitiesEditing = false)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </form>
+                {:else if capabilityEntries.length}
                   <dl class="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                     {#each capabilityEntries as [key, value] (key)}
                       <div class="border border-border/70 bg-muted/20 p-3">
@@ -359,6 +621,221 @@
                   <p class="mt-4 text-sm text-muted-foreground">
                     No server capabilities have been reported.
                   </p>
+                {/if}
+              </div>
+            </div>
+
+            <Separator />
+
+            <div>
+              <div class="flex flex-wrap items-end justify-between gap-3">
+                <h3
+                  class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground"
+                >
+                  Host maintenance
+                </h3>
+                <div class="flex flex-wrap items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onclick={() => (pruneOpen = true)}
+                    disabled={!!busy}
+                  >
+                    <BoxIcon />
+                    Prune
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onclick={() => (rebootOpen = true)}
+                    aria-busy={rebooting}
+                    disabled={!!busy}
+                  >
+                    {#if rebooting}<Spinner />{/if}
+                    <PowerIcon />
+                    Reboot server
+                  </Button>
+                </div>
+              </div>
+
+              <div class="mt-4">
+                <h4
+                  class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground"
+                >
+                  Containers
+                </h4>
+                {#if containers.length === 0}
+                  <Empty.Root class="mt-4 border border-dashed border-border py-8"
+                    ><Empty.Header
+                      ><Empty.Media variant="icon"><ContainerIcon /></Empty.Media
+                      ><Empty.Title>No containers</Empty.Title
+                      ><Empty.Description
+                        >Containers running on this host will appear here.</Empty.Description
+                      ></Empty.Header
+                    ></Empty.Root
+                  >
+                {:else}
+                  <div class="mt-4 overflow-x-auto border border-border">
+                    <Table.Root class="min-w-[760px]">
+                      <Table.Header>
+                        <Table.Row>
+                          <Table.Head>Name</Table.Head>
+                          <Table.Head>Image</Table.Head>
+                          <Table.Head>State</Table.Head>
+                          <Table.Head>Status</Table.Head>
+                          <Table.Head>Ports</Table.Head>
+                          <Table.Head class="w-44"
+                            ><span class="sr-only">Actions</span></Table.Head
+                          >
+                        </Table.Row>
+                      </Table.Header>
+                      <Table.Body>
+                        {#each containers as container (container.id)}
+                          {@const actions = containerActions(container)}
+                          <Table.Row>
+                            <Table.Cell class="font-medium">
+                              {container.name}
+                            </Table.Cell>
+                            <Table.Cell class="max-w-56 break-all font-mono text-xs">
+                              {container.image}
+                            </Table.Cell>
+                            <Table.Cell>
+                              <StatusBadge status={container.state} />
+                            </Table.Cell>
+                            <Table.Cell class="text-xs">
+                              {container.status}
+                            </Table.Cell>
+                            <Table.Cell class="font-mono text-xs">
+                              {container.ports}
+                            </Table.Cell>
+                            <Table.Cell>
+                              <div class="flex justify-end gap-1">
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  class="size-8"
+                                  title="Start"
+                                  aria-label="Start {container.name}"
+                                  disabled={!actions.start || !!busy}
+                                  onclick={() => containerControl("start", container)}
+                                >
+                                  <BoxIcon class="size-4" />
+                                </Button>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  class="size-8"
+                                  title="Stop"
+                                  aria-label="Stop {container.name}"
+                                  disabled={!actions.stop || !!busy}
+                                  onclick={() => containerControl("stop", container)}
+                                >
+                                  <SquareTerminalIcon class="size-4" />
+                                </Button>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  class="size-8"
+                                  title="Restart"
+                                  aria-label="Restart {container.name}"
+                                  disabled={!actions.restart || !!busy}
+                                  onclick={() => containerControl("restart", container)}
+                                >
+                                  <RotateCcwIcon class="size-4" />
+                                </Button>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  class="size-8"
+                                  title="Logs"
+                                  aria-label="Show logs for {container.name}"
+                                  disabled={!!logBusy}
+                                  onclick={() => fetchLogs(container)}
+                                >
+                                  {#if logBusy === container.name}
+                                    <Spinner class="size-4" />
+                                  {:else}
+                                    <RefreshCwIcon class="size-4" />
+                                  {/if}
+                                </Button>
+                                <Button
+                                  size="icon"
+                                  variant="ghost"
+                                  class="size-8 text-destructive"
+                                  title="Remove"
+                                  aria-label="Remove {container.name}"
+                                  disabled={!!busy}
+                                  onclick={() => containerControl("remove", container)}
+                                >
+                                  <Trash2Icon class="size-4" />
+                                </Button>
+                              </div>
+                            </Table.Cell>
+                          </Table.Row>
+                        {/each}
+                      </Table.Body>
+                    </Table.Root>
+                  </div>
+                {/if}
+              </div>
+
+              <div class="mt-8">
+                <h4
+                  class="text-xs font-semibold uppercase tracking-[0.14em] text-muted-foreground"
+                >
+                  Images
+                </h4>
+                {#if images.length === 0}
+                  <Empty.Root class="mt-4 border border-dashed border-border py-8"
+                    ><Empty.Header
+                      ><Empty.Media variant="icon"><BoxIcon /></Empty.Media
+                      ><Empty.Title>No images</Empty.Title
+                      ><Empty.Description
+                        >Images pulled to this host will appear here.</Empty.Description
+                      ></Empty.Header
+                    ></Empty.Root
+                  >
+                {:else}
+                  <div class="mt-4 overflow-x-auto border border-border">
+                    <Table.Root class="min-w-[560px]">
+                      <Table.Header>
+                        <Table.Row>
+                          <Table.Head>Repository</Table.Head>
+                          <Table.Head>Tag</Table.Head>
+                          <Table.Head>Size</Table.Head>
+                          <Table.Head class="w-16"
+                            ><span class="sr-only">Actions</span></Table.Head
+                          >
+                        </Table.Row>
+                      </Table.Header>
+                      <Table.Body>
+                        {#each images as image (image.id)}
+                          <Table.Row>
+                            <Table.Cell class="max-w-96 break-all font-mono text-xs">
+                              {image.repository}
+                            </Table.Cell>
+                            <Table.Cell class="font-mono text-xs">
+                              {image.tag}
+                            </Table.Cell>
+                            <Table.Cell class="text-xs">{image.size}</Table.Cell>
+                            <Table.Cell class="text-right">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                class="size-8 text-destructive"
+                                title="Remove image"
+                                aria-label="Remove image {image.repository}:{image.tag}"
+                                disabled={!!busy}
+                                onclick={() => openRemoveImage(image)}
+                              >
+                                <Trash2Icon class="size-4" />
+                              </Button>
+                            </Table.Cell>
+                          </Table.Row>
+                        {/each}
+                      </Table.Body>
+                    </Table.Root>
+                  </div>
                 {/if}
               </div>
             </div>
@@ -401,7 +878,7 @@
         </Accordion.Content>
       </Accordion.Item>
 
-      <Accordion.Item value="resource" class="border border-border px-5">
+      <Accordion.Item value="resource" class="min-w-0 border border-border px-5">
         <Accordion.Trigger class="py-5 hover:no-underline">
           <div class="flex w-full items-center justify-between gap-6">
             <div>
@@ -536,7 +1013,7 @@
         </Accordion.Content>
       </Accordion.Item>
 
-      <Accordion.Item value="backups" class="border border-border px-5">
+      <Accordion.Item value="backups" class="min-w-0 border border-border px-5">
         <Accordion.Trigger class="py-5 hover:no-underline">
           <div class="flex w-full items-center justify-between gap-6">
             <div>
@@ -643,7 +1120,7 @@
         </Accordion.Content>
       </Accordion.Item>
 
-      <Accordion.Item value="deployments" class="border border-border px-5">
+      <Accordion.Item value="deployments" class="min-w-0 border border-border px-5">
         <Accordion.Trigger class="py-5 hover:no-underline">
           <div class="flex w-full items-center justify-between gap-6">
             <div>
@@ -708,6 +1185,231 @@
           </dl>
         </Accordion.Content>
       </Accordion.Item>
+
+      <Accordion.Item value="host-updates" class="min-w-0 border border-border px-5">
+        <Accordion.Trigger class="py-5 hover:no-underline">
+          <div class="flex w-full items-center justify-between gap-6">
+            <div>
+              <p class="text-sm font-semibold">Host updates</p>
+              <p class="mt-1 font-normal text-muted-foreground">
+                Operating system package updates for this server
+              </p>
+            </div>
+            {#if updates && updates.total > 0}
+              <StatusBadge
+                status={updates.rebootRequired ? "warning" : "available"}
+                label={`${updates.total} available`}
+              />
+            {:else if updates}
+              <StatusBadge status="ready" label="Up to date" />
+            {:else}
+              <StatusBadge status="pending" label="Not checked" />
+            {/if}
+          </div>
+        </Accordion.Trigger>
+        <Accordion.Content class="border-t border-border py-5">
+          <div class="flex flex-wrap items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onclick={checkUpdates}
+              disabled={!!updatesBusy}
+            >
+              {#if updatesBusy === "check"}<Spinner />{/if}
+              <RefreshCwIcon />
+              Check for updates
+            </Button>
+            <Button
+              size="sm"
+              onclick={applyUpdates}
+              disabled={!!updatesBusy || updates === null || updates.total === 0}
+              aria-busy={updatesBusy === "apply"}
+            >
+              {#if updatesBusy === "apply"}<Spinner />{/if}
+              <DownloadIcon />
+              Apply updates
+            </Button>
+            {#if updates?.rebootRequired}
+              <Button
+                variant="outline"
+                size="sm"
+                onclick={() => (rebootOpen = true)}
+              >
+                <PowerIcon />
+                Reboot to complete
+              </Button>
+            {/if}
+          </div>
+
+          <div class="mt-6">
+            {#if updates === null}
+              <Empty.Root class="border border-dashed border-border py-8"
+                ><Empty.Header
+                  ><Empty.Title>No check run yet</Empty.Title
+                  ><Empty.Description
+                    >Run a check to see which operating system package updates
+                    are available.</Empty.Description
+                  ></Empty.Header
+                ></Empty.Root
+              >
+            {:else if updates.total === 0}
+              <Empty.Root class="border border-dashed border-border py-8"
+                ><Empty.Header
+                  ><Empty.Title>No pending updates</Empty.Title
+                  ><Empty.Description
+                    >Check again to refresh the list of available package
+                    updates.</Empty.Description
+                  ></Empty.Header
+                ></Empty.Root
+              >
+            {:else}
+              <div class="overflow-x-auto border border-border">
+                <Table.Root class="min-w-[560px]">
+                  <Table.Header>
+                    <Table.Row>
+                      <Table.Head>Package</Table.Head>
+                      <Table.Head>Installed</Table.Head>
+                      <Table.Head>Available</Table.Head>
+                    </Table.Row>
+                  </Table.Header>
+                  <Table.Body>
+                    {#each updates.updates as update (update.name)}
+                      <Table.Row>
+                        <Table.Cell class="font-mono text-xs font-medium">
+                          {update.name}
+                        </Table.Cell>
+                        <Table.Cell class="font-mono text-xs">
+                          {update.installed}
+                        </Table.Cell>
+                        <Table.Cell class="font-mono text-xs">
+                          {update.available}
+                        </Table.Cell>
+                      </Table.Row>
+                    {/each}
+                  </Table.Body>
+                </Table.Root>
+              </div>
+              {#if updates.rebootRequired}
+                <Alert.Root variant="default" class="mt-4"
+                  ><Alert.Title>Reboot required</Alert.Title><Alert.Description
+                    >The applied kernel or system libraries will not take
+                    effect until the server is rebooted.</Alert.Description
+                  ></Alert.Root
+                >
+              {/if}
+            {/if}
+          </div>
+        </Accordion.Content>
+      </Accordion.Item>
     </Accordion.Root>
   </div>
+
+  <Dialog.Root bind:open={logsOpen}>
+    <Dialog.Content class="sm:max-w-3xl">
+      <Dialog.Header>
+        <Dialog.Title>Container logs</Dialog.Title>
+        <Dialog.Description>
+          Last 200 log lines for {containerLogsFor}.
+        </Dialog.Description>
+      </Dialog.Header>
+      <ScrollArea.Root class="max-h-96">
+        <pre class="whitespace-pre-wrap bg-muted/30 p-4 font-mono text-xs leading-5">
+          {containerLogs}</pre
+        >
+      </ScrollArea.Root>
+      <Dialog.Footer
+        ><Button onclick={() => (logsOpen = false)}>Close</Button></Dialog.Footer
+      >
+    </Dialog.Content>
+  </Dialog.Root>
+
+  <ConfirmActionDialog
+    bind:open={removeContainerOpen}
+    title="Remove container"
+    description={`This force-removes the container "${removeContainer?.name}". The image is kept.`}
+    confirmLabel="Remove container"
+    destructive
+    onconfirm={confirmRemoveContainer}
+  />
+
+  <ConfirmActionDialog
+    bind:open={removeImageOpen}
+    title="Remove image"
+    description={`Delete the image "${removeImage?.repository}:${removeImage?.tag}" from this server?`}
+    confirmLabel="Remove image"
+    destructive
+    requiredPhrase={removeImage?.tag === "<none>" ? "remove" : ""}
+    onconfirm={confirmRemoveImage}
+  />
+
+  <ConfirmActionDialog
+    bind:open={rebootOpen}
+    title="Reboot server"
+    description={`Reboot ${system.serverName} now? Active workloads will stop until the host comes back.`}
+    confirmLabel="Reboot server"
+    destructive
+    processing={rebooting}
+    requiredPhrase="reboot"
+    onconfirm={confirmReboot}
+  />
+
+  <Dialog.Root bind:open={pruneOpen}>
+    <Dialog.Content>
+      <Dialog.Header>
+        <Dialog.Title>Prune host artifacts</Dialog.Title>
+        <Dialog.Description>
+          Remove unused Docker artifacts from this server. Only the selected
+          scopes are cleaned.
+        </Dialog.Description>
+      </Dialog.Header>
+      <div class="grid gap-2">
+        <label
+          class="flex items-start gap-3 border border-border/70 bg-muted/20 p-3 text-sm"
+        >
+          <Checkbox bind:checked={pruneScopes.containers} class="mt-0.5" />
+          <span class="grid gap-1">
+            <span class="font-medium">Stopped containers</span>
+            <span class="text-xs text-muted-foreground">
+              Removes stopped containers that are not running.
+            </span>
+          </span>
+        </label>
+        <label
+          class="flex items-start gap-3 border border-border/70 bg-muted/20 p-3 text-sm"
+        >
+          <Checkbox bind:checked={pruneScopes.images} class="mt-0.5" />
+          <span class="grid gap-1">
+            <span class="font-medium">Unused images</span>
+            <span class="text-xs text-muted-foreground">
+              Removes all images not referenced by a running or stopped
+              container.
+            </span>
+          </span>
+        </label>
+        <label
+          class="flex items-start gap-3 border border-border/70 bg-muted/20 p-3 text-sm"
+        >
+          <Checkbox bind:checked={pruneScopes.volumes} class="mt-0.5" />
+          <span class="grid gap-1">
+            <span class="font-medium">Unused volumes</span>
+            <span class="text-xs text-muted-foreground">
+              Removes volumes that are not referenced by any container.
+            </span>
+          </span>
+        </label>
+      </div>
+      <Dialog.Footer>
+        <Dialog.Close>Cancel</Dialog.Close>
+        <Button
+          variant="destructive"
+          disabled={!pruneEnabled || pruning}
+          aria-busy={pruning}
+          onclick={confirmPrune}
+        >
+          {#if pruning}<Spinner />{/if}
+          Prune
+        </Button>
+      </Dialog.Footer>
+    </Dialog.Content>
+  </Dialog.Root>
 </DashboardLayout>

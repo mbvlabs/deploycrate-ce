@@ -43,10 +43,32 @@ func (service *ServerExecution) Target(
 	if err != nil {
 		return ServerExecutionTarget{}, err
 	}
+	return service.resolveTarget(ctx, server)
+}
+
+func (service *ServerExecution) TargetAny(
+	ctx context.Context,
+	serverID uuid.UUID,
+) (ServerExecutionTarget, error) {
+	server, err := models.Server.Find(ctx, service.db.Executor(), serverID)
+	if err != nil {
+		return ServerExecutionTarget{}, err
+	}
+	if server.ArchivedAt.Valid || !server.IsConfigured {
+		return ServerExecutionTarget{}, errors.New("selected Server is unavailable")
+	}
+	return service.resolveTarget(ctx, server)
+}
+
+func (service *ServerExecution) resolveTarget(
+	ctx context.Context,
+	server models.ServerEntity,
+) (ServerExecutionTarget, error) {
 	target := ServerExecutionTarget{Server: server, Remote: server.Kind == "worker"}
 	if !target.Remote {
 		return target, nil
 	}
+	var err error
 	target.Credential, err = models.ServerSSHCredential.FindForServer(
 		ctx,
 		service.db.Executor(),

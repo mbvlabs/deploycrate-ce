@@ -31,6 +31,7 @@ var Module = fx.Module(
 		NewNodeEnrollment,
 		NewServerExecution,
 		NewContainerExecution,
+		NewServerManagement,
 		NewWorkloadExecution,
 		NewMetricRollupService,
 		NewClickHouseBackup,

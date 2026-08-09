@@ -132,3 +132,51 @@ var SystemUpdateStatus = routing.NewSimpleRoute(
 	"system.update.status",
 	SystemPrefix,
 )
+
+var SystemHostContainersControl = routing.NewSimpleRoute(
+	"/host/containers/control",
+	"system.host.containers.control",
+	SystemPrefix,
+)
+
+var SystemHostContainersLogs = routing.NewSimpleRoute(
+	"/host/containers/logs",
+	"system.host.containers.logs",
+	SystemPrefix,
+)
+
+var SystemHostImagesRemove = routing.NewSimpleRoute(
+	"/host/images/remove",
+	"system.host.images.remove",
+	SystemPrefix,
+)
+
+var SystemHostPrune = routing.NewSimpleRoute(
+	"/host/prune",
+	"system.host.prune",
+	SystemPrefix,
+)
+
+var SystemHostCapabilities = routing.NewSimpleRoute(
+	"/host/capabilities",
+	"system.host.capabilities.update",
+	SystemPrefix,
+)
+
+var SystemHostReboot = routing.NewSimpleRoute(
+	"/host/reboot",
+	"system.host.reboot",
+	SystemPrefix,
+)
+
+var SystemHostUpdatesCheck = routing.NewSimpleRoute(
+	"/host/updates/check",
+	"system.host.updates.check",
+	SystemPrefix,
+)
+
+var SystemHostUpdatesApply = routing.NewSimpleRoute(
+	"/host/updates/apply",
+	"system.host.updates.apply",
+	SystemPrefix,
+)
