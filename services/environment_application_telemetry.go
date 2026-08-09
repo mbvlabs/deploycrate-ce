@@ -94,7 +94,10 @@ func (service *EnvironmentApplicationTelemetry) SlowQueries(
 		time.Now().UTC().Add(-telemetryRange.Duration()),
 		25,
 	)
-	return queries, err
+	if err != nil {
+		return nil, err
+	}
+	return queryTelemetry(queries), nil
 }
 
 func (service *EnvironmentApplicationTelemetry) Logs(
@@ -155,7 +158,11 @@ func (service *EnvironmentApplicationTelemetry) Trace(
 	if err != nil {
 		return nil, err
 	}
-	return client.EnvironmentTrace(ctx, environmentID.String(), traceID)
+	spans, err := client.EnvironmentTrace(ctx, environmentID.String(), traceID)
+	if err != nil {
+		return nil, err
+	}
+	return traceSpans(spans), nil
 }
 
 func (service *EnvironmentApplicationTelemetry) ensureEnabled(

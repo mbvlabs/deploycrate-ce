@@ -106,5 +106,9 @@ func (service *SystemApplicationTelemetry) Trace(
 	if err != nil {
 		return nil, err
 	}
-	return client.Trace(ctx, traceID)
+	spans, err := client.Trace(ctx, traceID)
+	if err != nil {
+		return nil, err
+	}
+	return traceSpans(spans), nil
 }

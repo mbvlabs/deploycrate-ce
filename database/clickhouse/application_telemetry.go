@@ -12,37 +12,37 @@ import (
 	"time"
 )
 
-type QueryTelemetry struct {
-	Query          string  `json:"query"`
-	DatabaseSystem string  `json:"databaseSystem"`
-	Operation      string  `json:"operation"`
-	Executions     uint64  `json:"executions"`
-	P95DurationMS  float64 `json:"p95DurationMs"`
+type SlowQueryResult struct {
+	Query          string
+	DatabaseSystem string
+	Operation      string
+	Executions     uint64
+	P95DurationMS  float64
 }
 
-type TraceSummary struct {
-	TraceID      string    `json:"traceId"`
-	RootSpanName string    `json:"rootSpanName"`
-	StartedAt    time.Time `json:"startedAt"`
-	DurationNS   uint64    `json:"durationNs"`
-	SpanCount    uint64    `json:"spanCount"`
-	ErrorCount   uint64    `json:"errorCount"`
+type TraceSummaryResult struct {
+	TraceID      string
+	RootSpanName string
+	StartedAt    time.Time
+	DurationNS   uint64
+	SpanCount    uint64
+	ErrorCount   uint64
 }
 
-type TraceSpan struct {
-	TraceID            string            `json:"traceId"`
-	SpanID             string            `json:"spanId"`
-	ParentSpanID       string            `json:"parentSpanId"`
-	Name               string            `json:"name"`
-	Kind               string            `json:"kind"`
-	ServiceName        string            `json:"serviceName"`
-	Scope              string            `json:"scope"`
-	StatusCode         string            `json:"statusCode"`
-	StatusMessage      string            `json:"statusMessage"`
-	ResourceAttributes map[string]string `json:"resourceAttributes"`
-	SpanAttributes     map[string]string `json:"spanAttributes"`
-	StartedAt          time.Time         `json:"startedAt"`
-	DurationNS         uint64            `json:"durationNs"`
+type TraceSpanResult struct {
+	TraceID            string
+	SpanID             string
+	ParentSpanID       string
+	Name               string
+	Kind               string
+	ServiceName        string
+	Scope              string
+	StatusCode         string
+	StatusMessage      string
+	ResourceAttributes map[string]string
+	SpanAttributes     map[string]string
+	StartedAt          time.Time
+	DurationNS         uint64
 }
 
 type TelemetryScope struct {
@@ -263,7 +263,7 @@ func (client Queries) RecentTraces(
 	ctx context.Context,
 	scope TelemetryScope,
 	since time.Time,
-) ([]TraceSummary, error) {
+) ([]TraceSummaryResult, error) {
 	query := telemetryQuery(recentTracesQuery, scope)
 	type traceSummaryRow struct {
 		TraceID              string `json:"trace_id"`
@@ -279,7 +279,7 @@ func (client Queries) RecentTraces(
 	if err != nil {
 		return nil, err
 	}
-	result := make([]TraceSummary, 0, len(rows))
+	result := make([]TraceSummaryResult, 0, len(rows))
 	for _, row := range rows {
 		timestamp, parseErr := strconv.ParseInt(row.TimestampNanoseconds, 10, 64)
 		if parseErr != nil {
@@ -297,7 +297,7 @@ func (client Queries) RecentTraces(
 		if parseErr != nil {
 			return nil, fmt.Errorf("decode ClickHouse trace summary error count: %w", parseErr)
 		}
-		result = append(result, TraceSummary{
+		result = append(result, TraceSummaryResult{
 			TraceID:      row.TraceID,
 			RootSpanName: row.RootSpanName,
 			StartedAt:    time.Unix(0, timestamp).UTC(),
@@ -314,7 +314,7 @@ func (client Queries) SlowQueries(
 	scope TelemetryScope,
 	since time.Time,
 	limit int,
-) ([]QueryTelemetry, bool, error) {
+) ([]SlowQueryResult, bool, error) {
 	query := telemetryQuery(slowQueriesQuery, scope)
 	type slowQueryRow struct {
 		Query          string  `json:"query"`
@@ -330,13 +330,13 @@ func (client Queries) SlowQueries(
 	if err != nil {
 		return nil, false, err
 	}
-	queries := make([]QueryTelemetry, 0, len(rows))
+	queries := make([]SlowQueryResult, 0, len(rows))
 	for _, row := range rows {
 		executions, parseErr := strconv.ParseUint(row.Executions, 10, 64)
 		if parseErr != nil {
 			return nil, false, fmt.Errorf("decode ClickHouse slow query executions: %w", parseErr)
 		}
-		queries = append(queries, QueryTelemetry{
+		queries = append(queries, SlowQueryResult{
 			Query: row.Query, DatabaseSystem: row.DatabaseSystem, Operation: row.Operation,
 			Executions: executions, P95DurationMS: row.P95DurationMS,
 		})
@@ -348,14 +348,14 @@ func (client Queries) SlowQueries(
 	return queries, more, nil
 }
 
-func (client Queries) Trace(ctx context.Context, traceID string) ([]TraceSpan, error) {
+func (client Queries) Trace(ctx context.Context, traceID string) ([]TraceSpanResult, error) {
 	return client.trace(ctx, traceID, "")
 }
 
 func (client Queries) EnvironmentTrace(
 	ctx context.Context,
 	environment, traceID string,
-) ([]TraceSpan, error) {
+) ([]TraceSpanResult, error) {
 	return client.trace(ctx, traceID, environment)
 }
 
@@ -363,7 +363,7 @@ func (client Queries) trace(
 	ctx context.Context,
 	traceID string,
 	environment string,
-) ([]TraceSpan, error) {
+) ([]TraceSpanResult, error) {
 	type traceRow struct {
 		TimestampNanoseconds string            `json:"timestamp_nanoseconds"`
 		TraceID              string            `json:"trace_id"`
@@ -385,7 +385,7 @@ func (client Queries) trace(
 	if err != nil {
 		return nil, err
 	}
-	spans := make([]TraceSpan, 0, len(rows))
+	spans := make([]TraceSpanResult, 0, len(rows))
 	for _, row := range rows {
 		timestamp, parseErr := strconv.ParseInt(row.TimestampNanoseconds, 10, 64)
 		if parseErr != nil {
@@ -395,7 +395,7 @@ func (client Queries) trace(
 		if parseErr != nil {
 			return nil, fmt.Errorf("decode ClickHouse trace duration: %w", parseErr)
 		}
-		spans = append(spans, TraceSpan{
+		spans = append(spans, TraceSpanResult{
 			TraceID: row.TraceID, SpanID: row.SpanID, ParentSpanID: row.ParentSpanID,
 			Name: row.Name, Kind: row.Kind, ServiceName: row.ServiceName, Scope: row.Scope,
 			StatusCode: row.StatusCode, StatusMessage: row.StatusMessage,

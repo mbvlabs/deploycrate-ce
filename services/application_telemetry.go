@@ -38,7 +38,13 @@ type RouteTelemetry struct {
 	P95DurationMS     float64 `json:"p95DurationMs"`
 }
 
-type QueryTelemetry = clickhouse.QueryTelemetry
+type QueryTelemetry struct {
+	Query          string  `json:"query"`
+	DatabaseSystem string  `json:"databaseSystem"`
+	Operation      string  `json:"operation"`
+	Executions     uint64  `json:"executions"`
+	P95DurationMS  float64 `json:"p95DurationMs"`
+}
 
 type ApplicationTelemetryPoint struct {
 	ObservedAt        time.Time `json:"observedAt"`
@@ -68,8 +74,30 @@ type DatabaseTelemetryPoint struct {
 	P99DurationMS       float64   `json:"p99DurationMs"`
 }
 
-type TraceSummary = clickhouse.TraceSummary
-type TraceSpan = clickhouse.TraceSpan
+type TraceSummary struct {
+	TraceID      string    `json:"traceId"`
+	RootSpanName string    `json:"rootSpanName"`
+	StartedAt    time.Time `json:"startedAt"`
+	DurationNS   uint64    `json:"durationNs"`
+	SpanCount    uint64    `json:"spanCount"`
+	ErrorCount   uint64    `json:"errorCount"`
+}
+
+type TraceSpan struct {
+	TraceID            string            `json:"traceId"`
+	SpanID             string            `json:"spanId"`
+	ParentSpanID       string            `json:"parentSpanId"`
+	Name               string            `json:"name"`
+	Kind               string            `json:"kind"`
+	ServiceName        string            `json:"serviceName"`
+	Scope              string            `json:"scope"`
+	StatusCode         string            `json:"statusCode"`
+	StatusMessage      string            `json:"statusMessage"`
+	ResourceAttributes map[string]string `json:"resourceAttributes"`
+	SpanAttributes     map[string]string `json:"spanAttributes"`
+	StartedAt          time.Time         `json:"startedAt"`
+	DurationNS         uint64            `json:"durationNs"`
+}
 
 func loadApplicationTelemetry(
 	ctx context.Context,
@@ -136,15 +164,54 @@ func loadApplicationTelemetry(
 		bucket,
 		time.Since(since),
 	)
-	result.RecentTraces, err = queries.RecentTraces(ctx, scope, since)
+	recentTraces, err := queries.RecentTraces(ctx, scope, since)
 	if err != nil {
 		return ApplicationTelemetry{}, err
 	}
-	result.Queries, result.MoreQueries, err = queries.SlowQueries(ctx, scope, since, 10)
+	result.RecentTraces = traceSummaries(recentTraces)
+	slowQueries, moreQueries, err := queries.SlowQueries(ctx, scope, since, 10)
 	if err != nil {
 		return ApplicationTelemetry{}, err
 	}
+	result.Queries = queryTelemetry(slowQueries)
+	result.MoreQueries = moreQueries
 	return result, nil
+}
+
+func queryTelemetry(rows []clickhouse.SlowQueryResult) []QueryTelemetry {
+	result := make([]QueryTelemetry, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, QueryTelemetry{
+			Query: row.Query, DatabaseSystem: row.DatabaseSystem, Operation: row.Operation,
+			Executions: row.Executions, P95DurationMS: row.P95DurationMS,
+		})
+	}
+	return result
+}
+
+func traceSummaries(rows []clickhouse.TraceSummaryResult) []TraceSummary {
+	result := make([]TraceSummary, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, TraceSummary{
+			TraceID: row.TraceID, RootSpanName: row.RootSpanName, StartedAt: row.StartedAt,
+			DurationNS: row.DurationNS, SpanCount: row.SpanCount, ErrorCount: row.ErrorCount,
+		})
+	}
+	return result
+}
+
+func traceSpans(rows []clickhouse.TraceSpanResult) []TraceSpan {
+	result := make([]TraceSpan, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, TraceSpan{
+			TraceID: row.TraceID, SpanID: row.SpanID, ParentSpanID: row.ParentSpanID,
+			Name: row.Name, Kind: row.Kind, ServiceName: row.ServiceName, Scope: row.Scope,
+			StatusCode: row.StatusCode, StatusMessage: row.StatusMessage,
+			ResourceAttributes: row.ResourceAttributes, SpanAttributes: row.SpanAttributes,
+			StartedAt: row.StartedAt, DurationNS: row.DurationNS,
+		})
+	}
+	return result
 }
 
 type aggregatedHistogram struct {

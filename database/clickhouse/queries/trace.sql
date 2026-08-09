@@ -16,12 +16,7 @@ FROM otel_traces
 WHERE TraceId = {trace_id:String}
   AND (
     {environment:String} = ''
-    OR TraceId IN (
-      SELECT TraceId
-      FROM otel_traces
-      WHERE TraceId = {trace_id:String}
-        AND ResourceAttributes['deploycrate.environment.id'] = {environment:String}
-    )
+    OR ResourceAttributes['deploycrate.environment.id'] = {environment:String}
   )
 ORDER BY Timestamp, Duration DESC
 LIMIT 1000
