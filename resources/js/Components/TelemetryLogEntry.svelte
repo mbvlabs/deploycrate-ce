@@ -37,7 +37,10 @@
   const shortTraceId = $derived(traceId ? traceId.slice(0, 8) : "");
 </script>
 
-<article class="border-b border-border last:border-b-0 hover:bg-muted/15">
+<article
+  data-slot="telemetry-log-entry"
+  class="border-b border-border last:border-b-0 hover:bg-muted/15"
+>
   <div class="grid gap-3 p-3 lg:grid-cols-[11rem_minmax(0,1fr)] lg:p-4">
     <header class="space-y-2">
       <div class="flex flex-wrap items-center gap-2">

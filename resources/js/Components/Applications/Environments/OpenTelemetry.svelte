@@ -1,7 +1,7 @@
 <script lang="ts">
   import { page, router } from "@inertiajs/svelte";
   import SearchIcon from "@lucide/svelte/icons/search";
-  import LogEntry from "@/Components/Applications/Environments/LogEntry.svelte";
+  import LogEntry from "@/Components/TelemetryLogEntry.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import TelemetryHistory from "@/Components/System/TelemetryHistory.svelte";
   import { Button } from "@/Components/ui/button";
@@ -241,6 +241,7 @@
           (key !== "trace_id" || !log.traceId) &&
           (key !== "span_id" || !log.spanId) &&
           ![
+            "path",
             "url.path",
             "http.target",
             "http.route",
@@ -695,17 +696,22 @@
             statusLabel={logLevel(log)}
             source={log.service || log.processName || "application"}
             metadata={[
-              ...(log.processKind
+              ...(log.processReplica || log.processName || log.processKind
                 ? [
                     {
                       label: "Process",
-                      value: `${log.processKind}${log.processName ? ` · ${log.processName}` : ""}${log.processReplica ? ` · ${log.processReplica}` : ""}`,
+                      value:
+                        log.processReplica ||
+                        log.processName ||
+                        log.processKind,
                     },
                   ]
                 : []),
-              ...(log.requestPath
-                ? [{ label: "Path", value: log.requestPath, mono: true }]
-                : []),
+              {
+                label: "Path",
+                value: log.requestPath || "Unavailable",
+                mono: true,
+              },
               ...(log.responseCode
                 ? [
                     {

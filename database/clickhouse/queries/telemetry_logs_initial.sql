@@ -19,7 +19,8 @@ SELECT
   coalesce(
     nullIf(LogAttributes['url.path'], ''),
     nullIf(LogAttributes['http.target'], ''),
-    LogAttributes['http.route']
+    nullIf(LogAttributes['http.route'], ''),
+    LogAttributes['path']
   ) AS request_path,
   toUInt16OrZero(coalesce(
     nullIf(LogAttributes['http.response.status_code'], ''),

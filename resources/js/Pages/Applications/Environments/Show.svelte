@@ -11,7 +11,7 @@
   import * as Dialog from "@/Components/ui/dialog";
   import ConfirmActionDialog from "@/Components/ConfirmActionDialog.svelte";
   import DataField from "@/Components/DataField.svelte";
-  import LogEntry from "@/Components/Applications/Environments/LogEntry.svelte";
+  import LogEntry from "@/Components/TelemetryLogEntry.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import OpenTelemetry from "@/Components/Applications/Environments/OpenTelemetry.svelte";
   import TelemetryHistory from "@/Components/Applications/Environments/TelemetryHistory.svelte";

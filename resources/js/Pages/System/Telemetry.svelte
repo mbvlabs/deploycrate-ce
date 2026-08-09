@@ -7,9 +7,9 @@
   import * as NativeSelect from "@/Components/ui/native-select";
   import * as Table from "@/Components/ui/table";
   import StatusBadge from "@/Components/StatusBadge.svelte";
+  import LogEntry from "@/Components/TelemetryLogEntry.svelte";
   import TelemetryHistory from "@/Components/System/TelemetryHistory.svelte";
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
-  import { cn } from "@/lib/utils";
   import { routes } from "@/routes";
   import { page, router } from "@inertiajs/svelte";
   import SearchIcon from "@lucide/svelte/icons/search";
@@ -213,6 +213,12 @@
     line: string;
     instance: string;
     slot: string;
+    service: string;
+    processName: string;
+    processKind: string;
+    processReplica: string;
+    requestPath: string;
+    responseCode: number;
     occurredAt: string;
   };
 
@@ -637,10 +643,6 @@
     if (log.severityNumber >= 13) return "warning";
     return systemLogLevel(log).toLowerCase();
   };
-  const systemLogSource = (log: SystemLog) => {
-    if (log.source) return log.line ? `${log.source}:${log.line}` : log.source;
-    return log.scope || "application";
-  };
   const systemLogContext = (log: SystemLog) =>
     Object.entries(log.attributes ?? {})
       .filter(
@@ -648,7 +650,15 @@
           value &&
           !key.startsWith("code.") &&
           (key !== "trace_id" || !log.traceId) &&
-          (key !== "span_id" || !log.spanId),
+          (key !== "span_id" || !log.spanId) &&
+          ![
+            "path",
+            "url.path",
+            "http.target",
+            "http.route",
+            "http.response.status_code",
+            "http.status_code",
+          ].includes(key),
       )
       .sort(([left], [right]) => left.localeCompare(right));
   const systemLogMessage = (log: SystemLog) => {
@@ -1461,75 +1471,67 @@
               class="max-h-[42rem] min-h-48 overflow-auto border border-border bg-muted/10"
             >
               {#each systemLogs as log (log.id)}
-                <article
-                  class="border-b border-border p-3 last:border-b-0 hover:bg-muted/20"
-                >
-                  <header
-                    class="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground"
-                  >
-                    <StatusBadge
-                      status={systemLogStatus(log)}
-                      label={systemLogLevel(log)}
-                    />
-                    <time
-                      datetime={log.occurredAt}
-                      title={new Date(log.occurredAt).toISOString()}
-                      >{stamp(log.occurredAt)}</time
-                    >
-                    <span aria-hidden="true">·</span>
-                    <span>{log.slot || "slot unknown"}</span>
-                    {#if log.instance}<span aria-hidden="true">·</span><span
-                        class="font-mono">instance {short(log.instance)}</span
-                      >{/if}
-                    <!-- <span aria-hidden="true">·</span> -->
-                    <!-- <span class="font-mono">{systemLogSource(log)}</span> -->
-                    {#if log.traceId}
-                      <span aria-hidden="true">·</span>
-                      <span>trace </span>
-                      <Button
-                        variant="link"
-                        size="xs"
-                        class="h-auto p-0 font-mono text-[10px]"
-                        onclick={() => loadTrace(log.traceId)}
-                        >{short(log.traceId)}</Button
-                      >{/if}
-                    {#if log.spanId}<span aria-hidden="true">·</span><span
-                        class="font-mono">span {short(log.spanId)}</span
-                      >{/if}
-                  </header>
-                  <div class="mt-2 min-w-0">
-                    <pre
-                      class={cn(
-                        "whitespace-pre-wrap break-words pl-3 font-mono text-xs leading-5 text-foreground",
-                        {
-                          "border-warning":
-                            log.severityNumber >= 13 && log.severityNumber < 17,
-                          "border-destructive": log.severityNumber >= 17,
-                        },
-                      )}>{systemLogMessage(log)}</pre>
-                    {#if systemLogContext(log).length > 0}
-                      <dl
-                        class="mt-3 grid gap-x-5 gap-y-1 border-t border-border/70 pt-2 text-[10px] sm:grid-cols-2 xl:grid-cols-3"
-                      >
-                        {#each systemLogContext(log) as [key, value] (key)}
-                          <div
-                            class="grid min-w-0 grid-cols-[minmax(5rem,auto)_1fr] gap-2"
-                          >
-                            <dt
-                              class="truncate font-mono text-muted-foreground"
-                              title={key}
-                            >
-                              {key}
-                            </dt>
-                            <dd class="break-all font-mono text-foreground/80">
-                              {value}
-                            </dd>
-                          </div>
-                        {/each}
-                      </dl>
-                    {/if}
-                  </div>
-                </article>
+                <LogEntry
+                  occurredAt={log.occurredAt}
+                  message={systemLogMessage(log)}
+                  status={systemLogStatus(log)}
+                  statusLabel={systemLogLevel(log)}
+                  source={log.service || log.scope || "application"}
+                  metadata={[
+                    ...(log.processReplica || log.processName || log.processKind
+                      ? [
+                          {
+                            label: "Process",
+                            value:
+                              log.processReplica ||
+                              log.processName ||
+                              log.processKind,
+                          },
+                        ]
+                      : []),
+                    {
+                      label: "Path",
+                      value: log.requestPath || "Unavailable",
+                      mono: true,
+                    },
+                    ...(log.responseCode
+                      ? [
+                          {
+                            label: "Response",
+                            value: String(log.responseCode),
+                            mono: true,
+                          },
+                        ]
+                      : []),
+                    ...(log.slot
+                      ? [{ label: "Slot", value: log.slot, mono: true }]
+                      : []),
+                    ...(log.source
+                      ? [
+                          {
+                            label: "Source",
+                            value: `${log.source}${log.line ? `:${log.line}` : ""}`,
+                            mono: true,
+                          },
+                        ]
+                      : []),
+                    ...(log.instance
+                      ? [{ label: "Instance", value: log.instance, mono: true }]
+                      : []),
+                    ...(log.spanId
+                      ? [
+                          {
+                            label: "Span",
+                            value: short(log.spanId),
+                            mono: true,
+                          },
+                        ]
+                      : []),
+                  ]}
+                  attributes={systemLogContext(log)}
+                  traceId={log.traceId}
+                  ontrace={() => loadTrace(log.traceId)}
+                />
               {:else}
                 <p class="p-4 text-sm text-muted-foreground">
                   {systemLogsLoaded
