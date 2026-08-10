@@ -103,6 +103,25 @@ func (resourceCredential) ActiveAdministratorCount(
 		Count(ctx)
 }
 
+func (resourceCredential) LockActiveApplicationsForDatabase(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+	databaseName string,
+) ([]ResourceCredentialEntity, error) {
+	credentials := make([]ResourceCredentialEntity, 0)
+	err := db.NewSelect().
+		Model(&credentials).
+		Where("resource_id = ?", resourceID).
+		Where("metadata ->> 'purpose' = 'application'").
+		Where("lower(metadata ->> 'database') = lower(?)", strings.TrimSpace(databaseName)).
+		Where("archived_at IS NULL").
+		OrderExpr("created_at, id").
+		For("UPDATE").
+		Scan(ctx)
+	return credentials, err
+}
+
 type CreateResourceCredentialData struct {
 	Name       string
 	Username   sql.NullString

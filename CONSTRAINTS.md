@@ -152,6 +152,7 @@ Rules local to one entity belong in `models/`. Rules involving multiple records,
 - Creating a Resource does not create an application database or application user.
 - Logical database creation is an explicit operation. The service connects using the administrator credential, creates the database in the engine, and then records its non-secret definition in Resource configuration.
 - An application credential has metadata purpose `application` and selects exactly one configured logical database.
+- A logical database may have any number of application credentials. Deleting it archives those credentials after active Environment, health-check, backup-policy, and restore dependencies have been removed.
 - For PostgreSQL, application credential creation and rotation reconcile the LOGIN role and database privileges in code before desired credential state commits.
 - Database names and application principal names are unique within their Resource scopes.
 - Database telemetry is attributed to Resource and Resource Installation identity.

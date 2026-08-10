@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -32,24 +33,30 @@ import (
 
 var appVersion = "dev"
 
+const exitFail = 1
+
 func main() {
-	if len(os.Args) > 1 {
-		if err := runCommand(context.Background(), os.Args[1:]); err != nil {
-			fmt.Fprintf(os.Stderr, "%s\n", err)
-			os.Exit(1)
-		}
-		return
+	if err := run(os.Args, os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "%s\n", err)
+		os.Exit(exitFail)
+	}
+}
+
+func run(arguments []string, stdout io.Writer) error {
+	if len(arguments) == 0 {
+		return errors.New("program arguments are required")
+	}
+	if len(arguments) > 1 {
+		return runCommand(context.Background(), arguments[1:], stdout)
 	}
 
 	rootHTML, err := assets.Files.ReadFile("inertia/root.go.html")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to read Inertia root template: %s\n", err)
-		os.Exit(1)
+		return fmt.Errorf("read Inertia root template: %w", err)
 	}
 	viteManifest, err := assets.Files.ReadFile("dist/vite/manifest.json")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to read Vite manifest: %s\n", err)
-		os.Exit(1)
+		return fmt.Errorf("read Vite manifest: %w", err)
 	}
 
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -62,10 +69,22 @@ func main() {
 		viteManifest,
 		inertia.WithSharedProp("appVersion", appVersion),
 	); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to initialize inertia: %s\n", err)
-		os.Exit(1)
+		return fmt.Errorf("initialize inertia: %w", err)
 	}
-	app := fx.New(
+	app := fx.New(appOptions(ctx)...)
+	if err := app.Start(ctx); err != nil {
+		return err
+	}
+
+	<-ctx.Done()
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer shutdownCancel()
+	return app.Stop(shutdownCtx)
+}
+
+func appOptions(ctx context.Context) []fx.Option {
+	return []fx.Option{
 		fx.Provide(
 			func() context.Context { return ctx },
 			func() services.CurrentVersion { return services.CurrentVersion(appVersion) },
@@ -94,32 +113,20 @@ func main() {
 		fx.Invoke(startQueueProcessor),
 		fx.Invoke(startServer),
 		fx.Invoke(ensureInitialBackupsOnStartup),
-	)
-
-	if err := app.Start(ctx); err != nil {
-		fmt.Fprintf(os.Stderr, "%s\n", err)
-		os.Exit(1)
-	}
-
-	<-ctx.Done()
-
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
-	defer cancel()
-
-	if err := app.Stop(shutdownCtx); err != nil {
-		fmt.Fprintf(os.Stderr, "%s\n", err)
-		os.Exit(1)
 	}
 }
 
-func runCommand(ctx context.Context, arguments []string) error {
+func runCommand(ctx context.Context, arguments []string, stdout io.Writer) error {
+	if len(arguments) == 0 {
+		return errors.New("command is required")
+	}
 	switch arguments[0] {
 	case "version":
 		if len(arguments) != 1 {
 			return errors.New("usage: deploycrate-ce version")
 		}
-		fmt.Println(appVersion)
-		return nil
+		_, err := fmt.Fprintln(stdout, appVersion)
+		return err
 	case "migrate":
 		if len(arguments) != 1 {
 			return errors.New("usage: deploycrate-ce migrate")
@@ -156,8 +163,8 @@ func runCommand(ctx context.Context, arguments []string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("activated %d backup policies\n", activated)
-		return nil
+		_, err = fmt.Fprintf(stdout, "activated %d backup policies\n", activated)
+		return err
 	case "host-resource-access":
 		return resourceaccess.RunHostCommand(arguments[1:])
 	default:

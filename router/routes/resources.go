@@ -83,6 +83,17 @@ var ResourceDatabaseCreateForResource = routing.NewRouteWithUUIDID(
 	ResourcesPrefix,
 )
 
+type ResourceDatabaseParams struct {
+	ResourceID   string `param:"id"`
+	DatabaseName string `param:"databaseName"`
+}
+
+var ResourceDatabaseDestroy = routing.NewRouteWithParams[ResourceDatabaseParams](
+	"/:id/databases/:databaseName",
+	"resources.databases.destroy",
+	ResourcesPrefix,
+)
+
 var ResourcePrivateAccessCreate = routing.NewRouteWithUUIDID(
 	"/:id/private-access",
 	"resources.private-access.create",
@@ -262,11 +273,6 @@ var ResourceHealthCheckDestroy = routing.NewRouteWithParams[ResourceHealthCheckP
 	"resources.health-checks.destroy",
 	ResourcesPrefix,
 )
-
-type ResourceDatabaseParams struct {
-	ResourceID   string `param:"id"`
-	DatabaseName string `param:"databaseName"`
-}
 
 type ResourceDatabaseBackupPolicyParams struct {
 	ResourceID     string `param:"id"`

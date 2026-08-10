@@ -31,6 +31,7 @@ var Module = fx.Module(
 		NewNodeEnrollment,
 		NewServerExecution,
 		NewContainerExecution,
+		func(container *ContainerExecution) ResourceContainerService { return container },
 		NewServerManagement,
 		NewWorkloadExecution,
 		NewMetricRollupService,

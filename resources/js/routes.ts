@@ -112,6 +112,7 @@ export const routes = {
   resourceCredentialUpdate: (id: string, credentialID: string) => `/resources/${id}/credentials/${credentialID}`,
   resourceCredentials: (id: string) => `/resources/${id}/credentials`,
   resourceDatabaseCreateForResource: (id: string) => `/resources/${id}/databases`,
+  resourceDatabaseDestroy: (id: string, databaseName: string) => `/resources/${id}/databases/${databaseName}`,
   resourceDatabases: (id: string) => `/resources/${id}/databases`,
   resourceDeploy: (id: string) => `/resources/${id}/deploy`,
   resourceDestroy: (id: string) => `/resources/${id}`,

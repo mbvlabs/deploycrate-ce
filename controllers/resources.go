@@ -100,6 +100,7 @@ func (controller Resources) RegisterRoutes(r *router.Router) error {
 			middleware.IPRateLimiter(5, routes.Resources)(controller.RevealCredential),
 		},
 		{http.MethodPost, routes.ResourceDatabaseCreateForResource, controller.CreateDatabase},
+		{http.MethodDelete, routes.ResourceDatabaseDestroy, controller.DestroyDatabase},
 		{http.MethodPost, routes.ResourceInstallationCreate, controller.CreateInstallation},
 		{http.MethodGet, routes.ResourceInstallationLogs, controller.InstallationLogs},
 		{http.MethodPost, routes.ResourceInstallationStart, controller.StartInstallation},
@@ -717,6 +718,22 @@ func (controller Resources) CreateDatabase(etx *echo.Context) error {
 		err,
 		"Database and credential access created",
 	)
+}
+
+func (controller Resources) DestroyDatabase(etx *echo.Context) error {
+	resourceID, err := uuid.Parse(etx.Param("id"))
+	databaseName := strings.TrimSpace(etx.Param("databaseName"))
+	if err == nil && databaseName == "" {
+		err = domainPayloadError("database", "Database is required")
+	}
+	if err == nil {
+		err = controller.service.DestroyDatabase(
+			etx.Request().Context(),
+			resourceID,
+			databaseName,
+		)
+	}
+	return controller.finishChildMutation(etx, resourceID, err, "Database deleted")
 }
 
 func (controller Resources) UpdateCredential(etx *echo.Context) error {

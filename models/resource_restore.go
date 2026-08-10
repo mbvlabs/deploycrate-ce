@@ -149,6 +149,25 @@ func (resourceRestore) FindBySafetyBackup(
 	return entity, err
 }
 
+func (resourceRestore) ActiveCountForResourceDatabase(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+	databaseName string,
+) (int, error) {
+	return db.NewSelect().
+		Model((*ResourceRestoreEntity)(nil)).
+		Where("resource_id = ?", resourceID).
+		Where("target ->> 'database' = ?", strings.TrimSpace(databaseName)).
+		Where(
+			"status IN (?, ?, ?)",
+			ResourceRestoreStatusPending,
+			ResourceRestoreStatusSafetyBackup,
+			ResourceRestoreStatusRestoring,
+		).
+		Count(ctx)
+}
+
 func (resourceRestore) FindForUpdate(
 	ctx context.Context,
 	db storage.Executor,

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 	"strings"
@@ -1349,6 +1350,152 @@ func (service *ResourceManagement) CreateDatabase(
 	}
 	completed = true
 	return updated, nil
+}
+
+func (service *ResourceManagement) DestroyDatabase(
+	ctx context.Context,
+	resourceID uuid.UUID,
+	databaseName string,
+) error {
+	databaseName = strings.TrimSpace(databaseName)
+	if databaseName == "" || strings.EqualFold(databaseName, "postgres") {
+		return domainError(
+			"database",
+			"unavailable",
+			"select a configured application Database",
+		)
+	}
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	resource, err := service.loadResource(ctx, tx, resourceID, true)
+	if err != nil {
+		return err
+	}
+	if resource.ResourceType != models.ResourceTypeDatabase || resource.Engine() != "postgresql" {
+		return domainError(
+			"database",
+			"resource_type",
+			"database deletion currently requires a PostgreSQL Resource",
+		)
+	}
+	databaseIndex := -1
+	configuration := resource.ParsedConfiguration()
+	for index, database := range configuration.Databases {
+		if strings.EqualFold(database.Name, databaseName) {
+			databaseIndex = index
+			databaseName = database.Name
+			break
+		}
+	}
+	if databaseIndex < 0 {
+		return models.ErrNotFound
+	}
+	if _, policyErr := models.BackupPolicy.FindForResourceDatabase(
+		ctx,
+		tx,
+		resource.ID,
+		databaseName,
+	); policyErr == nil {
+		return domainError(
+			"database",
+			"dependency",
+			"archive the Database backup policy before deleting this Database",
+		)
+	} else if !errors.Is(policyErr, sql.ErrNoRows) {
+		return policyErr
+	}
+	activeRestores, err := models.ResourceRestore.ActiveCountForResourceDatabase(
+		ctx,
+		tx,
+		resource.ID,
+		databaseName,
+	)
+	if err != nil {
+		return err
+	}
+	if activeRestores > 0 {
+		return domainError(
+			"database",
+			"dependency",
+			"wait for the active Database restore to finish before deleting this Database",
+		)
+	}
+	credentials, err := models.ResourceCredential.LockActiveApplicationsForDatabase(
+		ctx,
+		tx,
+		resource.ID,
+		databaseName,
+	)
+	if err != nil {
+		return err
+	}
+	for _, credential := range credentials {
+		dependencies, dependencyErr := models.ResourceCredential.ActiveDependencyCount(
+			ctx,
+			tx,
+			credential.ID,
+		)
+		if dependencyErr != nil {
+			return dependencyErr
+		}
+		if dependencies > 0 {
+			return domainError(
+				"database",
+				"dependency",
+				"detach Environments and health checks using this Database before deleting it",
+			)
+		}
+	}
+	connection, err := service.postgreSQLAdministratorConnection(ctx, tx, resource)
+	if err != nil {
+		return err
+	}
+	configuration.Databases = slices.Delete(configuration.Databases, databaseIndex, databaseIndex+1)
+	encoded, err := json.Marshal(configuration)
+	if err != nil {
+		return err
+	}
+	if _, err := models.Resource.Update(ctx, tx, models.UpdateResourceData{
+		ID: resource.ID, Name: resource.Name, Slug: resource.Slug,
+		ResourceType: resource.ResourceType, Configuration: encoded,
+		SystemManaged: resource.SystemManaged, EnvironmentAttachable: resource.EnvironmentAttachable,
+		ArchivedAt: resource.ArchivedAt,
+	}); err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	for _, credential := range credentials {
+		if err := models.ResourceCredential.ArchiveID(ctx, tx, credential.ID, now); err != nil {
+			return err
+		}
+	}
+	if err := service.postgres.DropDatabase(ctx, connection, databaseName); err != nil {
+		return err
+	}
+	for _, credential := range credentials {
+		if !credential.Username.Valid {
+			continue
+		}
+		if cleanupErr := service.postgres.DropLoginRole(
+			ctx,
+			connection,
+			credential.Username.String,
+		); cleanupErr != nil {
+			slog.WarnContext(
+				ctx,
+				"database deleted but PostgreSQL credential role cleanup failed",
+				"resource_id", resource.ID,
+				"database", databaseName,
+				"credential_id", credential.ID,
+				"username", credential.Username.String,
+				"error", cleanupErr,
+			)
+		}
+	}
+	return tx.Commit()
 }
 
 func (service *ResourceManagement) reconcilePostgreSQLCredential(

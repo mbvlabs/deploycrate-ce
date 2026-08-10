@@ -173,6 +173,13 @@
         confirmationLabel: string;
       }
     | {
+        kind: "delete-database";
+        databaseName: string;
+        title: string;
+        description: string;
+        confirmationLabel: string;
+      }
+    | {
         kind: "archive-volume";
         volumeId: string;
         title: string;
@@ -824,7 +831,7 @@
     const mapping = serviceMappings[index];
     if (mapping) endpoint.port = mapping.hostPort;
   }
-  function openCredentialDialog(item: any = null) {
+  function openCredentialDialog(item: any = null, databaseName = "") {
     if (!item && !canAddApplicationUser) return;
     editingCredentialId = item?.id ?? "";
     credential = item
@@ -840,7 +847,7 @@
       : {
           name: "Application user",
           username: "",
-          database: resource.databases[0]?.name ?? "",
+          database: databaseName || resource.databases[0]?.name || "",
           purpose: "application",
           metadata: {},
           rotate: false,
@@ -1285,6 +1292,19 @@
       confirmationLabel: "Archive credential",
     });
   }
+  function confirmDatabaseDelete(databaseName: string, credentialCount: number) {
+    const credentialDescription =
+      credentialCount === 0
+        ? ""
+        : ` Its ${credentialCount} attached ${credentialCount === 1 ? "credential" : "credentials"} will also be archived.`;
+    confirmDestructive({
+      kind: "delete-database",
+      databaseName,
+      title: `Delete ${databaseName}?`,
+      description: `The PostgreSQL Database and all of its data will be permanently deleted.${credentialDescription} Remove active Environment, health-check, backup-policy, and restore dependencies first.`,
+      confirmationLabel: "Delete Database",
+    });
+  }
   function archiveVolume() {
     if (!editingVolumeId) return;
     volumeDialogOpen = false;
@@ -1340,6 +1360,11 @@
         return routes.resourceCredentialDestroy(
           resource.id,
           action.credentialId,
+        );
+      case "delete-database":
+        return routes.resourceDatabaseDestroy(
+          resource.id,
+          databaseRouteName(action.databaseName),
         );
       case "archive-volume":
         return routes.resourceVolumeDestroy(resource.id, action.volumeId);
@@ -1624,7 +1649,7 @@
                     ><Table.Head>Collation</Table.Head><Table.Head
                       >Attached credentials</Table.Head
                     ><Table.Head>Endpoints</Table.Head><Table.Head
-                      class="text-right">Backups</Table.Head
+                      class="text-right">Actions</Table.Head
                     ></Table.Row
                   ></Table.Header
                 >
@@ -1652,24 +1677,42 @@
                       >
                       <Table.Cell>{resource.endpoints.length}</Table.Cell>
                       <Table.Cell class="text-right">
-                        {#if backup?.policy}
-                          <Button size="sm" variant="ghost"
-                            >{#snippet child({ props })}<Link
-                                {...props}
-                                href={`${routes.resourceBackups(resource.id)}?database=${encodeURIComponent(item.name)}`}
-                                >Manage</Link
-                              >{/snippet}</Button
-                          >
-                        {:else}
+                        <div class="flex flex-wrap justify-end gap-2">
                           <Button
                             size="sm"
-                            variant="outline"
-                            disabled={!backup?.eligibility.eligible}
-                            title={backup?.eligibility.reason || undefined}
-                            onclick={() => openBackupPolicyDialog(item.name)}
-                            >Set up</Button
+                            variant="ghost"
+                            disabled={!canAddApplicationUser}
+                            onclick={() => openCredentialDialog(null, item.name)}
+                            >Add credential</Button
                           >
-                        {/if}
+                          {#if backup?.policy}
+                            <Button size="sm" variant="ghost"
+                              >{#snippet child({ props })}<Link
+                                  {...props}
+                                  href={`${routes.resourceBackups(resource.id)}?database=${encodeURIComponent(item.name)}`}
+                                  >Backups</Link
+                                >{/snippet}</Button
+                            >
+                          {:else}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={!backup?.eligibility.eligible}
+                              title={backup?.eligibility.reason || undefined}
+                              onclick={() => openBackupPolicyDialog(item.name)}
+                              >Set up backups</Button
+                            >
+                          {/if}
+                          <Button
+                            size="sm"
+                            variant="destructive"
+                            onclick={() =>
+                              confirmDatabaseDelete(
+                                item.name,
+                                attachedCredentials.length,
+                              )}>Delete</Button
+                          >
+                        </div>
                       </Table.Cell>
                     </Table.Row>
                   {/each}
@@ -3208,8 +3251,9 @@
       >
         <Dialog.Header
           ><Dialog.Title>Add Database</Dialog.Title><Dialog.Description
-            >Create a logical Database and attach the only application
-            credential that should receive access in one setup flow.</Dialog.Description
+            >Create a logical Database and attach its initial application
+            credential. You can add more credentials from the Databases
+            screen.</Dialog.Description
           ></Dialog.Header
         >
         <div class="grid gap-4 sm:grid-cols-2">
@@ -3315,7 +3359,7 @@
                 !database.credentialId)}
             aria-busy={dialogAction === "database"}
             >{#if dialogAction === "database"}<Spinner />{/if}Create Database
-            and attach credential</Button
+            and attach initial credential</Button
           ></Dialog.Footer
         >
       </form>

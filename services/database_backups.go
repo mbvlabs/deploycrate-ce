@@ -349,7 +349,7 @@ func (service *DatabaseBackups) CreateForResource(
 		return models.BackupPolicyEntity{}, err
 	}
 	defer tx.Rollback()
-	resource, err := models.Resource.Find(ctx, tx, resourceID)
+	resource, err := models.Resource.FindActive(ctx, tx, resourceID, true)
 	if err != nil || resource.ArchivedAt.Valid || !resourceHasDatabase(resource, databaseName) {
 		return models.BackupPolicyEntity{}, models.ErrNotFound
 	}
