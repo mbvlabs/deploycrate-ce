@@ -33,16 +33,33 @@ var ErrSystemResourceImmutable = errors.New("DeployCrate system Resources cannot
 type ResourceManagement struct {
 	db        storage.Pool
 	config    config.Config
-	container *ContainerExecution
+	container ResourceContainerService
 	postgres  postgresqlclient.Client
 	secrets   *EnvironmentSecrets
+}
+
+type ResourceContainerService interface {
+	Run(context.Context, uuid.UUID, models.ServerCapability, containerclient.RunSpec) error
+	Inspect(
+		context.Context,
+		uuid.UUID,
+		models.ServerCapability,
+		string,
+		string,
+	) (containerclient.State, error)
+	Logs(context.Context, uuid.UUID, models.ServerCapability, string, string, int) (string, error)
+	Start(context.Context, uuid.UUID, models.ServerCapability, string, string) error
+	Stop(context.Context, uuid.UUID, models.ServerCapability, string, string) error
+	Restart(context.Context, uuid.UUID, models.ServerCapability, string, string) error
+	Remove(context.Context, uuid.UUID, models.ServerCapability, string, string) error
+	RemoveVolume(context.Context, uuid.UUID, models.ServerCapability, string) error
 }
 
 func NewResourceManagement(
 	db storage.Pool,
 	cfg config.Config,
 	secrets *EnvironmentSecrets,
-	container *ContainerExecution,
+	container ResourceContainerService,
 ) *ResourceManagement {
 	return &ResourceManagement{
 		db:        db,
@@ -117,7 +134,11 @@ func resourceCredentialMetadataForDatabase(
 ) (json.RawMessage, error) {
 	values := make(map[string]any)
 	if len(metadata) > 0 && json.Unmarshal(metadata, &values) != nil {
-		return nil, domainError("credential.metadata", "invalid", "credential metadata must be valid JSON")
+		return nil, domainError(
+			"credential.metadata",
+			"invalid",
+			"credential metadata must be valid JSON",
+		)
 	}
 	if values == nil {
 		values = make(map[string]any)
@@ -1693,7 +1714,11 @@ func (service *ResourceManagement) createEndpoint(
 	caddySettings := entity.ParsedSettings().Caddy
 	isCaddyEndpoint := caddySettings != nil && caddySettings.Managed
 	if !isCaddyEndpoint && input.Role == "primary" && input.PrivateNetworkID == nil {
-		primaryEndpoints, err := models.ResourceEndpoint.ActivePrimaryPublicCount(ctx, db, resource.ID)
+		primaryEndpoints, err := models.ResourceEndpoint.ActivePrimaryPublicCount(
+			ctx,
+			db,
+			resource.ID,
+		)
 		if err != nil {
 			return models.ResourceEndpointEntity{}, err
 		}
@@ -1777,7 +1802,11 @@ func (service *ResourceManagement) UpdateEndpoint(
 	inputIsCaddyEndpoint := inputCaddySettings != nil && inputCaddySettings.Managed
 	if !inputIsCaddyEndpoint && input.Role == "primary" && input.PrivateNetworkID == nil &&
 		(current.Role != "primary" || current.PrivateNetworkID != nil) {
-		primaryEndpoints, countErr := models.ResourceEndpoint.ActivePrimaryPublicCount(ctx, tx, resourceID)
+		primaryEndpoints, countErr := models.ResourceEndpoint.ActivePrimaryPublicCount(
+			ctx,
+			tx,
+			resourceID,
+		)
 		if countErr != nil {
 			return models.ResourceEndpointEntity{}, countErr
 		}
@@ -1935,7 +1964,11 @@ func (service *ResourceManagement) archiveEndpoint(
 		)
 	}
 	if !systemManaged && endpoint.Role == "primary" && endpoint.PrivateNetworkID == nil {
-		primaryEndpoints, countErr := models.ResourceEndpoint.ActivePrimaryPublicCount(ctx, tx, resourceID)
+		primaryEndpoints, countErr := models.ResourceEndpoint.ActivePrimaryPublicCount(
+			ctx,
+			tx,
+			resourceID,
+		)
 		if countErr != nil {
 			return countErr
 		}
@@ -2116,7 +2149,12 @@ func (service *ResourceManagement) updateCredential(
 	if err != nil {
 		return models.ResourceCredentialEntity{}, err
 	}
-	current, err := models.ResourceCredential.LockActiveForResource(ctx, tx, resourceID, credentialID)
+	current, err := models.ResourceCredential.LockActiveForResource(
+		ctx,
+		tx,
+		resourceID,
+		credentialID,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.ResourceCredentialEntity{}, models.ErrNotFound
 	}
@@ -2277,7 +2315,12 @@ func (service *ResourceManagement) UpdateConnectionEnvironmentKeys(
 	if err != nil {
 		return err
 	}
-	connection, err := models.EnvironmentResource.LockActiveConnection(ctx, tx, resourceID, connectionID)
+	connection, err := models.EnvironmentResource.LockActiveConnection(
+		ctx,
+		tx,
+		resourceID,
+		connectionID,
+	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return errors.Join(
@@ -2510,7 +2553,12 @@ func (service *ResourceManagement) CreateInstallation(
 	if err != nil {
 		return models.ResourceInstallationEntity{}, err
 	}
-	healthChecks, err := models.ResourceHealthCheck.ActiveKindCount(ctx, tx, resource.ID, resource.Engine())
+	healthChecks, err := models.ResourceHealthCheck.ActiveKindCount(
+		ctx,
+		tx,
+		resource.ID,
+		resource.Engine(),
+	)
 	if err != nil {
 		return models.ResourceInstallationEntity{}, err
 	}
@@ -2615,7 +2663,12 @@ func (service *ResourceManagement) UpdateInstallation(
 	if err != nil {
 		return models.ResourceInstallationEntity{}, err
 	}
-	current, err := models.ResourceInstallation.LockActiveForResource(ctx, tx, resourceID, installationID)
+	current, err := models.ResourceInstallation.LockActiveForResource(
+		ctx,
+		tx,
+		resourceID,
+		installationID,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return models.ResourceInstallationEntity{}, models.ErrNotFound
 	}
@@ -2680,7 +2733,12 @@ func (service *ResourceManagement) UpdateInstallation(
 	if err != nil {
 		return models.ResourceInstallationEntity{}, err
 	}
-	privateEndpoints, err := models.ResourceEndpoint.ActivePrivateCount(ctx, tx, resourceID, uuid.Nil)
+	privateEndpoints, err := models.ResourceEndpoint.ActivePrivateCount(
+		ctx,
+		tx,
+		resourceID,
+		uuid.Nil,
+	)
 	if err != nil {
 		return models.ResourceInstallationEntity{}, err
 	}
@@ -3079,7 +3137,12 @@ func (service *ResourceManagement) validateInstallationMove(
 	db storage.Executor,
 	installationID, targetServerID uuid.UUID,
 ) error {
-	conflicts, err := models.ResourceInstallation.MoveConflicts(ctx, db, installationID, targetServerID)
+	conflicts, err := models.ResourceInstallation.MoveConflicts(
+		ctx,
+		db,
+		installationID,
+		targetServerID,
+	)
 	if err != nil {
 		return err
 	}
@@ -3122,7 +3185,11 @@ func (service *ResourceManagement) ArchiveInstallation(
 	if err != nil {
 		return err
 	}
-	dependencies, err := models.ResourceInstallation.ActiveMountDependencyCount(ctx, tx, installationID)
+	dependencies, err := models.ResourceInstallation.ActiveMountDependencyCount(
+		ctx,
+		tx,
+		installationID,
+	)
 	if err != nil {
 		return err
 	}
@@ -3420,7 +3487,12 @@ func (service *ResourceManagement) UpdateMount(
 	if err != nil {
 		return models.ResourceVolumeMountEntity{}, err
 	}
-	owned, err := models.ResourceVolume.OwnedByResource(ctx, tx, current.ResourceVolumeID, resourceID)
+	owned, err := models.ResourceVolume.OwnedByResource(
+		ctx,
+		tx,
+		current.ResourceVolumeID,
+		resourceID,
+	)
 	if err != nil || !owned {
 		if err != nil {
 			return models.ResourceVolumeMountEntity{}, err
