@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"deploycrate-ce/database/seeds"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
 	"deploycrate-ce/models/factories"
@@ -107,7 +108,7 @@ func TestEnvironmentsControllerIndexUsesDatabase(t *testing.T) {
 }
 
 func TestEnvironmentsControllerDestroyDeletesEnvironmentAndEmptyApplication(t *testing.T) {
-	db := newControllerTestDB(t, nil)
+	db := newControllerTestDB(t, seeds.UI)
 	application, err := factories.CreateApplication(
 		t.Context(),
 		db.Executor(),

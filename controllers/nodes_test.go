@@ -36,6 +36,27 @@ func (queue failingControllerInsertQueue) InsertTx(
 	return nil, queue.err
 }
 
+func createControllerNodeEnrollment(
+	t *testing.T,
+	db storage.Pool,
+	data models.CreateNodeEnrollmentData,
+) models.NodeEnrollmentEntity {
+	t.Helper()
+	tx, err := db.BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatalf("begin Node enrollment fixture transaction: %v", err)
+	}
+	defer tx.Rollback()
+	enrollment, err := models.NodeEnrollment.Create(t.Context(), tx, data)
+	if err != nil {
+		t.Fatalf("create Node enrollment fixture: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit Node enrollment fixture: %v", err)
+	}
+	return enrollment
+}
+
 func TestNodesControllerIndexAndShowUseDatabase(t *testing.T) {
 	db := newControllerTestDB(t, seeds.UI)
 	configuration := controllerTestConfig(t)
@@ -45,9 +66,9 @@ func TestNodesControllerIndexAndShowUseDatabase(t *testing.T) {
 	}
 	var firstEnrollmentID uuid.UUID
 	for index, worker := range workers {
-		enrollment, createErr := models.NodeEnrollment.Create(
-			t.Context(),
-			db.Executor(),
+		enrollment := createControllerNodeEnrollment(
+			t,
+			db,
 			models.CreateNodeEnrollmentData{
 				HostFingerprint:  "SHA256:integration-fingerprint",
 				AllocatedAddress: fmt.Sprintf("10.99.1.%d", index+2),
@@ -55,9 +76,6 @@ func TestNodesControllerIndexAndShowUseDatabase(t *testing.T) {
 				ServerID:         worker.ID,
 			},
 		)
-		if createErr != nil {
-			t.Fatalf("create Node enrollment fixture: %v", createErr)
-		}
 		if firstEnrollmentID == uuid.Nil {
 			firstEnrollmentID = enrollment.ID
 		}
@@ -116,7 +134,7 @@ func TestNodesControllerCreateValidationDoesNotWriteDatabase(t *testing.T) {
 		t,
 		http.MethodPost,
 		routes.NodeCreate.URL(),
-		map[string]any{"name": "", "address": "not-an-address", "port": 0},
+		map[string]any{"name": "", "address": "bad address", "port": 0},
 		nil,
 		controller.Create,
 	), "Nodes/New")
@@ -143,9 +161,9 @@ func TestNodesControllerConfirmRollsBackWhenQueueInsertFails(t *testing.T) {
 	if err != nil || len(workers) == 0 {
 		t.Fatalf("load seeded worker Server: workers=%d err=%v", len(workers), err)
 	}
-	enrollment, err := models.NodeEnrollment.Create(
-		t.Context(),
-		db.Executor(),
+	enrollment := createControllerNodeEnrollment(
+		t,
+		db,
 		models.CreateNodeEnrollmentData{
 			HostFingerprint:  "SHA256:rollback-fingerprint",
 			AllocatedAddress: "10.99.2.2",
@@ -153,9 +171,6 @@ func TestNodesControllerConfirmRollsBackWhenQueueInsertFails(t *testing.T) {
 			ServerID:         workers[0].ID,
 		},
 	)
-	if err != nil {
-		t.Fatalf("create Node enrollment fixture: %v", err)
-	}
 	queueFailure := errors.New("integration queue failure")
 	controller := NewNodes(
 		services.NewNodeEnrollment(

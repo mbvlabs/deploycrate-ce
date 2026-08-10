@@ -49,7 +49,7 @@ func TestResourcesControllerCredentialLifecycleUsesDatabase(t *testing.T) {
 	)
 	controller := NewResources(
 		service,
-		nil,
+		services.NewResourcePrivateAccess(db, nil),
 		nil,
 		nil,
 		nil,
@@ -168,7 +168,7 @@ func TestResourcesControllerEndpointAndHealthCheckLifecycleUsesDatabase(t *testi
 			nil,
 			&fakeResourceContainers{},
 		),
-		nil,
+		services.NewResourcePrivateAccess(db, nil),
 		nil,
 		nil,
 		nil,
@@ -368,7 +368,7 @@ func TestResourcesControllerEndpointAndHealthCheckLifecycleUsesDatabase(t *testi
 		t.Fatal("Resource health check was not archived")
 	}
 
-	destroyEndpointResponse := controllerRequest(
+	destroyEndpointPage := requireControllerComponent(t, controllerRequest(
 		t,
 		http.MethodDelete,
 		routes.ResourceEndpointDestroy.URL(endpointParams),
@@ -378,21 +378,20 @@ func TestResourcesControllerEndpointAndHealthCheckLifecycleUsesDatabase(t *testi
 			{Name: "endpointID", Value: endpoint.ID.String()},
 		},
 		controller.DestroyEndpoint,
-	)
-	if destroyEndpointResponse.Code != http.StatusSeeOther {
-		t.Fatalf(
-			"destroy endpoint status = %d, want %d; body: %s",
-			destroyEndpointResponse.Code,
-			http.StatusSeeOther,
-			destroyEndpointResponse.Body,
-		)
+	), "Resources/Show")
+	var destroyErrors map[string]string
+	if err := json.Unmarshal(destroyEndpointPage.Props["errors"], &destroyErrors); err != nil {
+		t.Fatalf("decode endpoint destroy validation errors: %v", err)
 	}
-	archivedEndpoint, err := models.ResourceEndpoint.Find(t.Context(), db.Executor(), endpoint.ID)
+	if destroyErrors["endpoint"] == "" {
+		t.Fatalf("endpoint destroy validation errors = %v", destroyErrors)
+	}
+	retainedEndpoint, err := models.ResourceEndpoint.Find(t.Context(), db.Executor(), endpoint.ID)
 	if err != nil {
-		t.Fatalf("load archived Resource endpoint: %v", err)
+		t.Fatalf("load retained Resource endpoint: %v", err)
 	}
-	if !archivedEndpoint.ArchivedAt.Valid {
-		t.Fatal("Resource endpoint was not archived")
+	if retainedEndpoint.ArchivedAt.Valid {
+		t.Fatal("sole primary Resource endpoint was archived despite the topology invariant")
 	}
 }
 
