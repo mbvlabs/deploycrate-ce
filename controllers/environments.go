@@ -886,6 +886,7 @@ func (c Environments) showSection(etx *echo.Context, section string) error {
 			params.ApplicationID,
 			params.EnvironmentID,
 			telemetryRange,
+			etx.QueryParam("responseClass"),
 		)
 		if err != nil {
 			slog.WarnContext(

@@ -283,6 +283,9 @@ export type DatabaseTelemetryPoint = {
 export type TraceSummary = {
   traceId: string;
   rootSpanName: string;
+  requestMethod: string;
+  requestRoute: string;
+  responseCode: number;
   startedAt: string;
   durationNs: number;
   spanCount: number;

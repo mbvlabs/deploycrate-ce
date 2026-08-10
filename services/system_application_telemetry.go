@@ -91,6 +91,7 @@ func (service *SystemApplicationTelemetry) Snapshot(
 		clickhouseclient.ServiceTelemetryScope(service.serviceName, service.namespace),
 		time.Now().UTC().Add(-telemetryRange.Duration()),
 		telemetryRange.Bucket(),
+		0,
 	)
 }
 

@@ -21,12 +21,15 @@ type SlowQueryResult struct {
 }
 
 type TraceSummaryResult struct {
-	TraceID      string
-	RootSpanName string
-	StartedAt    time.Time
-	DurationNS   uint64
-	SpanCount    uint64
-	ErrorCount   uint64
+	TraceID       string
+	RootSpanName  string
+	RequestMethod string
+	RequestRoute  string
+	ResponseCode  uint16
+	StartedAt     time.Time
+	DurationNS    uint64
+	SpanCount     uint64
+	ErrorCount    uint64
 }
 
 type TraceSpanResult struct {
@@ -263,18 +266,23 @@ func (client Queries) RecentTraces(
 	ctx context.Context,
 	scope TelemetryScope,
 	since time.Time,
+	responseClass uint8,
 ) ([]TraceSummaryResult, error) {
 	query := telemetryQuery(recentTracesQuery, scope)
 	type traceSummaryRow struct {
 		TraceID              string `json:"trace_id"`
 		RootSpanName         string `json:"root_span_name"`
+		RequestMethod        string `json:"request_method"`
+		RequestRoute         string `json:"request_route"`
+		ResponseCode         uint16 `json:"response_code"`
 		TimestampNanoseconds string `json:"timestamp_nanoseconds"`
 		DurationNanoseconds  string `json:"duration_nanoseconds"`
 		SpanCount            string `json:"span_count"`
 		ErrorCount           string `json:"error_count"`
 	}
 	rows, err := queryJSONRows[traceSummaryRow](ctx, client, query, scope.params(map[string]string{
-		"since_seconds": strconv.FormatInt(since.Unix(), 10),
+		"since_seconds":  strconv.FormatInt(since.Unix(), 10),
+		"response_class": strconv.FormatUint(uint64(responseClass), 10),
 	}))
 	if err != nil {
 		return nil, err
@@ -298,8 +306,9 @@ func (client Queries) RecentTraces(
 			return nil, fmt.Errorf("decode ClickHouse trace summary error count: %w", parseErr)
 		}
 		result = append(result, TraceSummaryResult{
-			TraceID:      row.TraceID,
-			RootSpanName: row.RootSpanName,
+			TraceID: row.TraceID, RootSpanName: row.RootSpanName,
+			RequestMethod: row.RequestMethod, RequestRoute: row.RequestRoute,
+			ResponseCode: row.ResponseCode,
 			StartedAt:    time.Unix(0, timestamp).UTC(),
 			DurationNS:   duration,
 			SpanCount:    spanCount,

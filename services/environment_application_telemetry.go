@@ -58,11 +58,16 @@ func (service *EnvironmentApplicationTelemetry) Snapshot(
 	applicationID uuid.UUID,
 	environmentID uuid.UUID,
 	telemetryRange TelemetryRange,
+	responseClass string,
 ) (ApplicationTelemetry, error) {
 	if err := service.ensureEnabled(ctx, applicationID, environmentID); err != nil {
 		return ApplicationTelemetry{}, err
 	}
 	client, err := service.resource.Queries(ctx)
+	if err != nil {
+		return ApplicationTelemetry{}, err
+	}
+	class, err := telemetryResponseClass(responseClass)
 	if err != nil {
 		return ApplicationTelemetry{}, err
 	}
@@ -72,6 +77,7 @@ func (service *EnvironmentApplicationTelemetry) Snapshot(
 		clickhouseclient.EnvironmentTelemetryScope(environmentID.String()),
 		time.Now().UTC().Add(-telemetryRange.Duration()),
 		telemetryRange.Bucket(),
+		class,
 	)
 }
 
@@ -120,9 +126,9 @@ func (service *EnvironmentApplicationTelemetry) Logs(
 	if utf8.RuneCountInString(search) > maxSystemLogSearch {
 		return SystemLogSnapshot{}, ErrInvalidSystemLogSearch
 	}
-	class, ok := map[string]uint8{"": 0, "2xx": 2, "3xx": 3, "4xx": 4, "5xx": 5}[responseClass]
-	if !ok {
-		return SystemLogSnapshot{}, ErrInvalidTelemetryResponseClass
+	class, err := telemetryResponseClass(responseClass)
+	if err != nil {
+		return SystemLogSnapshot{}, err
 	}
 	client, err := service.resource.Queries(ctx)
 	if err != nil {
@@ -145,6 +151,14 @@ func (service *EnvironmentApplicationTelemetry) Logs(
 		return SystemLogSnapshot{}, err
 	}
 	return systemLogSnapshot(page, after)
+}
+
+func telemetryResponseClass(value string) (uint8, error) {
+	class, ok := map[string]uint8{"": 0, "2xx": 2, "3xx": 3, "4xx": 4, "5xx": 5}[value]
+	if !ok {
+		return 0, ErrInvalidTelemetryResponseClass
+	}
+	return class, nil
 }
 
 func (service *EnvironmentApplicationTelemetry) Trace(

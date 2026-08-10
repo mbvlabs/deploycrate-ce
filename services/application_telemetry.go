@@ -75,12 +75,15 @@ type DatabaseTelemetryPoint struct {
 }
 
 type TraceSummary struct {
-	TraceID      string    `json:"traceId"`
-	RootSpanName string    `json:"rootSpanName"`
-	StartedAt    time.Time `json:"startedAt"`
-	DurationNS   uint64    `json:"durationNs"`
-	SpanCount    uint64    `json:"spanCount"`
-	ErrorCount   uint64    `json:"errorCount"`
+	TraceID       string    `json:"traceId"`
+	RootSpanName  string    `json:"rootSpanName"`
+	RequestMethod string    `json:"requestMethod"`
+	RequestRoute  string    `json:"requestRoute"`
+	ResponseCode  uint16    `json:"responseCode"`
+	StartedAt     time.Time `json:"startedAt"`
+	DurationNS    uint64    `json:"durationNs"`
+	SpanCount     uint64    `json:"spanCount"`
+	ErrorCount    uint64    `json:"errorCount"`
 }
 
 type TraceSpan struct {
@@ -105,6 +108,7 @@ func loadApplicationTelemetry(
 	scope clickhouse.TelemetryScope,
 	since time.Time,
 	bucket time.Duration,
+	responseClass uint8,
 ) (ApplicationTelemetry, error) {
 	result := ApplicationTelemetry{
 		History:      []ApplicationTelemetryPoint{},
@@ -164,7 +168,7 @@ func loadApplicationTelemetry(
 		bucket,
 		time.Since(since),
 	)
-	recentTraces, err := queries.RecentTraces(ctx, scope, since)
+	recentTraces, err := queries.RecentTraces(ctx, scope, since, responseClass)
 	if err != nil {
 		return ApplicationTelemetry{}, err
 	}
@@ -193,7 +197,9 @@ func traceSummaries(rows []clickhouse.TraceSummaryResult) []TraceSummary {
 	result := make([]TraceSummary, 0, len(rows))
 	for _, row := range rows {
 		result = append(result, TraceSummary{
-			TraceID: row.TraceID, RootSpanName: row.RootSpanName, StartedAt: row.StartedAt,
+			TraceID: row.TraceID, RootSpanName: row.RootSpanName,
+			RequestMethod: row.RequestMethod, RequestRoute: row.RequestRoute,
+			ResponseCode: row.ResponseCode, StartedAt: row.StartedAt,
 			DurationNS: row.DurationNS, SpanCount: row.SpanCount, ErrorCount: row.ErrorCount,
 		})
 	}
