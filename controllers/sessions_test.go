@@ -1,19 +1,14 @@
 package controllers
 
 import (
-	"context"
-	"encoding/gob"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"deploycrate-ce/assets"
 	"deploycrate-ce/config"
-	"deploycrate-ce/database"
-	"deploycrate-ce/internal/inertia"
-	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
 	"deploycrate-ce/models/factories"
 	"deploycrate-ce/queue"
@@ -33,35 +28,6 @@ func TestSignIn(t *testing.T) {
 		password = "correct horse battery staple"
 		pepper   = "test-pepper"
 	)
-
-	gob.Register(cookies.FlashMessage{})
-	rootHTML, err := assets.Files.ReadFile("inertia/root.go.html")
-	if err != nil {
-		t.Fatalf("read Inertia root template: %v", err)
-	}
-	viteManifest, err := assets.Files.ReadFile("dist/vite/manifest.json")
-	if err != nil {
-		t.Fatalf("read Vite manifest: %v", err)
-	}
-	if err := inertia.Init(
-		config.ProjectName,
-		config.Env,
-		routes.ViteBuild.Path(),
-		rootHTML,
-		viteManifest,
-	); err != nil {
-		t.Fatalf("initialize Inertia: %v", err)
-	}
-
-	cluster, err := storage.NewTestCluster(context.Background())
-	if err != nil {
-		t.Fatalf("start Postgres test cluster: %v", err)
-	}
-	t.Cleanup(func() {
-		if err := cluster.Close(context.Background()); err != nil {
-			t.Errorf("close Postgres test cluster: %v", err)
-		}
-	})
 
 	cfg := signInTestConfig(t, pepper)
 	tests := []struct {
@@ -131,7 +97,7 @@ func TestSignIn(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			db := cluster.NewTestDB(t, database.Migrations, "migrations")
+			db := newControllerTestDB(t, nil)
 			if test.createUser {
 				hash, err := models.HashPassword(password, pepper)
 				if err != nil {
@@ -143,6 +109,11 @@ func TestSignIn(t *testing.T) {
 				}
 				if test.verified {
 					options = append(options, factories.WithValidatedEmail())
+				} else {
+					options = append(
+						options,
+						factories.WithUsersEmailValidatedAt(sql.NullTime{}),
+					)
 				}
 				if _, err := factories.CreateUser(
 					t.Context(),
@@ -346,6 +317,7 @@ func signInTestConfig(t *testing.T, pepper string) config.Config {
 	t.Helper()
 
 	for key, value := range map[string]string{
+		"INSTANCE_ID":               "controller-tests",
 		"SESSION_KEY":               "0123456789012345678901234567890123456789012345678901234567890123",
 		"SESSION_ENCRYPTION_KEY":    "0123456789012345678901234567890123456789012345678901234567890123",
 		"TOKEN_SIGNING_KEY":         "test-signing-key",
@@ -359,6 +331,12 @@ func signInTestConfig(t *testing.T, pepper string) config.Config {
 		"DB_PASSWORD":               "test",
 		"DB_KIND":                   "postgres",
 		"DB_SSL_MODE":               "disable",
+		"CLICKHOUSE_PROTOCOL":       "http",
+		"CLICKHOUSE_HOST":           "localhost",
+		"CLICKHOUSE_PORT":           "8123",
+		"CLICKHOUSE_DATABASE":       "test",
+		"CLICKHOUSE_USER":           "test",
+		"CLICKHOUSE_PASSWORD":       "test",
 		"AWS_SES_ACCESS_KEY_ID":     "test",
 		"AWS_SES_SECRET_ACCESS_KEY": "test",
 		"AWS_SES_CONFIGURATION_SET": "test",
