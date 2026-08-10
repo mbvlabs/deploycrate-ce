@@ -311,6 +311,7 @@ func signInTestConfig(t *testing.T, pepper string) config.Config {
 	t.Helper()
 
 	for key, value := range map[string]string{
+		"INSTANCE_ID":               "controller-tests",
 		"SESSION_KEY":               "0123456789012345678901234567890123456789012345678901234567890123",
 		"SESSION_ENCRYPTION_KEY":    "0123456789012345678901234567890123456789012345678901234567890123",
 		"TOKEN_SIGNING_KEY":         "test-signing-key",
@@ -324,6 +325,12 @@ func signInTestConfig(t *testing.T, pepper string) config.Config {
 		"DB_PASSWORD":               "test",
 		"DB_KIND":                   "postgres",
 		"DB_SSL_MODE":               "disable",
+		"CLICKHOUSE_PROTOCOL":       "http",
+		"CLICKHOUSE_HOST":           "localhost",
+		"CLICKHOUSE_PORT":           "8123",
+		"CLICKHOUSE_DATABASE":       "test",
+		"CLICKHOUSE_USER":           "test",
+		"CLICKHOUSE_PASSWORD":       "test",
 		"AWS_SES_ACCESS_KEY_ID":     "test",
 		"AWS_SES_SECRET_ACCESS_KEY": "test",
 		"AWS_SES_CONFIGURATION_SET": "test",
