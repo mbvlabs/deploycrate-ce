@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -108,6 +109,11 @@ func TestSignIn(t *testing.T) {
 				}
 				if test.verified {
 					options = append(options, factories.WithValidatedEmail())
+				} else {
+					options = append(
+						options,
+						factories.WithUsersEmailValidatedAt(sql.NullTime{}),
+					)
 				}
 				if _, err := factories.CreateUser(
 					t.Context(),

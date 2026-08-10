@@ -570,13 +570,15 @@ func TestResourcesControllerDatabaseLifecycle(t *testing.T) {
 	)
 	page := requireControllerComponent(t, indexResponse, "Resources/Index")
 	var listed []struct {
-		ID   uuid.UUID `json:"id"`
-		Slug string    `json:"slug"`
+		ID     uuid.UUID `json:"id"`
+		Name   string    `json:"name"`
+		Engine string    `json:"engine"`
 	}
 	if err := json.Unmarshal(page.Props["resources"], &listed); err != nil {
 		t.Fatalf("decode Resource index props: %v", err)
 	}
-	if len(listed) != 1 || listed[0].ID != resourceID || listed[0].Slug != "integration-cache" {
+	if len(listed) != 1 || listed[0].ID != resourceID ||
+		listed[0].Name != "Integration Cache" || listed[0].Engine != "redis" {
 		t.Fatalf("filtered Resources = %+v", listed)
 	}
 
