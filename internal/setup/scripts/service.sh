@@ -4,7 +4,7 @@ set -euo pipefail
 : "${SERVICE_USER:?SERVICE_USER is required}"
 : "${CADDY_VERSION:?CADDY_VERSION is required}"
 
-install -d -m 0755 /opt/deploycrate-ce/slots/blue /opt/deploycrate-ce/slots/green
+install -d -m 0755 /opt/deploycrate-ce/slots/blue /opt/deploycrate-ce/slots/green /opt/deploycrate-ce/jobs
 install -d -m 0700 /etc/deploycrate-ce/slots
 install -d -m 0755 /var/lib/deploycrate-ce
 install -d -m 0750 -o "${SERVICE_USER}" -g "${SERVICE_USER}" /var/lib/deploycrate-ce/runtime
@@ -39,6 +39,39 @@ ExecStart=/opt/deploycrate-ce/slots/%i/deploycrate-ce
 ExecStop=/bin/kill -SIGTERM \$MAINPID
 KillMode=mixed
 Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+LimitNOFILE=65535
+CPUAccounting=yes
+MemoryAccounting=yes
+IOAccounting=yes
+TasksAccounting=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+job_runner_target="$(readlink -f /opt/deploycrate-ce/slots/blue/deploycrate-ce)"
+ln -sfn "${job_runner_target}" /opt/deploycrate-ce/jobs/deploycrate-ce.next
+mv -Tf /opt/deploycrate-ce/jobs/deploycrate-ce.next /opt/deploycrate-ce/jobs/deploycrate-ce
+
+cat > /etc/systemd/system/deploycrate-ce-jobs.service <<EOF
+[Unit]
+Description=DeployCrate CE background job runner
+Wants=network-online.target otelcol-contrib.service
+After=network-online.target postgresql.service docker.service otelcol-contrib.service
+
+[Service]
+Type=simple
+Slice=system.slice
+User=${SERVICE_USER}
+Group=${SERVICE_USER}
+WorkingDirectory=/opt/deploycrate-ce
+EnvironmentFile=/etc/deploycrate-ce/app.env
+ExecStart=/opt/deploycrate-ce/jobs/deploycrate-ce jobs
+ExecStop=/bin/kill -SIGTERM \$MAINPID
+KillMode=mixed
+Restart=always
 RestartSec=5
 TimeoutStopSec=30
 LimitNOFILE=65535
@@ -107,3 +140,4 @@ if systemctl is-active --quiet deploycrate-ce@green.service; then
 fi
 systemctl enable --now caddy
 systemctl restart caddy
+systemctl enable --now deploycrate-ce-jobs.service

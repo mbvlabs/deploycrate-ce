@@ -82,8 +82,9 @@ func NewProcessor(params ProcessorParams) (Processor, error) {
 			jobs.ReleaseCommandQueue: {MaxWorkers: 4},
 			jobs.DNSQueue:            {MaxWorkers: 4},
 			jobs.NodeEnrollmentQueue: {MaxWorkers: 1},
+			jobs.SelfUpdateQueue:     {MaxWorkers: 1},
 		},
-		RescueStuckJobsAfter: 13 * time.Hour,
+		RescueStuckJobsAfter: 2 * time.Minute,
 		Logger:               slog.Default(),
 		Workers:              params.Workers,
 	})
@@ -182,9 +183,9 @@ func (i InsertOnly) InsertTx(
 
 var _ storage.InsertQueue = InsertOnly{}
 
-func NewInsertOnly(db storage.Pool, workers *river.Workers) (InsertOnly, error) {
+func NewInsertOnly(db storage.Pool) (InsertOnly, error) {
 	riverClient, err := river.NewClient(riverdatabasesql.New(db.Conn()), &river.Config{
-		Workers: workers,
+		Workers: river.NewWorkers(),
 	})
 	if err != nil {
 		return InsertOnly{}, err
@@ -211,5 +212,9 @@ var Module = fx.Module(
 		NewProcessor,
 		fx.Annotate(NewMetricRollupPeriodicJob, fx.ResultTags(periodicJobsGroup)),
 		fx.Annotate(NewResourceHealthPeriodicJob, fx.ResultTags(periodicJobsGroup)),
+		fx.Annotate(
+			NewSelfUpdateReconciliationPeriodicJob,
+			fx.ResultTags(periodicJobsGroup),
+		),
 	),
 )

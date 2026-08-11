@@ -177,13 +177,15 @@ DeployCrate separates temporary bootstrap commands, immutable application releas
 /opt/deploycrate-ce/
 |-- releases/
 |   `-- <version>/deploycrate-ce        Immutable installed application release
+|-- jobs/
+|   `-- deploycrate-ce -> /opt/deploycrate-ce/releases/<runner-version>/deploycrate-ce
 `-- slots/
     |-- blue/deploycrate-ce  -> /opt/deploycrate-ce/releases/<blue-version>/deploycrate-ce
     `-- green/deploycrate-ce -> /opt/deploycrate-ce/releases/<green-version>/deploycrate-ce
                                Created when the first update is staged
 ```
 
-The initial installation creates the blue and green slot directories, installs the selected application release under `/opt/deploycrate-ce/releases/<version>/`, points the blue slot at that release, and starts only `deploycrate-ce@blue.service`. A slot path is an atomic symlink to a release binary. It identifies what that slot will execute, but it does not by itself mean the slot is active.
+The initial installation creates the blue and green slot directories, installs the selected application release under `/opt/deploycrate-ce/releases/<version>/`, points the blue slot and independent job runner at that release, and starts `deploycrate-ce@blue.service` plus `deploycrate-ce-jobs.service`. Web slots only serve requests and enqueue durable River jobs. The job runner owns job execution, update coordination, and periodic reconciliation, so stopping either web slot cannot terminate those workflows.
 
 The remaining DeployCrate-managed locations are:
 
@@ -301,9 +303,9 @@ DeployCrate queries `systemctl is-active` for both slot services. It refuses to 
 
 Development builds use the fixed `https://get-dev.deploycrate.com/dc-ce-app/deploycrate-ce` object and its `.sha256` file. The updater executes the checksum-verified binary's `version` command to identify the target. Builds named `dev` or `development-*` select this source automatically. Other versions require an explicit Cloudflare R2 base URL in `DEPLOYCRATE_CE_RELEASE_BASE_URL`.
 
-During an update, DeployCrate installs the checksum-verified binary in a new immutable release directory, runs that binary's embedded database migrations, repoints only the inactive slot symlink, starts that slot, and checks its database-backed health endpoint. It writes the desired `100/0` to `0/100` traffic switch to PostgreSQL, reconciles that desired route into Caddy, waits until Caddy's admin API reports the selected slot, and requires the public health response to identify the target slot and version. Only then does it update systemd boot state and stop the previous slot. Database checkpoints record each external side effect so a surviving slot can complete a healthy cutover or restore traffic, service enablement, service state, and the previous inactive-slot symlink after interruption. Success is recorded only after the old service is inactive and the persisted topology is committed.
+During an update, the durable `system_updates` River job installs the checksum-verified binary in a new immutable release directory, runs that binary's embedded database migrations, repoints only the inactive slot symlink, starts that slot, and checks its database-backed health endpoint. It writes the desired `100/0` to `0/100` traffic switch to PostgreSQL, reconciles that desired route into Caddy, waits until Caddy's admin API reports the selected slot, and requires the public health response to identify the target slot and version. Only then does it update systemd boot state, repoint the independent job-runner symlink, and stop the previous web slot. Database checkpoints record each external side effect so the job runner can complete a healthy cutover or restore traffic, service enablement, service state, and both prior symlink targets after interruption. Success is recorded only after the old service is inactive and the persisted topology is committed.
 
-The running `SelfUpdate` service also reconciles the system route and slot services every 30 seconds. An unresolved update checkpoint is authoritative during a cutover. Outside a cutover, the active database backend is authoritative. The reconciler starts and verifies the database-selected slot, applies its database route to Caddy, confirms the public response came from that slot, enables it for boot, and only then stops the other slot.
+The independent job runner also enqueues system reconciliation every 30 seconds. Each reconciliation attempt has a five-minute deadline. An unresolved update checkpoint is authoritative during a cutover. Outside a cutover, the active database backend is authoritative. The reconciler starts and verifies the database-selected slot, applies its database route to Caddy, confirms the public response came from that slot, enables it for boot, and only then stops the other slot.
 
 Self-update migrations must follow expand-and-contract compatibility because the previous binary remains available during cutover and database migrations are not automatically reversed.
 
@@ -314,8 +316,10 @@ sudo systemctl is-active deploycrate-ce@blue.service
 sudo systemctl is-active deploycrate-ce@green.service
 sudo systemctl is-enabled deploycrate-ce@blue.service
 sudo systemctl is-enabled deploycrate-ce@green.service
+sudo systemctl is-active deploycrate-ce-jobs.service
 readlink -f /opt/deploycrate-ce/slots/blue/deploycrate-ce
 readlink -f /opt/deploycrate-ce/slots/green/deploycrate-ce
+readlink -f /opt/deploycrate-ce/jobs/deploycrate-ce
 ```
 
 The green `readlink` command has no target until the first update has staged a release into that slot.
@@ -325,16 +329,16 @@ The green `readlink` command has no target until the first update has staged a r
 If the dashboard becomes unavailable during a cutover, first inspect both slots and their recent logs:
 
 ```bash
-sudo systemctl status deploycrate-ce@blue.service deploycrate-ce@green.service
-sudo journalctl -u deploycrate-ce@blue.service -u deploycrate-ce@green.service -n 200 --no-pager
+sudo systemctl status deploycrate-ce-jobs.service deploycrate-ce@blue.service deploycrate-ce@green.service
+sudo journalctl -u deploycrate-ce-jobs.service -u deploycrate-ce@blue.service -u deploycrate-ce@green.service -n 200 --no-pager
 curl -fsS -D - -o /dev/null http://127.0.0.1:8080/api/health
 curl -fsS -D - -o /dev/null http://127.0.0.1:8081/api/health
 ```
 
-Healthy responses include `X-DeployCrate-Slot` and `X-DeployCrate-Version`. If at least one slot is healthy, start both units and allow the surviving process to reconcile the durable checkpoint and database route:
+Healthy responses include `X-DeployCrate-Slot` and `X-DeployCrate-Version`. If at least one slot is healthy, ensure the independent runner is active so it can reconcile the durable checkpoint and database route:
 
 ```bash
-sudo systemctl start deploycrate-ce@blue.service deploycrate-ce@green.service
+sudo systemctl start deploycrate-ce-jobs.service
 ```
 
 Wait at least 30 seconds, then inspect the units, the public health identity, and Caddy's managed routes:

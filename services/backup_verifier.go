@@ -257,6 +257,7 @@ func (service *BackupVerifier) verifyServerBackup(
 		"/var/lib/caddy",
 		"/opt/deploycrate-ce/releases",
 		"/opt/deploycrate-ce/slots",
+		"/opt/deploycrate-ce/jobs",
 		sshCARecoveryBundlePath,
 		manifestPath,
 		clickHousePath,
