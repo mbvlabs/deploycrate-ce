@@ -26,6 +26,7 @@ type ApplicationTelemetry struct {
 	Database              DatabaseTelemetry           `json:"database"`
 	RecentTraces          []TraceSummary              `json:"recentTraces"`
 	Routes                []RouteTelemetry            `json:"routes"`
+	Countries             []CountryTelemetry          `json:"countries"`
 	Queries               []QueryTelemetry            `json:"queries"`
 	MoreQueries           bool                        `json:"moreQueries"`
 }
@@ -33,9 +34,15 @@ type ApplicationTelemetry struct {
 type RouteTelemetry struct {
 	Route             string  `json:"route"`
 	Method            string  `json:"method"`
+	Requests          uint64  `json:"requests"`
 	RequestsPerSecond float64 `json:"requestsPerSecond"`
 	ErrorRate         float64 `json:"errorRate"`
 	P95DurationMS     float64 `json:"p95DurationMs"`
+}
+
+type CountryTelemetry struct {
+	Code     string `json:"code"`
+	Requests uint64 `json:"requests"`
 }
 
 type QueryTelemetry struct {
@@ -115,6 +122,7 @@ func loadApplicationTelemetry(
 		Database:     DatabaseTelemetry{History: []DatabaseTelemetryPoint{}},
 		RecentTraces: []TraceSummary{},
 		Routes:       []RouteTelemetry{},
+		Countries:    []CountryTelemetry{},
 		Queries:      []QueryTelemetry{},
 	}
 	overview, err := queries.RequestOverview(ctx, scope)
@@ -368,6 +376,7 @@ func aggregateApplicationHistory(
 	for _, route := range routesByKey {
 		row := RouteTelemetry{
 			Route: route.route, Method: route.method,
+			Requests:          route.histogram.count,
 			RequestsPerSecond: float64(route.histogram.count) / windowSeconds,
 			P95DurationMS:     route.histogram.quantile(0.95) * 1000,
 		}

@@ -2,7 +2,11 @@ package services
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"log/slog"
+	"net"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -23,13 +27,15 @@ var ErrEnvironmentOpenTelemetryUnavailable = errors.New(
 type EnvironmentApplicationTelemetry struct {
 	resource *ClickHouseResource
 	db       storage.Pool
+	geo      GeoResolver
 }
 
 func NewEnvironmentApplicationTelemetry(
 	resource *ClickHouseResource,
 	db storage.Pool,
+	geo GeoResolver,
 ) *EnvironmentApplicationTelemetry {
-	return &EnvironmentApplicationTelemetry{resource: resource, db: db}
+	return &EnvironmentApplicationTelemetry{resource: resource, db: db, geo: geo}
 }
 
 func (service *EnvironmentApplicationTelemetry) Enabled(
@@ -71,14 +77,78 @@ func (service *EnvironmentApplicationTelemetry) Snapshot(
 	if err != nil {
 		return ApplicationTelemetry{}, err
 	}
-	return loadApplicationTelemetry(
+	since := time.Now().UTC().Add(-telemetryRange.Duration())
+	snapshot, err := loadApplicationTelemetry(
 		ctx,
 		client,
 		clickhouseclient.EnvironmentTelemetryScope(environmentID.String()),
-		time.Now().UTC().Add(-telemetryRange.Duration()),
+		since,
 		telemetryRange.Bucket(),
 		class,
 	)
+	if err != nil {
+		return ApplicationTelemetry{}, err
+	}
+	domain, err := models.EnvironmentDomain.PrimaryForEnvironment(
+		ctx,
+		service.db.Executor(),
+		environmentID,
+	)
+	if err != nil {
+		if !errors.Is(err, sql.ErrNoRows) {
+			slog.WarnContext(ctx, "request geography domain lookup failed", "error", err)
+		}
+		return snapshot, nil
+	}
+	addresses, err := client.RequestAddresses(ctx, domain.Hostname, since)
+	if err != nil {
+		slog.WarnContext(ctx, "request geography query failed", "error", err)
+		return snapshot, nil
+	}
+	snapshot.Countries = service.resolveCountries(ctx, addresses)
+	return snapshot, nil
+}
+
+func (service *EnvironmentApplicationTelemetry) resolveCountries(
+	ctx context.Context,
+	rows []clickhouseclient.RequestAddressResult,
+) []CountryTelemetry {
+	requestsByAddress := make(map[string]uint64, len(rows))
+	addresses := make([]string, 0, len(rows))
+	for _, row := range rows {
+		address := net.ParseIP(strings.TrimSpace(row.Address))
+		if address == nil {
+			continue
+		}
+		normalized := address.String()
+		if _, ok := requestsByAddress[normalized]; !ok {
+			addresses = append(addresses, normalized)
+		}
+		requestsByAddress[normalized] += row.Requests
+	}
+	locations, _ := service.geo.Resolve(ctx, addresses)
+	requestsByCountry := make(map[string]uint64)
+	for address, requests := range requestsByAddress {
+		code := strings.ToUpper(strings.TrimSpace(locations[address].CountryCode))
+		if len(code) != 2 {
+			continue
+		}
+		requestsByCountry[code] += requests
+	}
+	countries := make([]CountryTelemetry, 0, len(requestsByCountry))
+	for code, requests := range requestsByCountry {
+		countries = append(countries, CountryTelemetry{Code: code, Requests: requests})
+	}
+	slices.SortFunc(countries, func(left, right CountryTelemetry) int {
+		if left.Requests > right.Requests {
+			return -1
+		}
+		if left.Requests < right.Requests {
+			return 1
+		}
+		return strings.Compare(left.Code, right.Code)
+	})
+	return countries
 }
 
 func (service *EnvironmentApplicationTelemetry) SlowQueries(

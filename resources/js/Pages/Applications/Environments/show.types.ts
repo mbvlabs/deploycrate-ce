@@ -311,9 +311,15 @@ export type TraceSpan = {
 export type RouteTelemetry = {
   route: string;
   method: string;
+  requests: number;
   requestsPerSecond: number;
   errorRate: number;
   p95DurationMs: number;
+};
+
+export type CountryTelemetry = {
+  code: string;
+  requests: number;
 };
 
 export type QueryTelemetry = {
@@ -348,6 +354,7 @@ export type ApplicationTelemetry = {
   };
   recentTraces: TraceSummary[];
   routes: RouteTelemetry[];
+  countries: CountryTelemetry[];
   queries: QueryTelemetry[];
   moreQueries: boolean;
 };

@@ -878,6 +878,7 @@ func (c Environments) showSection(etx *echo.Context, section string) error {
 		},
 		RecentTraces: []services.TraceSummary{},
 		Routes:       []services.RouteTelemetry{},
+		Countries:    []services.CountryTelemetry{},
 		Queries:      []services.QueryTelemetry{},
 	}
 	if section == "telemetry" && openTelemetryAvailable {

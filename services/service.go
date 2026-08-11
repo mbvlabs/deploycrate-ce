@@ -19,6 +19,7 @@ var Module = fx.Module(
 		NewSystemHealth,
 		NewSystemLogs,
 		NewSystemApplicationTelemetry,
+		NewIPAPIGeoResolver,
 		NewEnvironmentApplicationTelemetry,
 		NewTelemetryIdentity,
 		NewResourceCredentials,
