@@ -828,7 +828,7 @@
   });
 
   $effect(() => {
-    if (!live) return;
+    if (!live || activeView === "logs") return;
     let refreshing = false;
     const refresh = () => {
       if (refreshing || document.visibilityState !== "visible") return;
@@ -841,7 +841,7 @@
       });
     };
     refresh();
-    const timer = window.setInterval(refresh, 3000);
+    const timer = window.setInterval(refresh, 10000);
     return () => window.clearInterval(timer);
   });
 </script>

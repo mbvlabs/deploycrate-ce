@@ -17,6 +17,8 @@ FROM metric_rollups
 WHERE scope = {scope:String}
   AND server = {server:String}
   AND ({environment:String} = '' OR environment = {environment:String})
+  AND ({root_only:UInt8} = 0 OR instance = '')
+  AND bucket_start >= now() - INTERVAL 10 MINUTE
 GROUP BY
   scope,
   component,

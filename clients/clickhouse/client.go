@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"deploycrate-ce/telemetry"
@@ -20,13 +21,29 @@ type Client struct {
 	user     string
 	password string
 	client   *http.Client
+	requests chan struct{}
 }
+
+const maxConcurrentRequests = 4
 
 func New(baseURL, database, user, password string) Client {
 	return Client{
 		baseURL: baseURL, database: database, user: user, password: password,
-		client: telemetry.NewHTTPClient(15 * time.Second),
+		client:   telemetry.NewHTTPClient(15 * time.Second),
+		requests: make(chan struct{}, maxConcurrentRequests),
 	}
+}
+
+type responseBody struct {
+	io.ReadCloser
+	release func()
+	once    sync.Once
+}
+
+func (body *responseBody) Close() error {
+	err := body.ReadCloser.Close()
+	body.once.Do(body.release)
+	return err
 }
 
 func (client Client) Ping(ctx context.Context) (string, error) {
@@ -66,7 +83,7 @@ func (client Client) Query(
 	statement string,
 	parameters map[string]string,
 ) (io.ReadCloser, error) {
-	return client.do(ctx, statement, parameters, nil, nil, "")
+	return client.do(ctx, statement, parameters, nil, nil, "", true)
 }
 
 // Insert sends a streaming request body to a parameterized insert statement.
@@ -78,7 +95,7 @@ func (client Client) Insert(
 	body io.Reader,
 	contentType string,
 ) error {
-	responseBody, err := client.do(ctx, statement, parameters, settings, body, contentType)
+	responseBody, err := client.do(ctx, statement, parameters, settings, body, contentType, false)
 	if err != nil {
 		return err
 	}
@@ -92,6 +109,7 @@ func (client Client) do(
 	settings map[string]string,
 	body io.Reader,
 	contentType string,
+	limitConcurrency bool,
 ) (io.ReadCloser, error) {
 	endpoint, err := url.Parse(client.baseURL)
 	if err != nil {
@@ -115,6 +133,19 @@ func (client Client) do(
 	if contentType != "" {
 		request.Header.Set("Content-Type", contentType)
 	}
+	release := func() {}
+	if limitConcurrency {
+		release, err = client.acquire(ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
+	handedOff := false
+	defer func() {
+		if !handedOff {
+			release()
+		}
+	}()
 	response, err := client.client.Do(request)
 	if err != nil {
 		return nil, fmt.Errorf("execute ClickHouse request: %w", err)
@@ -128,5 +159,21 @@ func (client Client) do(
 			string(message),
 		)
 	}
+	handedOff = true
+	if limitConcurrency {
+		return &responseBody{ReadCloser: response.Body, release: release}, nil
+	}
 	return response.Body, nil
+}
+
+func (client Client) acquire(ctx context.Context) (func(), error) {
+	if client.requests == nil {
+		return func() {}, nil
+	}
+	select {
+	case client.requests <- struct{}{}:
+		return func() { <-client.requests }, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("wait for ClickHouse request capacity: %w", ctx.Err())
+	}
 }

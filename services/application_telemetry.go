@@ -7,6 +7,8 @@ import (
 	"time"
 
 	clickhouse "deploycrate-ce/database/clickhouse"
+
+	"golang.org/x/sync/errgroup"
 )
 
 type ApplicationTelemetry struct {
@@ -109,15 +111,8 @@ type TraceSpan struct {
 	DurationNS         uint64            `json:"durationNs"`
 }
 
-func loadApplicationTelemetry(
-	ctx context.Context,
-	queries clickhouse.Queries,
-	scope clickhouse.TelemetryScope,
-	since time.Time,
-	bucket time.Duration,
-	responseClass uint8,
-) (ApplicationTelemetry, error) {
-	result := ApplicationTelemetry{
+func EmptyApplicationTelemetry() ApplicationTelemetry {
+	return ApplicationTelemetry{
 		History:      []ApplicationTelemetryPoint{},
 		Database:     DatabaseTelemetry{History: []DatabaseTelemetryPoint{}},
 		RecentTraces: []TraceSummary{},
@@ -125,8 +120,59 @@ func loadApplicationTelemetry(
 		Countries:    []CountryTelemetry{},
 		Queries:      []QueryTelemetry{},
 	}
-	overview, err := queries.RequestOverview(ctx, scope)
-	if err != nil {
+}
+
+type applicationTelemetryLoadOptions struct {
+	includeRequestOverview bool
+	includeDatabaseErrors  bool
+	includeSlowQueries     bool
+}
+
+func loadApplicationTelemetry(
+	ctx context.Context,
+	queries clickhouse.Queries,
+	scope clickhouse.TelemetryScope,
+	since time.Time,
+	bucket time.Duration,
+	options applicationTelemetryLoadOptions,
+) (ApplicationTelemetry, error) {
+	result := EmptyApplicationTelemetry()
+	var (
+		overview       *clickhouse.RequestOverview
+		deltas         []clickhouse.HistogramDelta
+		databaseErrors map[int64]float64
+		slowQueries    []clickhouse.SlowQueryResult
+		moreQueries    bool
+	)
+	group, groupContext := errgroup.WithContext(ctx)
+	group.SetLimit(4)
+	if options.includeRequestOverview {
+		group.Go(func() error {
+			var err error
+			overview, err = queries.RequestOverview(groupContext, scope)
+			return err
+		})
+	}
+	group.Go(func() error {
+		var err error
+		deltas, err = queries.ApplicationMetricDeltas(groupContext, scope, since, bucket)
+		return err
+	})
+	if options.includeDatabaseErrors {
+		group.Go(func() error {
+			var err error
+			databaseErrors, err = queries.DatabaseErrorHistory(groupContext, scope, since, bucket)
+			return err
+		})
+	}
+	if options.includeSlowQueries {
+		group.Go(func() error {
+			var err error
+			slowQueries, moreQueries, err = queries.SlowQueries(groupContext, scope, since, 10)
+			return err
+		})
+	}
+	if err := group.Wait(); err != nil {
 		return ApplicationTelemetry{}, err
 	}
 	if overview != nil && overview.WindowSeconds > 0 {
@@ -140,51 +186,12 @@ func loadApplicationTelemetry(
 			result.MeanRequestDurationMS = overview.DurationSum / overview.Requests * 1000
 		}
 	}
-	runtime, err := queries.RuntimeOverview(ctx, scope)
-	if err != nil {
-		return ApplicationTelemetry{}, err
-	}
-	for _, metric := range runtime {
-		result.Available = true
-		if metric.ObservedAt.After(result.ObservedAt) {
-			result.ObservedAt = metric.ObservedAt
-		}
-		switch metric.Metric {
-		case "go.memory.used":
-			result.RuntimeMemoryBytes = metric.Value
-		case "go.memory.allocated":
-			result.HeapAllocatedBytes = metric.Value
-		case "go.memory.allocations":
-			result.HeapAllocations = metric.Value
-		case "go.memory.gc.goal":
-			result.HeapGoalBytes = metric.Value
-		case "go.goroutine.count":
-			result.Goroutines = metric.Value
-		}
-	}
-	deltas, err := queries.ApplicationMetricDeltas(ctx, scope, since, bucket)
-	if err != nil {
-		return ApplicationTelemetry{}, err
-	}
-	databaseErrors, err := queries.DatabaseErrorHistory(ctx, scope, since, bucket)
-	if err != nil {
-		return ApplicationTelemetry{}, err
-	}
 	result.History, result.Database, result.Routes = aggregateApplicationHistory(
 		deltas,
 		databaseErrors,
 		bucket,
 		time.Since(since),
 	)
-	recentTraces, err := queries.RecentTraces(ctx, scope, since, responseClass)
-	if err != nil {
-		return ApplicationTelemetry{}, err
-	}
-	result.RecentTraces = traceSummaries(recentTraces)
-	slowQueries, moreQueries, err := queries.SlowQueries(ctx, scope, since, 10)
-	if err != nil {
-		return ApplicationTelemetry{}, err
-	}
 	result.Queries = queryTelemetry(slowQueries)
 	result.MoreQueries = moreQueries
 	return result, nil

@@ -2,6 +2,10 @@
 package controllers
 
 import (
+	"net/http"
+	"slices"
+	"strings"
+
 	"deploycrate-ce/controllers/api"
 	"deploycrate-ce/router"
 
@@ -9,6 +13,24 @@ import (
 )
 
 var otherCache = NewCacheBuilder[string]().WithSize(2).Build
+
+func inertiaPropRequested(request *http.Request, component string, names ...string) bool {
+	partialComponent := strings.TrimSpace(request.Header.Get("X-Inertia-Partial-Component"))
+	if partialComponent == "" || partialComponent != component {
+		return true
+	}
+	requested := strings.TrimSpace(request.Header.Get("X-Inertia-Partial-Data"))
+	if requested == "" {
+		return true
+	}
+	for value := range strings.SplitSeq(requested, ",") {
+		value = strings.TrimSpace(value)
+		if slices.Contains(names, value) {
+			return true
+		}
+	}
+	return false
+}
 
 var constructors = fx.Provide(
 	otherCache,

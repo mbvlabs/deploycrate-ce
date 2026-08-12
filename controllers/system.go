@@ -7,6 +7,7 @@ import (
 	"maps"
 	"net/http"
 	"strings"
+	"sync"
 
 	"deploycrate-ce/internal/inertia"
 	"deploycrate-ce/internal/request"
@@ -476,6 +477,10 @@ func systemFlashProps(
 
 func (s System) Telemetry(etx *echo.Context) error {
 	telemetryRange := services.ParseTelemetryRange(etx.QueryParam("range"))
+	view := strings.TrimSpace(etx.QueryParam("view"))
+	if view != "services" && view != "logs" && view != "traces" {
+		view = "overview"
+	}
 	overview, err := models.Application.FindSystemOverview(
 		etx.Request().Context(),
 		s.db.Executor(),
@@ -483,35 +488,52 @@ func (s System) Telemetry(etx *echo.Context) error {
 	if err != nil {
 		return s.renderLoadError(etx, "telemetry", err)
 	}
-	metricData, err := s.metric.SystemTelemetry(
-		etx.Request().Context(),
-		overview.ServerID,
-		telemetryRange,
-	)
-	if err != nil {
+	metricData := services.EmptySystemTelemetry()
+	applicationData := services.EmptyApplicationTelemetry()
+	loadMetrics := (view == "overview" || view == "services") &&
+		inertiaPropRequested(etx.Request(), "System/Telemetry", "telemetry")
+	loadApplication := (view == "overview" || view == "traces") &&
+		inertiaPropRequested(etx.Request(), "System/Telemetry", "applicationTelemetry")
+	var metricErr, applicationErr error
+	group := sync.WaitGroup{}
+	if loadMetrics {
+		group.Go(func() {
+			metricData, metricErr = s.metric.SystemTelemetry(
+				etx.Request().Context(),
+				overview.ServerID,
+				telemetryRange,
+			)
+		})
+	}
+	if loadApplication {
+		group.Go(func() {
+			if view == "traces" {
+				applicationData, applicationErr = s.appTelemetry.RecentTraces(
+					etx.Request().Context(), telemetryRange,
+				)
+			} else {
+				applicationData, applicationErr = s.appTelemetry.Snapshot(
+					etx.Request().Context(), telemetryRange,
+				)
+			}
+		})
+	}
+	group.Wait()
+	if metricErr != nil {
 		slog.WarnContext(
 			etx.Request().Context(),
 			"failed to load DeployCrate CE extended telemetry",
 			"error",
-			err,
+			metricErr,
 		)
 	}
-	applicationData, err := s.appTelemetry.Snapshot(etx.Request().Context(), telemetryRange)
-	if err != nil {
+	if applicationErr != nil {
 		slog.WarnContext(
 			etx.Request().Context(),
 			"failed to load DeployCrate CE application telemetry",
 			"error",
-			err,
+			applicationErr,
 		)
-	}
-	collectorEndpoint, err := models.ResourceEndpoint.FindSystemEnvironmentEndpoint(
-		etx.Request().Context(),
-		s.db.Executor(),
-		"opentelemetry",
-	)
-	if err != nil {
-		return s.renderLoadError(etx, "telemetry Resource endpoint", err)
 	}
 	return inertia.Page(etx, "System/Telemetry", inertia.Props{
 		"auth":                 s.authProps(etx),
@@ -519,7 +541,6 @@ func (s System) Telemetry(etx *echo.Context) error {
 		"telemetry":            metricData,
 		"applicationTelemetry": applicationData,
 		"telemetryRange":       telemetryRange,
-		"collectorEndpoint":    collectorEndpoint.URL(),
 	})
 }
 

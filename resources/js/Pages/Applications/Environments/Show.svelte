@@ -171,6 +171,12 @@
   const telemetryMode = $derived(
     openTelemetryAvailable ? "opentelemetry" : "standard",
   );
+  const openTelemetryView = $derived.by(() => {
+    const view = new URLSearchParams($page.url.split("?")[1] ?? "").get("view");
+    return view === "logs" || view === "traces" || view === "database"
+      ? view
+      : "insights";
+  });
   const environmentMemorySeries = $derived.by(() => {
     const totals: Record<
       string,
@@ -257,19 +263,11 @@
   ) => {
     const query = new URLSearchParams({ range, source });
     if (source === "opentelemetry") {
-      const view = new URLSearchParams($page.url.split("?")[1] ?? "").get(
-        "view",
-      );
       const trace = new URLSearchParams($page.url.split("?")[1] ?? "").get(
         "trace",
       );
-      query.set(
-        "view",
-        view === "logs" || view === "traces" || view === "database"
-          ? view
-          : "insights",
-      );
-      if (view === "traces" && trace) query.set("trace", trace);
+      query.set("view", openTelemetryView);
+      if (openTelemetryView === "traces" && trace) query.set("trace", trace);
     }
     return `${routes.environmentTelemetry(
       environment.applicationId,
@@ -796,6 +794,8 @@
 
   $effect(() => {
     if (section !== "telemetry" || !telemetryLive) return;
+    if (telemetryMode === "opentelemetry" && openTelemetryView === "logs")
+      return;
     let refreshing = false;
     const refresh = () => {
       if (refreshing || document.visibilityState !== "visible") return;
@@ -811,7 +811,7 @@
       });
     };
     refresh();
-    const timer = window.setInterval(refresh, 3000);
+    const timer = window.setInterval(refresh, 10000);
     return () => window.clearInterval(timer);
   });
 

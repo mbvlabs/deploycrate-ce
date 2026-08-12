@@ -16,6 +16,7 @@ import (
 	"deploycrate-ce/models"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 )
 
 const openTelemetryResourceEngine = "opentelemetry"
@@ -28,6 +29,13 @@ type EnvironmentApplicationTelemetry struct {
 	resource *ClickHouseResource
 	db       storage.Pool
 	geo      GeoResolver
+}
+
+type EnvironmentApplicationTelemetryOptions struct {
+	IncludeRequestOverview bool
+	IncludeDatabaseErrors  bool
+	IncludeSlowQueries     bool
+	IncludeGeography       bool
 }
 
 func NewEnvironmentApplicationTelemetry(
@@ -65,6 +73,7 @@ func (service *EnvironmentApplicationTelemetry) Snapshot(
 	environmentID uuid.UUID,
 	telemetryRange TelemetryRange,
 	responseClass string,
+	options EnvironmentApplicationTelemetryOptions,
 ) (ApplicationTelemetry, error) {
 	if err := service.ensureEnabled(ctx, applicationID, environmentID); err != nil {
 		return ApplicationTelemetry{}, err
@@ -73,22 +82,50 @@ func (service *EnvironmentApplicationTelemetry) Snapshot(
 	if err != nil {
 		return ApplicationTelemetry{}, err
 	}
-	class, err := telemetryResponseClass(responseClass)
-	if err != nil {
+	if _, err := telemetryResponseClass(responseClass); err != nil {
 		return ApplicationTelemetry{}, err
 	}
 	since := time.Now().UTC().Add(-telemetryRange.Duration())
-	snapshot, err := loadApplicationTelemetry(
-		ctx,
-		client,
-		clickhouseclient.EnvironmentTelemetryScope(environmentID.String()),
-		since,
-		telemetryRange.Bucket(),
-		class,
+	var (
+		snapshot  ApplicationTelemetry
+		countries []CountryTelemetry
 	)
-	if err != nil {
+	group, groupContext := errgroup.WithContext(ctx)
+	group.Go(func() error {
+		var snapshotErr error
+		snapshot, snapshotErr = loadApplicationTelemetry(
+			groupContext,
+			client,
+			clickhouseclient.EnvironmentTelemetryScope(environmentID.String()),
+			since,
+			telemetryRange.Bucket(),
+			applicationTelemetryLoadOptions{
+				includeRequestOverview: options.IncludeRequestOverview,
+				includeDatabaseErrors:  options.IncludeDatabaseErrors,
+				includeSlowQueries:     options.IncludeSlowQueries,
+			},
+		)
+		return snapshotErr
+	})
+	if options.IncludeGeography {
+		group.Go(func() error {
+			countries = service.requestCountries(groupContext, client, environmentID, since)
+			return nil
+		})
+	}
+	if err := group.Wait(); err != nil {
 		return ApplicationTelemetry{}, err
 	}
+	snapshot.Countries = countries
+	return snapshot, nil
+}
+
+func (service *EnvironmentApplicationTelemetry) requestCountries(
+	ctx context.Context,
+	client clickhouseclient.Queries,
+	environmentID uuid.UUID,
+	since time.Time,
+) []CountryTelemetry {
 	domain, err := models.EnvironmentDomain.PrimaryForEnvironment(
 		ctx,
 		service.db.Executor(),
@@ -98,15 +135,14 @@ func (service *EnvironmentApplicationTelemetry) Snapshot(
 		if !errors.Is(err, sql.ErrNoRows) {
 			slog.WarnContext(ctx, "request geography domain lookup failed", "error", err)
 		}
-		return snapshot, nil
+		return []CountryTelemetry{}
 	}
 	addresses, err := client.RequestAddresses(ctx, domain.Hostname, since)
 	if err != nil {
 		slog.WarnContext(ctx, "request geography query failed", "error", err)
-		return snapshot, nil
+		return []CountryTelemetry{}
 	}
-	snapshot.Countries = service.resolveCountries(ctx, addresses)
-	return snapshot, nil
+	return service.resolveCountries(ctx, addresses)
 }
 
 func (service *EnvironmentApplicationTelemetry) resolveCountries(
@@ -174,6 +210,38 @@ func (service *EnvironmentApplicationTelemetry) SlowQueries(
 		return nil, err
 	}
 	return queryTelemetry(queries), nil
+}
+
+func (service *EnvironmentApplicationTelemetry) RecentTraces(
+	ctx context.Context,
+	applicationID uuid.UUID,
+	environmentID uuid.UUID,
+	telemetryRange TelemetryRange,
+	responseClass string,
+) (ApplicationTelemetry, error) {
+	result := EmptyApplicationTelemetry()
+	if err := service.ensureEnabled(ctx, applicationID, environmentID); err != nil {
+		return result, err
+	}
+	class, err := telemetryResponseClass(responseClass)
+	if err != nil {
+		return result, err
+	}
+	client, err := service.resource.Queries(ctx)
+	if err != nil {
+		return result, err
+	}
+	rows, err := client.RecentTraces(
+		ctx,
+		clickhouseclient.EnvironmentTelemetryScope(environmentID.String()),
+		time.Now().UTC().Add(-telemetryRange.Duration()),
+		class,
+	)
+	if err != nil {
+		return result, err
+	}
+	result.RecentTraces = traceSummaries(rows)
+	return result, nil
 }
 
 func (service *EnvironmentApplicationTelemetry) Logs(

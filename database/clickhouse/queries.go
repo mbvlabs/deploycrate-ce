@@ -237,6 +237,7 @@ func (client Queries) LatestAttributedMetricValues(
 	scope string,
 	server string,
 	environment string,
+	rootOnly bool,
 ) ([]AttributedMetricValue, error) {
 	return client.queryAttributedMetrics(
 		ctx,
@@ -246,6 +247,7 @@ func (client Queries) LatestAttributedMetricValues(
 		environment,
 		time.Time{},
 		0,
+		rootOnly,
 	)
 }
 
@@ -256,6 +258,7 @@ func (client Queries) AttributedMetricHistory(
 	environment string,
 	since time.Time,
 	bucket time.Duration,
+	rootOnly bool,
 ) ([]AttributedMetricValue, error) {
 	return client.queryAttributedMetrics(
 		ctx,
@@ -265,6 +268,7 @@ func (client Queries) AttributedMetricHistory(
 		environment,
 		since,
 		bucket,
+		rootOnly,
 	)
 }
 
@@ -276,9 +280,11 @@ func (client Queries) queryAttributedMetrics(
 	environment string,
 	since time.Time,
 	bucket time.Duration,
+	rootOnly bool,
 ) ([]AttributedMetricValue, error) {
 	parameters := map[string]string{
 		"scope": scope, "server": server, "environment": environment,
+		"root_only": strconv.FormatUint(boolUint64(rootOnly), 10),
 	}
 	if !since.IsZero() {
 		parameters["since_seconds"] = strconv.FormatInt(since.Unix(), 10)
@@ -329,6 +335,13 @@ func (client Queries) queryAttributedMetrics(
 		})
 	}
 	return result, nil
+}
+
+func boolUint64(value bool) uint64 {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func (client Queries) EnvironmentLogs(

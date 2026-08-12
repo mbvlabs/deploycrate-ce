@@ -871,24 +871,36 @@ func (c Environments) showSection(etx *echo.Context, section string) error {
 	if openTelemetryErr != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
-	applicationTelemetry := services.ApplicationTelemetry{
-		History: []services.ApplicationTelemetryPoint{},
-		Database: services.DatabaseTelemetry{
-			History: []services.DatabaseTelemetryPoint{},
-		},
-		RecentTraces: []services.TraceSummary{},
-		Routes:       []services.RouteTelemetry{},
-		Countries:    []services.CountryTelemetry{},
-		Queries:      []services.QueryTelemetry{},
-	}
-	if section == "telemetry" && openTelemetryAvailable {
-		applicationTelemetry, err = c.appTelemetrySvc.Snapshot(
-			etx.Request().Context(),
-			params.ApplicationID,
-			params.EnvironmentID,
-			telemetryRange,
-			etx.QueryParam("responseClass"),
-		)
+	applicationTelemetry := services.EmptyApplicationTelemetry()
+	telemetryView := strings.TrimSpace(etx.QueryParam("view"))
+	if section == "telemetry" && openTelemetryAvailable &&
+		telemetryView != "logs" &&
+		inertiaPropRequested(
+			etx.Request(), "Applications/Environments/Show", "applicationTelemetry",
+		) {
+		if telemetryView == "traces" {
+			applicationTelemetry, err = c.appTelemetrySvc.RecentTraces(
+				etx.Request().Context(),
+				params.ApplicationID,
+				params.EnvironmentID,
+				telemetryRange,
+				etx.QueryParam("responseClass"),
+			)
+		} else {
+			applicationTelemetry, err = c.appTelemetrySvc.Snapshot(
+				etx.Request().Context(),
+				params.ApplicationID,
+				params.EnvironmentID,
+				telemetryRange,
+				etx.QueryParam("responseClass"),
+				services.EnvironmentApplicationTelemetryOptions{
+					IncludeRequestOverview: telemetryView != "database",
+					IncludeDatabaseErrors:  telemetryView == "database",
+					IncludeSlowQueries:     telemetryView == "database",
+					IncludeGeography:       telemetryView != "database",
+				},
+			)
+		}
 		if err != nil {
 			slog.WarnContext(
 				etx.Request().Context(),
@@ -898,19 +910,27 @@ func (c Environments) showSection(etx *echo.Context, section string) error {
 			)
 		}
 	}
-	telemetry, telemetryErr := c.metricsSvc.EnvironmentTelemetry(
-		etx.Request().Context(),
-		params.EnvironmentID,
-		telemetryRange,
-	)
-	if telemetryErr != nil {
-		slog.ErrorContext(
-			etx.Request().Context(),
-			"failed to load Environment telemetry",
-			"environment_id", params.EnvironmentID,
-			"error", telemetryErr,
+	telemetry := services.EnvironmentTelemetryResult{Rows: []services.AttributedTelemetryRow{}}
+	var telemetryErr error
+	loadMetrics := (section == "overview" || (section == "telemetry" && !openTelemetryAvailable)) &&
+		inertiaPropRequested(
+			etx.Request(), "Applications/Environments/Show", "telemetry", "host",
 		)
-		telemetry = services.EnvironmentTelemetryResult{Rows: []services.AttributedTelemetryRow{}}
+	if loadMetrics {
+		telemetry, telemetryErr = c.metricsSvc.EnvironmentTelemetry(
+			etx.Request().Context(),
+			params.EnvironmentID,
+			telemetryRange,
+		)
+		if telemetryErr != nil {
+			slog.ErrorContext(
+				etx.Request().Context(),
+				"failed to load Environment telemetry",
+				"environment_id", params.EnvironmentID,
+				"error", telemetryErr,
+			)
+			telemetry = services.EnvironmentTelemetryResult{Rows: []services.AttributedTelemetryRow{}}
+		}
 	}
 	container, containerErr := c.envSetupSvc.ServingContainer(
 		etx.Request().Context(),
