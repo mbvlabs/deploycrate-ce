@@ -79,22 +79,23 @@ func parseEnvironmentResourceConfiguration(
 }
 
 type EnvironmentSetup struct {
-	db         storage.Pool
-	queue      storage.InsertQueue
-	jobControl BuildJobControl
-	github     *GitHubConnection
-	secrets    *EnvironmentSecrets
-	resources  *ResourceManagement
-	dns        *EnvironmentDNS
-	caddy      CaddyRouteService
-	workloads  *WorkloadExecution
-	buildpacks buildpacksclient.Client
-	servers    *ServerExecution
-	builds     *BuildExecution
-	registry   registryclient.Client
-	telemetry  *TelemetryIdentity
-	releases   *ReleaseDeployment
-	config     config.Config
+	db          storage.Pool
+	queue       storage.InsertQueue
+	jobControl  BuildJobControl
+	github      *GitHubConnection
+	secrets     *EnvironmentSecrets
+	resources   *ResourceManagement
+	dns         *EnvironmentDNS
+	caddy       CaddyRouteService
+	workloads   *WorkloadExecution
+	buildpacks  buildpacksclient.Client
+	servers     *ServerExecution
+	builds      *BuildExecution
+	registry    registryclient.Client
+	telemetry   *TelemetryIdentity
+	releases    *ReleaseDeployment
+	deployments *DeploymentExecution
+	config      config.Config
 }
 
 func NewEnvironmentSetup(
@@ -111,25 +112,27 @@ func NewEnvironmentSetup(
 	builds *BuildExecution,
 	telemetry *TelemetryIdentity,
 	releases *ReleaseDeployment,
+	deployments *DeploymentExecution,
 	cfg config.Config,
 ) *EnvironmentSetup {
 	return &EnvironmentSetup{
-		db:         db,
-		queue:      queue,
-		jobControl: jobControl,
-		github:     github,
-		secrets:    secrets,
-		resources:  resources,
-		dns:        dns,
-		caddy:      caddy,
-		workloads:  workloads,
-		buildpacks: buildpacksclient.New(),
-		servers:    servers,
-		builds:     builds,
-		registry:   registryclient.New(),
-		telemetry:  telemetry,
-		releases:   releases,
-		config:     cfg,
+		db:          db,
+		queue:       queue,
+		jobControl:  jobControl,
+		github:      github,
+		secrets:     secrets,
+		resources:   resources,
+		dns:         dns,
+		caddy:       caddy,
+		workloads:   workloads,
+		buildpacks:  buildpacksclient.New(),
+		servers:     servers,
+		builds:      builds,
+		registry:    registryclient.New(),
+		telemetry:   telemetry,
+		releases:    releases,
+		deployments: deployments,
+		config:      cfg,
 	}
 }
 
@@ -3382,10 +3385,10 @@ func (service *EnvironmentSetup) RetryDeployment(
 	}
 	defer tx.Rollback()
 	previous, err := models.Deployment.Lock(ctx, tx, deploymentID)
-	if err != nil || previous.Status != "failed" {
+	if err != nil || (previous.Status != "failed" && previous.Status != "cancelled") {
 		return models.DeploymentEntity{}, errors.Join(
 			models.ErrDomainValidation,
-			errors.New("only a failed Deployment can be retried"),
+			errors.New("only a failed or cancelled Deployment can be retried"),
 		)
 	}
 	release, err := models.Release.Find(ctx, tx, previous.ReleaseID)
@@ -3470,6 +3473,54 @@ func (service *EnvironmentSetup) RetryDeployment(
 		return models.DeploymentEntity{}, err
 	}
 	return deployment, nil
+}
+
+func (service *EnvironmentSetup) StopDeployment(
+	ctx context.Context,
+	applicationID, environmentID, deploymentID uuid.UUID,
+) error {
+	if _, err := models.Environment.FindForApplication(
+		ctx,
+		service.db.Executor(),
+		applicationID,
+		environmentID,
+	); err != nil {
+		return errors.New("Deployment does not belong to this Application")
+	}
+	deployment, err := models.Deployment.Find(ctx, service.db.Executor(), deploymentID)
+	if err != nil {
+		return errors.New("Deployment does not belong to this Environment")
+	}
+	release, err := models.Release.Find(ctx, service.db.Executor(), deployment.ReleaseID)
+	if err != nil || release.EnvironmentID != environmentID {
+		return errors.New("Deployment does not belong to this Environment")
+	}
+	if deployment.Status != "queued" && deployment.Status != "running" &&
+		deployment.Status != "cancelling" {
+		return errors.Join(
+			models.ErrDomainValidation,
+			errors.New("only an active Deployment can be stopped"),
+		)
+	}
+	if deployment.Status != "cancelling" {
+		job, err := models.Job.FindForDeployment(ctx, service.db.Executor(), deployment.ID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return errors.New("Deployment background job is unavailable")
+		}
+		if err == nil && (job.State == "available" || job.State == "pending" ||
+			job.State == "retryable" || job.State == "running" || job.State == "scheduled") {
+			if err := service.jobControl.CancelJob(ctx, job.ID); err != nil {
+				return fmt.Errorf("stop Deployment background job: %w", err)
+			}
+		}
+	}
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+	defer cancel()
+	return service.deployments.Cancel(
+		cleanupCtx,
+		deployment.ID,
+		"Deployment cancelled by user",
+	)
 }
 
 func validateEnvironmentSetupInput(

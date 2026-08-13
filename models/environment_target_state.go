@@ -80,6 +80,22 @@ func (environmentTargetState) MarkFailed(
 	return err
 }
 
+func (environmentTargetState) RestoreAppliedAfterDeploymentCancellation(
+	ctx context.Context,
+	db storage.Executor,
+	deploymentID uuid.UUID,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().TableExpr("environment_target_states AS state").
+		Set("desired_revision_id = applied_revision_id").
+		Set("applying_revision_id = NULL").
+		Set("state = CASE WHEN applied_revision_id IS NULL THEN 'failed' ELSE 'applied' END").
+		Set("updated_at = ?", at).
+		Where("EXISTS (SELECT 1 FROM deployments deployment WHERE deployment.id = ? AND deployment.environment_target_id = state.environment_target_id)", deploymentID).
+		Exec(ctx)
+	return err
+}
+
 func (environmentTargetState) MarkApplied(
 	ctx context.Context,
 	db storage.Executor,

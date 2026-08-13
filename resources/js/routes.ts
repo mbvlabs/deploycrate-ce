@@ -36,6 +36,7 @@ export const routes = {
   environmentDNSRetry: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/dns/retry`,
   environmentDeploymentEvents: (environmentID: string, deploymentID: string) => `/environments/${environmentID}/deployments/${deploymentID}/events`,
   environmentDeploymentRetry: (applicationID: string, environmentID: string, deploymentID: string) => `/applications/${applicationID}/environments/${environmentID}/deployments/${deploymentID}/retry`,
+  environmentDeploymentStop: (applicationID: string, environmentID: string, deploymentID: string) => `/applications/${applicationID}/environments/${environmentID}/deployments/${deploymentID}/stop`,
   environmentDeploymentsCreate: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/deployments`,
   environmentDestroy: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}`,
   environmentEdit: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/edit`,

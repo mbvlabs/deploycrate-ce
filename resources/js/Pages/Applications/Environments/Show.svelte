@@ -79,6 +79,10 @@
   let dnsActionProcessing = $state(false);
   let secretCreationProcessing = $state(false);
   let deploymentRetrying = $state("");
+  let deploymentStopDialogOpen = $state(false);
+  let pendingDeploymentStop = $state<Deployment | null>(null);
+  let deploymentStopping = $state("");
+  let deploymentStopError = $state("");
   let expandedBuildId = $state("");
   let expandedReleaseId = $state("");
   let selectedDeploymentId = $state("");
@@ -276,6 +280,10 @@
   };
   const stepLabel = (value: string) =>
     value ? value.replaceAll("_", " ") : "waiting for worker";
+  const deploymentIsActive = (deployment: Deployment) =>
+    deployment.status === "queued" ||
+    deployment.status === "running" ||
+    deployment.status === "cancelling";
   const deploymentStep = (deployment: Deployment) =>
     deployment.active
       ? "serving"
@@ -287,10 +295,11 @@
     deployments.filter((deployment) => deployment.releaseId === releaseId);
   const releaseStatus = (releaseId: string) => {
     const own = deploymentsFor(releaseId);
-    if (own.some((d) => d.status === "queued" || d.status === "running"))
+    if (own.some(deploymentIsActive))
       return "running";
     if (own.some((d) => d.status === "succeeded")) return "succeeded";
     if (own.some((d) => d.status === "failed")) return "failed";
+    if (own.some((d) => d.status === "cancelled")) return "cancelled";
     return "";
   };
   const releaseCommandForRelease = $derived(
@@ -670,6 +679,38 @@
       },
     );
   }
+  function askToStopDeployment(deployment: Deployment) {
+    pendingDeploymentStop = deployment;
+    deploymentStopError = "";
+    deploymentStopDialogOpen = true;
+  }
+  function stopDeployment() {
+    if (!pendingDeploymentStop || deploymentStopping) return;
+    const deployment = pendingDeploymentStop;
+    deploymentStopping = deployment.id;
+    deploymentStopError = "";
+    router.post(
+      routes.environmentDeploymentStop(
+        environment.applicationId,
+        environment.environment.id,
+        deployment.id,
+      ),
+      {},
+      {
+        headers: { "X-Deploycrate-Section": section },
+        preserveScroll: true,
+        onSuccess: () => {
+          deploymentStopDialogOpen = false;
+          deploymentStream.reset();
+        },
+        onError: (errors) =>
+          (deploymentStopError =
+            Object.values(errors).map(String).join("\n") ||
+            "The Deployment could not be stopped."),
+        onFinish: () => (deploymentStopping = ""),
+      },
+    );
+  }
   function askForBuildAction(action: "start" | "stop" | "retry", build: Build) {
     pendingBuildAction = { action, build };
     buildActionDialogOpen = true;
@@ -784,10 +825,7 @@
 
   $effect(() => {
     if (section !== "overview") return;
-    const runningDeployment = deployments.find(
-      (deployment) =>
-        deployment.status === "queued" || deployment.status === "running",
-    );
+    const runningDeployment = deployments.find(deploymentIsActive);
     if (!runningDeployment) return;
     return deploymentStream.poll(runningDeployment.id);
   });
@@ -831,10 +869,7 @@
 
   $effect(() => {
     if (section !== "releases") return;
-    const runningDeployment = deployments.find(
-      (deployment) =>
-        deployment.status === "queued" || deployment.status === "running",
-    );
+    const runningDeployment = deployments.find(deploymentIsActive);
     const candidateReleaseId =
       runningDeployment?.releaseId ?? releases[0]?.id ?? "";
     if (!candidateReleaseId) return;
@@ -855,10 +890,7 @@
     if (autoSelectedForRelease === releaseId) return;
     autoSelectedForRelease = releaseId;
     const preferred =
-      own.find(
-        (deployment) =>
-          deployment.status === "queued" || deployment.status === "running",
-      ) ?? own[0];
+      own.find(deploymentIsActive) ?? own[0];
     selectedDeploymentId = preferred.id;
   });
 
@@ -872,6 +904,7 @@
     if (
       deployment.status !== "queued" &&
       deployment.status !== "running" &&
+      deployment.status !== "cancelling" &&
       !(deployment.id in deploymentStream.events)
     ) {
       void (async () => {
@@ -2035,7 +2068,18 @@
                               {deployment.error}
                             </p>{/if}
                         </div>
-                        {#if deployment.status === "failed"}<Button
+                        <div class="flex flex-wrap gap-2">
+                          {#if deploymentIsActive(deployment)}<Button
+                              size="sm"
+                              variant="destructive"
+                              disabled={Boolean(deploymentStopping)}
+                              aria-busy={deploymentStopping === deployment.id}
+                              onclick={() => askToStopDeployment(deployment)}
+                              >{deployment.status === "cancelling"
+                                ? "Finish rollback"
+                                : "Stop & roll back"}</Button
+                            >{/if}
+                          {#if deployment.status === "failed" || deployment.status === "cancelled"}<Button
                             size="sm"
                             variant="outline"
                             disabled={Boolean(deploymentRetrying)}
@@ -2043,7 +2087,8 @@
                             onclick={() => retryDeployment(deployment.id)}
                             >{#if deploymentRetrying === deployment.id}<Spinner
                               />{/if}Retry</Button
-                          >{/if}
+                            >{/if}
+                        </div>
                       </div>
                       <div class="border-t border-border bg-muted/20 p-3">
                         <div
@@ -2069,7 +2114,8 @@
                           {:else}
                             <p class="text-muted-foreground">
                               {deployment.status === "queued" ||
-                              deployment.status === "running"
+                              deployment.status === "running" ||
+                              deployment.status === "cancelling"
                                 ? "Waiting for Deployment events..."
                                 : "No deployment events recorded yet."}
                             </p>
@@ -2098,6 +2144,21 @@
       </div>
     {/if}
   </div>
+
+  <ConfirmActionDialog
+    bind:open={deploymentStopDialogOpen}
+    title={pendingDeploymentStop?.status === "cancelling"
+      ? "Finish Deployment rollback?"
+      : "Stop and roll back Deployment?"}
+    description="The candidate route and containers will be removed. If traffic already switched, DeployCrate will restore the previous serving release before removing the candidate."
+    confirmLabel={pendingDeploymentStop?.status === "cancelling"
+      ? "Finish rollback"
+      : "Stop & roll back"}
+    destructive
+    processing={Boolean(deploymentStopping)}
+    error={deploymentStopError}
+    onconfirm={stopDeployment}
+  />
 
   <ConfirmActionDialog
     bind:open={releaseCommandRetryDialogOpen}

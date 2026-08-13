@@ -35,6 +35,7 @@ func newControllerEnvironmentSetup(t *testing.T, db storage.Pool) *services.Envi
 		nil,
 		nil,
 		nil,
+		nil,
 		configuration,
 	)
 }
@@ -72,6 +73,7 @@ func TestEnvironmentsControllerIndexUsesDatabase(t *testing.T) {
 		nil,
 		nil,
 		services.CaddyRouteService{},
+		nil,
 		nil,
 		nil,
 		nil,

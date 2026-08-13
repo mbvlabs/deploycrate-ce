@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"deploycrate-ce/queue/jobs"
@@ -25,7 +26,7 @@ func (worker *DeployReleaseWorker) Register(workers *river.Workers) error {
 }
 
 func (worker *DeployReleaseWorker) Timeout(*river.Job[jobs.DeployReleaseArgs]) time.Duration {
-	return 15 * time.Minute
+	return services.DeploymentExecutionTimeout
 }
 
 func (worker *DeployReleaseWorker) Work(
@@ -33,13 +34,32 @@ func (worker *DeployReleaseWorker) Work(
 	job *river.Job[jobs.DeployReleaseArgs],
 ) error {
 	err := worker.service.Execute(ctx, job.Args.DeploymentID)
+	if errors.Is(err, context.DeadlineExceeded) {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		defer cancel()
+		timeoutErr := worker.service.Cancel(
+			cleanupCtx,
+			job.Args.DeploymentID,
+			fmt.Sprintf(
+				"Deployment timed out after %s",
+				services.DeploymentExecutionTimeout,
+			),
+		)
+		return river.JobCancel(errors.Join(err, timeoutErr))
+	}
 	var permanent *services.PermanentDeploymentError
 	if errors.As(err, &permanent) {
 		return river.JobCancel(err)
 	}
 	if err != nil && job.Attempt >= job.MaxAttempts {
-		_ = worker.service.Fail(context.WithoutCancel(ctx), job.Args.DeploymentID, err)
-		return river.JobCancel(err)
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+		defer cancel()
+		rollbackErr := worker.service.Cancel(
+			cleanupCtx,
+			job.Args.DeploymentID,
+			fmt.Sprintf("Deployment stopped after %d unsuccessful attempts: %v", job.Attempt, err),
+		)
+		return river.JobCancel(errors.Join(err, rollbackErr))
 	}
 	return err
 }

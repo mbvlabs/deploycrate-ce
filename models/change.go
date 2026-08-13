@@ -431,6 +431,42 @@ func (c change) MarkFailed(
 	return err
 }
 
+func (c change) MarkCancelling(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	reason string,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().TableExpr("changes").
+		Set("status = 'cancelling'").
+		Set("error = ?", reason).
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Where("status IN ('committed', 'running', 'cancelling')").
+		Exec(ctx)
+	return err
+}
+
+func (c change) MarkCancelled(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	reason string,
+	at time.Time,
+) error {
+	_, err := db.NewUpdate().TableExpr("changes").
+		Set("status = 'cancelled'").
+		Set("finished_at = ?", at).
+		Set("cancelled_at = ?", at).
+		Set("error = ?", reason).
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Where("status = 'cancelling'").
+		Exec(ctx)
+	return err
+}
+
 func (c change) MarkBuildCancelled(
 	ctx context.Context,
 	db storage.Executor,

@@ -96,6 +96,7 @@ func (c Environments) RegisterRoutes(router *router.Router) error {
 		{http.MethodPost, routes.EnvironmentPromoteToProduction, c.PromoteToProduction},
 		{http.MethodPost, routes.EnvironmentReleaseDeploymentsCreate, c.RedeployRelease},
 		{http.MethodPost, routes.EnvironmentDeploymentRetry, c.RetryDeployment},
+		{http.MethodPost, routes.EnvironmentDeploymentStop, c.StopDeployment},
 		{http.MethodPost, routes.EnvironmentAPITokenRotate, c.RotateAPIToken},
 		{http.MethodPost, routes.EnvironmentDNSAdopt, c.AdoptDNS},
 		{http.MethodPost, routes.EnvironmentDNSRetry, c.RetryDNS},
@@ -511,6 +512,36 @@ func (c Environments) RetryDeployment(etx *echo.Context) error {
 		_ = cookies.AddFlash(etx, cookies.FlashError, err.Error())
 	} else {
 		_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Deployment retry queued")
+	}
+	return inertia.Redirect(
+		etx,
+		environmentSectionReturnURL(etx, params),
+		http.StatusSeeOther,
+	)
+}
+
+func (c Environments) StopDeployment(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	deploymentID, parseErr := uuid.Parse(etx.Param("deploymentID"))
+	if err == nil {
+		err = parseErr
+	}
+	if err == nil {
+		err = c.envSetupSvc.StopDeployment(
+			etx.Request().Context(),
+			params.ApplicationID,
+			params.EnvironmentID,
+			deploymentID,
+		)
+	}
+	if err != nil {
+		_ = cookies.AddFlash(etx, cookies.FlashError, err.Error())
+	} else {
+		_ = cookies.AddFlash(
+			etx,
+			cookies.FlashSuccess,
+			"Deployment stopped and candidate workloads rolled back",
+		)
 	}
 	return inertia.Redirect(
 		etx,

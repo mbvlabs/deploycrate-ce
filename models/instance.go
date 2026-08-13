@@ -194,7 +194,7 @@ func (instance) UnroutedWorkloads(
 	rows := make([]UnroutedWorkloadInstance, 0)
 	query := db.NewSelect().TableExpr("instances AS instance").
 		ColumnExpr("instance.id AS instance_id, instance.deployment_id AS deployment_id, target.server_id AS server_id").
-		Join("JOIN deployments AS deployment ON deployment.id = instance.deployment_id AND deployment.status NOT IN ('queued', 'running')").
+		Join("JOIN deployments AS deployment ON deployment.id = instance.deployment_id AND deployment.status NOT IN ('queued', 'running', 'cancelling')").
 		Join("JOIN releases AS release ON release.id = instance.release_id").
 		Join("JOIN environments AS environment ON environment.id = release.environment_id").
 		Join("JOIN applications AS application ON application.id = environment.application_id").

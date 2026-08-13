@@ -240,7 +240,8 @@ export class DeploymentEventStream {
         }
         if (
           snapshot.deployment.status !== "queued" &&
-          snapshot.deployment.status !== "running"
+          snapshot.deployment.status !== "running" &&
+          snapshot.deployment.status !== "cancelling"
         ) {
           router.reload({
             only: ["environment", "telemetry"],
