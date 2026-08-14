@@ -104,6 +104,22 @@ func (ri resourceInstallation) FindActiveForResource(
 	return entity, err
 }
 
+func (resourceInstallation) ActiveDNSServerAddresses(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+) ([]DNSServerAddress, error) {
+	rows := make([]DNSServerAddress, 0)
+	err := db.NewSelect().TableExpr("resource_installations AS installation").
+		ColumnExpr("server.id, server.kind, server.address AS addr, server.ipv4_address AS ipv4").
+		Join("JOIN servers AS server ON server.id = installation.server_id").
+		Where("installation.resource_id = ?", resourceID).
+		Where("installation.archived_at IS NULL").
+		Where("server.archived_at IS NULL").
+		OrderExpr("server.id").Scan(ctx, &rows)
+	return rows, err
+}
+
 type CreateResourceInstallationData struct {
 	ID                   uuid.UUID
 	ImageReference       string

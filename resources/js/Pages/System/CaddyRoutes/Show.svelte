@@ -67,6 +67,7 @@
     backends: { instanceId: string; weight: number }[];
   };
   type ResourceRouteInput = {
+    externalId: string;
     hostname: string;
     originAddress: string;
     originPort: number;
@@ -74,6 +75,7 @@
     originTlsMode: string;
     healthPath: string;
   };
+  type CustomRoute = ResourceRouteInput & { id: string };
   type RouteDetail = {
     externalId: string;
     kind: string;
@@ -90,6 +92,7 @@
     configurationError: string;
     environmentRoute?: EnvironmentRoute;
     resourceRoute?: ResourceRoute;
+    customRoute?: CustomRoute;
     options: {
       domains: DomainOption[];
       targets: TargetOption[];
@@ -157,12 +160,26 @@
     }
     if (route.resourceRoute) {
       resourceEditDraft = {
+        externalId: "",
         hostname: route.resourceRoute.hostname,
         originAddress: route.resourceRoute.originAddress,
         originPort: route.resourceRoute.originPort,
         originProtocol: route.resourceRoute.originProtocol,
         originTlsMode: route.resourceRoute.originTlsMode,
         healthPath: route.resourceRoute.healthPath,
+      };
+      resourceEditOpen = true;
+      return;
+    }
+    if (route.customRoute) {
+      resourceEditDraft = {
+        externalId: route.customRoute.externalId,
+        hostname: route.customRoute.hostname,
+        originAddress: route.customRoute.originAddress,
+        originPort: route.customRoute.originPort,
+        originProtocol: route.customRoute.originProtocol,
+        originTlsMode: route.customRoute.originTlsMode,
+        healthPath: route.customRoute.healthPath,
       };
       resourceEditOpen = true;
     }
@@ -241,11 +258,17 @@
   }
 
   function saveResourceEdit() {
-    if (!route.resourceRoute || !resourceEditDraft || resourceEditProcessing)
+    if (
+      (!route.resourceRoute && !route.customRoute) ||
+      !resourceEditDraft ||
+      resourceEditProcessing
+    )
       return;
     resourceEditProcessing = true;
     router.patch(
-      routes.caddyResourceRouteUpdate(route.resourceRoute.id),
+      route.customRoute
+        ? routes.caddyCustomRouteUpdate(route.customRoute.id)
+        : routes.caddyResourceRouteUpdate(route.resourceRoute!.id),
       resourceEditDraft,
       {
         preserveScroll: true,
@@ -256,12 +279,18 @@
   }
 
   function confirmDelete() {
-    if (!route.environmentRoute || deleteProcessing) return;
+    if ((!route.environmentRoute && !route.customRoute) || deleteProcessing)
+      return;
     deleteProcessing = true;
-    router.delete(routes.caddyRouteDestroy(route.environmentRoute.id), {
-      onSuccess: () => (deleteOpen = false),
-      onFinish: () => (deleteProcessing = false),
-    });
+    router.delete(
+      route.customRoute
+        ? routes.caddyCustomRouteDestroy(route.customRoute.id)
+        : routes.caddyRouteDestroy(route.environmentRoute!.id),
+      {
+        onSuccess: () => (deleteOpen = false),
+        onFinish: () => (deleteProcessing = false),
+      },
+    );
   }
 </script>
 
@@ -282,10 +311,10 @@
         </p>
       </div>
       <div class="flex flex-wrap gap-2">
-        {#if route.environmentRoute || route.resourceRoute}<Button
+        {#if route.environmentRoute || route.resourceRoute || route.customRoute}<Button
             variant="outline"
             onclick={beginEdit}>Edit</Button
-          >{/if}{#if route.environmentRoute}<Button
+          >{/if}{#if route.environmentRoute || route.customRoute}<Button
             variant="destructive"
             onclick={() => (deleteOpen = true)}>Delete</Button
           >{/if}<Button href={routes.caddyRoutes()} variant="outline"
@@ -497,13 +526,18 @@
   >
     <Dialog.Content class="sm:max-w-3xl">
       <Dialog.Header
-        ><Dialog.Title>Edit Resource Caddy route</Dialog.Title
+        ><Dialog.Title>Edit {route.customRoute ? "direct" : "Resource"} Caddy route</Dialog.Title
         ><Dialog.Description
           >Update the public hostname and HTTP origin used by Caddy.</Dialog.Description
         ></Dialog.Header
       >
       {#if resourceEditDraft}
         <div class="grid gap-5 sm:grid-cols-2">
+          {#if route.customRoute}
+            <FormField label="Caddy route ID"
+              ><Input bind:value={resourceEditDraft.externalId} readonly /></FormField
+            >
+          {/if}
           <FormField label="Public hostname"
             ><Input
               bind:value={resourceEditDraft.hostname}

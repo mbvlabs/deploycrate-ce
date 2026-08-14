@@ -166,6 +166,20 @@
     lastError: string;
     appliedAt: string;
     observedAt: string;
+    dns: {
+      mode: string;
+      zoneId: string;
+      zoneName: string;
+      connectionName: string;
+      state: string;
+      lastError: string;
+    };
+  };
+  type DNSZone = {
+    zoneId: string;
+    zoneName: string;
+    connectionId: string;
+    connectionName: string;
   };
   type BackupPolicy = {
     id: string;
@@ -199,6 +213,7 @@
     backups,
     options,
     publications = [],
+    dnsZones = [],
     enrollment = null,
   }: {
     auth: { email: string };
@@ -207,6 +222,7 @@
     backups: Backups;
     options: Options;
     publications?: Publication[];
+    dnsZones?: DNSZone[];
     enrollment?: Enrollment | null;
   } = $props();
   const resourceNavigation = $derived({
@@ -275,9 +291,17 @@
     user: "",
     settings: {} as Record<string, string>,
     privateNetworkId: "",
-    publication: { enabled: false, hostname: "", healthPath: "" },
+    publication: {
+      enabled: false,
+      hostname: "",
+      healthPath: "",
+      dnsMode: "manual",
+      dnsZoneId: "",
+    },
   }));
   const endpointErrors = $derived(Object.entries($endpointForm.errors));
+  const endpointError = (field: string) =>
+    ($endpointForm.errors as Record<string, string>)[field];
   const deviceForm = useForm(() => ({ name: "", deviceId: "" }));
   let revokeDialogOpen = $state(false);
   let revokeProcessing = $state(false);
@@ -364,7 +388,18 @@
               }).filter(([, value]) => value.trim() !== ""),
             ),
           };
-    $endpointForm.post(routes.systemResourceEndpointCreate(resource.id), {
+    $endpointForm
+      .transform((values) => ({
+        ...values,
+        publication: {
+          ...values.publication,
+          dnsZoneId:
+            values.publication.dnsMode === "cloudflare"
+              ? values.publication.dnsZoneId
+              : null,
+        },
+      }))
+      .post(routes.systemResourceEndpointCreate(resource.id), {
       preserveScroll: true,
       onSuccess: () => {
         endpointCreateDialogOpen = false;
@@ -374,7 +409,7 @@
         toast.error(
           Object.values(errors)[0] || "Resource endpoint could not be added",
         ),
-    });
+      });
   }
   function openEndpointCreateDialog() {
     $endpointForm.reset();
@@ -782,7 +817,14 @@
                             <span class="font-mono text-xs"
                               >{publication.hostname}</span
                             ><StatusBadge status={publication.state} />
-                          </div>{:else}<span
+                          </div>
+                          {#if publication.dns.mode === "cloudflare"}
+                            <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                              <span>{publication.dns.connectionName} · {publication.dns.zoneName}</span>
+                              <StatusBadge status={publication.dns.state} />
+                            </div>
+                          {/if}
+                        {:else}<span
                             class="text-xs text-muted-foreground"
                             >Not published</span
                           >{/if}</Table.Cell
@@ -1346,7 +1388,7 @@
               <div class="grid gap-4 sm:grid-cols-2">
                 <FormField
                   label="Public hostname"
-                  error={$endpointForm.errors.hostname}
+                  error={endpointError("hostname")}
                   ><Input
                     bind:value={$endpointForm.publication.hostname}
                     required
@@ -1355,13 +1397,48 @@
                 >
                 {#if $endpointForm.protocol === "http" || $endpointForm.protocol === "https"}<FormField
                     label="Public health path"
-                    error={$endpointForm.errors.healthPath ||
+                    error={endpointError("healthPath") ||
                       $endpointForm.errors["settings.caddy.health_path"]}
                     ><Input
                       bind:value={$endpointForm.publication.healthPath}
                       placeholder="Optional"
                     /></FormField
                   >{/if}
+                <FormField
+                  label="DNS management"
+                  error={endpointError("dnsZoneId")}
+                  ><NativeSelect.Root
+                    bind:value={$endpointForm.publication.dnsMode}
+                    class="w-full"
+                  >
+                    <NativeSelect.Option value="manual"
+                      >Manual DNS</NativeSelect.Option
+                    >
+                    <NativeSelect.Option value="cloudflare"
+                      >Cloudflare managed</NativeSelect.Option
+                    >
+                  </NativeSelect.Root></FormField
+                >
+                {#if $endpointForm.publication.dnsMode === "cloudflare"}
+                  <FormField
+                    label="Cloudflare zone"
+                    error={endpointError("dnsZoneId")}
+                    ><NativeSelect.Root
+                      bind:value={$endpointForm.publication.dnsZoneId}
+                      class="w-full"
+                      required
+                    >
+                      <NativeSelect.Option value=""
+                        >Select a zone</NativeSelect.Option
+                      >
+                      {#each dnsZones as zone (zone.zoneId)}
+                        <NativeSelect.Option value={zone.zoneId}
+                          >{zone.zoneName} · {zone.connectionName}</NativeSelect.Option
+                        >
+                      {/each}
+                    </NativeSelect.Root></FormField
+                  >
+                {/if}
                 <p class="sm:col-span-2 text-xs text-muted-foreground">
                   <span class="font-mono"
                     >https://{$endpointForm.publication.hostname ||
@@ -1476,6 +1553,15 @@
                 >
                   {publication.lastError}
                 </p>{/if}
+              {#if publication.dns.mode === "cloudflare"}
+                <div class="mt-3 border-t border-border pt-3">
+                  <div class="flex flex-wrap items-center justify-between gap-3">
+                    <p class="text-xs text-muted-foreground">Cloudflare DNS · {publication.dns.connectionName} / {publication.dns.zoneName}</p>
+                    <StatusBadge status={publication.dns.state} />
+                  </div>
+                  {#if publication.dns.lastError}<p class="mt-2 text-xs text-destructive">{publication.dns.lastError}</p>{/if}
+                </div>
+              {/if}
             </div>
           {/if}
           <div>

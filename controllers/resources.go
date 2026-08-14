@@ -1420,6 +1420,10 @@ func (controller Resources) renderShowSection(
 	if err != nil {
 		return controller.renderLoadError(etx, err)
 	}
+	dnsZones, err := controller.caddy.ResourceDNSOptions(etx.Request().Context())
+	if err != nil {
+		return controller.renderLoadError(etx, err)
+	}
 	options, err := controller.service.OptionsForEngine(
 		etx.Request().Context(),
 		detail.Resource.Engine(),
@@ -1448,6 +1452,7 @@ func (controller Resources) renderShowSection(
 		"backups":          resourceBackupProps(backups),
 		"options":          resourceOptionsProps(options),
 		"publications":     publications,
+		"dnsZones":         dnsZones,
 		"section":          section,
 		"selectedDatabase": strings.TrimSpace(etx.QueryParam("database")),
 		"flash":            resourceFlashProps(etx),

@@ -25,3 +25,15 @@ var CaddyResourceRouteUpdate = routing.NewRouteWithUUIDID(
 	"caddy-resource-routes.update",
 	CaddyRoutesPrefix,
 )
+
+var CaddyCustomRouteUpdate = routing.NewRouteWithUUIDID(
+	"/custom-routes/:id",
+	"caddy-custom-routes.update",
+	CaddyRoutesPrefix,
+)
+
+var CaddyCustomRouteDestroy = routing.NewRouteWithUUIDID(
+	"/custom-routes/:id",
+	"caddy-custom-routes.destroy",
+	CaddyRoutesPrefix,
+)

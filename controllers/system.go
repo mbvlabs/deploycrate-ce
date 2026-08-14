@@ -923,6 +923,10 @@ func (s System) renderResource(
 	if err != nil {
 		return s.renderLoadError(etx, "resource publications", err)
 	}
+	dnsZones, err := s.caddy.ResourceDNSOptions(etx.Request().Context())
+	if err != nil {
+		return s.renderLoadError(etx, "resource DNS zones", err)
+	}
 	backups := models.ResourceBackupCatalog{}
 	if section == "backups" && detail.ResourceType == "database" {
 		backups, err = s.backups.DetailsForResource(etx.Request().Context(), resourceID)
@@ -934,6 +938,7 @@ func (s System) renderResource(
 		"auth": s.authProps(etx), "resource": systemResourceDetailProps(detail),
 		"section": section, "backups": resourceBackupProps(backups),
 		"options": resourceOptionsProps(options), "publications": publications,
+		"dnsZones": dnsZones,
 	}
 	if enrollment != nil {
 		props["enrollment"] = enrollment

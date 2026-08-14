@@ -50,6 +50,21 @@
     lastError: string;
     appliedAt: string;
     observedAt: string;
+    dns: {
+      mode: string;
+      zoneId: string;
+      zoneName: string;
+      connectionName: string;
+      state: string;
+      lastError: string;
+      records: Array<{ type: string; name: string; content: string }>;
+    };
+  };
+  type DNSZone = {
+    zoneId: string;
+    zoneName: string;
+    connectionId: string;
+    connectionName: string;
   };
   type PrivateNetwork = {
     id: string;
@@ -220,6 +235,7 @@
     backups,
     options,
     publications = [],
+    dnsZones = [],
     section = "overview",
     selectedDatabase = "",
     enrollment = null,
@@ -230,6 +246,7 @@
     backups: Backups;
     options: Options;
     publications?: Publication[];
+    dnsZones?: DNSZone[];
     section?: string;
     selectedDatabase?: string;
     enrollment?: Enrollment | null;
@@ -242,12 +259,12 @@
       engine: resource.engine,
       label: resource.engine,
       resourceType: resource.resourceType,
-      protocols: [],
-      endpointRoles: [],
-      tlsModes: [],
-      credentialFields: [],
-      environmentKeys: [],
-      healthCheckKinds: [],
+      protocols: [] as string[],
+      endpointRoles: [] as string[],
+      tlsModes: [] as string[],
+      credentialFields: [] as CredentialField[],
+      environmentKeys: [] as EnvironmentKey[],
+      healthCheckKinds: [] as string[],
       defaultPort: 1,
       defaultProtocol: "",
       defaultTlsMode: "disable",
@@ -566,7 +583,13 @@
       tlsMode: definition?.defaultTlsMode ?? "disable",
       privateNetworkId: "",
       settings: {},
-      publication: { enabled: false, hostname: "", healthPath: "" },
+      publication: {
+        enabled: false,
+        hostname: "",
+        healthPath: "",
+        dnsMode: "manual",
+        dnsZoneId: "",
+      },
     };
   }
   function initialSelectedBackupDatabase() {
@@ -742,6 +765,8 @@
             enabled: Boolean(caddy || publication),
             hostname: item.address,
             healthPath: caddy?.health_path ?? publication?.healthPath ?? "",
+            dnsMode: publication?.dns.mode ?? "manual",
+            dnsZoneId: publication?.dns.zoneId ?? "",
           },
         }
       : initialEndpoint();
@@ -767,7 +792,13 @@
     const payload = {
       ...endpoint,
       settings,
-      publication: endpoint.publication,
+      publication: {
+        ...endpoint.publication,
+        dnsZoneId:
+          endpoint.publication.dnsMode === "cloudflare"
+            ? endpoint.publication.dnsZoneId
+            : null,
+      },
     };
     const options = {
       onSuccess: () => {
@@ -2148,6 +2179,15 @@
                                 >{publication.hostname}</span
                               ><StatusBadge status={publication.state} />
                             </div>
+                            {#if publication.dns.mode === "cloudflare"}
+                              <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                                <span>{publication.dns.connectionName} · {publication.dns.zoneName}</span>
+                                <StatusBadge status={publication.dns.state} />
+                              </div>
+                              {#if publication.dns.lastError}
+                                <p class="mt-1 max-w-sm text-xs text-destructive">{publication.dns.lastError}</p>
+                              {/if}
+                            {/if}
                             {#if publication.lastError}<p
                                 class="mt-1 max-w-sm text-xs text-destructive"
                               >
@@ -2977,6 +3017,37 @@
                       placeholder="Optional, for example /health"
                     /></FormField
                   >{/if}
+                <FormField label="DNS management" error={errors.dnsZoneId}
+                  ><NativeSelect.Root
+                    bind:value={endpoint.publication.dnsMode}
+                    class="w-full"
+                  >
+                    <NativeSelect.Option value="manual"
+                      >Manual DNS</NativeSelect.Option
+                    >
+                    <NativeSelect.Option value="cloudflare"
+                      >Cloudflare managed</NativeSelect.Option
+                    >
+                  </NativeSelect.Root></FormField
+                >
+                {#if endpoint.publication.dnsMode === "cloudflare"}
+                  <FormField label="Cloudflare zone" error={errors.dnsZoneId}
+                    ><NativeSelect.Root
+                      bind:value={endpoint.publication.dnsZoneId}
+                      class="w-full"
+                      required
+                    >
+                      <NativeSelect.Option value=""
+                        >Select a zone</NativeSelect.Option
+                      >
+                      {#each dnsZones as zone (zone.zoneId)}
+                        <NativeSelect.Option value={zone.zoneId}
+                          >{zone.zoneName} · {zone.connectionName}</NativeSelect.Option
+                        >
+                      {/each}
+                    </NativeSelect.Root></FormField
+                  >
+                {/if}
                 <div class="sm:col-span-2 text-xs text-muted-foreground">
                   <span class="font-mono"
                     >https://{endpoint.publication.hostname || "hostname"}</span
