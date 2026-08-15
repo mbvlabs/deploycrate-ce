@@ -24,29 +24,10 @@ func NewConfirmations(identity services.Identity) Confirmations {
 }
 
 func (c Confirmations) RegisterRoutes(r *router.Router) error {
-	errs := []error{}
-
-	_, err := r.AddRoute(echo.Route{
-		Method:  http.MethodGet,
-		Path:    routes.ConfirmationNew.Path(),
-		Name:    routes.ConfirmationNew.Name(),
-		Handler: c.New,
+	return registerRoutes(r, []routeDefinition{
+		{http.MethodGet, routes.ConfirmationNew, c.New},
+		{http.MethodPost, routes.ConfirmationCreate, c.Create},
 	})
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	_, err = r.AddRoute(echo.Route{
-		Method:  http.MethodPost,
-		Path:    routes.ConfirmationCreate.Path(),
-		Name:    routes.ConfirmationCreate.Name(),
-		Handler: c.Create,
-	})
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	return errors.Join(errs...)
 }
 
 func (c Confirmations) New(etx *echo.Context) error {

@@ -33,15 +33,7 @@ func NewApplications(
 }
 
 func (c Applications) RegisterRoutes(r *router.Router) error {
-	auth := []echo.MiddlewareFunc{middleware.AuthOnly}
-	definitions := []struct {
-		method string
-		route  interface {
-			Path() string
-			Name() string
-		}
-		handler echo.HandlerFunc
-	}{
+	definitions := []routeDefinition{
 		{http.MethodGet, routes.Applications, c.Index},
 		{http.MethodGet, routes.ApplicationNew, c.New},
 		{http.MethodPost, routes.ApplicationCreate, c.Create},
@@ -52,22 +44,7 @@ func (c Applications) RegisterRoutes(r *router.Router) error {
 		{http.MethodPatch, routes.ApplicationSourceUpdate, c.UpdateSource},
 		{http.MethodDelete, routes.ApplicationDestroy, c.Destroy},
 	}
-	errList := make([]error, 0, len(definitions))
-	for _, definition := range definitions {
-		_, err := r.AddRoute(
-			echo.Route{
-				Method:      definition.method,
-				Path:        definition.route.Path(),
-				Name:        definition.route.Name(),
-				Handler:     definition.handler,
-				Middlewares: auth,
-			},
-		)
-		if err != nil {
-			errList = append(errList, err)
-		}
-	}
-	return errors.Join(errList...)
+	return registerRoutes(r, definitions, middleware.AuthOnly)
 }
 
 func (c Applications) Index(etx *echo.Context) error {
@@ -383,7 +360,7 @@ func (c Applications) Create(etx *echo.Context) error {
 }
 
 func (c Applications) Show(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	if err != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
@@ -397,7 +374,7 @@ func (c Applications) Show(etx *echo.Context) error {
 }
 
 func (c Applications) Edit(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	if err != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
@@ -413,7 +390,7 @@ func (c Applications) Edit(etx *echo.Context) error {
 }
 
 func (c Applications) Update(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	var payload struct{ Name, Slug string }
 	if err == nil {
 		err = etx.Bind(&payload)
@@ -434,7 +411,7 @@ func (c Applications) Update(etx *echo.Context) error {
 }
 
 func (c Applications) EditSource(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	if err != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
@@ -461,7 +438,7 @@ func (c Applications) EditSource(etx *echo.Context) error {
 }
 
 func (c Applications) UpdateSource(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	var payload applicationSetupPayload
 	if err == nil {
 		err = etx.Bind(&payload)
@@ -481,7 +458,7 @@ func (c Applications) UpdateSource(etx *echo.Context) error {
 }
 
 func (c Applications) Destroy(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	if err != nil {
 		slog.ErrorContext(etx.Request().Context(), "could not parse id", "param", etx.Param("id"))
 		if err := cookies.AddFlash(

@@ -1,7 +1,6 @@
 package controllers
 
 import (
-	"errors"
 	"net/http"
 	"strings"
 
@@ -26,15 +25,7 @@ func NewDNSConnections(service *services.DNSConnections) DNSConnections {
 }
 
 func (controller DNSConnections) RegisterRoutes(r *router.Router) error {
-	admin := []echo.MiddlewareFunc{middleware.AdminOnly}
-	definitions := []struct {
-		method string
-		route  interface {
-			Path() string
-			Name() string
-		}
-		handler echo.HandlerFunc
-	}{
+	definitions := []routeDefinition{
 		{http.MethodGet, routes.DnsConnections, controller.Index},
 		{http.MethodPost, routes.DnsConnectionCreate, controller.Create},
 		{http.MethodGet, routes.DnsConnectionShow, controller.Show},
@@ -42,22 +33,7 @@ func (controller DNSConnections) RegisterRoutes(r *router.Router) error {
 		{http.MethodPatch, routes.DnsConnectionTokenUpdate, controller.RotateToken},
 		{http.MethodDelete, routes.DnsConnectionDestroy, controller.Destroy},
 	}
-	errList := make([]error, 0, len(definitions))
-	for _, definition := range definitions {
-		_, err := r.AddRoute(
-			echo.Route{
-				Method:      definition.method,
-				Path:        definition.route.Path(),
-				Name:        definition.route.Name(),
-				Handler:     definition.handler,
-				Middlewares: admin,
-			},
-		)
-		if err != nil {
-			errList = append(errList, err)
-		}
-	}
-	return errors.Join(errList...)
+	return registerRoutes(r, definitions, middleware.AdminOnly)
 }
 
 func (controller DNSConnections) Index(etx *echo.Context) error {
@@ -71,7 +47,7 @@ func (controller DNSConnections) Index(etx *echo.Context) error {
 }
 
 func (controller DNSConnections) Show(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	if err != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
@@ -118,7 +94,7 @@ func (controller DNSConnections) Create(etx *echo.Context) error {
 }
 
 func (controller DNSConnections) Sync(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	if err == nil {
 		err = controller.service.Synchronize(etx.Request().Context(), id)
 	}
@@ -130,7 +106,7 @@ func (controller DNSConnections) Sync(etx *echo.Context) error {
 }
 
 func (controller DNSConnections) RotateToken(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	var payload struct {
 		Token string `json:"token"`
 	}
@@ -151,7 +127,7 @@ func (controller DNSConnections) RotateToken(etx *echo.Context) error {
 }
 
 func (controller DNSConnections) Destroy(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	if err == nil {
 		err = controller.service.Archive(etx.Request().Context(), id)
 	}

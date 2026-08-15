@@ -1,7 +1,6 @@
 package controllers
 
 import (
-	"errors"
 	"log/slog"
 	"net/http"
 
@@ -21,38 +20,25 @@ import (
 type Pages struct {
 	db         storage.Pool
 	insertOnly queue.InsertOnly
-	dashboard  *services.Dashboard
 	metric     services.MetricRollupService
 }
 
 func NewPages(
 	db storage.Pool,
 	insertOnly queue.InsertOnly,
-	dashboard *services.Dashboard,
 	metric services.MetricRollupService,
 ) Pages {
-	return Pages{db: db, insertOnly: insertOnly, dashboard: dashboard, metric: metric}
+	return Pages{db: db, insertOnly: insertOnly, metric: metric}
 }
 
 func (p Pages) RegisterRoutes(r *router.Router) error {
-	errs := []error{}
-
-	_, err := r.AddRoute(echo.Route{
-		Method:  http.MethodGet,
-		Path:    routes.HomePage.Path(),
-		Name:    routes.HomePage.Name(),
-		Handler: p.Home,
-		Middlewares: []echo.MiddlewareFunc{
-			middleware.AuthOnly,
-		},
-	})
-	if err != nil {
-		errs = append(errs, err)
-	}
+	err := registerRoutes(r, []routeDefinition{
+		{http.MethodGet, routes.HomePage, p.Home},
+	}, middleware.AuthOnly)
 
 	_ = r.AddRouteNotFound(middleware.AuthOnly(p.NotFound))
 
-	return errors.Join(errs...)
+	return err
 }
 
 func (p Pages) Home(etx *echo.Context) error {
@@ -85,7 +71,7 @@ func (p Pages) Home(etx *echo.Context) error {
 		}
 		appSession.Email = user.Email
 	}
-	dashboard, err := p.dashboard.Snapshot(ctx)
+	dashboard, err := models.Dashboard.Snapshot(ctx, p.db.Executor())
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to load dashboard", "error", err)
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})

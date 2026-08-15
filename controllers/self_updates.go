@@ -27,48 +27,11 @@ func NewSelfUpdates(service *services.SelfUpdate, db storage.Pool) SelfUpdates {
 }
 
 func (s SelfUpdates) RegisterRoutes(r *router.Router) error {
-	errList := []error{}
-
-	_, err := r.AddRoute(echo.Route{
-		Method:  http.MethodGet,
-		Path:    routes.SystemUpdate.Path(),
-		Name:    routes.SystemUpdate.Name(),
-		Handler: s.Show,
-		Middlewares: []echo.MiddlewareFunc{
-			middleware.AuthOnly,
-		},
-	})
-	if err != nil {
-		errList = append(errList, err)
-	}
-
-	_, err = r.AddRoute(echo.Route{
-		Method:  http.MethodPost,
-		Path:    routes.SystemUpdateCreate.Path(),
-		Name:    routes.SystemUpdateCreate.Name(),
-		Handler: s.Create,
-		Middlewares: []echo.MiddlewareFunc{
-			middleware.AuthOnly,
-		},
-	})
-	if err != nil {
-		errList = append(errList, err)
-	}
-
-	_, err = r.AddRoute(echo.Route{
-		Method:  http.MethodGet,
-		Path:    routes.SystemUpdateStatus.Path(),
-		Name:    routes.SystemUpdateStatus.Name(),
-		Handler: s.Status,
-		Middlewares: []echo.MiddlewareFunc{
-			middleware.AuthOnly,
-		},
-	})
-	if err != nil {
-		errList = append(errList, err)
-	}
-
-	return errors.Join(errList...)
+	return registerRoutes(r, []routeDefinition{
+		{http.MethodGet, routes.SystemUpdate, s.Show},
+		{http.MethodPost, routes.SystemUpdateCreate, s.Create},
+		{http.MethodGet, routes.SystemUpdateStatus, s.Status},
+	}, middleware.AuthOnly)
 }
 
 func (s SelfUpdates) Show(etx *echo.Context) error {

@@ -287,8 +287,8 @@ func (c Environments) TelemetryTrace(etx *echo.Context) error {
 }
 
 func (c Environments) DeploymentEvents(etx *echo.Context) error {
-	environmentID, environmentErr := uuid.Parse(etx.Param("environmentID"))
-	deploymentID, deploymentErr := uuid.Parse(etx.Param("deploymentID"))
+	environmentID, environmentErr := uuidPathParam(etx, "environmentID")
+	deploymentID, deploymentErr := uuidPathParam(etx, "deploymentID")
 	after := int64(0)
 	afterErr := error(nil)
 	if value := etx.QueryParam("after"); value != "" {
@@ -326,8 +326,8 @@ func (c Environments) DeploymentEvents(etx *echo.Context) error {
 }
 
 func (c Environments) BuildLogs(etx *echo.Context) error {
-	environmentID, environmentErr := uuid.Parse(etx.Param("environmentID"))
-	buildID, buildErr := uuid.Parse(etx.Param("buildID"))
+	environmentID, environmentErr := uuidPathParam(etx, "environmentID")
+	buildID, buildErr := uuidPathParam(etx, "buildID")
 	after := int64(0)
 	afterErr := error(nil)
 	if value := etx.QueryParam("after"); value != "" {
@@ -377,7 +377,7 @@ func (c Environments) Index(etx *echo.Context) error {
 }
 
 func (c Environments) New(etx *echo.Context) error {
-	applicationID, err := uuid.Parse(etx.Param("applicationID"))
+	applicationID, err := uuidPathParam(etx, "applicationID")
 	if err != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
@@ -385,7 +385,7 @@ func (c Environments) New(etx *echo.Context) error {
 }
 
 func (c Environments) Create(etx *echo.Context) error {
-	applicationID, err := uuid.Parse(etx.Param("applicationID"))
+	applicationID, err := uuidPathParam(etx, "applicationID")
 	var payload applicationEnvironmentCreationPayload
 	if err == nil {
 		err = etx.Bind(&payload)
@@ -495,7 +495,7 @@ func (c Environments) newEnvironmentPage(
 
 func (c Environments) RetryDeployment(etx *echo.Context) error {
 	params, err := environmentPathParams(etx)
-	deploymentID, parseErr := uuid.Parse(etx.Param("deploymentID"))
+	deploymentID, parseErr := uuidPathParam(etx, "deploymentID")
 	if err == nil {
 		err = parseErr
 	}
@@ -522,7 +522,7 @@ func (c Environments) RetryDeployment(etx *echo.Context) error {
 
 func (c Environments) StopDeployment(etx *echo.Context) error {
 	params, err := environmentPathParams(etx)
-	deploymentID, parseErr := uuid.Parse(etx.Param("deploymentID"))
+	deploymentID, parseErr := uuidPathParam(etx, "deploymentID")
 	if err == nil {
 		err = parseErr
 	}
@@ -630,7 +630,7 @@ func (c Environments) Deploy(etx *echo.Context) error {
 
 func (c Environments) RedeployRelease(etx *echo.Context) error {
 	params, err := environmentPathParams(etx)
-	releaseID, parseErr := uuid.Parse(etx.Param("releaseID"))
+	releaseID, parseErr := uuidPathParam(etx, "releaseID")
 	deferred := false
 	if err == nil {
 		err = parseErr
@@ -686,7 +686,7 @@ func (c Environments) buildAction(
 	action func(context.Context, uuid.UUID, uuid.UUID, uuid.UUID) error,
 ) error {
 	params, err := environmentPathParams(etx)
-	buildID, parseErr := uuid.Parse(etx.Param("buildID"))
+	buildID, parseErr := uuidPathParam(etx, "buildID")
 	if err == nil {
 		err = parseErr
 	}
@@ -757,7 +757,7 @@ func environmentOverviewProps(overview services.EnvironmentOverview) map[string]
 
 func (c Environments) ReleaseCommandLogs(etx *echo.Context) error {
 	params, err := environmentPathParams(etx)
-	executionID, parseErr := uuid.Parse(etx.Param("executionID"))
+	executionID, parseErr := uuidPathParam(etx, "executionID")
 	if err == nil {
 		err = parseErr
 	}
@@ -785,7 +785,7 @@ func (c Environments) ReleaseCommandLogs(etx *echo.Context) error {
 
 func (c Environments) RetryReleaseCommand(etx *echo.Context) error {
 	params, err := environmentPathParams(etx)
-	executionID, parseErr := uuid.Parse(etx.Param("executionID"))
+	executionID, parseErr := uuidPathParam(etx, "executionID")
 	if err == nil {
 		err = parseErr
 	}
@@ -849,11 +849,11 @@ func environmentSectionReturnURL(etx *echo.Context, params environmentPathIDs) s
 }
 
 func environmentPathParams(etx *echo.Context) (environmentPathIDs, error) {
-	applicationID, err := uuid.Parse(etx.Param("applicationID"))
+	applicationID, err := uuidPathParam(etx, "applicationID")
 	if err != nil {
 		return environmentPathIDs{}, err
 	}
-	environmentID, err := uuid.Parse(etx.Param("environmentID"))
+	environmentID, err := uuidPathParam(etx, "environmentID")
 	return environmentPathIDs{ApplicationID: applicationID, EnvironmentID: environmentID}, err
 }
 
@@ -1392,7 +1392,7 @@ func (c Environments) BulkCreateSecrets(etx *echo.Context) error {
 
 func (c Environments) RotateSecret(etx *echo.Context) error {
 	params, err := environmentPathParams(etx)
-	secretID, parseErr := uuid.Parse(etx.Param("secretID"))
+	secretID, parseErr := uuidPathParam(etx, "secretID")
 	if err == nil {
 		err = parseErr
 	}
@@ -1415,7 +1415,7 @@ func (c Environments) RotateSecret(etx *echo.Context) error {
 
 func (c Environments) ArchiveSecret(etx *echo.Context) error {
 	params, err := environmentPathParams(etx)
-	secretID, parseErr := uuid.Parse(etx.Param("secretID"))
+	secretID, parseErr := uuidPathParam(etx, "secretID")
 	if err == nil {
 		err = parseErr
 	}

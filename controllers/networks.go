@@ -14,7 +14,6 @@ import (
 	"deploycrate-ce/router/routes"
 	"deploycrate-ce/services"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v5"
 )
 
@@ -28,40 +27,14 @@ func NewNetworks(db storage.Pool, access *services.ResourcePrivateAccess) Networ
 }
 
 func (controller Networks) RegisterRoutes(r *router.Router) error {
-	routesToRegister := []struct {
-		method string
-		route  interface {
-			Path() string
-			Name() string
-		}
-		handler     echo.HandlerFunc
-		middlewares []echo.MiddlewareFunc
-	}{
-		{
-			http.MethodGet,
-			routes.Networks,
-			controller.Index,
-			[]echo.MiddlewareFunc{middleware.AuthOnly},
-		},
-		{
-			http.MethodDelete,
-			routes.NetworkWireGuardDeviceDestroy,
-			controller.DestroyWireGuardDevice,
-			[]echo.MiddlewareFunc{middleware.AdminOnly},
-		},
-	}
-
-	errList := make([]error, 0, len(routesToRegister))
-	for _, registered := range routesToRegister {
-		_, err := r.AddRoute(echo.Route{
-			Method: registered.method, Path: registered.route.Path(), Name: registered.route.Name(),
-			Handler: registered.handler, Middlewares: registered.middlewares,
-		})
-		if err != nil {
-			errList = append(errList, err)
-		}
-	}
-	return errors.Join(errList...)
+	return errors.Join(
+		registerRoutes(r, []routeDefinition{
+			{http.MethodGet, routes.Networks, controller.Index},
+		}, middleware.AuthOnly),
+		registerRoutes(r, []routeDefinition{
+			{http.MethodDelete, routes.NetworkWireGuardDeviceDestroy, controller.DestroyWireGuardDevice},
+		}, middleware.AdminOnly),
+	)
 }
 
 func (controller Networks) Index(etx *echo.Context) error {
@@ -88,7 +61,7 @@ func (controller Networks) Index(etx *echo.Context) error {
 }
 
 func (controller Networks) DestroyWireGuardDevice(etx *echo.Context) error {
-	deviceID, err := uuid.Parse(etx.Param("id"))
+	deviceID, err := uuidPathParam(etx, "id")
 	if err == nil {
 		err = controller.access.RevokeDevice(etx.Request().Context(), deviceID)
 	}

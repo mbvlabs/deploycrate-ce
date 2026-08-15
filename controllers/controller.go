@@ -2,15 +2,59 @@
 package controllers
 
 import (
+	"errors"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 
 	"deploycrate-ce/controllers/api"
 	"deploycrate-ce/router"
 
+	"github.com/google/uuid"
+	"github.com/labstack/echo/v5"
 	"go.uber.org/fx"
 )
+
+type namedRoute interface {
+	Path() string
+	Name() string
+}
+
+type routeDefinition struct {
+	method  string
+	route   namedRoute
+	handler echo.HandlerFunc
+}
+
+func registerRoutes(
+	r *router.Router,
+	definitions []routeDefinition,
+	middlewares ...echo.MiddlewareFunc,
+) error {
+	errList := make([]error, 0, len(definitions))
+	for _, definition := range definitions {
+		_, err := r.AddRoute(echo.Route{
+			Method:      definition.method,
+			Path:        definition.route.Path(),
+			Name:        definition.route.Name(),
+			Handler:     definition.handler,
+			Middlewares: middlewares,
+		})
+		if err != nil {
+			errList = append(errList, err)
+		}
+	}
+	return errors.Join(errList...)
+}
+
+func uuidPathParam(etx *echo.Context, name string) (uuid.UUID, error) {
+	return uuid.Parse(etx.Param(name))
+}
+
+func int64PathParam(etx *echo.Context, name string) (int64, error) {
+	return strconv.ParseInt(etx.Param(name), 10, 64)
+}
 
 var otherCache = NewCacheBuilder[string]().WithSize(2).Build
 

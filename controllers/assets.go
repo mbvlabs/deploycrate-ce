@@ -3,7 +3,6 @@ package controllers
 import (
 	"crypto/md5"
 	"encoding/xml"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -31,67 +30,14 @@ func NewAssets(cache *Cache[string]) Assets {
 }
 
 func (a Assets) RegisterRoutes(r *router.Router) error {
-	errs := []error{}
-
-	_, err := r.AddRoute(echo.Route{
-		Method:  http.MethodGet,
-		Path:    routes.Robots.Path(),
-		Name:    routes.Robots.Name(),
-		Handler: a.Robots,
+	return registerRoutes(r, []routeDefinition{
+		{http.MethodGet, routes.Robots, a.Robots},
+		{http.MethodGet, routes.Sitemap, a.Sitemap},
+		{http.MethodGet, routes.Stylesheet, a.Stylesheet},
+		{http.MethodGet, routes.Scripts, a.Scripts},
+		{http.MethodGet, routes.Script, a.Script},
+		{http.MethodGet, routes.ViteBuild, a.ViteBuild},
 	})
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	_, err = r.AddRoute(echo.Route{
-		Method:  http.MethodGet,
-		Path:    routes.Sitemap.Path(),
-		Name:    routes.Sitemap.Name(),
-		Handler: a.Sitemap,
-	})
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	_, err = r.AddRoute(echo.Route{
-		Method:  http.MethodGet,
-		Path:    routes.Stylesheet.Path(),
-		Name:    routes.Stylesheet.Name(),
-		Handler: a.Stylesheet,
-	})
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	_, err = r.AddRoute(echo.Route{
-		Method:  http.MethodGet,
-		Path:    routes.Scripts.Path(),
-		Name:    routes.Scripts.Name(),
-		Handler: a.Scripts,
-	})
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	_, err = r.AddRoute(echo.Route{
-		Method:  http.MethodGet,
-		Path:    routes.Script.Path(),
-		Name:    routes.Script.Name(),
-		Handler: a.Script,
-	})
-	if err != nil {
-		errs = append(errs, err)
-	}
-	_, err = r.AddRoute(echo.Route{
-		Method:  http.MethodGet,
-		Path:    routes.ViteBuild.Path(),
-		Name:    routes.ViteBuild.Name(),
-		Handler: a.ViteBuild,
-	})
-	if err != nil {
-		errs = append(errs, err)
-	}
-	return errors.Join(errs...)
 }
 
 func (a Assets) enableCaching(etx *echo.Context, content []byte) *echo.Context {

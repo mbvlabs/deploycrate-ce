@@ -16,7 +16,6 @@ import (
 	"deploycrate-ce/router/routes"
 	"deploycrate-ce/services"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v5"
 )
 
@@ -35,49 +34,23 @@ func NewGitHubConnections(
 }
 
 func (controller GitHubConnections) RegisterRoutes(r *router.Router) error {
-	admin := []echo.MiddlewareFunc{middleware.AdminOnly}
-	definitions := []struct {
-		method string
-		route  interface {
-			Path() string
-			Name() string
-		}
-		handler     echo.HandlerFunc
-		middlewares []echo.MiddlewareFunc
-	}{
-		{http.MethodGet, routes.GitHubConnection, controller.Show, admin},
-		{http.MethodPost, routes.GitHubAppSetup, controller.StartAppSetup, admin},
-		{http.MethodGet, routes.GitHubAppCallback, controller.CompleteAppSetup, admin},
-		{http.MethodPost, routes.GitHubInstall, controller.StartInstallation, admin},
-		{http.MethodGet, routes.GitHubInstallCallback, controller.CompleteInstallation, admin},
-		{http.MethodGet, routes.GitHubInstallationShow, controller.ShowInstallation, admin},
-		{http.MethodPost, routes.GitHubInstallationSync, controller.SyncInstallation, admin},
-		{http.MethodPost, routes.GitHubInstallationVerify, controller.VerifyInstallation, admin},
-		{
-			http.MethodDelete,
-			routes.GitHubInstallationDestroy,
-			controller.DestroyInstallation,
-			admin,
-		},
-		{http.MethodDelete, routes.GitHubAppDestroy, controller.DestroyApp, admin},
-		{http.MethodPost, routes.GitHubWebhook, controller.Webhook, nil},
-	}
-	errList := make([]error, 0, len(definitions))
-	for _, definition := range definitions {
-		_, err := r.AddRoute(
-			echo.Route{
-				Method:      definition.method,
-				Path:        definition.route.Path(),
-				Name:        definition.route.Name(),
-				Handler:     definition.handler,
-				Middlewares: definition.middlewares,
-			},
-		)
-		if err != nil {
-			errList = append(errList, err)
-		}
-	}
-	return errors.Join(errList...)
+	return errors.Join(
+		registerRoutes(r, []routeDefinition{
+			{http.MethodGet, routes.GitHubConnection, controller.Show},
+			{http.MethodPost, routes.GitHubAppSetup, controller.StartAppSetup},
+			{http.MethodGet, routes.GitHubAppCallback, controller.CompleteAppSetup},
+			{http.MethodPost, routes.GitHubInstall, controller.StartInstallation},
+			{http.MethodGet, routes.GitHubInstallCallback, controller.CompleteInstallation},
+			{http.MethodGet, routes.GitHubInstallationShow, controller.ShowInstallation},
+			{http.MethodPost, routes.GitHubInstallationSync, controller.SyncInstallation},
+			{http.MethodPost, routes.GitHubInstallationVerify, controller.VerifyInstallation},
+			{http.MethodDelete, routes.GitHubInstallationDestroy, controller.DestroyInstallation},
+			{http.MethodDelete, routes.GitHubAppDestroy, controller.DestroyApp},
+		}, middleware.AdminOnly),
+		registerRoutes(r, []routeDefinition{
+			{http.MethodPost, routes.GitHubWebhook, controller.Webhook},
+		}),
+	)
 }
 
 func (controller GitHubConnections) Show(etx *echo.Context) error {
@@ -93,7 +66,7 @@ func (controller GitHubConnections) Show(etx *echo.Context) error {
 }
 
 func (controller GitHubConnections) ShowInstallation(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	if err != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
@@ -208,7 +181,7 @@ func (controller GitHubConnections) CompleteInstallation(etx *echo.Context) erro
 }
 
 func (controller GitHubConnections) SyncInstallation(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	if err == nil {
 		_, err = controller.connection.Synchronize(etx.Request().Context(), id)
 	}
@@ -220,7 +193,7 @@ func (controller GitHubConnections) SyncInstallation(etx *echo.Context) error {
 }
 
 func (controller GitHubConnections) VerifyInstallation(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	if err == nil {
 		err = controller.connection.Verify(etx.Request().Context(), id)
 	}
@@ -232,7 +205,7 @@ func (controller GitHubConnections) VerifyInstallation(etx *echo.Context) error 
 }
 
 func (controller GitHubConnections) DestroyInstallation(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	if err == nil {
 		err = controller.connection.ArchiveInstallation(etx.Request().Context(), id)
 	}

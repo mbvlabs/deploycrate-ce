@@ -631,7 +631,7 @@ func (s System) ResourceAccess(etx *echo.Context) error {
 }
 
 func (s System) resourceSection(etx *echo.Context, section string) error {
-	resourceID, err := uuid.Parse(etx.Param("id"))
+	resourceID, err := uuidPathParam(etx, "id")
 	if err != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
@@ -642,8 +642,8 @@ func (s System) RevealResourceCredential(etx *echo.Context) error {
 	etx.Response().Header().Set("Cache-Control", "no-store")
 	etx.Response().Header().Set("Pragma", "no-cache")
 
-	resourceID, resourceErr := uuid.Parse(etx.Param("resourceID"))
-	credentialID, credentialErr := uuid.Parse(etx.Param("credentialID"))
+	resourceID, resourceErr := uuidPathParam(etx, "resourceID")
+	credentialID, credentialErr := uuidPathParam(etx, "credentialID")
 	if errors.Join(resourceErr, credentialErr) != nil {
 		return etx.JSON(
 			http.StatusNotFound,
@@ -712,7 +712,7 @@ type systemResourceEndpointPayload struct {
 }
 
 func (s System) CreateResourceEndpoint(etx *echo.Context) error {
-	resourceID, err := uuid.Parse(etx.Param("id"))
+	resourceID, err := uuidPathParam(etx, "id")
 	var payload systemResourceEndpointPayload
 	if err == nil {
 		err = etx.Bind(&payload)
@@ -795,8 +795,8 @@ func (s System) CreateResourceEndpoint(etx *echo.Context) error {
 }
 
 func (s System) DestroyResourceEndpoint(etx *echo.Context) error {
-	resourceID, resourceErr := uuid.Parse(etx.Param("resourceID"))
-	endpointID, endpointErr := uuid.Parse(etx.Param("endpointID"))
+	resourceID, resourceErr := uuidPathParam(etx, "resourceID")
+	endpointID, endpointErr := uuidPathParam(etx, "endpointID")
 	err := errors.Join(resourceErr, endpointErr)
 	if err == nil {
 		err = s.resources.ArchiveSystemEndpoint(etx.Request().Context(), resourceID, endpointID)
@@ -830,7 +830,7 @@ type systemResourceWireGuardPayload struct {
 }
 
 func (s System) CreateResourceWireGuardDevice(etx *echo.Context) error {
-	resourceID, err := uuid.Parse(etx.Param("id"))
+	resourceID, err := uuidPathParam(etx, "id")
 	var payload systemResourceWireGuardPayload
 	if err == nil {
 		err = etx.Bind(&payload)
@@ -873,8 +873,8 @@ func (s System) CreateResourceWireGuardDevice(etx *echo.Context) error {
 }
 
 func (s System) DestroyResourceWireGuardDevice(etx *echo.Context) error {
-	resourceID, resourceErr := uuid.Parse(etx.Param("resourceID"))
-	deviceID, deviceErr := uuid.Parse(etx.Param("deviceID"))
+	resourceID, resourceErr := uuidPathParam(etx, "resourceID")
+	deviceID, deviceErr := uuidPathParam(etx, "deviceID")
 	err := errors.Join(resourceErr, deviceErr)
 	if err == nil {
 		err = s.access.RevokeGrant(etx.Request().Context(), resourceID, deviceID)

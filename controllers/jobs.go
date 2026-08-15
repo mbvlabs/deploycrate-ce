@@ -279,7 +279,7 @@ func (j Jobs) Index(etx *echo.Context) error {
 }
 
 func (j Jobs) Show(etx *echo.Context) error {
-	jobID, err := strconv.ParseInt(etx.Param("id"), 10, 64)
+	jobID, err := int64PathParam(etx, "id")
 	if err != nil {
 		return inertia.Page(etx, "Errors/BadRequest", inertia.Props{})
 	}
@@ -299,7 +299,7 @@ func (j Jobs) Show(etx *echo.Context) error {
 }
 
 func jobIDParam(etx *echo.Context) (int64, error) {
-	return strconv.ParseInt(etx.Param("id"), 10, 64)
+	return int64PathParam(etx, "id")
 }
 
 func jobActionError(etx *echo.Context, jobID int64, action string, err error) error {

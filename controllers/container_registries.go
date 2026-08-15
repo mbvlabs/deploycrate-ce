@@ -15,7 +15,6 @@ import (
 	"deploycrate-ce/router/routes"
 	"deploycrate-ce/services"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v5"
 )
 
@@ -28,53 +27,25 @@ func NewRegistryResources(service *services.RegistryResources) RegistryResources
 }
 
 func (controller RegistryResources) RegisterRoutes(r *router.Router) error {
-	admin := []echo.MiddlewareFunc{middleware.AdminOnly}
-	definitions := []struct {
-		method string
-		route  interface {
-			Path() string
-			Name() string
-		}
-		handler     echo.HandlerFunc
-		middlewares []echo.MiddlewareFunc
-	}{
-		{http.MethodGet, routes.RegistryResources, controller.Index, nil},
-		{http.MethodPost, routes.RegistryResourceCreate, controller.Create, nil},
-		{http.MethodGet, routes.RegistryResourceShow, controller.Show, nil},
-		{http.MethodDelete, routes.RegistryResourceDestroy, controller.Destroy, nil},
-		{http.MethodPost, routes.RegistryResourceImageDelete, controller.DeleteImage, nil},
-		{
-			http.MethodPost,
-			routes.RegistryResourceCredentials,
-			controller.Credentials,
-			[]echo.MiddlewareFunc{middleware.IPRateLimiter(5, routes.RegistryResources)},
-		},
-	}
-	errList := make([]error, 0, len(definitions))
-	for _, definition := range definitions {
-		middlewares := append([]echo.MiddlewareFunc{}, admin...)
-		middlewares = append(middlewares, definition.middlewares...)
-		_, err := r.AddRoute(
-			echo.Route{
-				Method:      definition.method,
-				Path:        definition.route.Path(),
-				Name:        definition.route.Name(),
-				Handler:     definition.handler,
-				Middlewares: middlewares,
-			},
-		)
-		if err != nil {
-			errList = append(errList, err)
-		}
-	}
-	return errors.Join(errList...)
+	return errors.Join(
+		registerRoutes(r, []routeDefinition{
+			{http.MethodGet, routes.RegistryResources, controller.Index},
+			{http.MethodPost, routes.RegistryResourceCreate, controller.Create},
+			{http.MethodGet, routes.RegistryResourceShow, controller.Show},
+			{http.MethodDelete, routes.RegistryResourceDestroy, controller.Destroy},
+			{http.MethodPost, routes.RegistryResourceImageDelete, controller.DeleteImage},
+		}, middleware.AdminOnly),
+		registerRoutes(r, []routeDefinition{
+			{http.MethodPost, routes.RegistryResourceCredentials, controller.Credentials},
+		}, middleware.AdminOnly, middleware.IPRateLimiter(5, routes.RegistryResources)),
+	)
 }
 
 func (controller RegistryResources) Credentials(etx *echo.Context) error {
 	etx.Response().Header().Set("Cache-Control", "no-store")
 	etx.Response().Header().Set("Pragma", "no-cache")
 
-	resourceID, err := uuid.Parse(etx.Param("id"))
+	resourceID, err := uuidPathParam(etx, "id")
 	if err != nil {
 		return etx.JSON(
 			http.StatusNotFound,
@@ -144,7 +115,7 @@ func (controller RegistryResources) Index(etx *echo.Context) error {
 }
 
 func (controller RegistryResources) Show(etx *echo.Context) error {
-	resourceID, err := uuid.Parse(etx.Param("id"))
+	resourceID, err := uuidPathParam(etx, "id")
 	if err != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
@@ -223,7 +194,7 @@ func (controller RegistryResources) Create(etx *echo.Context) error {
 }
 
 func (controller RegistryResources) Destroy(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	if err == nil {
 		err = controller.service.ArchiveExternal(etx.Request().Context(), id)
 	}
@@ -235,7 +206,7 @@ func (controller RegistryResources) Destroy(etx *echo.Context) error {
 }
 
 func (controller RegistryResources) DeleteImage(etx *echo.Context) error {
-	resourceID, err := uuid.Parse(etx.Param("id"))
+	resourceID, err := uuidPathParam(etx, "id")
 	if err != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}

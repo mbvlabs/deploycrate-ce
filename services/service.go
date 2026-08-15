@@ -12,7 +12,6 @@ import (
 var Module = fx.Module(
 	"services",
 	fx.Provide(
-		NewDashboard,
 		NewIdentity,
 		NewSelfUpdate,
 		NewClickHouseResource,

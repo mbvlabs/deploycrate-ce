@@ -14,7 +14,6 @@ import (
 	"deploycrate-ce/router/routes"
 	"deploycrate-ce/services"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v5"
 )
 
@@ -28,14 +27,7 @@ func NewNodes(service *services.NodeEnrollment, management *services.ServerManag
 }
 
 func (controller Nodes) RegisterRoutes(r *router.Router) error {
-	definitions := []struct {
-		method string
-		route  interface {
-			Path() string
-			Name() string
-		}
-		handler echo.HandlerFunc
-	}{
+	definitions := []routeDefinition{
 		{http.MethodGet, routes.Nodes, controller.Index},
 		{http.MethodGet, routes.NodeNew, controller.New},
 		{http.MethodPost, routes.NodeCreate, controller.Create},
@@ -44,17 +36,7 @@ func (controller Nodes) RegisterRoutes(r *router.Router) error {
 		{http.MethodPost, routes.NodeRetry, controller.Retry},
 		{http.MethodPost, routes.NodeCapabilities, controller.UpdateCapabilities},
 	}
-	var errs []error
-	for _, definition := range definitions {
-		_, err := r.AddRoute(echo.Route{
-			Method: definition.method, Path: definition.route.Path(), Name: definition.route.Name(),
-			Handler: definition.handler, Middlewares: []echo.MiddlewareFunc{middleware.AdminOnly},
-		})
-		if err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
+	return registerRoutes(r, definitions, middleware.AdminOnly)
 }
 
 type updateNodeCapabilitiesPayload struct {
@@ -67,7 +49,7 @@ type updateNodeCapabilitiesPayload struct {
 }
 
 func (controller Nodes) UpdateCapabilities(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	var payload updateNodeCapabilitiesPayload
 	var detail services.NodeEnrollmentDetail
 	if err == nil {
@@ -154,7 +136,7 @@ func (controller Nodes) Create(etx *echo.Context) error {
 }
 
 func (controller Nodes) Show(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	if err != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
@@ -174,7 +156,7 @@ type confirmNodePayload struct {
 }
 
 func (controller Nodes) Confirm(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	var payload confirmNodePayload
 	if err == nil {
 		err = etx.Bind(&payload)
@@ -191,7 +173,7 @@ func (controller Nodes) Confirm(etx *echo.Context) error {
 }
 
 func (controller Nodes) Retry(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	if err == nil {
 		err = controller.service.Retry(etx.Request().Context(), id)
 	}

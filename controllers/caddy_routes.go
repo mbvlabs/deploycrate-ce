@@ -14,7 +14,6 @@ import (
 	"deploycrate-ce/router/routes"
 	"deploycrate-ce/services"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v5"
 )
 
@@ -27,80 +26,24 @@ func NewCaddyRoutes(service services.CaddyRouteService) CaddyRoutes {
 }
 
 func (controller CaddyRoutes) RegisterRoutes(r *router.Router) error {
-	routesToRegister := []struct {
-		method string
-		route  interface {
-			Path() string
-			Name() string
-		}
-		handler     echo.HandlerFunc
-		middlewares []echo.MiddlewareFunc
-	}{
-		{
-			http.MethodGet,
-			routes.CaddyRoutes,
-			controller.Index,
-			[]echo.MiddlewareFunc{middleware.AuthOnly},
-		},
-		{
-			http.MethodGet,
-			routes.CaddyRouteShow,
-			controller.Show,
-			[]echo.MiddlewareFunc{middleware.AuthOnly},
-		},
-		{
-			http.MethodPost,
-			routes.CaddyRouteCreate,
-			controller.Create,
-			[]echo.MiddlewareFunc{middleware.AdminOnly},
-		},
-		{
-			http.MethodPatch,
-			routes.CaddyRouteUpdate,
-			controller.Update,
-			[]echo.MiddlewareFunc{middleware.AdminOnly},
-		},
-		{
-			http.MethodPatch,
-			routes.CaddyResourceRouteUpdate,
-			controller.UpdateResource,
-			[]echo.MiddlewareFunc{middleware.AdminOnly},
-		},
-		{
-			http.MethodPatch,
-			routes.CaddyCustomRouteUpdate,
-			controller.UpdateCustom,
-			[]echo.MiddlewareFunc{middleware.AdminOnly},
-		},
-		{
-			http.MethodDelete,
-			routes.CaddyCustomRouteDestroy,
-			controller.DestroyCustom,
-			[]echo.MiddlewareFunc{middleware.AdminOnly},
-		},
-		{
-			http.MethodDelete,
-			routes.CaddyRouteDestroy,
-			controller.Destroy,
-			[]echo.MiddlewareFunc{middleware.AdminOnly},
-		},
-	}
-
-	errList := make([]error, 0, len(routesToRegister))
-	for _, registered := range routesToRegister {
-		_, err := r.AddRoute(echo.Route{
-			Method: registered.method, Path: registered.route.Path(), Name: registered.route.Name(),
-			Handler: registered.handler, Middlewares: registered.middlewares,
-		})
-		if err != nil {
-			errList = append(errList, err)
-		}
-	}
-	return errors.Join(errList...)
+	return errors.Join(
+		registerRoutes(r, []routeDefinition{
+			{http.MethodGet, routes.CaddyRoutes, controller.Index},
+			{http.MethodGet, routes.CaddyRouteShow, controller.Show},
+		}, middleware.AuthOnly),
+		registerRoutes(r, []routeDefinition{
+			{http.MethodPost, routes.CaddyRouteCreate, controller.Create},
+			{http.MethodPatch, routes.CaddyRouteUpdate, controller.Update},
+			{http.MethodPatch, routes.CaddyResourceRouteUpdate, controller.UpdateResource},
+			{http.MethodPatch, routes.CaddyCustomRouteUpdate, controller.UpdateCustom},
+			{http.MethodDelete, routes.CaddyCustomRouteDestroy, controller.DestroyCustom},
+			{http.MethodDelete, routes.CaddyRouteDestroy, controller.Destroy},
+		}, middleware.AdminOnly),
+	)
 }
 
 func (controller CaddyRoutes) UpdateResource(etx *echo.Context) error {
-	endpointID, err := uuid.Parse(etx.Param("id"))
+	endpointID, err := uuidPathParam(etx, "id")
 	var input services.ResourceCaddyRouteUpdateInput
 	if err == nil {
 		err = etx.Bind(&input)
@@ -121,7 +64,7 @@ func (controller CaddyRoutes) UpdateResource(etx *echo.Context) error {
 }
 
 func (controller CaddyRoutes) UpdateCustom(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	var input services.CustomCaddyRouteInput
 	if err == nil {
 		err = etx.Bind(&input)
@@ -137,7 +80,7 @@ func (controller CaddyRoutes) UpdateCustom(etx *echo.Context) error {
 }
 
 func (controller CaddyRoutes) DestroyCustom(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	if err == nil {
 		err = controller.service.DestroyCustom(etx.Request().Context(), id)
 	}
@@ -217,7 +160,7 @@ func (controller CaddyRoutes) Create(etx *echo.Context) error {
 }
 
 func (controller CaddyRoutes) Update(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	var input services.ManagedCaddyRouteInput
 	if err == nil {
 		err = etx.Bind(&input)
@@ -240,7 +183,7 @@ func (controller CaddyRoutes) Update(etx *echo.Context) error {
 }
 
 func (controller CaddyRoutes) Destroy(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	if err == nil {
 		err = controller.service.DestroyManaged(etx.Request().Context(), id)
 	}

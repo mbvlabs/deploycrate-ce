@@ -15,7 +15,6 @@ import (
 	"deploycrate-ce/router/routes"
 	"deploycrate-ce/services"
 
-	"github.com/google/uuid"
 	"github.com/labstack/echo/v5"
 )
 
@@ -28,46 +27,23 @@ func NewObjectStorage(backups *services.DatabaseBackups) ObjectStorage {
 }
 
 func (controller ObjectStorage) RegisterRoutes(r *router.Router) error {
-	definitions := []struct {
-		method string
-		route  interface {
-			Path() string
-			Name() string
-		}
-		handler     echo.HandlerFunc
-		middlewares []echo.MiddlewareFunc
-	}{
-		{http.MethodGet, routes.ObjectStorage, controller.Index, nil},
-		{http.MethodPost, routes.ObjectStorageCreate, controller.Create, nil},
-		{http.MethodGet, routes.ObjectStorageShow, controller.Show, nil},
-		{
-			http.MethodPost,
-			routes.ObjectStorageRecovery,
-			controller.Recovery,
-			[]echo.MiddlewareFunc{middleware.IPRateLimiter(5, routes.ObjectStorage)},
-		},
-	}
-	errList := make([]error, 0, len(definitions))
-	for _, definition := range definitions {
-		middlewares := append(
-			[]echo.MiddlewareFunc{middleware.AdminOnly},
-			definition.middlewares...)
-		_, err := r.AddRoute(echo.Route{
-			Method: definition.method, Path: definition.route.Path(), Name: definition.route.Name(),
-			Handler: definition.handler, Middlewares: middlewares,
-		})
-		if err != nil {
-			errList = append(errList, err)
-		}
-	}
-	return errors.Join(errList...)
+	return errors.Join(
+		registerRoutes(r, []routeDefinition{
+			{http.MethodGet, routes.ObjectStorage, controller.Index},
+			{http.MethodPost, routes.ObjectStorageCreate, controller.Create},
+			{http.MethodGet, routes.ObjectStorageShow, controller.Show},
+		}, middleware.AdminOnly),
+		registerRoutes(r, []routeDefinition{
+			{http.MethodPost, routes.ObjectStorageRecovery, controller.Recovery},
+		}, middleware.AdminOnly, middleware.IPRateLimiter(5, routes.ObjectStorage)),
+	)
 }
 
 func (controller ObjectStorage) Recovery(etx *echo.Context) error {
 	etx.Response().Header().Set("Cache-Control", "no-store")
 	etx.Response().Header().Set("Pragma", "no-cache")
 
-	destinationID, err := uuid.Parse(etx.Param("id"))
+	destinationID, err := uuidPathParam(etx, "id")
 	if err != nil {
 		return etx.JSON(
 			http.StatusNotFound,
@@ -140,7 +116,7 @@ func (controller ObjectStorage) Index(etx *echo.Context) error {
 }
 
 func (controller ObjectStorage) Show(etx *echo.Context) error {
-	id, err := uuid.Parse(etx.Param("id"))
+	id, err := uuidPathParam(etx, "id")
 	if err != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}

@@ -24,49 +24,12 @@ func NewResetPasswords(identity services.Identity) ResetPasswords {
 }
 
 func (rp ResetPasswords) RegisterRoutes(r *router.Router) error {
-	errs := []error{}
-
-	_, err := r.AddRoute(echo.Route{
-		Method:  http.MethodGet,
-		Path:    routes.PasswordNew.Path(),
-		Name:    routes.PasswordNew.Name(),
-		Handler: rp.New,
+	return registerRoutes(r, []routeDefinition{
+		{http.MethodGet, routes.PasswordNew, rp.New},
+		{http.MethodPost, routes.PasswordCreate, rp.Create},
+		{http.MethodGet, routes.PasswordEdit, rp.Edit},
+		{http.MethodPut, routes.PasswordUpdate, rp.Update},
 	})
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	_, err = r.AddRoute(echo.Route{
-		Method:  http.MethodPost,
-		Path:    routes.PasswordCreate.Path(),
-		Name:    routes.PasswordCreate.Name(),
-		Handler: rp.Create,
-	})
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	_, err = r.AddRoute(echo.Route{
-		Method:  http.MethodGet,
-		Path:    routes.PasswordEdit.Path(),
-		Name:    routes.PasswordEdit.Name(),
-		Handler: rp.Edit,
-	})
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	_, err = r.AddRoute(echo.Route{
-		Method:  http.MethodPut,
-		Path:    routes.PasswordUpdate.Path(),
-		Name:    routes.PasswordUpdate.Name(),
-		Handler: rp.Update,
-	})
-	if err != nil {
-		errs = append(errs, err)
-	}
-
-	return errors.Join(errs...)
 }
 
 func (rp ResetPasswords) New(etx *echo.Context) error {
