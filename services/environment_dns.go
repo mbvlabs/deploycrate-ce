@@ -9,13 +9,8 @@ import (
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
 	"deploycrate-ce/queue/jobs"
-	"deploycrate-ce/telemetry"
 	"errors"
 	"fmt"
-	"io"
-	"net"
-	"net/http"
-	"net/netip"
 	"sort"
 	"strings"
 	"time"
@@ -538,15 +533,6 @@ func (service *EnvironmentDNS) Reconcile(
 	if err != nil {
 		return nil, service.fail(ctx, bindingID, generation, err)
 	}
-	remote, err := service.client.ListAddressRecords(
-		ctx,
-		string(token),
-		scope.ZoneExternalID,
-		scope.Hostname,
-	)
-	if err != nil {
-		return nil, service.fail(ctx, bindingID, generation, err)
-	}
 	tracked, err := models.EnvironmentDNSRecord.ActiveForBinding(
 		ctx,
 		service.db.Executor(),
@@ -555,28 +541,33 @@ func (service *EnvironmentDNS) Reconcile(
 	if err != nil {
 		return nil, service.fail(ctx, bindingID, generation, err)
 	}
-	trackedIDs := make(map[string]struct{}, len(tracked))
+	trackedIDs := make([]string, 0, len(tracked))
 	for _, record := range tracked {
 		if record.DNSZoneID == scope.ZoneID &&
 			strings.EqualFold(record.ObservedName, scope.Hostname) {
-			trackedIDs[record.ExternalID] = struct{}{}
+			trackedIDs = append(trackedIDs, record.ExternalID)
 		}
 	}
-	marker := ownershipMarker(bindingID)
-	owned := make([]cloudflareclient.DNSRecord, 0, len(remote))
-	unmanaged := make([]cloudflareclient.DNSRecord, 0)
-	for _, record := range remote {
-		_, tracked := trackedIDs[record.ID]
-		if tracked || record.Comment == marker || scope.AdoptionConfirmed.Valid {
-			owned = append(owned, record)
-		} else {
-			unmanaged = append(unmanaged, record)
-		}
+	reconciliation, err := cloudflareclient.ReconcileARecords(
+		ctx,
+		service.client,
+		cloudflareclient.ARecordReconciliationInput{
+			Token:            string(token),
+			ZoneID:           scope.ZoneExternalID,
+			Hostname:         scope.Hostname,
+			DesiredIPv4:      desired,
+			OwnershipMarker:  ownershipMarker(bindingID),
+			TrackedRecordIDs: trackedIDs,
+			AdoptUnmanaged:   scope.AdoptionConfirmed.Valid,
+		},
+	)
+	if err != nil {
+		return nil, service.fail(ctx, bindingID, generation, err)
 	}
-	if len(unmanaged) > 0 {
+	if reconciliation.BlockedByUnmanaged {
 		message := fmt.Sprintf(
 			"%d unmanaged Cloudflare address record(s) already use %s",
-			len(unmanaged),
+			len(reconciliation.Classification.Unmanaged),
 			scope.Hostname,
 		)
 		if err := service.markState(
@@ -590,59 +581,6 @@ func (service *EnvironmentDNS) Reconcile(
 		}
 		return nil, nil
 	}
-	sort.Slice(owned, func(i, j int) bool { return owned[i].ID < owned[j].ID })
-	applied := make([]cloudflareclient.DNSRecord, 0, len(desired))
-	for index, address := range desired {
-		input := cloudflareclient.DNSRecordInput{
-			Type:    "A",
-			Name:    scope.Hostname,
-			Content: address,
-			TTL:     1,
-			Proxied: true,
-			Comment: marker,
-		}
-		var record cloudflareclient.DNSRecord
-		if index < len(owned) && strings.EqualFold(owned[index].Type, "A") {
-			record, err = service.client.UpdateARecord(
-				ctx,
-				string(token),
-				scope.ZoneExternalID,
-				owned[index].ID,
-				input,
-			)
-		} else {
-			if index < len(owned) {
-				err = service.client.DeleteRecord(
-					ctx,
-					string(token),
-					scope.ZoneExternalID,
-					owned[index].ID,
-				)
-			}
-			if err == nil {
-				record, err = service.client.CreateARecord(
-					ctx,
-					string(token),
-					scope.ZoneExternalID,
-					input,
-				)
-			}
-		}
-		if err != nil {
-			return nil, service.fail(ctx, bindingID, generation, err)
-		}
-		applied = append(applied, record)
-	}
-	for index := len(desired); index < len(owned); index++ {
-		if err := service.client.DeleteRecord(
-			ctx,
-			string(token),
-			scope.ZoneExternalID,
-			owned[index].ID,
-		); err != nil {
-			return nil, service.fail(ctx, bindingID, generation, err)
-		}
-	}
 	if err := service.removeTracked(ctx, bindingID, func(record dnsTrackedRemoval) bool {
 		return record.ZoneID != scope.ZoneID ||
 			!strings.EqualFold(record.ObservedName, scope.Hostname)
@@ -655,8 +593,8 @@ func (service *EnvironmentDNS) Reconcile(
 		return nil, err
 	}
 	defer tx.Rollback()
-	externalIDs := make([]string, 0, len(applied))
-	for _, record := range applied {
+	externalIDs := make([]string, 0, len(reconciliation.Applied))
+	for _, record := range reconciliation.Applied {
 		externalIDs = append(externalIDs, record.ID)
 		if _, err := models.EnvironmentDNSRecord.Upsert(
 			ctx,
@@ -791,8 +729,6 @@ func (service *EnvironmentDNS) scope(
 	)
 }
 
-type dnsServerAddress = models.DNSServerAddress
-
 func (service *EnvironmentDNS) desiredIPv4(
 	ctx context.Context,
 	db storage.Executor,
@@ -805,7 +741,7 @@ func (service *EnvironmentDNS) desiredIPv4(
 	unique := make([]string, 0, len(servers))
 	seen := make(map[string]struct{}, len(servers))
 	for _, entry := range servers {
-		value, err := service.resolvePublicIPv4(ctx, db, entry)
+		value, err := resolveDNSServerPublicIPv4(ctx, db, entry)
 		if err != nil {
 			return nil, err
 		}
@@ -822,86 +758,6 @@ func (service *EnvironmentDNS) desiredIPv4(
 	}
 	sort.Strings(unique)
 	return unique, nil
-}
-
-func (service *EnvironmentDNS) resolvePublicIPv4(
-	ctx context.Context,
-	db storage.Executor,
-	server dnsServerAddress,
-) (string, error) {
-	for _, candidate := range []string{server.IPv4, server.Addr} {
-		if parsed, err := netip.ParseAddr(
-			strings.TrimSpace(candidate),
-		); err == nil &&
-			isPublicIPv4(parsed) {
-			return parsed.String(), nil
-		}
-	}
-	if server.Kind != "self_hosted" {
-		return "", errors.Join(
-			models.ErrDomainValidation,
-			fmt.Errorf(
-				"Cloudflare-managed DNS requires a public IPv4 address on runtime Server %s; set one in the Server settings",
-				server.ID,
-			),
-		)
-	}
-	detected, err := detectHostPublicIPv4(ctx)
-	if err != nil {
-		return "", errors.Join(models.ErrDomainValidation, err)
-	}
-	if err := models.Server.UpdateIPv4Address(
-		ctx, db, server.ID, detected, time.Now().UTC(),
-	); err != nil {
-		return "", err
-	}
-	return detected, nil
-}
-
-func detectHostPublicIPv4(ctx context.Context) (string, error) {
-	var lastErr error
-	for _, endpoint := range []string{"1.1.1.1:53", "8.8.8.8:53", "9.9.9.9:53"} {
-		connection, err := (&net.Dialer{Timeout: 3 * time.Second}).DialContext(
-			ctx,
-			"tcp4",
-			endpoint,
-		)
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		local := connection.LocalAddr()
-		_ = connection.Close()
-		if tcpAddress, ok := local.(*net.TCPAddr); ok {
-			if address, ok := netip.AddrFromSlice(tcpAddress.IP); ok && isPublicIPv4(address) {
-				return tcpAddress.IP.String(), nil
-			}
-		}
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api4.ipify.org", nil)
-	if err != nil {
-		return "", lastErr
-	}
-	response, err := telemetry.NewHTTPClient(5 * time.Second).Do(request)
-	if err != nil {
-		return "", errors.Join(lastErr, err)
-	}
-	defer response.Body.Close()
-	body, readErr := io.ReadAll(io.LimitReader(response.Body, 64))
-	if readErr != nil {
-		return "", errors.Join(lastErr, readErr)
-	}
-	value := strings.TrimSpace(string(body))
-	if parsed, err := netip.ParseAddr(value); err == nil && isPublicIPv4(parsed) {
-		return parsed.String(), nil
-	}
-	return "", errors.Join(lastErr, errors.New("could not detect the host's public IPv4 address"))
-}
-
-func isPublicIPv4(address netip.Addr) bool {
-	return address.Is4() && address.IsGlobalUnicast() && !address.IsPrivate() &&
-		!address.IsLoopback() &&
-		!address.IsLinkLocalUnicast()
 }
 
 func (service *EnvironmentDNS) markReconciling(

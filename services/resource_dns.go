@@ -141,58 +141,38 @@ func (service *ResourceDNS) reconcile(ctx context.Context, endpoint models.Resou
 	if err != nil {
 		return err
 	}
-	remote, err := service.client.ListAddressRecords(ctx, token, zone.ExternalID, endpoint.Address)
-	if err != nil {
-		return err
-	}
 	tracked, err := models.ResourceDNSRecord.ActiveForBinding(ctx, service.db.Executor(), binding.ID)
 	if err != nil {
 		return err
 	}
-	trackedIDs := make(map[string]struct{}, len(tracked))
+	trackedIDs := make([]string, 0, len(tracked))
 	for _, record := range tracked {
 		if record.DNSZoneID == zone.ID && strings.EqualFold(record.ObservedName, endpoint.Address) {
-			trackedIDs[record.ExternalID] = struct{}{}
+			trackedIDs = append(trackedIDs, record.ExternalID)
 		}
 	}
-	marker := resourceDNSOwnershipMarker(binding.ID)
-	owned := make([]cloudflareclient.DNSRecord, 0)
-	unmanaged := 0
-	for _, record := range remote {
-		_, wasTracked := trackedIDs[record.ID]
-		if wasTracked || record.Comment == marker {
-			owned = append(owned, record)
-		} else {
-			unmanaged++
-		}
+	reconciliation, err := cloudflareclient.ReconcileARecords(
+		ctx,
+		service.client,
+		cloudflareclient.ARecordReconciliationInput{
+			Token:            token,
+			ZoneID:           zone.ExternalID,
+			Hostname:         endpoint.Address,
+			DesiredIPv4:      desired,
+			OwnershipMarker:  resourceDNSOwnershipMarker(binding.ID),
+			TrackedRecordIDs: trackedIDs,
+		},
+	)
+	if err != nil {
+		return err
 	}
-	if unmanaged > 0 {
-		return fmt.Errorf("%w: %d unmanaged Cloudflare address record(s) already use %s", errResourceDNSConflict, unmanaged, endpoint.Address)
-	}
-	sort.Slice(owned, func(i, j int) bool { return owned[i].ID < owned[j].ID })
-	applied := make([]cloudflareclient.DNSRecord, 0, len(desired))
-	for index, address := range desired {
-		input := cloudflareclient.DNSRecordInput{Type: "A", Name: endpoint.Address, Content: address, TTL: 1, Proxied: true, Comment: marker}
-		var record cloudflareclient.DNSRecord
-		if index < len(owned) && strings.EqualFold(owned[index].Type, "A") {
-			record, err = service.client.UpdateARecord(ctx, token, zone.ExternalID, owned[index].ID, input)
-		} else {
-			if index < len(owned) {
-				err = service.client.DeleteRecord(ctx, token, zone.ExternalID, owned[index].ID)
-			}
-			if err == nil {
-				record, err = service.client.CreateARecord(ctx, token, zone.ExternalID, input)
-			}
-		}
-		if err != nil {
-			return err
-		}
-		applied = append(applied, record)
-	}
-	for index := len(desired); index < len(owned); index++ {
-		if err := service.client.DeleteRecord(ctx, token, zone.ExternalID, owned[index].ID); err != nil {
-			return err
-		}
+	if reconciliation.BlockedByUnmanaged {
+		return fmt.Errorf(
+			"%w: %d unmanaged Cloudflare address record(s) already use %s",
+			errResourceDNSConflict,
+			len(reconciliation.Classification.Unmanaged),
+			endpoint.Address,
+		)
 	}
 	if err := service.removeTracked(ctx, binding.ID, func(record dnsTrackedRemoval) bool {
 		return record.ZoneID != zone.ID || !strings.EqualFold(record.ObservedName, endpoint.Address)
@@ -204,8 +184,8 @@ func (service *ResourceDNS) reconcile(ctx context.Context, endpoint models.Resou
 		return err
 	}
 	defer tx.Rollback()
-	externalIDs := make([]string, 0, len(applied))
-	for _, record := range applied {
+	externalIDs := make([]string, 0, len(reconciliation.Applied))
+	for _, record := range reconciliation.Applied {
 		externalIDs = append(externalIDs, record.ID)
 		if _, err := models.ResourceDNSRecord.Upsert(ctx, tx, models.UpsertResourceDNSRecordData{
 			ExternalID: record.ID, Content: record.Content, ObservedName: record.Name,
@@ -228,7 +208,7 @@ func (service *ResourceDNS) desiredIPv4(ctx context.Context, resourceID uuid.UUI
 	values := make([]string, 0, len(servers))
 	seen := make(map[string]struct{}, len(servers))
 	for _, server := range servers {
-		value, err := (&EnvironmentDNS{db: service.db}).resolvePublicIPv4(ctx, service.db.Executor(), server)
+		value, err := resolveDNSServerPublicIPv4(ctx, service.db.Executor(), server)
 		if err != nil {
 			return nil, err
 		}
