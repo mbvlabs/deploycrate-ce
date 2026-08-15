@@ -80,7 +80,7 @@
         height={136}
         padding={0}
         tooltipContext={false}
-        motion={false}
+        motion="none"
         aria-label={`${label}: ${available ? `${usedPercent.toFixed(0)} percent used` : "Unavailable"}`}
         props={{
           arc: { strokeWidth: 0 },

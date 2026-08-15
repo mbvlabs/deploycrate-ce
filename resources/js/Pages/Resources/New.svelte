@@ -8,45 +8,14 @@
   import { Input } from "@/Components/ui/input";
   import * as NativeSelect from "@/Components/ui/native-select";
   import { Spinner } from "@/Components/ui/spinner";
+  import type {
+    ResourceEngine,
+    ResourceOptions,
+  } from "@/Components/Resources/resource.types";
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
   import { slugify } from "@/lib/slug";
   import { routes } from "@/routes";
 
-  type CredentialField = {
-    name: string;
-    label: string;
-    required: boolean;
-    secret: boolean;
-  };
-  type EnvironmentKey = { name: string; label: string; defaultKey: string };
-  type Engine = {
-    engine: string;
-    label: string;
-    resourceType: "database" | "cache" | "service";
-    protocols: string[];
-    endpointRoles: string[];
-    tlsModes: string[];
-    credentialFields: CredentialField[];
-    environmentKeys: EnvironmentKey[];
-    healthCheckKinds: string[];
-    defaultPort: number;
-    defaultProtocol: string;
-    defaultTlsMode: string;
-  };
-  type Server = { id: string; name: string; address: string };
-  type PrivateNetwork = {
-    id: string;
-    name: string;
-    serverIds: string[];
-    serverAddresses: Record<string, string>;
-  };
-  type Options = {
-    engines: Engine[];
-    resourceTypes: string[];
-    servers: Server[];
-    privateNetworks: PrivateNetwork[];
-    registryCredentials: Array<{ id: string; name: string }>;
-  };
   type Preset = {
     engine: string;
     badge: string;
@@ -61,7 +30,7 @@
     errors = {},
   }: {
     auth: { email: string };
-    options: Options;
+    options: ResourceOptions;
     errors?: Record<string, string>;
   } = $props();
   let selectedEngine = $state("");
@@ -158,7 +127,7 @@
     };
   }
 
-  function chooseEngine(engine: Engine) {
+  function chooseEngine(engine: ResourceEngine) {
     selectedEngine = engine.engine;
     const selectedPreset = presets[engine.engine];
     form.installation.imageReference = selectedPreset?.image ?? "";

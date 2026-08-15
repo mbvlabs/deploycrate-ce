@@ -149,8 +149,8 @@
           error={$createForm.errors.accountId}
           ><Input
             bind:value={$createForm.accountId}
-            minlength="32"
-            maxlength="32"
+            minlength={32}
+            maxlength={32}
             placeholder="023e105f4ecef8ad9ca31a8372d0c353"
             autocomplete="off"
             required

@@ -1,26 +1,22 @@
 <script lang="ts">
   import { page, router } from "@inertiajs/svelte";
-  import SearchIcon from "@lucide/svelte/icons/search";
   import RequestGeography from "@/Components/Applications/Environments/RequestGeography.svelte";
-  import LogEntry from "@/Components/TelemetryLogEntry.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import TelemetryHistory from "@/Components/System/TelemetryHistory.svelte";
+  import LogExplorer from "@/Components/Telemetry/LogExplorer.svelte";
+  import TraceDetails from "@/Components/Telemetry/TraceDetails.svelte";
   import { Button } from "@/Components/ui/button";
   import * as Card from "@/Components/ui/card";
   import * as Empty from "@/Components/ui/empty";
-  import { Input } from "@/Components/ui/input";
   import * as NativeSelect from "@/Components/ui/native-select";
   import * as Table from "@/Components/ui/table";
   import { cn } from "@/lib/utils";
   import { routes } from "@/routes";
   import type {
     ApplicationTelemetry,
-    OpenTelemetryLog,
-    OpenTelemetryLogSnapshot,
     QueryTelemetry,
     RouteTelemetry,
     TelemetryRange,
-    TraceSpan,
   } from "@/Pages/Applications/Environments/show.types";
 
   type OpenTelemetryView = "insights" | "logs" | "traces" | "database";
@@ -44,18 +40,6 @@
     live: boolean;
   } = $props();
 
-  let logs = $state<OpenTelemetryLog[]>([]);
-  let logCursor = $state("");
-  let logsLoaded = $state(false);
-  let logConnectionError = $state("");
-  let logSearchInput = $state("");
-  let logSearch = $state("");
-  let logQueryKey = $state("");
-  let followingLogs = $state(true);
-  let logViewport = $state<HTMLDivElement>();
-  let traceSpans = $state<TraceSpan[]>([]);
-  let traceLoading = $state(false);
-  let traceError = $state("");
   let expandedSlowQueries = $state<QueryTelemetry[] | null>(null);
   let expandedSlowQueriesKey = $state("");
   let slowQueriesLoading = $state(false);
@@ -229,12 +213,6 @@
       })),
     },
   ]);
-  const databaseSpans = $derived(
-    traceSpans.filter(
-      (span) => databaseSystem(span) !== "" || databaseQueryText(span) !== "",
-    ),
-  );
-
   const formatPerSecond = (value: number) =>
     `${value.toFixed(value < 1 ? 2 : 1)}/s`;
   const formatPercent = (value: number) => `${(value * 100).toFixed(2)}%`;
@@ -247,115 +225,6 @@
   const short = (value: string) => (value ? value.slice(0, 8) : "Unknown");
   const stamp = (value: string) =>
     value ? new Date(value).toLocaleString() : "Unknown";
-  function databaseSystem(span: TraceSpan) {
-    return (
-      span.spanAttributes?.["db.system.name"] ??
-      span.spanAttributes?.["db.system"] ??
-      ""
-    );
-  }
-  function databaseQueryText(span: TraceSpan) {
-    return (
-      span.spanAttributes?.["db.query.text"] ??
-      span.spanAttributes?.["db.statement"] ??
-      ""
-    );
-  }
-  const logLevel = (log: OpenTelemetryLog) => {
-    if (log.severity) return log.severity.toUpperCase();
-    if (log.severityNumber >= 17) return "ERROR";
-    if (log.severityNumber >= 13) return "WARN";
-    if (log.severityNumber >= 9) return "INFO";
-    return "DEBUG";
-  };
-  const logStatus = (log: OpenTelemetryLog) => {
-    if (log.severityNumber >= 17) return "error";
-    if (log.severityNumber >= 13) return "warning";
-    return logLevel(log).toLowerCase();
-  };
-  const logContext = (log: OpenTelemetryLog) =>
-    Object.entries(log.attributes ?? {})
-      .filter(
-        ([key, value]) =>
-          value &&
-          !key.startsWith("code.") &&
-          (key !== "trace_id" || !log.traceId) &&
-          (key !== "span_id" || !log.spanId) &&
-          ![
-            "path",
-            "url.path",
-            "http.target",
-            "http.route",
-            "http.response.status_code",
-            "http.status_code",
-          ].includes(key),
-      )
-      .sort(([left], [right]) => left.localeCompare(right));
-  const logMessage = (log: OpenTelemetryLog) => {
-    const message = log.message.trim();
-    if (!(message.startsWith("{") || message.startsWith("[")))
-      return log.message;
-    try {
-      return JSON.stringify(JSON.parse(message), null, 2);
-    } catch {
-      return log.message;
-    }
-  };
-
-  async function loadLogs(
-    range: TelemetryRange,
-    search: string,
-    signal: AbortSignal,
-  ) {
-    const endpoint = new URL(
-      routes.environmentTelemetryLogs(applicationId, environmentId),
-      window.location.origin,
-    );
-    endpoint.searchParams.set("range", range);
-    if (search) endpoint.searchParams.set("search", search);
-    if (logCursor) endpoint.searchParams.set("after", logCursor);
-    const response = await window.fetch(endpoint, {
-      cache: "no-store",
-      credentials: "same-origin",
-      headers: { Accept: "application/json" },
-      signal,
-    });
-    if (!response.ok)
-      throw new Error(`OpenTelemetry logs returned ${response.status}`);
-    const snapshot = (await response.json()) as OpenTelemetryLogSnapshot;
-    const cutoff = Date.now() - rangeSeconds * 1000;
-    logs = [...logs, ...snapshot.logs]
-      .filter((log) => new Date(log.occurredAt).getTime() >= cutoff)
-      .slice(-2000);
-    logCursor = snapshot.nextCursor;
-    logsLoaded = true;
-    logConnectionError = "";
-    return snapshot;
-  }
-
-  async function loadTrace(traceId: string, signal: AbortSignal) {
-    try {
-      const response = await window.fetch(
-        routes.environmentTelemetryTrace(applicationId, environmentId, traceId),
-        {
-          cache: "no-store",
-          credentials: "same-origin",
-          headers: { Accept: "application/json" },
-          signal,
-        },
-      );
-      if (!response.ok) throw new Error(`Trace returned ${response.status}`);
-      const snapshot = (await response.json()) as { spans: TraceSpan[] };
-      if (signal.aborted) return;
-      traceSpans = snapshot.spans;
-    } catch {
-      if (signal.aborted) return;
-      traceError = "This trace could not be loaded.";
-    } finally {
-      if (!signal.aborted) traceLoading = false;
-    }
-  }
-
   async function toggleSlowQueries() {
     if (slowQueriesExpanded) {
       expandedSlowQueries = null;
@@ -394,15 +263,6 @@
     }
   }
 
-  function updateLogFollow() {
-    if (!logViewport) return;
-    followingLogs =
-      logViewport.scrollHeight -
-        logViewport.scrollTop -
-        logViewport.clientHeight <
-      48;
-  }
-
   function focusTrace(traceId: string) {
     router.visit(telemetryHref("traces", traceId), {
       preserveScroll: true,
@@ -426,79 +286,6 @@
     });
   }
 
-  $effect(() => {
-    const search = logSearchInput.trim();
-    const timer = window.setTimeout(() => (logSearch = search), 300);
-    return () => window.clearTimeout(timer);
-  });
-
-  $effect(() => {
-    if (activeView !== "logs") return;
-    const nextQueryKey = `${telemetryRange}:${logSearch}`;
-    if (nextQueryKey === logQueryKey) return;
-    logQueryKey = nextQueryKey;
-    logs = [];
-    logCursor = "";
-    logsLoaded = false;
-    logConnectionError = "";
-    followingLogs = true;
-  });
-
-  $effect(() => {
-    const traceId = focusedTraceId;
-    traceSpans = [];
-    traceError = "";
-    traceLoading = false;
-    if (!traceId) return;
-
-    traceLoading = true;
-    const abortController = new AbortController();
-    void loadTrace(traceId, abortController.signal);
-    return () => abortController.abort();
-  });
-
-  $effect(() => {
-    logs.length;
-    if (!followingLogs) return;
-    const frame = window.requestAnimationFrame(() => {
-      logViewport?.scrollTo({ top: logViewport.scrollHeight });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  });
-
-  $effect(() => {
-    if (activeView !== "logs" || !logQueryKey) return;
-    const range = telemetryRange;
-    const search = logSearch;
-    const shouldPoll = live;
-    const abortController = new AbortController();
-    let timer: number | undefined;
-    let retryDelay = 2000;
-
-    async function poll() {
-      try {
-        const snapshot = await loadLogs(range, search, abortController.signal);
-        if (abortController.signal.aborted) return;
-        retryDelay = 2000;
-        if (shouldPoll)
-          timer = window.setTimeout(poll, snapshot.hasMore ? 0 : retryDelay);
-      } catch {
-        if (abortController.signal.aborted) return;
-        logConnectionError = shouldPoll
-          ? "Reconnecting to the OpenTelemetry log stream..."
-          : "OpenTelemetry logs are temporarily unavailable.";
-        if (!shouldPoll) return;
-        retryDelay = Math.min(retryDelay * 2, 10000);
-        timer = window.setTimeout(poll, retryDelay);
-      }
-    }
-
-    timer = window.setTimeout(poll, 0);
-    return () => {
-      abortController.abort();
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  });
 </script>
 
 <nav
@@ -718,114 +505,25 @@
 {/if}
 
 {#if activeView === "logs"}
-  <Card.Root>
-    <Card.Header>
-      <Card.Title>Application logs</Card.Title>
-      <Card.Description
-        >Structured OpenTelemetry logs from {rangeLabel}. Search across
-        messages, attributes, trace IDs, span IDs, and services.</Card.Description
-      >
-    </Card.Header>
-    <Card.Content>
-      <div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end">
-        <label
-          class="grid w-full max-w-xl gap-1.5 text-xs font-medium"
-          for="environment-otel-log-search"
-        >
-          <span class="text-muted-foreground">Search logs</span>
-          <span class="relative">
-            <SearchIcon
-              class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
-            />
-            <Input
-              id="environment-otel-log-search"
-              type="search"
-              maxlength={256}
-              bind:value={logSearchInput}
-              placeholder="Search messages, attributes, traces, or services"
-              class="pl-8"
-            />
-          </span>
-        </label>
-        <p class="shrink-0 text-xs text-muted-foreground sm:ml-auto">
-          {logs.length}
-          {logs.length === 1 ? "entry" : "entries"}
-          {#if live}<span class="ml-2 text-success">● Live polling</span>{/if}
-        </p>
-      </div>
-      {#if logConnectionError}
-        <p class="mb-3 text-xs text-warning">{logConnectionError}</p>
-      {/if}
-      <div
-        bind:this={logViewport}
-        onscroll={updateLogFollow}
-        class="max-h-[42rem] min-h-48 overflow-auto border border-border bg-muted/10"
-      >
-        {#each logs as log (log.id)}
-          <LogEntry
-            occurredAt={log.occurredAt}
-            message={logMessage(log)}
-            status={logStatus(log)}
-            statusLabel={logLevel(log)}
-            source={log.service || log.processName || "application"}
-            metadata={[
-              ...(log.processReplica || log.processName || log.processKind
-                ? [
-                    {
-                      label: "Process",
-                      value:
-                        log.processReplica ||
-                        log.processName ||
-                        log.processKind,
-                    },
-                  ]
-                : []),
-              {
-                label: "Path",
-                value: log.requestPath || "Unavailable",
-                mono: true,
-              },
-              ...(log.responseCode
-                ? [
-                    {
-                      label: "Response",
-                      value: String(log.responseCode),
-                      mono: true,
-                    },
-                  ]
-                : []),
-              ...(log.source
-                ? [
-                    {
-                      label: "Source",
-                      value: `${log.source}${log.line ? `:${log.line}` : ""}`,
-                      mono: true,
-                    },
-                  ]
-                : []),
-              ...(log.instance
-                ? [{ label: "Instance", value: log.instance, mono: true }]
-                : []),
-              ...(log.spanId
-                ? [{ label: "Span", value: short(log.spanId), mono: true }]
-                : []),
-            ]}
-            attributes={logContext(log)}
-            traceId={log.traceId}
-            ontrace={() => focusTrace(log.traceId)}
-          />
-        {:else}
-          <p class="p-4 text-sm text-muted-foreground">
-            {logsLoaded
-              ? logSearch
-                ? `No logs in ${rangeLabel} match the current filters.`
-                : `No OpenTelemetry logs were collected in ${rangeLabel}.`
-              : "Loading OpenTelemetry logs..."}
-          </p>
-        {/each}
-      </div>
-    </Card.Content>
-  </Card.Root>
+  <LogExplorer
+    active
+    endpoint={routes.environmentTelemetryLogs(applicationId, environmentId)}
+    range={telemetryRange}
+    {rangeLabel}
+    {live}
+    title="Application logs"
+    description={`Structured OpenTelemetry logs from ${rangeLabel}. Search across messages, attributes, trace IDs, span IDs, and services.`}
+    searchId="environment-otel-log-search"
+    searchPlaceholder="Search messages, attributes, traces, or services"
+    source={(log) => log.service || log.processName || "application"}
+    emptyMessage={`No OpenTelemetry logs were collected in ${rangeLabel}.`}
+    filteredEmptyMessage={() =>
+      `No logs in ${rangeLabel} match the current filters.`}
+    loadingMessage="Loading OpenTelemetry logs..."
+    reconnectingMessage="Reconnecting to the OpenTelemetry log stream..."
+    unavailableMessage="OpenTelemetry logs are temporarily unavailable."
+    ontrace={focusTrace}
+  />
 {/if}
 
 {#if activeView === "traces"}
@@ -844,108 +542,15 @@
         >
       </Card.Header>
       <Card.Content>
-        {#if traceLoading}
-          <p class="py-6 text-sm text-muted-foreground">Loading trace...</p>
-        {:else if traceError}
-          <p class="py-6 text-sm text-destructive">{traceError}</p>
-        {:else if traceSpans.length}
-          <div class="overflow-x-auto border border-border">
-            <Table.Root class="min-w-[920px] text-xs">
-              <Table.Header>
-                <Table.Row>
-                  <Table.Head>Started</Table.Head><Table.Head
-                    >Service</Table.Head
-                  >
-                  <Table.Head>Span</Table.Head><Table.Head
-                    >Span ID / parent</Table.Head
-                  >
-                  <Table.Head>Duration</Table.Head><Table.Head
-                    >Status</Table.Head
-                  >
-                </Table.Row>
-              </Table.Header>
-              <Table.Body>
-                {#each traceSpans as span (span.spanId)}
-                  <Table.Row>
-                    <Table.Cell class="whitespace-nowrap"
-                      >{stamp(span.startedAt)}</Table.Cell
-                    >
-                    <Table.Cell>
-                      <p class="font-medium">{span.serviceName}</p>
-                      <p class="mt-1 text-muted-foreground">
-                        {span.kind || span.scope}
-                      </p>
-                    </Table.Cell>
-                    <Table.Cell class="font-medium">{span.name}</Table.Cell>
-                    <Table.Cell class="font-mono">
-                      <p>{span.spanId}</p>
-                      <p class="mt-1 text-muted-foreground">
-                        {span.parentSpanId || "root"}
-                      </p>
-                    </Table.Cell>
-                    <Table.Cell
-                      >{formatSpanDuration(span.durationNs)}</Table.Cell
-                    >
-                    <Table.Cell>
-                      <StatusBadge status={span.statusCode || "unset"} />
-                      {#if span.statusMessage}<p
-                          class="mt-1 text-muted-foreground"
-                        >
-                          {span.statusMessage}
-                        </p>{/if}
-                    </Table.Cell>
-                  </Table.Row>
-                {/each}
-              </Table.Body>
-            </Table.Root>
-          </div>
-          {#if databaseSpans.length}
-            <section
-              class="mt-6 space-y-3"
-              aria-labelledby="trace-database-spans"
-            >
-              <div>
-                <h3 id="trace-database-spans" class="text-sm font-semibold">
-                  Database spans
-                </h3>
-                <p class="mt-1 text-xs text-muted-foreground">
-                  Query text is shown only when emitted by application
-                  instrumentation.
-                </p>
-              </div>
-              {#each databaseSpans as span (span.spanId)}
-                <article class="border border-border bg-muted/10 p-3">
-                  <header
-                    class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs"
-                  >
-                    <span class="font-medium">
-                      {databaseSystem(span) || "database"}
-                    </span>
-                    <span class="text-muted-foreground">{span.name}</span>
-                    <span class="font-mono text-muted-foreground">
-                      {formatSpanDuration(span.durationNs)}
-                    </span>
-                    <StatusBadge status={span.statusCode || "unset"} />
-                  </header>
-                  {#if databaseQueryText(span)}
-                    <pre
-                      class="mt-3 max-h-48 overflow-auto whitespace-pre-wrap break-words border-l-2 border-primary/40 bg-background/60 p-3 font-mono text-xs leading-5">{databaseQueryText(
-                        span,
-                      )}</pre>
-                  {:else}
-                    <p class="mt-3 text-xs text-muted-foreground">
-                      Query text was not emitted with this span.
-                    </p>
-                  {/if}
-                </article>
-              {/each}
-            </section>
-          {/if}
-        {:else}
-          <p class="py-6 text-sm text-muted-foreground">
-            No spans were retained for this trace.
-          </p>
-        {/if}
+        <TraceDetails
+          traceId={focusedTraceId}
+          endpoint={routes.environmentTelemetryTrace(
+            applicationId,
+            environmentId,
+            focusedTraceId,
+          )}
+          showDatabaseDetails
+        />
       </Card.Content>
     </Card.Root>
   {:else}

@@ -106,10 +106,10 @@
       highlight={{
         lines: { stroke: "var(--foreground)", opacity: 0.35 },
         points: { r: 5, stroke: "var(--background)", strokeWidth: 2 },
-        motion: false,
+        motion: "none" as const,
       }}
       tooltipContext={{ mode: "bisect-x" }}
-      motion={false}
+      motion="none"
       aria-label={`${label} over the last 24 hours`}
       props={{
         spline: {
@@ -144,7 +144,7 @@
           anchor="bottom"
           yOffset={10}
           portal={false}
-          motion={false}
+          motion="none"
           fadeDuration={0}
           variant="none"
         >

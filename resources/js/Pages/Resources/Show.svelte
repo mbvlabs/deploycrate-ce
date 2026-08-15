@@ -16,142 +16,29 @@
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import * as Table from "@/Components/ui/table";
   import { Textarea } from "@/Components/ui/textarea";
+  import ResourceCredentials from "@/Components/Resources/ResourceCredentials.svelte";
+  import ResourceInstallations from "@/Components/Resources/ResourceInstallations.svelte";
+  import type {
+    BackupHistory,
+    DatabaseBackups,
+    DNSZone,
+    EnvironmentKey,
+    Publication,
+    ResourceBackups,
+    ResourceConnection,
+    ResourceCredential,
+    ResourceDetail,
+    ResourceEndpoint,
+    ResourceEnrollment,
+    ResourceEngine,
+    ResourceHealthCheck,
+    ResourceMount,
+    ResourceOptions,
+    ResourceVolume,
+  } from "@/Components/Resources/resource.types";
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
   import { routes } from "@/routes";
 
-  type CredentialField = {
-    name: string;
-    label: string;
-    required: boolean;
-    secret: boolean;
-  };
-  type EnvironmentKey = { name: string; label: string; defaultKey: string };
-  type Engine = {
-    engine: string;
-    label: string;
-    resourceType: string;
-    protocols: string[];
-    endpointRoles: string[];
-    tlsModes: string[];
-    credentialFields: CredentialField[];
-    environmentKeys: EnvironmentKey[];
-    healthCheckKinds: string[];
-    defaultPort: number;
-    defaultProtocol: string;
-    defaultTlsMode: string;
-  };
-  type Publication = {
-    id: string;
-    resourceEndpointId: string;
-    externalId: string;
-    hostname: string;
-    healthPath: string;
-    state: string;
-    lastError: string;
-    appliedAt: string;
-    observedAt: string;
-    dns: {
-      mode: string;
-      zoneId: string;
-      zoneName: string;
-      connectionName: string;
-      state: string;
-      lastError: string;
-      records: Array<{ type: string; name: string; content: string }>;
-    };
-  };
-  type DNSZone = {
-    zoneId: string;
-    zoneName: string;
-    connectionId: string;
-    connectionName: string;
-  };
-  type PrivateNetwork = {
-    id: string;
-    name: string;
-    serverIds: string[];
-    serverAddresses: Record<string, string>;
-  };
-  type Options = {
-    engines: Engine[];
-    servers: Array<{ id: string; name: string; address: string }>;
-    privateNetworks: PrivateNetwork[];
-    registryCredentials: Array<{ id: string; name: string }>;
-  };
-  type Enrollment = {
-    deviceId: string;
-    grantId: string;
-    clientConfiguration: string;
-  };
-  type BackupDestination = {
-    id: string;
-    name: string;
-    provider: string;
-    endpoint: string;
-    region: string;
-    bucket: string;
-    prefix: string;
-    verifiedAt: string | null;
-    lastUsedAt: string | null;
-  };
-  type BackupPolicy = {
-    id: string;
-    schedule: string;
-    active: boolean;
-    nextRunAt: string;
-    backupDestinationId: string;
-    keepLast: number;
-    keepDaily: number;
-    keepWeekly: number;
-    keepMonthly: number;
-  };
-  type BackupHistory = {
-    id: string;
-    status: string;
-    triggerType: string;
-    scheduledAt: string;
-    finishedAt: string | null;
-    verifiedAt: string | null;
-    sizeBytes: number | null;
-    error: string;
-    canRestore: boolean;
-  };
-  type RestoreHistory = {
-    id: string;
-    status: string;
-    requestedAt: string;
-    startedAt: string | null;
-    finishedAt: string | null;
-    verifiedAt: string | null;
-    cutoverAt: string | null;
-    rolledBackAt: string | null;
-    error: string;
-    backupId: string;
-    backupScheduledAt: string;
-    safetyBackupId: string | null;
-  };
-  type RevealedCredential = {
-    id: string;
-    name: string;
-    username: string;
-    values: Record<string, string>;
-  };
-  type DatabaseBackups = {
-    databaseName: string;
-    eligibility: {
-      eligible: boolean;
-      reason: string;
-      installationId: string | null;
-    };
-    policy: BackupPolicy | null;
-    history: BackupHistory[];
-    restores: RestoreHistory[];
-    activeRestore: boolean;
-  };
-  type Backups = {
-    destinations: BackupDestination[];
-    databases: DatabaseBackups[];
-  };
   type DestructiveAction =
     | {
         kind: "remove-container";
@@ -242,14 +129,14 @@
     errors = {},
   }: {
     auth: { email: string };
-    resource: any;
-    backups: Backups;
-    options: Options;
+    resource: ResourceDetail;
+    backups: ResourceBackups;
+    options: ResourceOptions;
     publications?: Publication[];
     dnsZones?: DNSZone[];
     section?: string;
     selectedDatabase?: string;
-    enrollment?: Enrollment | null;
+    enrollment?: ResourceEnrollment | null;
     errors?: Record<string, string>;
   } = $props();
   let selectedBackupDatabaseName = $state(initialSelectedBackupDatabase());
@@ -262,7 +149,7 @@
       protocols: [] as string[],
       endpointRoles: [] as string[],
       tlsModes: [] as string[],
-      credentialFields: [] as CredentialField[],
+      credentialFields: [] as ResourceEngine["credentialFields"],
       environmentKeys: [] as EnvironmentKey[],
       healthCheckKinds: [] as string[],
       defaultPort: 1,
@@ -283,12 +170,12 @@
   );
   const primaryEndpoint = $derived(
     resource.endpoints.find(
-      (item: any) => item.role === "primary" && !item.privateNetworkId,
+      (item) => item.role === "primary" && !item.privateNetworkId,
     ),
   );
   const serviceMappings = $derived(
-    resource.installations.flatMap((installation: any) =>
-      (installation.configuration?.portMappings ?? []).map((mapping: any) => ({
+    resource.installations.flatMap((installation) =>
+      (installation.configuration.portMappings ?? []).map((mapping) => ({
         ...mapping,
         installationId: installation.id,
         containerName: installation.containerName,
@@ -305,18 +192,18 @@
   );
   const administratorCredentials = $derived(
     resource.credentials.filter(
-      (item: any) => item.metadata?.purpose === "administrator",
+      (item) => item.metadata.purpose === "administrator",
     ),
   );
   const applicationCredentials = $derived(
     resource.credentials.filter(
-      (item: any) => item.metadata?.purpose === "application",
+      (item) => item.metadata.purpose === "application",
     ),
   );
   const databaseBacked = $derived(resource.resourceType === "database");
   const managedPostgreSQL = $derived(resource.engine === "postgresql");
   const containerRunning = $derived(
-    resource.installations.some((item: any) => item.serviceState === "running"),
+    resource.installations.some((item) => item.serviceState === "running"),
   );
   const canAddApplicationUser = $derived(
     (!databaseBacked || resource.databases.length > 0) &&
@@ -350,7 +237,7 @@
     if (databaseBacked) {
       if (
         resource.healthChecks.some(
-          (item: any) => item.enabled && item.state === "unhealthy",
+          (item) => item.enabled && item.state === "unhealthy",
         )
       )
         return {
@@ -361,7 +248,7 @@
         };
       if (
         resource.healthChecks.some(
-          (item: any) => item.enabled && item.state === "degraded",
+          (item) => item.enabled && item.state === "degraded",
         )
       )
         return {
@@ -372,7 +259,7 @@
         };
       if (
         resource.healthChecks.some(
-          (item: any) => item.enabled && item.state === "healthy",
+          (item) => item.enabled && item.state === "healthy",
         )
       )
         return {
@@ -395,7 +282,7 @@
       };
     if (
       resource.healthChecks.some(
-        (item: any) => item.enabled && item.state === "unhealthy",
+        (item) => item.enabled && item.state === "unhealthy",
       )
     )
       return {
@@ -405,7 +292,7 @@
       };
     if (
       resource.healthChecks.some(
-        (item: any) => item.enabled && item.state === "degraded",
+        (item) => item.enabled && item.state === "degraded",
       )
     )
       return {
@@ -416,7 +303,7 @@
       };
     if (
       resource.healthChecks.some(
-        (item: any) => item.enabled && item.state === "unknown",
+        (item) => item.enabled && item.state === "unknown",
       )
     )
       return {
@@ -424,14 +311,14 @@
         tone: "neutral",
         detail: "A Resource health check has no fresh observation.",
       };
-    if (resource.installations.some((item: any) => item.health === "unhealthy"))
+    if (resource.installations.some((item) => item.health === "unhealthy"))
       return {
         label: "Degraded",
         tone: "bad",
         detail: "At least one installation reports an unhealthy container.",
       };
     const running = resource.installations.filter(
-      (item: any) => item.serviceState === "running",
+      (item) => item.serviceState === "running",
     ).length;
     if (running === resource.installations.length)
       return {
@@ -447,7 +334,7 @@
       };
     if (
       resource.installations.some(
-        (item: any) =>
+        (item) =>
           item.serviceState === "exited" || item.serviceState === "stopped",
       )
     )
@@ -456,7 +343,7 @@
         tone: "warn",
         detail: "The configured runtime is not running.",
       };
-    if (resource.installations.every((item: any) => item.state === "missing"))
+    if (resource.installations.every((item) => item.state === "missing"))
       return {
         label: "Not deployed",
         tone: "neutral",
@@ -473,8 +360,6 @@
   let privateAccessDialogOpen = $state(false);
   let deviceDialogOpen = $state(false);
   let credentialDialogOpen = $state(false);
-  let credentialPasswordDialogOpen = $state(false);
-  let revealedCredentialDialogOpen = $state(false);
   let databaseDialogOpen = $state(false);
   let volumeDialogOpen = $state(false);
   let mountDialogOpen = $state(false);
@@ -484,11 +369,6 @@
   let restoreDialogOpen = $state(false);
   let backupPolicyDialogOpen = $state(false);
   let wireGuardConfigurationDialogOpen = $state(false);
-  let containerLogsDialogOpen = $state(false);
-  let containerLogsInstallation = $state<any>(null);
-  let containerLogs = $state("");
-  let containerLogsError = $state("");
-  let containerLogsLoading = $state(false);
   let jsonError = $state("");
   let pendingAction = $state("");
   let dialogAction = $state("");
@@ -508,11 +388,6 @@
     secretValues: {} as Record<string, string>,
   });
   let editingCredentialId = $state("");
-  let selectedCredential = $state<any>(null);
-  let currentPassword = $state("");
-  let credentialRevealError = $state("");
-  let credentialRevealProcessing = $state(false);
-  let revealedCredential = $state<RevealedCredential | null>(null);
   let database = $state(initialDatabase());
   let privateAccessNetworkId = $state("");
   let device = $state({ name: "", deviceId: "" });
@@ -525,7 +400,7 @@
   let backupPolicy = $state(initialBackupPolicy());
   let restoreBackup = $state<BackupHistory | null>(null);
   let restoreConfirmation = $state("");
-  let connectionKeysConnection = $state<any>(null);
+  let connectionKeysConnection = $state<ResourceConnection | null>(null);
   let connectionKeys = $state({} as Record<string, string>);
 
   onMount(() => {
@@ -536,7 +411,7 @@
     const healthInterval = window.setInterval(() => {
       if (
         section === "health" &&
-        resource.healthChecks.some((item: any) => item.enabled)
+        resource.healthChecks.some((item) => item.enabled)
       )
         router.reload({ only: ["resource"] });
     }, 15000);
@@ -729,7 +604,7 @@
     database = initialDatabase();
     databaseDialogOpen = true;
   }
-  function openEndpointDialog(item: any = null) {
+  function openEndpointDialog(item: ResourceEndpoint | null = null) {
     editingEndpointId = item?.id ?? "";
     const publication = publications.find(
       (value) => value.resourceEndpointId === item?.id,
@@ -862,7 +737,10 @@
     const mapping = serviceMappings[index];
     if (mapping) endpoint.port = mapping.hostPort;
   }
-  function openCredentialDialog(item: any = null, databaseName = "") {
+  function openCredentialDialog(
+    item: ResourceCredential | null = null,
+    databaseName = "",
+  ) {
     if (!item && !canAddApplicationUser) return;
     editingCredentialId = item?.id ?? "";
     credential = item
@@ -975,7 +853,7 @@
       { deviceId, name: "" },
     );
   }
-  function openVolumeDialog(item: any = null) {
+  function openVolumeDialog(item: ResourceVolume | null = null) {
     editingVolumeId = item?.id ?? "";
     volume = item
       ? {
@@ -1014,7 +892,7 @@
         );
     });
   }
-  function openMountDialog(item: any = null) {
+  function openMountDialog(item: ResourceMount | null = null) {
     editingMountId = item?.id ?? "";
     mount = item
       ? {
@@ -1050,7 +928,7 @@
         options,
       );
   }
-  function openHealthDialog(item: any = null) {
+  function openHealthDialog(item: ResourceHealthCheck | null = null) {
     editingHealthId = item?.id ?? "";
     health = item
       ? {
@@ -1097,12 +975,13 @@
         );
     });
   }
-  function openConnectionKeys(connection: any) {
+  function openConnectionKeys(connection: ResourceConnection) {
     connectionKeysConnection = connection;
     connectionKeys = { ...connection.environmentKeys };
     connectionKeysDialogOpen = true;
   }
-  function connectionKeyDefinitions(connection: any) {
+  function connectionKeyDefinitions(connection: ResourceConnection | null) {
+    if (!connection) return [];
     if (connection?.configuration?.credential_projection === "connection_url") {
       return definition.environmentKeys.filter((key) => key.name === "url");
     }
@@ -1446,116 +1325,6 @@
     }
   }
 
-  function askForCredential(item: any) {
-    selectedCredential = item;
-    currentPassword = "";
-    credentialRevealError = "";
-    credentialPasswordDialogOpen = true;
-  }
-
-  async function revealCredential(event: SubmitEvent) {
-    event.preventDefault();
-    if (!selectedCredential || !currentPassword || credentialRevealProcessing)
-      return;
-    credentialRevealProcessing = true;
-    credentialRevealError = "";
-    try {
-      const response = await window.fetch(
-        routes.resourceCredentialReveal(resource.id, selectedCredential.id),
-        {
-          method: "POST",
-          credentials: "same-origin",
-          headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({ password: currentPassword }),
-        },
-      );
-      const payload = (await response
-        .json()
-        .catch(() => ({}))) as Partial<RevealedCredential> & { error?: string };
-      if (
-        !response.ok ||
-        !payload.id ||
-        !payload.name ||
-        !payload.values ||
-        Object.keys(payload.values).length === 0
-      )
-        throw new Error(
-          payload.error || "Resource credential could not be loaded",
-        );
-      revealedCredential = {
-        id: payload.id,
-        name: payload.name,
-        username: payload.username ?? "",
-        values: payload.values,
-      };
-      currentPassword = "";
-      credentialPasswordDialogOpen = false;
-      revealedCredentialDialogOpen = true;
-    } catch (error) {
-      credentialRevealError =
-        error instanceof Error
-          ? error.message
-          : "Resource credential could not be loaded";
-    } finally {
-      credentialRevealProcessing = false;
-    }
-  }
-
-  function closeRevealedCredential() {
-    revealedCredentialDialogOpen = false;
-    revealedCredential = null;
-    selectedCredential = null;
-  }
-
-  async function copyCredential(value: string, label: string) {
-    try {
-      await navigator.clipboard.writeText(value);
-      toast.success(`${label} copied`);
-    } catch {
-      toast.error(`${label} could not be copied`);
-    }
-  }
-
-  function displayLabel(value: string) {
-    return value
-      .replaceAll("_", " ")
-      .replace(/\b\w/g, (character) => character.toUpperCase());
-  }
-
-  async function openContainerLogs(installation: any) {
-    containerLogsInstallation = installation;
-    containerLogs = "";
-    containerLogsError = "";
-    containerLogsLoading = true;
-    containerLogsDialogOpen = true;
-    try {
-      const response = await window.fetch(
-        `${routes.resourceInstallationLogs(resource.id, installation.id)}?tail=200`,
-        {
-          credentials: "same-origin",
-          headers: { Accept: "application/json" },
-        },
-      );
-      const payload = (await response.json().catch(() => ({}))) as {
-        logs?: string;
-        error?: string;
-      };
-      if (!response.ok)
-        throw new Error(payload.error || "Container logs could not be loaded");
-      containerLogs = payload.logs || "The container has not written any logs.";
-    } catch (error) {
-      containerLogsError =
-        error instanceof Error
-          ? error.message
-          : "Container logs could not be loaded";
-    } finally {
-      containerLogsLoading = false;
-    }
-  }
-
   function observedLabel(value: string | null) {
     if (!value) return "Never observed";
     return new Intl.DateTimeFormat(undefined, {
@@ -1690,7 +1459,7 @@
                       (detail) => detail.databaseName === item.name,
                     )}
                     {@const attachedCredentials = applicationCredentials.filter(
-                      (credential: any) =>
+                      (credential) =>
                         credential.metadata?.database === item.name,
                     )}
                     <Table.Row>
@@ -1702,7 +1471,7 @@
                       <Table.Cell
                         >{attachedCredentials.length > 0
                           ? attachedCredentials
-                              .map((credential: any) => credential.name)
+                              .map((credential) => credential.name)
                               .join(", ")
                           : "None"}</Table.Cell
                       >
@@ -1998,124 +1767,13 @@
     {/if}
 
     {#if section === "overview"}
-      <Card.Root>
-        <Card.Header>
-          <Card.Title>Docker installations</Card.Title>
-          <Card.Description
-            >Observed state and controls for each Resource installation.</Card.Description
-          >
-        </Card.Header>
-        <Card.Content class="space-y-4">
-          {#if resource.installations.length === 0}<p
-              class="text-sm text-muted-foreground"
-            >
-              No installation is configured.
-            </p>{/if}
-          {#each resource.installations as item (item.id)}
-            <article class="border border-border p-4">
-              <div class="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <div class="flex items-center gap-2">
-                    <h3 class="font-medium">{item.containerName}</h3>
-                    <span
-                      class="border border-border px-1.5 py-0.5 text-[10px] uppercase tracking-wider"
-                      >Docker</span
-                    >
-                  </div>
-                  <p class="mt-1 font-mono text-xs text-muted-foreground">
-                    {item.imageReference}
-                  </p>
-                </div>
-                <div class="flex flex-wrap gap-2">
-                  {#if item.state !== "missing"}<Button
-                      size="sm"
-                      variant="outline"
-                      disabled={containerLogsLoading &&
-                        containerLogsInstallation?.id === item.id}
-                      onclick={() => openContainerLogs(item)}
-                      >{#if containerLogsLoading && containerLogsInstallation?.id === item.id}<Spinner
-                        />{/if}View logs</Button
-                    >{/if}
-                  {#if item.canControl}
-                    {#if item.serviceState === "running"}
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={Boolean(pendingAction)}
-                        onclick={() => lifecycle(item.id, "stop")}>Stop</Button
-                      >
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        disabled={Boolean(pendingAction)}
-                        onclick={() => lifecycle(item.id, "restart")}
-                        >Restart</Button
-                      >
-                    {:else}
-                      <Button
-                        size="sm"
-                        disabled={Boolean(pendingAction)}
-                        onclick={() => lifecycle(item.id, "start")}
-                        >Start</Button
-                      >
-                    {/if}
-                    {#if item.state !== "missing"}<Button
-                        size="sm"
-                        variant="destructive"
-                        disabled={Boolean(pendingAction)}
-                        onclick={() =>
-                          confirmContainerRemoval(item.id, item.containerName)}
-                        >Remove container</Button
-                      >{/if}
-                  {/if}
-                </div>
-              </div>
-              {#if item.state !== "missing" && item.serviceState !== "running"}
-                <Alert.Root variant="destructive" class="mt-4">
-                  <Alert.Title
-                    >Container is {item.serviceState ||
-                      "not running"}</Alert.Title
-                  >
-                  <Alert.Description
-                    >Docker reports exit code {item.containerDetails
-                      ?.exitCode ?? "unknown"} and {item.containerDetails
-                      ?.restartCount ?? 0} restarts. Open the container logs to see
-                    the process error.</Alert.Description
-                  >
-                </Alert.Root>
-              {/if}
-              <div class="mt-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-5">
-                <DataField
-                  label="Service"
-                  value={item.serviceState || "Unknown"}
-                />
-                <DataField label="Health" value={item.health || "Unknown"} />
-                <DataField label="Server" value={item.serverName} />
-                <DataField
-                  label="Container ID"
-                  value={item.containerDetails?.id?.slice(0, 12) ||
-                    "Not created"}
-                />
-                <DataField
-                  label="Observed"
-                  value={observedLabel(item.observedAt)}
-                />
-              </div>
-              {#if item.healthReason}<p
-                  class="mt-4 border-l-2 border-border pl-3 text-xs text-muted-foreground"
-                >
-                  {item.healthReason}
-                </p>{/if}
-              {#if !item.canControl}<p
-                  class="mt-4 text-xs text-muted-foreground"
-                >
-                  Container controls are unavailable because the selected Server
-                  cannot currently be reached.
-                </p>{/if}
-            </article>
-          {/each}
-        </Card.Content>
-      </Card.Root>
+      <ResourceInstallations
+        resourceId={resource.id}
+        installations={resource.installations}
+        {pendingAction}
+        onLifecycle={lifecycle}
+        onRemove={confirmContainerRemoval}
+      />
     {/if}
 
     {#if section === "endpoints"}
@@ -2354,74 +2012,15 @@
     {/if}
 
     {#if section === "credentials"}
-      <Card.Root>
-        <Card.Header
-          ><Card.Action
-            ><Button
-              size="sm"
-              variant="outline"
-              disabled={!canAddApplicationUser}
-              onclick={openCredentialDialog}>Add application credential</Button
-            ></Card.Action
-          ><Card.Title>Credentials</Card.Title><Card.Description
-            >{databaseBacked
-              ? "The administrator stays internal. Each application credential is tied to one configured Database."
-              : "Encrypted application credentials for this Resource."}</Card.Description
-          ></Card.Header
-        >
-        <Card.Content class="space-y-4">
-          {#if managedPostgreSQL && !containerRunning}<p
-              class="border border-border bg-muted/20 p-3 text-sm text-muted-foreground"
-            >
-              Start the PostgreSQL container before adding an application user.
-              DeployCrate must connect to the running server to create its LOGIN
-              role.
-            </p>{/if}
-          {#if resource.credentials.length === 0}<p
-              class="text-sm text-muted-foreground"
-            >
-              No credentials configured.
-            </p>{:else}<div class="overflow-hidden border border-border">
-              <Table.Root
-                ><Table.Header
-                  ><Table.Row
-                    ><Table.Head>Name</Table.Head><Table.Head
-                      >Username</Table.Head
-                    ><Table.Head>Purpose</Table.Head><Table.Head
-                      >Database</Table.Head
-                    ><Table.Head class="text-right">Actions</Table.Head
-                    ></Table.Row
-                  ></Table.Header
-                ><Table.Body
-                  >{#each resource.credentials as item (item.id)}<Table.Row
-                      ><Table.Cell class="font-medium">{item.name}</Table.Cell
-                      ><Table.Cell class="font-mono text-xs"
-                        >{item.username || "None"}</Table.Cell
-                      ><Table.Cell class="capitalize"
-                        >{item.metadata?.purpose ?? "Application"}</Table.Cell
-                      ><Table.Cell
-                        >{item.metadata?.database || "All / none"}</Table.Cell
-                      ><Table.Cell
-                        ><div class="flex justify-end gap-2">
-                          {#if item.hasEncryptedPayload}<Button
-                              size="sm"
-                              variant="ghost"
-                              onclick={() => askForCredential(item)}
-                              >View</Button
-                            >{/if}<Button
-                            size="sm"
-                            variant="outline"
-                            onclick={() => openCredentialDialog(item)}
-                            >Edit</Button
-                          >
-                        </div></Table.Cell
-                      ></Table.Row
-                    >{/each}</Table.Body
-                ></Table.Root
-              >
-            </div>{/if}
-        </Card.Content>
-      </Card.Root>
+      <ResourceCredentials
+        resourceId={resource.id}
+        credentials={resource.credentials}
+        {databaseBacked}
+        {managedPostgreSQL}
+        {containerRunning}
+        {canAddApplicationUser}
+        onEdit={openCredentialDialog}
+      />
     {/if}
 
     {#if section === "overview"}
@@ -2641,37 +2240,6 @@
       </div>
     {/if}
   </div>
-
-  <Dialog.Root bind:open={containerLogsDialogOpen}>
-    <Dialog.Content class="sm:max-w-4xl">
-      <Dialog.Header>
-        <Dialog.Title>Container logs</Dialog.Title>
-        <Dialog.Description
-          >{containerLogsInstallation?.containerName ?? "Resource container"} · latest
-          200 lines, limited to 64 KiB.</Dialog.Description
-        >
-      </Dialog.Header>
-      {#if containerLogsLoading}
-        <div class="flex min-h-40 items-center justify-center"><Spinner /></div>
-      {:else if containerLogsError}
-        <Alert.Root variant="destructive"
-          ><Alert.Title>Logs unavailable</Alert.Title><Alert.Description
-            >{containerLogsError}</Alert.Description
-          ></Alert.Root
-        >
-      {:else}
-        <pre
-          class="max-h-[60vh] overflow-auto border border-border bg-muted/30 p-4 font-mono text-xs whitespace-pre-wrap">{containerLogs}</pre>
-      {/if}
-      <Dialog.Footer
-        ><Button
-          type="button"
-          variant="outline"
-          onclick={() => (containerLogsDialogOpen = false)}>Close</Button
-        ></Dialog.Footer
-      >
-    </Dialog.Content>
-  </Dialog.Root>
 
   <Dialog.Root bind:open={wireGuardConfigurationDialogOpen}>
     <Dialog.Content class="sm:max-w-3xl">
@@ -2958,7 +2526,7 @@
               ><NativeSelect.Root
                 value={String(
                   serviceMappings.findIndex(
-                    (mapping: any) => mapping.hostPort === endpoint.port,
+                    (mapping) => mapping.hostPort === endpoint.port,
                   ),
                 )}
                 onchange={(event) =>
@@ -3668,105 +3236,4 @@
     </Dialog.Content>
   </Dialog.Root>
 
-  <Dialog.Root
-    bind:open={credentialPasswordDialogOpen}
-    onOpenChange={(open) => {
-      if (!open && !credentialRevealProcessing) {
-        currentPassword = "";
-        credentialRevealError = "";
-        selectedCredential = null;
-      }
-    }}
-  >
-    <Dialog.Content showCloseButton={!credentialRevealProcessing}>
-      <form class="grid gap-4" onsubmit={revealCredential}>
-        <Dialog.Header
-          ><Dialog.Title>View Resource credential</Dialog.Title
-          ><Dialog.Description
-            >Enter your current password to reveal {selectedCredential?.name ??
-              "this credential"}.</Dialog.Description
-          ></Dialog.Header
-        >
-        <FormField label="Current password"
-          ><Input
-            type="password"
-            bind:value={currentPassword}
-            autocomplete="current-password"
-            autofocus
-            required
-            disabled={credentialRevealProcessing}
-          /></FormField
-        >
-        {#if credentialRevealError}<p
-            class="border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive"
-            role="alert"
-          >
-            {credentialRevealError}
-          </p>{/if}
-        <Dialog.Footer
-          ><Button
-            type="button"
-            variant="outline"
-            disabled={credentialRevealProcessing}
-            onclick={() => (credentialPasswordDialogOpen = false)}
-            >Cancel</Button
-          ><Button
-            type="submit"
-            disabled={!currentPassword || credentialRevealProcessing}
-            >{#if credentialRevealProcessing}<Spinner />{/if}Continue</Button
-          ></Dialog.Footer
-        >
-      </form>
-    </Dialog.Content>
-  </Dialog.Root>
-
-  <Dialog.Root
-    bind:open={revealedCredentialDialogOpen}
-    onOpenChange={(open) => {
-      if (!open) closeRevealedCredential();
-    }}
-  >
-    <Dialog.Content class="sm:max-w-xl">
-      <Dialog.Header
-        ><Dialog.Title
-          >{revealedCredential?.name ?? "Resource credential"}</Dialog.Title
-        ><Dialog.Description
-          >This decrypted credential is shown only until you close this dialog.</Dialog.Description
-        ></Dialog.Header
-      >
-      {#if revealedCredential}
-        <div class="grid gap-4">
-          {#if revealedCredential.username}<div class="grid gap-2">
-              <p class="text-xs font-medium">Username</p>
-              <div class="flex gap-2">
-                <Input value={revealedCredential.username} readonly /><Button
-                  type="button"
-                  variant="outline"
-                  onclick={() =>
-                    copyCredential(revealedCredential!.username, "Username")}
-                  >Copy</Button
-                >
-              </div>
-            </div>{/if}
-          {#each Object.entries(revealedCredential.values) as [name, value] (name)}
-            <div class="grid gap-2">
-              <p class="text-xs font-medium">{displayLabel(name)}</p>
-              <div class="flex gap-2">
-                <Input type="text" {value} readonly autocomplete="off" /><Button
-                  type="button"
-                  variant="outline"
-                  onclick={() => copyCredential(value, displayLabel(name))}
-                  >Copy</Button
-                >
-              </div>
-            </div>
-          {/each}
-        </div>
-      {/if}
-      <Dialog.Footer
-        ><Button type="button" onclick={closeRevealedCredential}>Done</Button
-        ></Dialog.Footer
-      >
-    </Dialog.Content>
-  </Dialog.Root>
 </DashboardLayout>

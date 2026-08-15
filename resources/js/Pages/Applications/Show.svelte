@@ -163,7 +163,7 @@
         headers: { "X-Deploycrate-Return-To": "application" },
         onSuccess: () => {
           promotionDialogOpen = false;
-          router.reload({ only: ["application"], preserveScroll: true });
+          router.reload({ only: ["application"] });
         },
         onError: (errors) =>
           (promotionError =

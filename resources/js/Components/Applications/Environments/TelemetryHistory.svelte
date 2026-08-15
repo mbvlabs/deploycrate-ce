@@ -200,10 +200,10 @@
         highlight={{
           lines: { stroke: "var(--foreground)", opacity: 0.35 },
           points: { r: 4, stroke: "var(--background)", strokeWidth: 2 },
-          motion: false,
+          motion: "none" as const,
         }}
         tooltipContext={{ mode: "bisect-x" }}
-        motion={false}
+        motion="none"
         aria-label={`Memory usage over the ${rangeLabel}`}
         props={{
           xAxis: {
@@ -231,7 +231,7 @@
             x="pointer"
             y="pointer"
             portal={false}
-            motion={false}
+            motion="none"
             fadeDuration={0}
             variant="none"
           >

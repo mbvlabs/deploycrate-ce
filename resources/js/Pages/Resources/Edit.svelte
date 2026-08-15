@@ -9,39 +9,22 @@
   import * as NativeSelect from "@/Components/ui/native-select";
   import { Spinner } from "@/Components/ui/spinner";
   import { Textarea } from "@/Components/ui/textarea";
+  import type {
+    JSONValue,
+    ResourceDetail,
+    ResourceInstallation,
+    ResourceOptions,
+  } from "@/Components/Resources/resource.types";
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
   import { slugify } from "@/lib/slug";
   import { routes } from "@/routes";
 
-  type CredentialField = {
-    name: string;
-    label: string;
-    required: boolean;
-    secret: boolean;
-  };
-  type EnvironmentKey = { name: string; label: string; defaultKey: string };
-  type Engine = {
-    engine: string;
-    label: string;
-    resourceType: "database" | "cache" | "service";
-    protocols: string[];
-    endpointRoles: string[];
-    tlsModes: string[];
-    credentialFields: CredentialField[];
-    environmentKeys: EnvironmentKey[];
-    healthCheckKinds: string[];
-    defaultPort: number;
-  };
-  type Options = {
-    engines: Engine[];
-    servers: Array<{ id: string; name: string; address: string }>;
-    privateNetworks: Array<{
-      id: string;
-      name: string;
-      serverIds: string[];
-      serverAddresses: Record<string, string>;
-    }>;
-    registryCredentials: Array<{ id: string; name: string }>;
+  type PatchPayload = Exclude<Parameters<typeof router.patch>[1], undefined>;
+  type EditableInstallation = ResourceInstallation & {
+    configurationText: string;
+    hostPort: number;
+    containerPort: number;
+    protocol: string;
   };
 
   let {
@@ -51,8 +34,8 @@
     errors = {},
   }: {
     auth: { email: string };
-    resource: any;
-    options: Options;
+    resource: ResourceDetail;
+    options: ResourceOptions;
     errors?: Record<string, string>;
   } = $props();
 
@@ -69,13 +52,15 @@
   let processingKey = $state("");
   let jsonErrors = $state<Record<string, string>>({});
 
-  function initializeFromResource<T>(initialize: (value: any) => T): T {
+  function initializeFromResource<T>(
+    initialize: (value: ResourceDetail) => T,
+  ): T {
     return initialize(resource);
   }
 
   let installations = $state(
     initializeFromResource((initial) =>
-      initial.installations.map((item: any) => ({
+      initial.installations.map((item) => ({
         ...item,
         imageDigest: item.imageDigest ?? "",
         registryCredentialId: item.registryCredentialId ?? "",
@@ -124,7 +109,7 @@
     slugCustomized = true;
   }
 
-  function parseJSON(key: string, value: string): unknown | undefined {
+  function parseJSON(key: string, value: string): JSONValue | undefined {
     try {
       const parsed = JSON.parse(value || "{}");
       jsonErrors[key] = "";
@@ -135,7 +120,7 @@
     }
   }
 
-  function patch(key: string, url: string, payload: Record<string, unknown>) {
+  function patch(key: string, url: string, payload: PatchPayload) {
     if (processingKey) return;
     processingKey = key;
     router.patch(editURL(url), payload, {
@@ -161,7 +146,7 @@
       .patch(routes.resourceUpdate(resource.id));
   }
 
-  function saveInstallation(item: any) {
+  function saveInstallation(item: EditableInstallation) {
     const configuration = parseJSON(
       `installation:${item.id}`,
       item.configurationText,

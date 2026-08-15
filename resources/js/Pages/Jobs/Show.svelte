@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { router } from "@inertiajs/svelte";
+  import { router, usePoll } from "@inertiajs/svelte";
 
   import { Button } from "@/Components/ui/button";
   import * as ButtonGroup from "@/Components/ui/button-group";
@@ -84,13 +84,19 @@
     else router.post(pendingAction.url, {}, options);
   }
 
+  const itemPoll = usePoll(
+    3000,
+    { only: ["item"] },
+    { autoStart: false, mode: "rest" },
+  );
+
   $effect(() => {
-    if (!isActive || activeAction) return;
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible")
-        router.reload({ only: ["item"], preserveScroll: true });
-    }, 3000);
-    return () => window.clearInterval(timer);
+    if (!isActive || activeAction) {
+      itemPoll.stop();
+      return;
+    }
+    itemPoll.start();
+    return itemPoll.stop;
   });
 </script>
 

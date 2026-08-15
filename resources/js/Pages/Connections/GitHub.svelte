@@ -1,6 +1,6 @@
 <script lang="ts">
   import GithubIcon from "@lucide/svelte/icons/git-fork";
-  import { Link, useForm } from "@inertiajs/svelte";
+  import { Link, router, useForm } from "@inertiajs/svelte";
 
   import ConfirmActionDialog from "@/Components/ConfirmActionDialog.svelte";
   import FormField from "@/Components/FormField.svelte";
@@ -194,7 +194,7 @@
               <Button size="sm" variant="outline"
                 >{#snippet child({ props })}<a
                     {...props}
-                    href={connection.app.htmlUrl}
+                    href={connection.app?.htmlUrl ?? ""}
                     target="_blank"
                     rel="noreferrer">Settings</a
                   >{/snippet}</Button

@@ -13,6 +13,7 @@
   import { Spinner } from "@/Components/ui/spinner";
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import * as Table from "@/Components/ui/table";
+  import type { PortMapping } from "@/Components/Resources/resource.types";
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
   import { routes } from "@/routes";
 
@@ -62,7 +63,7 @@
     imageDigest: string;
     containerName: string;
     restartPolicy: string;
-    configuration: unknown;
+    configuration: Record<string, unknown> & { portMappings?: PortMapping[] };
     serverId: string;
     serverName: string;
     serverAddress: string;
@@ -267,12 +268,11 @@
   );
   const serviceMappings = $derived(
     resource.installations.flatMap((installation) =>
-      ((installation.configuration as any)?.portMappings ?? []).map(
-        (mapping: any) => ({
-          ...mapping,
-          containerName: installation.containerName,
-        }),
-      ),
+      (installation.configuration.portMappings ?? []).map((mapping) => ({
+        ...mapping,
+        installationId: installation.id,
+        containerName: installation.containerName,
+      })),
     ),
   );
   const endpointForm = useForm(() => ({
@@ -1328,7 +1328,7 @@
                 class="w-full"
                 value={String(
                   serviceMappings.findIndex(
-                    (mapping: any) => mapping.hostPort === $endpointForm.port,
+                    (mapping) => mapping.hostPort === $endpointForm.port,
                   ),
                 )}
                 onchange={(event) =>

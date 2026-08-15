@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { router, useForm } from "@inertiajs/svelte";
+  import { router, useForm, usePoll } from "@inertiajs/svelte";
   import { untrack } from "svelte";
   import * as Alert from "@/Components/ui/alert";
   import { Button } from "@/Components/ui/button";
@@ -110,14 +110,19 @@
           : 55,
   );
 
+  const nodePoll = usePoll(
+    3000,
+    { only: ["node"] },
+    { autoStart: false, mode: "rest" },
+  );
+
   $effect(() => {
-    if (["awaiting_confirmation", "ready", "failed"].includes(node.state))
+    if (["awaiting_confirmation", "ready", "failed"].includes(node.state)) {
+      nodePoll.stop();
       return;
-    const timer = window.setInterval(
-      () => router.reload({ only: ["node"], preserveScroll: true }),
-      3000,
-    );
-    return () => window.clearInterval(timer);
+    }
+    nodePoll.start();
+    return nodePoll.stop;
   });
 </script>
 

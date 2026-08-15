@@ -3,7 +3,7 @@
   import ContainerIcon from "@lucide/svelte/icons/container";
   import DatabaseIcon from "@lucide/svelte/icons/database";
   import ServerIcon from "@lucide/svelte/icons/server";
-  import { page, router } from "@inertiajs/svelte";
+  import { page, router, usePoll } from "@inertiajs/svelte";
   import { untrack } from "svelte";
   import { Button } from "@/Components/ui/button";
   import * as Card from "@/Components/ui/card";
@@ -578,7 +578,7 @@
       apiToken = payload.token;
       apiTokenConfirmOpen = false;
       apiTokenDialogOpen = true;
-      router.reload({ only: ["environment"], preserveScroll: true });
+      router.reload({ only: ["environment"] });
     } catch (error) {
       apiTokenError =
         error instanceof Error
@@ -773,6 +773,27 @@
       48;
   }
 
+  const dnsPoll = usePoll(
+    2000,
+    { only: ["environment"] },
+    { autoStart: false, mode: "rest" },
+  );
+  const overviewTelemetryPoll = usePoll(
+    30000,
+    { only: ["telemetry"] },
+    { autoStart: false, mode: "rest" },
+  );
+  const liveTelemetryPoll = usePoll(
+    10000,
+    () => ({
+      only:
+        telemetryMode === "opentelemetry"
+          ? ["applicationTelemetry"]
+          : ["telemetry"],
+    }),
+    { autoStart: false, mode: "rest" },
+  );
+
   $effect(() => {
     if (section !== "telemetry" || telemetryMode !== "standard") return;
     logStream.logs.length;
@@ -804,23 +825,26 @@
   });
 
   $effect(() => {
-    if (section !== "overview") return;
-    const dnsState = environment.dns.state;
-    if (!environment.dns.reconciliationQueued && dnsState !== "reconciling")
+    if (section !== "overview") {
+      dnsPoll.stop();
       return;
-
-    const timer = window.setInterval(() => {
-      router.reload({ only: ["environment"], preserveScroll: true });
-    }, 2000);
-    return () => window.clearInterval(timer);
+    }
+    const dnsState = environment.dns.state;
+    if (!environment.dns.reconciliationQueued && dnsState !== "reconciling") {
+      dnsPoll.stop();
+      return;
+    }
+    dnsPoll.start();
+    return dnsPoll.stop;
   });
 
   $effect(() => {
-    if (section !== "overview") return;
-    const timer = window.setInterval(() => {
-      router.reload({ only: ["telemetry"], preserveScroll: true });
-    }, 30000);
-    return () => window.clearInterval(timer);
+    if (section !== "overview") {
+      overviewTelemetryPoll.stop();
+      return;
+    }
+    overviewTelemetryPoll.start();
+    return overviewTelemetryPoll.stop;
   });
 
   $effect(() => {
@@ -831,26 +855,22 @@
   });
 
   $effect(() => {
-    if (section !== "telemetry" || !telemetryLive) return;
-    if (telemetryMode === "opentelemetry" && openTelemetryView === "logs")
+    if (
+      section !== "telemetry" ||
+      !telemetryLive ||
+      (telemetryMode === "opentelemetry" && openTelemetryView === "logs")
+    ) {
+      liveTelemetryPoll.stop();
       return;
-    let refreshing = false;
-    const refresh = () => {
-      if (refreshing || document.visibilityState !== "visible") return;
-      refreshing = true;
-      router.reload({
-        only:
-          telemetryMode === "opentelemetry"
-            ? ["applicationTelemetry"]
-            : ["telemetry"],
-        preserveScroll: true,
-        preserveState: true,
-        onFinish: () => (refreshing = false),
-      });
-    };
-    refresh();
-    const timer = window.setInterval(refresh, 10000);
-    return () => window.clearInterval(timer);
+    }
+    router.reload({
+      only:
+        telemetryMode === "opentelemetry"
+          ? ["applicationTelemetry"]
+          : ["telemetry"],
+    });
+    liveTelemetryPoll.start();
+    return liveTelemetryPoll.stop;
   });
 
   $effect(() => {
@@ -862,7 +882,7 @@
     if (!activeReleaseCommand) return;
     const timer = window.setInterval(() => {
       void loadReleaseCommandLogs(activeReleaseCommand.id);
-      router.reload({ only: ["environment"], preserveScroll: true });
+      router.reload({ only: ["environment"] });
     }, 2000);
     return () => window.clearInterval(timer);
   });

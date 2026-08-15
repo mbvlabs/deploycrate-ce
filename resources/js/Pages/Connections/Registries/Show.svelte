@@ -187,7 +187,6 @@
     inventoryRefreshing = true;
     router.reload({
       only: ["repositories", "inventoryError"],
-      preserveScroll: true,
       onFinish: () => (inventoryRefreshing = false),
     });
   }

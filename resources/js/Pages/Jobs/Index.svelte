@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Link, router } from "@inertiajs/svelte";
+  import { Link, router, usePoll } from "@inertiajs/svelte";
 
   import { Button } from "@/Components/ui/button";
   import * as Card from "@/Components/ui/card";
@@ -113,17 +113,7 @@
     });
   }
 
-  $effect(() => {
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
-        router.reload({
-          only: ["items", "pagination", "stats"],
-          preserveScroll: true,
-        });
-      }
-    }, 4000);
-    return () => window.clearInterval(timer);
-  });
+  usePoll(4000, { only: ["items", "pagination", "stats"] }, { mode: "rest" });
 </script>
 
 <svelte:head><title>System Tasks</title></svelte:head>

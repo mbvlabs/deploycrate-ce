@@ -7,12 +7,12 @@
   import * as NativeSelect from "@/Components/ui/native-select";
   import * as Table from "@/Components/ui/table";
   import StatusBadge from "@/Components/StatusBadge.svelte";
-  import LogEntry from "@/Components/TelemetryLogEntry.svelte";
   import TelemetryHistory from "@/Components/System/TelemetryHistory.svelte";
+  import LogExplorer from "@/Components/Telemetry/LogExplorer.svelte";
+  import TraceDetails from "@/Components/Telemetry/TraceDetails.svelte";
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
   import { routes } from "@/routes";
-  import { page, router } from "@inertiajs/svelte";
-  import SearchIcon from "@lucide/svelte/icons/search";
+  import { page, router, usePoll } from "@inertiajs/svelte";
 
   type SystemIdentity = {
     applicationName: string;
@@ -184,50 +184,6 @@
     errorCount: number;
   };
 
-  type TraceSpan = {
-    traceId: string;
-    spanId: string;
-    parentSpanId: string;
-    name: string;
-    kind: string;
-    serviceName: string;
-    scope: string;
-    statusCode: string;
-    statusMessage: string;
-    resourceAttributes: Record<string, string>;
-    spanAttributes: Record<string, string>;
-    startedAt: string;
-    durationNs: number;
-  };
-
-  type SystemLog = {
-    id: string;
-    message: string;
-    severity: string;
-    severityNumber: number;
-    attributes: Record<string, string>;
-    traceId: string;
-    spanId: string;
-    scope: string;
-    source: string;
-    line: string;
-    instance: string;
-    slot: string;
-    service: string;
-    processName: string;
-    processKind: string;
-    processReplica: string;
-    requestPath: string;
-    responseCode: number;
-    occurredAt: string;
-  };
-
-  type SystemLogSnapshot = {
-    logs: SystemLog[];
-    nextCursor: string;
-    hasMore: boolean;
-  };
-
   type TelemetryView = "overview" | "services" | "logs" | "traces";
 
   let {
@@ -244,24 +200,11 @@
     telemetryRange: "1h" | "6h" | "24h" | "7d";
   } = $props();
 
-  let systemLogs = $state.raw<SystemLog[]>([]);
-  let systemLogCursor = $state("");
-  let systemLogsLoaded = $state(false);
-  let systemLogConnectionError = $state("");
-  let systemLogSearchInput = $state("");
-  let systemLogSearch = $state("");
-  let systemLogQueryKey = $state("");
-  let followingSystemLogs = $state(true);
-  let systemLogViewport = $state<HTMLDivElement>();
   let traceDialogOpen = $state(false);
   let selectedTraceID = $state("");
-  let traceSpans = $state.raw<TraceSpan[]>([]);
-  let traceLoading = $state(false);
-  let traceError = $state("");
   let selectedAttributionID = $state("");
   let attributionComparison = $state<"host" | "service">("host");
   let live = $state(false);
-  let traceAbortController: AbortController | undefined;
 
   const activeView = $derived.by<TelemetryView>(() => {
     const view = new URLSearchParams($page.url.split("?")[1] ?? "").get("view");
@@ -631,218 +574,29 @@
     selectedAttributionID = attributionOptions[0]?.id ?? "";
   });
 
-  const systemLogLevel = (log: SystemLog) => {
-    if (log.severity) return log.severity.toUpperCase();
-    if (log.severityNumber >= 17) return "ERROR";
-    if (log.severityNumber >= 13) return "WARN";
-    if (log.severityNumber >= 9) return "INFO";
-    return "DEBUG";
-  };
-  const systemLogStatus = (log: SystemLog) => {
-    if (log.severityNumber >= 17) return "error";
-    if (log.severityNumber >= 13) return "warning";
-    return systemLogLevel(log).toLowerCase();
-  };
-  const systemLogContext = (log: SystemLog) =>
-    Object.entries(log.attributes ?? {})
-      .filter(
-        ([key, value]) =>
-          value &&
-          !key.startsWith("code.") &&
-          (key !== "trace_id" || !log.traceId) &&
-          (key !== "span_id" || !log.spanId) &&
-          ![
-            "path",
-            "url.path",
-            "http.target",
-            "http.route",
-            "http.response.status_code",
-            "http.status_code",
-          ].includes(key),
-      )
-      .sort(([left], [right]) => left.localeCompare(right));
-  const systemLogMessage = (log: SystemLog) => {
-    const message = log.message.trim();
-    if (!(message.startsWith("{") || message.startsWith("[")))
-      return log.message;
-    try {
-      return JSON.stringify(JSON.parse(message), null, 2);
-    } catch {
-      return log.message;
-    }
-  };
-
-  async function loadSystemLogs(
-    range: string,
-    search: string,
-    signal?: AbortSignal,
-  ) {
-    const endpoint = new URL(
-      routes.systemTelemetryLogs(),
-      window.location.origin,
-    );
-    endpoint.searchParams.set("range", range);
-    if (search) endpoint.searchParams.set("search", search);
-    if (systemLogCursor) endpoint.searchParams.set("after", systemLogCursor);
-    const response = await window.fetch(endpoint, {
-      cache: "no-store",
-      credentials: "same-origin",
-      headers: { Accept: "application/json" },
-      signal,
-    });
-    if (!response.ok)
-      throw new Error(`System logs returned ${response.status}`);
-    const snapshot = (await response.json()) as SystemLogSnapshot;
-    const windowSeconds =
-      (
-        { "1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800 } as Record<
-          string,
-          number
-        >
-      )[range] ?? 86400;
-    const cutoff = Date.now() - windowSeconds * 1000;
-    systemLogs = [...systemLogs, ...snapshot.logs]
-      .filter((log) => new Date(log.occurredAt).getTime() >= cutoff)
-      .slice(-2000);
-    systemLogCursor = snapshot.nextCursor;
-    systemLogsLoaded = true;
-    systemLogConnectionError = "";
-    return snapshot;
-  }
-
-  async function loadTrace(traceID: string) {
-    traceAbortController?.abort();
-    const abortController = new AbortController();
-    traceAbortController = abortController;
+  function openTrace(traceID: string) {
     selectedTraceID = traceID;
     traceDialogOpen = true;
-    traceSpans = [];
-    traceError = "";
-    traceLoading = true;
-    try {
-      const response = await window.fetch(
-        routes.systemTelemetryTrace(traceID),
-        {
-          cache: "no-store",
-          credentials: "same-origin",
-          headers: { Accept: "application/json" },
-          signal: abortController.signal,
-        },
-      );
-      if (!response.ok) throw new Error(`Trace returned ${response.status}`);
-      const spans = ((await response.json()) as { spans: TraceSpan[] }).spans;
-      if (abortController.signal.aborted) return;
-      traceSpans = spans;
-    } catch {
-      if (abortController.signal.aborted) return;
-      traceError = "This trace could not be loaded.";
-    } finally {
-      if (traceAbortController === abortController) {
-        traceAbortController = undefined;
-        traceLoading = false;
-      }
-    }
   }
 
   function closeTrace() {
-    traceAbortController?.abort();
-    traceAbortController = undefined;
     selectedTraceID = "";
-    traceSpans = [];
-    traceError = "";
-    traceLoading = false;
   }
 
-  function updateSystemLogFollow() {
-    if (!systemLogViewport) return;
-    followingSystemLogs =
-      systemLogViewport.scrollHeight -
-        systemLogViewport.scrollTop -
-        systemLogViewport.clientHeight <
-      48;
-  }
+  const telemetryPoll = usePoll(
+    10000,
+    { only: ["telemetry", "applicationTelemetry"] },
+    { autoStart: false, mode: "rest" },
+  );
 
   $effect(() => {
-    const search = systemLogSearchInput.trim();
-    const timer = window.setTimeout(() => (systemLogSearch = search), 300);
-    return () => window.clearTimeout(timer);
-  });
-
-  $effect(() => {
-    const nextQueryKey =
-      activeView === "logs" ? `${telemetryRange}:${systemLogSearch}` : "";
-    if (nextQueryKey === systemLogQueryKey) return;
-    systemLogQueryKey = nextQueryKey;
-    systemLogs = [];
-    systemLogCursor = "";
-    systemLogsLoaded = false;
-    systemLogConnectionError = "";
-    followingSystemLogs = true;
-  });
-
-  $effect(() => {
-    systemLogs.length;
-    if (!followingSystemLogs) return;
-    const frame = window.requestAnimationFrame(() => {
-      systemLogViewport?.scrollTo({ top: systemLogViewport.scrollHeight });
-    });
-    return () => window.cancelAnimationFrame(frame);
-  });
-
-  $effect(() => {
-    if (activeView !== "logs" || !systemLogQueryKey) return;
-    const range = telemetryRange;
-    const search = systemLogSearch;
-    const shouldPoll = live;
-    const abortController = new AbortController();
-    let timer: number | undefined;
-    let retryDelay = 2000;
-
-    async function poll() {
-      try {
-        const snapshot = await loadSystemLogs(
-          range,
-          search,
-          abortController.signal,
-        );
-        if (abortController.signal.aborted) return;
-        retryDelay = 2000;
-        if (shouldPoll)
-          timer = window.setTimeout(poll, snapshot.hasMore ? 0 : retryDelay);
-      } catch {
-        if (abortController.signal.aborted) return;
-        systemLogConnectionError = shouldPoll
-          ? "Reconnecting to the DeployCrate CE log stream..."
-          : "DeployCrate CE logs are temporarily unavailable.";
-        if (!shouldPoll) return;
-        retryDelay = Math.min(retryDelay * 2, 10000);
-        timer = window.setTimeout(poll, retryDelay);
-      }
+    if (!live || activeView === "logs") {
+      telemetryPoll.stop();
+      return;
     }
-
-    timer = window.setTimeout(poll, 0);
-    return () => {
-      abortController.abort();
-      if (timer !== undefined) window.clearTimeout(timer);
-    };
-  });
-
-  $effect(() => {
-    if (!live || activeView === "logs") return;
-    let refreshing = false;
-    const refresh = () => {
-      if (refreshing || document.visibilityState !== "visible") return;
-      refreshing = true;
-      router.reload({
-        only: ["telemetry", "applicationTelemetry"],
-        preserveScroll: true,
-        preserveState: true,
-        onFinish: () => (refreshing = false),
-      });
-    };
-    refresh();
-    const timer = window.setInterval(refresh, 10000);
-    return () => window.clearInterval(timer);
+    router.reload({ only: ["telemetry", "applicationTelemetry"] });
+    telemetryPoll.start();
+    return telemetryPoll.stop;
   });
 </script>
 
@@ -1422,128 +1176,27 @@
 
     {#if activeView === "logs"}
       <section aria-labelledby="deploycrate-logs-heading">
-        <Card.Root>
-          <Card.Header>
-            <Card.Title id="deploycrate-logs-heading"
-              >DeployCrate CE logs</Card.Title
-            >
-            <Card.Description
-              >Structured application logs from {rangeLabel}. Use Live above to
-              poll for new entries. ClickHouse retains logs for seven days.</Card.Description
-            >
-          </Card.Header>
-          <Card.Content>
-            <div
-              class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"
-            >
-              <label
-                class="grid w-full max-w-xl gap-1.5 text-xs font-medium"
-                for="system-log-search"
-              >
-                <span class="text-muted-foreground">Search logs</span>
-                <span class="relative">
-                  <SearchIcon
-                    class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
-                  />
-                  <Input
-                    id="system-log-search"
-                    type="search"
-                    maxlength="256"
-                    bind:value={systemLogSearchInput}
-                    placeholder="Search messages, attributes, traces, or instances"
-                    class="pl-8"
-                  />
-                </span>
-              </label>
-              <p class="shrink-0 text-xs text-muted-foreground">
-                {systemLogs.length}
-                {systemLogs.length === 1 ? "entry" : "entries"}
-                {#if live}<span class="ml-2 text-success">● Live polling</span
-                  >{/if}
-              </p>
-            </div>
-            {#if systemLogConnectionError}<p class="mb-3 text-xs text-warning">
-                {systemLogConnectionError}
-              </p>{/if}
-            <div
-              bind:this={systemLogViewport}
-              onscroll={updateSystemLogFollow}
-              class="max-h-[42rem] min-h-48 overflow-auto border border-border bg-muted/10"
-            >
-              {#each systemLogs as log (log.id)}
-                <LogEntry
-                  occurredAt={log.occurredAt}
-                  message={systemLogMessage(log)}
-                  status={systemLogStatus(log)}
-                  statusLabel={systemLogLevel(log)}
-                  source={log.service || log.scope || "application"}
-                  metadata={[
-                    ...(log.processReplica || log.processName || log.processKind
-                      ? [
-                          {
-                            label: "Process",
-                            value:
-                              log.processReplica ||
-                              log.processName ||
-                              log.processKind,
-                          },
-                        ]
-                      : []),
-                    {
-                      label: "Path",
-                      value: log.requestPath || "Unavailable",
-                      mono: true,
-                    },
-                    ...(log.responseCode
-                      ? [
-                          {
-                            label: "Response",
-                            value: String(log.responseCode),
-                            mono: true,
-                          },
-                        ]
-                      : []),
-                    ...(log.slot
-                      ? [{ label: "Slot", value: log.slot, mono: true }]
-                      : []),
-                    ...(log.source
-                      ? [
-                          {
-                            label: "Source",
-                            value: `${log.source}${log.line ? `:${log.line}` : ""}`,
-                            mono: true,
-                          },
-                        ]
-                      : []),
-                    ...(log.instance
-                      ? [{ label: "Instance", value: log.instance, mono: true }]
-                      : []),
-                    ...(log.spanId
-                      ? [
-                          {
-                            label: "Span",
-                            value: short(log.spanId),
-                            mono: true,
-                          },
-                        ]
-                      : []),
-                  ]}
-                  attributes={systemLogContext(log)}
-                  traceId={log.traceId}
-                  ontrace={() => loadTrace(log.traceId)}
-                />
-              {:else}
-                <p class="p-4 text-sm text-muted-foreground">
-                  {systemLogsLoaded
-                    ? systemLogSearch
-                      ? `No logs in ${rangeLabel} match “${systemLogSearch}”.`
-                      : `No DeployCrate CE logs were collected in ${rangeLabel}.`
-                    : "Loading DeployCrate CE logs..."}
-                </p>
-              {/each}
-            </div>
-          </Card.Content>
-        </Card.Root>
+        <LogExplorer
+          active
+          endpoint={routes.systemTelemetryLogs()}
+          range={telemetryRange}
+          {rangeLabel}
+          {live}
+          title="DeployCrate CE logs"
+          headingId="deploycrate-logs-heading"
+          description={`Structured application logs from ${rangeLabel}. Use Live above to poll for new entries. ClickHouse retains logs for seven days.`}
+          searchId="system-log-search"
+          searchPlaceholder="Search messages, attributes, traces, or instances"
+          source={(log) => log.service || log.scope || "application"}
+          emptyMessage={`No DeployCrate CE logs were collected in ${rangeLabel}.`}
+          filteredEmptyMessage={(search) =>
+            `No logs in ${rangeLabel} match “${search}”.`}
+          loadingMessage="Loading DeployCrate CE logs..."
+          reconnectingMessage="Reconnecting to the DeployCrate CE log stream..."
+          unavailableMessage="DeployCrate CE logs are temporarily unavailable."
+          showSlot
+          ontrace={openTrace}
+        />
       </section>
     {/if}
 
@@ -1596,7 +1249,7 @@
                             variant="link"
                             size="xs"
                             class="h-auto p-0 font-mono"
-                            onclick={() => loadTrace(trace.traceId)}
+                            onclick={() => openTrace(trace.traceId)}
                             >{short(trace.traceId)}</Button
                           ></Table.Cell
                         >
@@ -1634,63 +1287,12 @@
             contributed to this trace.</Dialog.Description
           >
         </Dialog.Header>
-        {#if traceLoading}<p class="py-6 text-sm text-muted-foreground">
-            Loading trace...
-          </p>
-        {:else if traceError}<p class="py-6 text-sm text-destructive">
-            {traceError}
-          </p>
-        {:else if traceSpans.length}
-          <div class="overflow-x-auto border border-border">
-            <Table.Root class="min-w-[920px] text-xs">
-              <Table.Header
-                ><Table.Row
-                  ><Table.Head>Started</Table.Head><Table.Head
-                    >Service</Table.Head
-                  ><Table.Head>Span</Table.Head><Table.Head
-                    >Span ID / parent</Table.Head
-                  ><Table.Head>Duration</Table.Head><Table.Head
-                    >Status</Table.Head
-                  ></Table.Row
-                ></Table.Header
-              >
-              <Table.Body>
-                {#each traceSpans as span (span.spanId)}
-                  <Table.Row>
-                    <Table.Cell class="whitespace-nowrap"
-                      >{stamp(span.startedAt)}</Table.Cell
-                    ><Table.Cell
-                      ><p class="font-medium">{span.serviceName}</p>
-                      <p class="mt-1 text-muted-foreground">
-                        {span.kind || span.scope}
-                      </p></Table.Cell
-                    >
-                    <Table.Cell class="font-medium">{span.name}</Table.Cell
-                    ><Table.Cell class="font-mono"
-                      ><p>{span.spanId}</p>
-                      <p class="mt-1 text-muted-foreground">
-                        {span.parentSpanId || "root"}
-                      </p></Table.Cell
-                    >
-                    <Table.Cell
-                      >{formatSpanDuration(span.durationNs)}</Table.Cell
-                    ><Table.Cell
-                      ><StatusBadge
-                        status={span.statusCode || "unset"}
-                      />{#if span.statusMessage}<p
-                          class="mt-1 text-muted-foreground"
-                        >
-                          {span.statusMessage}
-                        </p>{/if}</Table.Cell
-                    >
-                  </Table.Row>
-                {/each}
-              </Table.Body>
-            </Table.Root>
-          </div>
-        {:else}<p class="py-6 text-sm text-muted-foreground">
-            No spans were retained for this trace.
-          </p>{/if}
+        <TraceDetails
+          traceId={selectedTraceID}
+          endpoint={selectedTraceID
+            ? routes.systemTelemetryTrace(selectedTraceID)
+            : ""}
+        />
       </Dialog.Content>
     </Dialog.Root>
   </div>

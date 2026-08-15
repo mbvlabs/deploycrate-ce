@@ -84,7 +84,7 @@
         height={136}
         padding={0}
         tooltipContext={false}
-        motion={false}
+        motion="none"
         aria-label={`${label}: ${available ? formatValue(centerValue) : "Unavailable"}`}
         props={{
           arc: { strokeWidth: 0 },
