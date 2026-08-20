@@ -47,6 +47,9 @@ func run(arguments []string, stdout io.Writer) error {
 		return errors.New("program arguments are required")
 	}
 	if len(arguments) > 1 {
+		if len(arguments) == 2 && arguments[1] == "jobs" {
+			return runJobRunner()
+		}
 		return runCommand(context.Background(), arguments[1:], stdout)
 	}
 
@@ -85,6 +88,30 @@ func run(arguments []string, stdout io.Writer) error {
 
 func appOptions(ctx context.Context) []fx.Option {
 	return []fx.Option{
+		sharedOptions(ctx),
+		controllers.Module,
+		router.Module,
+
+		fx.Invoke(runMigrationsOnStartup),
+		fx.Invoke(reconcileWorkloadsOnStartup),
+		fx.Invoke(startServer),
+	}
+}
+
+func jobRunnerOptions(ctx context.Context) []fx.Option {
+	return []fx.Option{
+		sharedOptions(ctx),
+		queue.WorkersModule,
+
+		fx.Invoke(runMigrationsOnStartup),
+		fx.Invoke(startQueueProcessor),
+		fx.Invoke(ensureInitialBackupsOnStartup),
+		fx.Invoke(services.StartResourceCaddyReconciler),
+	}
+}
+
+func sharedOptions(ctx context.Context) fx.Option {
+	return fx.Options(
 		fx.Provide(
 			func() context.Context { return ctx },
 			func() services.CurrentVersion { return services.CurrentVersion(appVersion) },
@@ -103,17 +130,23 @@ func appOptions(ctx context.Context) []fx.Option {
 		database.Module,
 		telemetry.Module,
 		queue.Module,
-		queue.WorkersModule,
 		services.Module,
-		controllers.Module,
-		router.Module,
+	)
+}
 
-		fx.Invoke(runMigrationsOnStartup),
-		fx.Invoke(reconcileWorkloadsOnStartup),
-		fx.Invoke(startQueueProcessor),
-		fx.Invoke(startServer),
-		fx.Invoke(ensureInitialBackupsOnStartup),
+func runJobRunner() error {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	app := fx.New(jobRunnerOptions(ctx)...)
+	if err := app.Start(ctx); err != nil {
+		return err
 	}
+	<-ctx.Done()
+
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer shutdownCancel()
+	return app.Stop(shutdownCtx)
 }
 
 func runCommand(ctx context.Context, arguments []string, stdout io.Writer) error {

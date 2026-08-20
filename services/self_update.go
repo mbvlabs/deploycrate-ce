@@ -25,28 +25,33 @@ import (
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/sudo"
 	"deploycrate-ce/models"
+	"deploycrate-ce/queue/jobs"
 	"deploycrate-ce/telemetry"
 
 	"github.com/google/uuid"
-	"go.uber.org/fx"
 )
 
 const (
-	defaultReleaseRoot   = "/opt/deploycrate-ce/releases"
-	defaultSlotsRoot     = "/opt/deploycrate-ce/slots"
-	defaultStatusPath    = "/var/lib/deploycrate-ce/self-update.json"
-	defaultCaddyAdminURL = "http://127.0.0.1:2019"
-	updateLockPath       = "/tmp/deploycrate-ce-update.lock"
-	greenInstance        = "green"
-	blueInstance         = "blue"
-	greenService         = "deploycrate-ce@green.service"
-	blueService          = "deploycrate-ce@blue.service"
-	greenPort            = 8081
-	bluePort             = 8080
-	healthSlotHeader     = "X-DeployCrate-Slot"
-	healthVersionHeader  = "X-DeployCrate-Version"
-	selfHealInterval     = 30 * time.Second
-	trafficVerifyTimeout = 15 * time.Second
+	defaultReleaseRoot           = "/opt/deploycrate-ce/releases"
+	defaultSlotsRoot             = "/opt/deploycrate-ce/slots"
+	defaultStatusPath            = "/var/lib/deploycrate-ce/self-update.json"
+	defaultJobRunnerPath         = "/opt/deploycrate-ce/jobs/deploycrate-ce"
+	jobRunnerService             = "deploycrate-ce-jobs.service"
+	defaultCaddyAdminURL         = "http://127.0.0.1:2019"
+	updateLockPath               = "/tmp/deploycrate-ce-update.lock"
+	greenInstance                = "green"
+	blueInstance                 = "blue"
+	greenService                 = "deploycrate-ce@green.service"
+	blueService                  = "deploycrate-ce@blue.service"
+	greenPort                    = 8081
+	bluePort                     = 8080
+	healthSlotHeader             = "X-DeployCrate-Slot"
+	healthVersionHeader          = "X-DeployCrate-Version"
+	trafficVerifyTimeout         = 15 * time.Second
+	reconciliationTimeout        = 5 * time.Minute
+	SystemUpdateExecutionTimeout = 10 * time.Minute
+	SystemUpdateRollbackTimeout  = 2 * time.Minute
+	updateFinalizationTimeout    = 2 * time.Minute
 )
 
 var (
@@ -122,39 +127,30 @@ type caddyUpstream struct {
 	Dial string `json:"dial"`
 }
 
-type updateJob struct {
-	actorID uuid.UUID
-	source  config.ReleaseSource
-}
-
 type SelfUpdate struct {
 	mu             sync.RWMutex
 	status         SelfUpdateStatus
-	localRunning   bool
-	handingOff     bool
 	currentVersion string
 	releaseRoot    string
 	slotsRoot      string
 	statusPath     string
+	jobRunnerPath  string
 	caddyAdminURL  string
 	publicHealth   string
 	client         *http.Client
 	r2             *cloudflare.R2
-	queue          chan updateJob
+	jobs           storage.InsertQueue
 	db             storage.Pool
 	routes         CaddyRouteService
-	instanceSlot   string
 
 	currentDeployment *selfUpdateDeployment
 }
 
 func NewSelfUpdate(
-	lifecycle fx.Lifecycle,
-	appCtx context.Context,
 	version CurrentVersion,
+	jobs storage.InsertQueue,
 	db storage.Pool,
 	routes CaddyRouteService,
-	configuration config.Config,
 ) *SelfUpdate {
 	currentVersion := normalizeVersion(string(version))
 	if currentVersion == "" {
@@ -171,6 +167,7 @@ func NewSelfUpdate(
 		releaseRoot:    environmentOr("DEPLOYCRATE_CE_RELEASE_ROOT", defaultReleaseRoot),
 		slotsRoot:      environmentOr("DEPLOYCRATE_CE_SLOTS_ROOT", defaultSlotsRoot),
 		statusPath:     environmentOr("DEPLOYCRATE_CE_UPDATE_STATUS_PATH", defaultStatusPath),
+		jobRunnerPath:  environmentOr("DEPLOYCRATE_CE_JOB_RUNNER_PATH", defaultJobRunnerPath),
 		caddyAdminURL: strings.TrimRight(
 			environmentOr("DEPLOYCRATE_CE_CADDY_ADMIN_URL", defaultCaddyAdminURL),
 			"/",
@@ -181,40 +178,14 @@ func NewSelfUpdate(
 		),
 		client: httpClient,
 		r2:     cloudflare.NewR2(httpClient),
-		queue:  make(chan updateJob, 1),
+		jobs:   jobs,
 		db:     db,
 		routes: routes,
-		instanceSlot: strings.ToLower(strings.TrimSpace(
-			configuration.App.Slot,
-		)),
 	}
 	service.loadStatus()
 	if service.status.UpdatedAt.IsZero() {
 		service.status.UpdatedAt = time.Now()
 	}
-
-	var done chan struct{}
-	lifecycle.Append(fx.Hook{
-		OnStart: func(context.Context) error {
-			done = make(chan struct{})
-			go func() {
-				defer close(done)
-				service.run(appCtx)
-			}()
-			return nil
-		},
-		OnStop: func(ctx context.Context) error {
-			if done == nil {
-				return nil
-			}
-			select {
-			case <-done:
-				return nil
-			case <-ctx.Done():
-				return ctx.Err()
-			}
-		},
-	})
 
 	return service
 }
@@ -242,18 +213,17 @@ func (s *SelfUpdate) Start(ctx context.Context, actorID uuid.UUID) (SelfUpdateSt
 		return s.Status(), ErrUpdateInProgress
 	}
 
-	source, err := config.ResolveReleaseSource(s.currentVersion)
+	_, err = config.ResolveReleaseSource(s.currentVersion)
 	if err != nil {
 		return s.Status(), err
 	}
 
 	s.mu.Lock()
-	if s.localRunning || selfUpdateLockHeld() {
+	if selfUpdateLockHeld() {
 		status := s.status
 		s.mu.Unlock()
 		return status, ErrUpdateInProgress
 	}
-	s.localRunning = true
 	now := time.Now()
 	s.status = SelfUpdateStatus{
 		State:       SelfUpdateQueued,
@@ -267,93 +237,51 @@ func (s *SelfUpdate) Start(ctx context.Context, actorID uuid.UUID) (SelfUpdateSt
 		}},
 	}
 	s.currentDeployment = nil
-	s.handingOff = false
 	s.persistStatusLocked()
 	status := s.status
 	s.mu.Unlock()
 
-	select {
-	case s.queue <- updateJob{actorID: actorID, source: source}:
-		return status, nil
-	case <-ctx.Done():
-		s.mu.Lock()
-		s.localRunning = false
-		s.mu.Unlock()
-		s.fail("queued", ctx.Err())
-		return s.Status(), ctx.Err()
+	args := jobs.SelfUpdateArgs{ActorID: actorID}
+	opts := args.InsertOpts()
+	result, err := s.jobs.Insert(ctx, args, &opts)
+	if err != nil {
+		s.fail("queued", err)
+		return s.Status(), err
 	}
+	if result.UniqueSkippedAsDuplicate {
+		return s.Status(), ErrUpdateInProgress
+	}
+	return status, nil
 }
 
-func (s *SelfUpdate) run(ctx context.Context) {
-	ticker := time.NewTicker(selfHealInterval)
-	defer ticker.Stop()
-	if s.reconcileWhenUnlocked(ctx) {
-		return
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case job := <-s.queue:
-			s.execute(ctx, job)
-			s.mu.RLock()
-			handingOff := s.handingOff
-			s.mu.RUnlock()
-			if handingOff {
-				return
-			}
-		case <-ticker.C:
-			if s.reconcileIfUnlocked(ctx) {
-				return
-			}
-		}
-	}
-}
-
-func (s *SelfUpdate) reconcileWhenUnlocked(ctx context.Context) bool {
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		lock, err := acquireSelfUpdateLock()
-		if err == nil {
-			stopSelf, reconcileErr := s.reconcileLocked(ctx)
-			lock.release()
-			if reconcileErr != nil &&
-				!errors.Is(reconcileErr, context.Canceled) {
-				slog.ErrorContext(
-					ctx,
-					"failed to reconcile interrupted self-update",
-					"error",
-					reconcileErr,
-				)
-			}
-			if stopSelf {
-				return s.requestSelfStop()
-			}
-			return false
-		}
-		select {
-		case <-ctx.Done():
-			return false
-		case <-ticker.C:
-		}
-	}
-}
-
-func (s *SelfUpdate) reconcileIfUnlocked(ctx context.Context) bool {
+func (s *SelfUpdate) Reconcile(ctx context.Context) error {
 	lock, err := acquireSelfUpdateLock()
 	if err != nil {
-		return false
+		return nil
 	}
-	stopSelf, reconcileErr := s.reconcileLocked(ctx)
+	_, reconcileErr := s.reconcileWithTimeout(ctx)
 	lock.release()
 	if reconcileErr != nil && !errors.Is(reconcileErr, context.Canceled) {
 		slog.ErrorContext(ctx, "failed to reconcile DeployCrate CE slots", "error", reconcileErr)
 	}
-	if stopSelf {
-		return s.requestSelfStop()
+	return reconcileErr
+}
+
+func (s *SelfUpdate) reconcileWithTimeout(ctx context.Context) (bool, error) {
+	reconcileCtx, cancel := context.WithTimeout(ctx, reconciliationTimeout)
+	defer cancel()
+
+	stopSelf, err := s.reconcileLocked(reconcileCtx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		return stopSelf, err
 	}
-	return false
+	timeoutErr := fmt.Errorf(
+		"self-update reconciliation exceeded %s: %w",
+		reconciliationTimeout,
+		err,
+	)
+	s.reportUnresolvedFailure("reconcile", timeoutErr)
+	return stopSelf, timeoutErr
 }
 
 func (s *SelfUpdate) reconcileLocked(ctx context.Context) (bool, error) {
@@ -362,18 +290,16 @@ func (s *SelfUpdate) reconcileLocked(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	if record == nil {
-		return s.healSteadyStateLocked(ctx)
+		stopSelf, healErr := s.healSteadyStateLocked(ctx)
+		if healErr == nil {
+			s.clearRecoveredStatus()
+		}
+		return stopSelf, healErr
 	}
 
 	s.mu.Lock()
 	s.currentDeployment = record
-	s.localRunning = true
 	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		s.localRunning = false
-		s.mu.Unlock()
-	}()
 
 	activeInstance := record.SystemState.ActiveInstanceSlot
 	targetInstance := record.InactiveSlot
@@ -450,7 +376,7 @@ func (s *SelfUpdate) reconcileLocked(ctx context.Context) (bool, error) {
 func (s *SelfUpdate) completeRecoveredUpdate(
 	record *selfUpdateDeployment,
 ) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), updateFinalizationTimeout)
 	defer cancel()
 
 	activeInstance := record.SystemState.ActiveInstanceSlot
@@ -471,10 +397,15 @@ func (s *SelfUpdate) completeRecoveredUpdate(
 	if err := s.persistCheckpoint(ctx, record); err != nil {
 		return false, err
 	}
-	if s.instanceSlot == activeInstance {
-		return true, nil
+	s.transition(SelfUpdateInProgress, "update_job_runner", "Finalizing background job runner")
+	if err := s.replaceSlotLink(ctx, s.jobRunnerPath, record.ReleasePath); err != nil {
+		return false, err
 	}
-
+	record.Checkpoint.JobRunnerUpdated = true
+	record.Checkpoint.Phase = "job_runner_updated"
+	if err := s.persistCheckpoint(ctx, record); err != nil {
+		return false, err
+	}
 	s.transition(SelfUpdateInProgress, "stop_previous_instance", "Stopping previous instance")
 	if err := stopServiceAndWait(
 		ctx,
@@ -504,11 +435,15 @@ func (s *SelfUpdate) completeRecoveredUpdate(
 	if err := s.pruneReleases(ctx); err != nil {
 		slog.WarnContext(ctx, "failed to prune orphaned DeployCrate CE releases", "error", err)
 	}
+	s.scheduleJobRunnerRestart()
 	return false, nil
 }
 
 func (s *SelfUpdate) rollbackDeployment(record *selfUpdateDeployment) (bool, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	ctx, cancel := context.WithTimeout(
+		context.Background(),
+		SystemUpdateRollbackTimeout,
+	)
 	defer cancel()
 
 	activeInstance := record.SystemState.ActiveInstanceSlot
@@ -538,6 +473,15 @@ func (s *SelfUpdate) rollbackDeployment(record *selfUpdateDeployment) (bool, err
 		rollbackErr,
 		s.restoreSlot(ctx, targetInstance, record.Checkpoint.PreviousSlotTarget),
 	)
+	jobRunnerTarget, jobRunnerErr := readSlotTarget(s.jobRunnerPath)
+	rollbackErr = errors.Join(rollbackErr, jobRunnerErr)
+	if jobRunnerErr == nil &&
+		filepath.Clean(jobRunnerTarget) == filepath.Clean(record.ReleasePath) {
+		rollbackErr = errors.Join(
+			rollbackErr,
+			s.restoreLink(ctx, s.jobRunnerPath, record.Checkpoint.PreviousJobRunnerTarget),
+		)
+	}
 	if rollbackErr != nil {
 		return false, rollbackErr
 	}
@@ -545,14 +489,11 @@ func (s *SelfUpdate) rollbackDeployment(record *selfUpdateDeployment) (bool, err
 	record.Checkpoint.TargetStarted = false
 	record.Checkpoint.TrafficSwitched = false
 	record.Checkpoint.BootStateSwitched = false
+	record.Checkpoint.JobRunnerUpdated = false
 	record.Checkpoint.Phase = "rolled_back"
 	if err := s.persistCheckpoint(ctx, record); err != nil {
 		return false, err
 	}
-	if s.instanceSlot == targetInstance {
-		return true, nil
-	}
-
 	rollbackErr = errors.Join(
 		rollbackErr,
 		stopServiceAndWait(ctx, serviceForInstance(targetInstance), 30*time.Second),
@@ -576,14 +517,30 @@ func (s *SelfUpdate) rollbackDeployment(record *selfUpdateDeployment) (bool, err
 	return false, nil
 }
 
-func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
-	defer func() {
-		s.mu.Lock()
-		s.localRunning = false
-		s.mu.Unlock()
-	}()
+func (s *SelfUpdate) Execute(parent context.Context, actorID uuid.UUID) error {
+	unresolved, err := s.loadUnresolvedDeployment(parent)
+	if err != nil {
+		return err
+	}
+	if unresolved != nil {
+		return s.Reconcile(parent)
+	}
+	source, err := config.ResolveReleaseSource(s.currentVersion)
+	if err != nil {
+		s.fail("resolve_release", err)
+		return nil
+	}
+	s.execute(parent, actorID, source)
+	return nil
+}
 
-	ctx, cancel := context.WithTimeout(parent, 15*time.Minute)
+func (s *SelfUpdate) execute(
+	parent context.Context,
+	actorID uuid.UUID,
+	source config.ReleaseSource,
+) {
+
+	ctx, cancel := context.WithTimeout(parent, SystemUpdateExecutionTimeout)
 	defer cancel()
 
 	s.transition(SelfUpdateInProgress, "acquire_lock", "Acquiring update lock")
@@ -606,7 +563,7 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 	s.transition(SelfUpdateInProgress, "download_artifact", "Downloading release artifact")
 	if err := s.r2.Download(
 		ctx,
-		job.source.BaseURL,
+		source.BaseURL,
 		config.ReleaseApplicationPath,
 		stagedBinary,
 	); err != nil {
@@ -615,7 +572,7 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 	}
 	if err := s.r2.Download(
 		ctx,
-		job.source.BaseURL,
+		source.BaseURL,
 		config.ReleaseChecksumPath,
 		checksumPath,
 	); err != nil {
@@ -637,7 +594,7 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 		s.fail("verify_version", err)
 		return
 	}
-	if job.source.Development && !strings.HasPrefix(stagedVersion, "development-") {
+	if source.Development && !strings.HasPrefix(stagedVersion, "development-") {
 		s.fail(
 			"verify_version",
 			fmt.Errorf("development release reported unexpected version %q", stagedVersion),
@@ -675,7 +632,7 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 		))
 		return
 	}
-	deployment, err := s.createDeploymentRecords(ctx, job.actorID, release, systemState)
+	deployment, err := s.createDeploymentRecords(ctx, actorID, release, systemState)
 	if err != nil {
 		s.fail("create_deployment", err)
 		return
@@ -687,7 +644,7 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 	inactiveInstance := deployment.InactiveSlot
 	s.setInstances(activeInstance, activeInstance)
 	rollback := func(cause error) {
-		stopSelf, rollbackErr := s.rollbackDeployment(deployment)
+		_, rollbackErr := s.rollbackDeployment(deployment)
 		if rollbackErr != nil {
 			cause = errors.Join(cause, fmt.Errorf("rollback failed: %w", rollbackErr))
 			s.reportUnresolvedFailure(s.Status().CurrentStep, cause)
@@ -695,13 +652,6 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 		}
 		s.setInstances(activeInstance, activeInstance)
 		s.fail(s.Status().CurrentStep, cause)
-		if stopSelf {
-			if s.requestSelfStop() {
-				s.mu.Lock()
-				s.handingOff = true
-				s.mu.Unlock()
-			}
-		}
 	}
 
 	if err := s.recordArtifact(digest); err != nil {
@@ -714,7 +664,13 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 		s.fail("read_slot", err)
 		return
 	}
+	previousJobRunnerTarget, err := readSlotTarget(s.jobRunnerPath)
+	if err != nil {
+		s.fail("read_job_runner", err)
+		return
+	}
 	deployment.Checkpoint.PreviousSlotTarget = previousSlotTarget
+	deployment.Checkpoint.PreviousJobRunnerTarget = previousJobRunnerTarget
 	deployment.Checkpoint.Phase = "artifact_verified"
 	if err := s.persistCheckpoint(ctx, deployment); err != nil {
 		s.fail("record_checkpoint", err)
@@ -864,22 +820,40 @@ func (s *SelfUpdate) execute(parent context.Context, job updateJob) {
 		return
 	}
 
+	s.transition(SelfUpdateInProgress, "update_job_runner", "Updating background job runner")
+	if err := s.replaceSlotLink(ctx, s.jobRunnerPath, installedBinary); err != nil {
+		rollback(err)
+		return
+	}
+	deployment.Checkpoint.JobRunnerUpdated = true
+	deployment.Checkpoint.Phase = "job_runner_updated"
+	if err := s.persistCheckpoint(ctx, deployment); err != nil {
+		rollback(err)
+		return
+	}
+
 	s.transition(SelfUpdateInProgress, "stop_previous_instance", "Stopping previous instance")
-	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer stopCancel()
-	if err := runSudo(
-		stopCtx,
-		"systemctl",
-		"stop",
-		"--no-block",
+	if err := stopServiceAndWait(
+		ctx,
 		serviceForInstance(activeInstance),
+		30*time.Second,
 	); err != nil {
 		rollback(err)
 		return
 	}
-	s.mu.Lock()
-	s.handingOff = true
-	s.mu.Unlock()
+	deployment.Checkpoint.Phase = "old_instance_stopped"
+	if err := s.persistCheckpoint(ctx, deployment); err != nil {
+		s.reportUnresolvedFailure("stop_previous_instance", err)
+		return
+	}
+	if err := s.succeed(deployment.Version, inactiveInstance); err != nil {
+		s.reportUnresolvedFailure("complete", err)
+		return
+	}
+	if err := s.pruneReleases(ctx); err != nil {
+		slog.WarnContext(ctx, "failed to prune orphaned DeployCrate CE releases", "error", err)
+	}
+	s.scheduleJobRunnerRestart()
 }
 
 func (s *SelfUpdate) runningInstance(ctx context.Context) (string, error) {
@@ -932,13 +906,17 @@ func (s *SelfUpdate) installRelease(
 }
 
 func (s *SelfUpdate) restoreSlot(ctx context.Context, slot, target string) error {
+	return s.restoreLink(ctx, s.slotBinaryPath(slot), target)
+}
+
+func (s *SelfUpdate) restoreLink(ctx context.Context, path, target string) error {
 	if target == "" {
-		if err := runSudo(ctx, "rm", "-f", s.slotBinaryPath(slot)); err != nil {
-			return fmt.Errorf("remove newly created %s slot link: %w", slot, err)
+		if err := runSudo(ctx, "rm", "-f", path); err != nil {
+			return fmt.Errorf("remove newly created link %s: %w", path, err)
 		}
 		return nil
 	}
-	return s.replaceSlotLink(ctx, s.slotBinaryPath(slot), target)
+	return s.replaceSlotLink(ctx, path, target)
 }
 
 func (s *SelfUpdate) replaceSlotLink(ctx context.Context, slotPath, target string) error {
@@ -1154,9 +1132,6 @@ func findReverseProxy(handles []caddyHandle, prefix string) (*caddyHandle, strin
 }
 
 func (s *SelfUpdate) healSteadyStateLocked(ctx context.Context) (bool, error) {
-	if s.instanceSlot != blueInstance && s.instanceSlot != greenInstance {
-		return false, nil
-	}
 	state, err := s.loadSystemState(ctx)
 	if err != nil {
 		return false, err
@@ -1215,9 +1190,6 @@ func (s *SelfUpdate) healSteadyStateLocked(ctx context.Context) (bool, error) {
 	if err != nil || !fallbackActive {
 		return false, err
 	}
-	if s.instanceSlot == fallbackInstance {
-		return true, nil
-	}
 	if err := stopServiceAndWait(
 		ctx,
 		serviceForInstance(fallbackInstance),
@@ -1226,25 +1198,6 @@ func (s *SelfUpdate) healSteadyStateLocked(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	return false, nil
-}
-
-func (s *SelfUpdate) requestSelfStop() bool {
-	if s.instanceSlot != blueInstance && s.instanceSlot != greenInstance {
-		return false
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := runSudo(
-		ctx,
-		"systemctl",
-		"stop",
-		"--no-block",
-		serviceForInstance(s.instanceSlot),
-	); err != nil {
-		slog.Error("failed to stop superseded DeployCrate CE slot", "error", err)
-		return false
-	}
-	return true
 }
 
 func (s *SelfUpdate) waitForSlotHealth(
@@ -1366,6 +1319,26 @@ func (s *SelfUpdate) setInstances(before, current string) {
 	s.persistStatusLocked()
 }
 
+func (s *SelfUpdate) clearRecoveredStatus() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.status.State != SelfUpdateInProgress {
+		return
+	}
+	now := time.Now()
+	s.status.State = SelfUpdateIdle
+	s.status.CurrentStep = "idle"
+	s.status.Error = ""
+	s.status.FinishedAt = &now
+	s.status.UpdatedAt = now
+	s.status.Events = append(s.status.Events, SelfUpdateEvent{
+		ID:         uuid.NewString(),
+		Message:    "Recovered steady system state",
+		OccurredAt: now,
+	})
+	s.persistStatusLocked()
+}
+
 func (s *SelfUpdate) fail(step string, err error) error {
 	finalized := true
 	if finishErr := s.finishDeployment(false, err); finishErr != nil {
@@ -1449,6 +1422,23 @@ func (s *SelfUpdate) succeed(version, instance string) error {
 	s.persistStatusLocked()
 	s.mu.Unlock()
 	return nil
+}
+
+func (s *SelfUpdate) scheduleJobRunnerRestart() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := runSudo(
+		ctx,
+		"/usr/bin/systemd-run",
+		"--unit=deploycrate-ce-jobs-restart",
+		"--on-active=15s",
+		"--collect",
+		"/usr/bin/systemctl",
+		"restart",
+		jobRunnerService,
+	); err != nil {
+		slog.Warn("failed to schedule background job runner restart", "error", err)
+	}
 }
 
 func (s *SelfUpdate) reconcileFinalSystemRoute() {

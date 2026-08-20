@@ -27,13 +27,13 @@ import (
 const jobPageSize int64 = 25
 
 type Jobs struct {
-	db        storage.Pool
-	processor queue.Processor
-	builds    *services.EnvironmentSetup
+	db     storage.Pool
+	jobs   queue.JobClient
+	builds *services.EnvironmentSetup
 }
 
-func NewJobs(db storage.Pool, processor queue.Processor, builds *services.EnvironmentSetup) Jobs {
-	return Jobs{db: db, processor: processor, builds: builds}
+func NewJobs(db storage.Pool, jobs queue.JobClient, builds *services.EnvironmentSetup) Jobs {
+	return Jobs{db: db, jobs: jobs, builds: builds}
 }
 
 func (j Jobs) RegisterRoutes(r *router.Router) error {
@@ -284,7 +284,7 @@ func (j Jobs) Show(etx *echo.Context) error {
 		return inertia.Page(etx, "Errors/BadRequest", inertia.Props{})
 	}
 
-	job, err := j.processor.Job(etx.Request().Context(), jobID)
+	job, err := j.jobs.Job(etx.Request().Context(), jobID)
 	if errors.Is(err, rivertype.ErrNotFound) {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
@@ -325,7 +325,7 @@ func (j Jobs) Run(etx *echo.Context) error {
 	if err != nil {
 		return inertia.Page(etx, "Errors/BadRequest", inertia.Props{})
 	}
-	if _, err := j.processor.RunJobNow(etx.Request().Context(), jobID); err != nil {
+	if _, err := j.jobs.RunJobNow(etx.Request().Context(), jobID); err != nil {
 		return jobActionError(etx, jobID, "run", err)
 	}
 	return jobActionSuccess(etx, jobID, "System Task made available to run now")
@@ -336,11 +336,11 @@ func (j Jobs) Retry(etx *echo.Context) error {
 	if err != nil {
 		return inertia.Page(etx, "Errors/BadRequest", inertia.Props{})
 	}
-	job, err := j.processor.Job(etx.Request().Context(), jobID)
+	job, err := j.jobs.Job(etx.Request().Context(), jobID)
 	if err == nil && job.Kind == "build_source" {
 		err = j.builds.RetryBuildJob(etx.Request().Context(), jobID)
 	} else if err == nil {
-		_, err = j.processor.RestartJob(etx.Request().Context(), jobID)
+		_, err = j.jobs.RestartJob(etx.Request().Context(), jobID)
 	}
 	if err != nil {
 		return jobActionError(etx, jobID, "restart", err)
@@ -353,11 +353,11 @@ func (j Jobs) Cancel(etx *echo.Context) error {
 	if err != nil {
 		return inertia.Page(etx, "Errors/BadRequest", inertia.Props{})
 	}
-	job, err := j.processor.Job(etx.Request().Context(), jobID)
+	job, err := j.jobs.Job(etx.Request().Context(), jobID)
 	if err == nil && job.Kind == "build_source" {
 		err = j.builds.StopBuildJob(etx.Request().Context(), jobID)
 	} else if err == nil {
-		_, err = j.processor.CancelJob(etx.Request().Context(), jobID)
+		_, err = j.jobs.CancelJob(etx.Request().Context(), jobID)
 	}
 	if err != nil {
 		return jobActionError(etx, jobID, "cancel", err)
@@ -370,7 +370,7 @@ func (j Jobs) Destroy(etx *echo.Context) error {
 	if err != nil {
 		return inertia.Page(etx, "Errors/BadRequest", inertia.Props{})
 	}
-	if _, err := j.processor.DeleteJob(etx.Request().Context(), jobID); err != nil {
+	if _, err := j.jobs.DeleteJob(etx.Request().Context(), jobID); err != nil {
 		return jobActionError(etx, jobID, "delete", err)
 	}
 	if err := cookies.AddFlash(
