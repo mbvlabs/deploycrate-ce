@@ -19,10 +19,11 @@ import (
 )
 
 type Pages struct {
-	db         storage.Pool
-	insertOnly queue.InsertOnly
-	dashboard  *services.Dashboard
-	metric     services.MetricRollupService
+	db           storage.Pool
+	insertOnly   queue.InsertOnly
+	dashboard    *services.Dashboard
+	metric       services.MetricRollupService
+	appTelemetry *services.SystemApplicationTelemetry
 }
 
 func NewPages(
@@ -30,8 +31,12 @@ func NewPages(
 	insertOnly queue.InsertOnly,
 	dashboard *services.Dashboard,
 	metric services.MetricRollupService,
+	appTelemetry *services.SystemApplicationTelemetry,
 ) Pages {
-	return Pages{db: db, insertOnly: insertOnly, dashboard: dashboard, metric: metric}
+	return Pages{
+		db: db, insertOnly: insertOnly, dashboard: dashboard,
+		metric: metric, appTelemetry: appTelemetry,
+	}
 }
 
 func (p Pages) RegisterRoutes(r *router.Router) error {
@@ -99,13 +104,22 @@ func (p Pages) Home(etx *echo.Context) error {
 	if err != nil {
 		slog.WarnContext(ctx, "failed to load dashboard host telemetry", "error", err)
 	}
+	applicationTelemetry, err := p.appTelemetry.Snapshot(
+		ctx,
+		services.TelemetryRangeSevenDays,
+	)
+	if err != nil {
+		slog.WarnContext(ctx, "failed to load dashboard application telemetry", "error", err)
+		applicationTelemetry = services.EmptyApplicationTelemetry()
+	}
 
 	return inertia.Page(etx, "Home", inertia.Props{
 		"auth": inertia.Props{
 			"email": appSession.Email,
 		},
-		"dashboard": dashboard,
-		"telemetry": telemetry,
+		"dashboard":            dashboard,
+		"telemetry":            telemetry,
+		"applicationTelemetry": applicationTelemetry,
 	})
 }
 

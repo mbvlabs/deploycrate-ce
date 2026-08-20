@@ -53,6 +53,7 @@
     resourceNavigation = null,
     applicationNavigation = null,
     environmentNavigation = null,
+    fullWidth = false,
   }: {
     children: Snippet;
     email: string;
@@ -60,6 +61,7 @@
     resourceNavigation?: ResourceNavigation | null;
     applicationNavigation?: ApplicationNavigation | null;
     environmentNavigation?: EnvironmentNavigation | null;
+    fullWidth?: boolean;
   } = $props();
   const appVersion = $derived(
     version ?? String($page.props.appVersion ?? "dev"),
@@ -1031,7 +1033,7 @@
     </header>
 
     <div class="flex-1 p-4 sm:p-6 lg:p-8">
-      <div class="mx-auto w-full max-w-6xl">
+      <div class={fullWidth ? "w-full" : "mx-auto w-full max-w-6xl"}>
         {@render children()}
       </div>
     </div>
