@@ -377,6 +377,22 @@ func (r release) Upsert(
 	return entity, nil
 }
 
+func (r release) PrepareSystemUpdate(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	version, artifactReference string,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("releases").
+		Set("version = ?", version).
+		Set("artifact_reference = ?", artifactReference).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
 func (r release) RecordArtifactDigest(
 	ctx context.Context,
 	db storage.Executor,

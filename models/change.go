@@ -361,6 +361,22 @@ func (c change) NextSequence(
 	return sequence, err
 }
 
+func (c change) PrepareSystemUpdate(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	version string,
+) error {
+	_, err := db.NewUpdate().
+		TableExpr("changes").
+		Set("cause_reference = ?", version).
+		Set("summary = ?", "Update DeployCrate CE to v"+version).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Exec(ctx)
+	return err
+}
+
 func (c change) RecordProgress(
 	ctx context.Context,
 	db storage.Executor,

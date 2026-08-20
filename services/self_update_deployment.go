@@ -17,17 +17,18 @@ import (
 type systemApplicationState = models.SystemApplicationState
 
 type selfUpdateDeployment struct {
-	SystemState   systemApplicationState
-	ChangeID      uuid.UUID
-	ReleaseID     uuid.UUID
-	Version       string
-	ReleasePath   string
-	DeploymentID  uuid.UUID
-	InstanceID    uuid.UUID
-	BackendID     int32
-	EventSequence int64
-	InactiveSlot  string
-	Checkpoint    models.SystemUpdateCheckpoint
+	SystemState      systemApplicationState
+	ChangeID         uuid.UUID
+	ReleaseID        uuid.UUID
+	Version          string
+	ReleasePath      string
+	DeploymentID     uuid.UUID
+	DeploymentStatus string
+	InstanceID       uuid.UUID
+	BackendID        int32
+	EventSequence    int64
+	InactiveSlot     string
+	Checkpoint       models.SystemUpdateCheckpoint
 }
 
 func (s *SelfUpdate) loadSystemState(ctx context.Context) (systemApplicationState, error) {
@@ -176,9 +177,46 @@ func (s *SelfUpdate) createDeploymentRecords(
 	return &selfUpdateDeployment{
 		SystemState: systemState, ChangeID: change.ID, ReleaseID: releaseEntity.ID,
 		Version: release.Version, ReleasePath: releasePath,
-		DeploymentID: deployment.ID, InstanceID: instance.ID, BackendID: backend.ID,
-		EventSequence: 1, InactiveSlot: inactiveSlot, Checkpoint: checkpoint,
+		DeploymentID: deployment.ID, DeploymentStatus: "queued",
+		InstanceID: instance.ID, BackendID: backend.ID, EventSequence: 1,
+		InactiveSlot: inactiveSlot, Checkpoint: checkpoint,
 	}, nil
+}
+
+func (s *SelfUpdate) prepareDeploymentRelease(
+	ctx context.Context,
+	record *selfUpdateDeployment,
+	release updateRelease,
+) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin self-update release preparation: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
+	releasePath := s.releaseBinaryPath(release.Version)
+	if err := models.Release.PrepareSystemUpdate(
+		ctx, tx, record.ReleaseID, release.Version, releasePath,
+	); err != nil {
+		return fmt.Errorf("prepare self-update release: %w", err)
+	}
+	if err := models.Change.PrepareSystemUpdate(
+		ctx, tx, record.ChangeID, release.Version,
+	); err != nil {
+		return fmt.Errorf("prepare self-update change: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit self-update release preparation: %w", err)
+	}
+	committed = true
+	record.Version = release.Version
+	record.ReleasePath = releasePath
+	return nil
 }
 
 func (s *SelfUpdate) persistCheckpoint(ctx context.Context, record *selfUpdateDeployment) error {
@@ -230,9 +268,10 @@ func (s *SelfUpdate) loadUnresolvedDeployment(ctx context.Context) (*selfUpdateD
 	return &selfUpdateDeployment{
 		SystemState: systemState, ChangeID: persisted.ChangeID, ReleaseID: persisted.ReleaseID,
 		Version: persisted.Version, ReleasePath: persisted.ReleasePath,
-		DeploymentID: persisted.DeploymentID, InstanceID: persisted.InstanceID,
-		BackendID: persisted.BackendID, EventSequence: persisted.EventSequence,
-		InactiveSlot: persisted.InactiveSlot, Checkpoint: checkpoint,
+		DeploymentID: persisted.DeploymentID, DeploymentStatus: persisted.DeploymentStatus,
+		InstanceID: persisted.InstanceID, BackendID: persisted.BackendID,
+		EventSequence: persisted.EventSequence,
+		InactiveSlot:  persisted.InactiveSlot, Checkpoint: checkpoint,
 	}, nil
 }
 

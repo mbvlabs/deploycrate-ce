@@ -217,6 +217,10 @@ func (s *SelfUpdate) Start(ctx context.Context, actorID uuid.UUID) (SelfUpdateSt
 	if err != nil {
 		return s.Status(), err
 	}
+	systemState, err := s.loadSystemState(ctx)
+	if err != nil {
+		return s.Status(), err
+	}
 
 	s.mu.Lock()
 	if selfUpdateLockHeld() {
@@ -238,10 +242,24 @@ func (s *SelfUpdate) Start(ctx context.Context, actorID uuid.UUID) (SelfUpdateSt
 	}
 	s.currentDeployment = nil
 	s.persistStatusLocked()
+	s.mu.Unlock()
+
+	deployment, err := s.createDeploymentRecords(
+		ctx,
+		actorID,
+		updateRelease{Version: "pending"},
+		systemState,
+	)
+	if err != nil {
+		s.fail("create_deployment", err)
+		return s.Status(), err
+	}
+	s.mu.Lock()
+	s.currentDeployment = deployment
 	status := s.status
 	s.mu.Unlock()
 
-	args := jobs.SelfUpdateArgs{ActorID: actorID}
+	args := jobs.SelfUpdateArgs{DeploymentID: deployment.DeploymentID}
 	opts := args.InsertOpts()
 	result, err := s.jobs.Insert(ctx, args, &opts)
 	if err != nil {
@@ -249,6 +267,7 @@ func (s *SelfUpdate) Start(ctx context.Context, actorID uuid.UUID) (SelfUpdateSt
 		return s.Status(), err
 	}
 	if result.UniqueSkippedAsDuplicate {
+		s.fail("queued", ErrUpdateInProgress)
 		return s.Status(), ErrUpdateInProgress
 	}
 	return status, nil
@@ -295,6 +314,9 @@ func (s *SelfUpdate) reconcileLocked(ctx context.Context) (bool, error) {
 			s.clearRecoveredStatus()
 		}
 		return stopSelf, healErr
+	}
+	if record.DeploymentStatus == "queued" {
+		return false, nil
 	}
 
 	s.mu.Lock()
@@ -517,27 +539,38 @@ func (s *SelfUpdate) rollbackDeployment(record *selfUpdateDeployment) (bool, err
 	return false, nil
 }
 
-func (s *SelfUpdate) Execute(parent context.Context, actorID uuid.UUID) error {
-	unresolved, err := s.loadUnresolvedDeployment(parent)
+func (s *SelfUpdate) Execute(parent context.Context, deploymentID uuid.UUID) error {
+	deployment, err := s.loadUnresolvedDeployment(parent)
 	if err != nil {
 		return err
 	}
-	if unresolved != nil {
-		return s.Reconcile(parent)
+	if deployment == nil {
+		return errors.New("queued self-update deployment is missing")
 	}
+	if deployment.DeploymentID != deploymentID {
+		return fmt.Errorf(
+			"queued self-update deployment mismatch: got %s, want %s",
+			deployment.DeploymentID,
+			deploymentID,
+		)
+	}
+	s.mu.Lock()
+	s.currentDeployment = deployment
+	s.mu.Unlock()
+
 	source, err := config.ResolveReleaseSource(s.currentVersion)
 	if err != nil {
 		s.fail("resolve_release", err)
 		return nil
 	}
-	s.execute(parent, actorID, source)
+	s.execute(parent, source, deployment)
 	return nil
 }
 
 func (s *SelfUpdate) execute(
 	parent context.Context,
-	actorID uuid.UUID,
 	source config.ReleaseSource,
+	deployment *selfUpdateDeployment,
 ) {
 
 	ctx, cancel := context.WithTimeout(parent, SystemUpdateExecutionTimeout)
@@ -602,6 +635,10 @@ func (s *SelfUpdate) execute(
 		return
 	}
 	release := updateRelease{Version: stagedVersion}
+	if err := s.prepareDeploymentRelease(ctx, deployment, release); err != nil {
+		s.fail("prepare_release", err)
+		return
+	}
 	s.mu.Lock()
 	s.status.TargetVersion = release.Version
 	s.status.UpdatedAt = time.Now()
@@ -614,32 +651,19 @@ func (s *SelfUpdate) execute(
 		return
 	}
 
-	systemState, err := s.loadSystemState(ctx)
-	if err != nil {
-		s.fail("load_system_state", err)
-		return
-	}
 	activeInstance, err := s.runningInstance(ctx)
 	if err != nil {
 		s.fail("detect_running_service", err)
 		return
 	}
-	if activeInstance != systemState.ActiveInstanceSlot {
+	if activeInstance != deployment.SystemState.ActiveInstanceSlot {
 		s.fail("detect_running_service", fmt.Errorf(
 			"running slot %q does not match the persisted active slot %q",
 			activeInstance,
-			systemState.ActiveInstanceSlot,
+			deployment.SystemState.ActiveInstanceSlot,
 		))
 		return
 	}
-	deployment, err := s.createDeploymentRecords(ctx, actorID, release, systemState)
-	if err != nil {
-		s.fail("create_deployment", err)
-		return
-	}
-	s.mu.Lock()
-	s.currentDeployment = deployment
-	s.mu.Unlock()
 
 	inactiveInstance := deployment.InactiveSlot
 	s.setInstances(activeInstance, activeInstance)

@@ -31,7 +31,7 @@ func (worker *SelfUpdateWorker) Work(
 	ctx context.Context,
 	job *river.Job[jobs.SelfUpdateArgs],
 ) error {
-	return worker.service.Execute(ctx, job.Args.ActorID)
+	return worker.service.Execute(ctx, job.Args.DeploymentID)
 }
 
 type SelfUpdateReconcileWorker struct {
