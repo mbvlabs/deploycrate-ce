@@ -89,6 +89,7 @@ func run(arguments []string, stdout io.Writer) error {
 func appOptions(ctx context.Context) []fx.Option {
 	return []fx.Option{
 		sharedOptions(ctx),
+		queue.WorkersModule,
 		controllers.Module,
 		router.Module,
 

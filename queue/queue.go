@@ -207,9 +207,9 @@ func (i InsertOnly) InsertTx(
 
 var _ storage.InsertQueue = InsertOnly{}
 
-func NewInsertOnly(db storage.Pool) (InsertOnly, error) {
+func NewInsertOnly(db storage.Pool, workers *river.Workers) (InsertOnly, error) {
 	riverClient, err := river.NewClient(riverdatabasesql.New(db.Conn()), &river.Config{
-		Workers: river.NewWorkers(),
+		Workers: workers,
 	})
 	if err != nil {
 		return InsertOnly{}, err
