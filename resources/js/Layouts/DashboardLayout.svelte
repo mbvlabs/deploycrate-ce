@@ -67,8 +67,7 @@
     version ?? String($page.props.appVersion ?? "dev"),
   );
   const environmentPage = $derived(
-    $page.url.startsWith(routes.environments()) ||
-      /^\/applications\/[^/]+\/environments(?:\/|$)/.test($page.url),
+    /^\/applications\/[^/]+\/environments(?:\/|$)/.test($page.url),
   );
   const contextualResourceRoutes = $derived.by(
     (): Record<string, string> | null => {
@@ -251,7 +250,7 @@
     if (environmentPage)
       return [
         { label: "Applications", href: routes.applications() },
-        { label: path === routes.environments() ? "Environments" : leaf },
+        { label: leaf },
       ];
     if (path.startsWith(routes.applications()))
       return [

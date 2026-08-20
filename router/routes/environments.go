@@ -4,10 +4,6 @@ import (
 	"deploycrate-ce/internal/routing"
 )
 
-const EnvironmentsPrefix = "/environments"
-
-var Environments = routing.NewSimpleRoute("", "environments.index", EnvironmentsPrefix)
-
 type EnvironmentParams struct {
 	ApplicationID string `param:"applicationID"`
 	EnvironmentID string `param:"environmentID"`
@@ -228,13 +224,13 @@ var EnvironmentDNSRefresh = routing.NewRouteWithParams[EnvironmentParams](
 var EnvironmentDeploymentEvents = routing.NewRouteWithParams[EnvironmentDeploymentEventParams](
 	"/:environmentID/deployments/:deploymentID/events",
 	"environments.deployments.events",
-	EnvironmentsPrefix,
+	"/environments",
 )
 
 var EnvironmentBuildLogs = routing.NewRouteWithParams[EnvironmentBuildParams](
 	"/:environmentID/builds/:buildID/logs",
 	"environments.builds.logs",
-	EnvironmentsPrefix,
+	"/environments",
 )
 
 var EnvironmentBuildStart = routing.NewRouteWithParams[EnvironmentBuildActionParams](

@@ -64,6 +64,15 @@
     openTelemetryAvailable: boolean;
     applicationTelemetry: ApplicationTelemetry;
   } = $props();
+  const requestedDeploymentId = new URLSearchParams(
+    untrack(() => $page.url.split("?")[1] ?? ""),
+  ).get("deployment") ?? "";
+  const requestedReleaseId = untrack(
+    () =>
+      environment.deployments.find(
+        (deployment) => deployment.id === requestedDeploymentId,
+      )?.releaseId ?? "",
+  );
   let key = $state("");
   let value = $state("");
   let bulkSecretDialogOpen = $state(false);
@@ -87,10 +96,10 @@
   let expandedBuildId = $state("");
   let buildSearch = $state("");
   let buildStatus = $state("all");
-  let expandedReleaseId = $state("");
+  let expandedReleaseId = $state(requestedReleaseId);
   let releaseSearch = $state("");
   let releaseStatusFilter = $state("all");
-  let selectedDeploymentId = $state("");
+  let selectedDeploymentId = $state(requestedDeploymentId);
   let autoSelectedForRelease = $state("");
   let environmentLogsPaused = $state(false);
   let followingEnvironmentLogs = $state(true);
@@ -946,7 +955,10 @@
     if (!releaseId || own.length === 0) return;
     if (autoSelectedForRelease === releaseId) return;
     autoSelectedForRelease = releaseId;
-    const preferred = own.find(deploymentIsActive) ?? own[0];
+    const preferred =
+      own.find((deployment) => deployment.id === selectedDeploymentId) ??
+      own.find(deploymentIsActive) ??
+      own[0];
     selectedDeploymentId = preferred.id;
   });
 

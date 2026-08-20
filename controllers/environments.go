@@ -66,7 +66,6 @@ func (c Environments) RegisterRoutes(router *router.Router) error {
 		}
 		handler echo.HandlerFunc
 	}{
-		{http.MethodGet, routes.Environments, c.Index},
 		{http.MethodGet, routes.EnvironmentNew, c.New},
 		{http.MethodPost, routes.EnvironmentCreate, c.Create},
 		{http.MethodGet, routes.EnvironmentShow, c.Show},
@@ -362,18 +361,6 @@ func (c Environments) BuildLogs(etx *echo.Context) error {
 	}
 	etx.Response().Header().Set("Cache-Control", "no-store")
 	return etx.JSON(http.StatusOK, snapshot)
-}
-
-func (c Environments) Index(etx *echo.Context) error {
-	environments, err := c.envSetupSvc.List(etx.Request().Context())
-	if err != nil {
-		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
-	}
-	return inertia.Page(etx, "Environments/Index", inertia.Props{
-		"auth":         authProps(etx),
-		"environments": environments,
-		"flash":        environmentFlashProps(etx),
-	})
 }
 
 func (c Environments) New(etx *echo.Context) error {
@@ -1336,7 +1323,7 @@ func (c Environments) Destroy(etx *echo.Context) error {
 		)
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Environment permanently deleted")
-	return inertia.Redirect(etx, routes.Environments.URL(), http.StatusSeeOther)
+	return inertia.Redirect(etx, routes.Applications.URL(), http.StatusSeeOther)
 }
 
 func environmentFlashProps(etx *echo.Context) []inertia.Props {

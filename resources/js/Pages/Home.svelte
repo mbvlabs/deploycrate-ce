@@ -6,7 +6,6 @@
   import GitBranchIcon from "@lucide/svelte/icons/git-branch";
   import GitCommitHorizontalIcon from "@lucide/svelte/icons/git-commit-horizontal";
   import RocketIcon from "@lucide/svelte/icons/rocket";
-  import ServerIcon from "@lucide/svelte/icons/server";
   import TimerIcon from "@lucide/svelte/icons/timer";
   import { Link } from "@inertiajs/svelte";
 
@@ -136,10 +135,6 @@
     { label: "Memory", percent: usagePercent(telemetry.memory) },
     { label: "Storage", percent: usagePercent(telemetry.storage) },
   ]);
-  const highestHostUsage = $derived(
-    Math.max(0, ...hostUsage.map((item) => item.percent)),
-  );
-
   function sparklinePath(values: number[], width = 112, height = 34) {
     if (values.length < 2) return "";
     const maximum = Math.max(1, ...values);
@@ -166,6 +161,21 @@
 
   function deploymentTime(value: string) {
     return dateTimeFormatter.format(new Date(value));
+  }
+
+  function deploymentStatus(value: string) {
+    if (value === "succeeded") return "succeeded";
+    if (["queued", "running", "cancelling", "in_progress"].includes(value))
+      return "in_progress";
+    return "failed";
+  }
+
+  function deploymentDestination(deployment: Deployment) {
+    const path = routes.environmentReleases(
+      deployment.applicationId,
+      deployment.environmentId,
+    );
+    return `${path}?deployment=${encodeURIComponent(deployment.id)}`;
   }
 
   function revisionLabel(value: string) {
@@ -353,15 +363,6 @@
     >
       <Card.Root class="min-w-0">
         <Card.Header class="border-b border-border">
-          <Card.Action>
-            <Button size="sm" variant="ghost">
-              {#snippet child({ props })}<Link
-                  {...props}
-                  href={routes.environments()}
-                  >View all<ArrowRightIcon data-icon="inline-end" /></Link
-                >{/snippet}
-            </Button>
-          </Card.Action>
           <Card.Title
             >Deployments <span class="ml-1 text-muted-foreground"
               >{dashboard.metrics.deployments}</span
@@ -387,10 +388,7 @@
             <div class="divide-y divide-border">
               {#each dashboard.recentDeployments as deployment (deployment.id)}
                 <Link
-                  href={routes.environmentShow(
-                    deployment.applicationId,
-                    deployment.environmentId,
-                  )}
+                  href={deploymentDestination(deployment)}
                   class="group grid gap-3 px-5 py-4 hover:bg-muted/35 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-center"
                 >
                   <span
@@ -399,17 +397,9 @@
                     <GitCommitHorizontalIcon class="size-4" />
                   </span>
                   <div class="min-w-0">
-                    <div class="flex min-w-0 flex-wrap items-center gap-2">
-                      <p class="truncate text-sm font-semibold">
-                        {deployment.applicationName}
-                      </p>
-                      <StatusBadge status={deployment.status} />
-                      {#if deployment.currentStep}
-                        <span class="truncate text-xs text-muted-foreground"
-                          >{deployment.currentStep}</span
-                        >
-                      {/if}
-                    </div>
+                    <p class="truncate text-sm font-semibold">
+                      {deployment.applicationName}
+                    </p>
                     <p
                       class="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground"
                     >
@@ -424,12 +414,15 @@
                       >
                     </p>
                   </div>
-                  <time
-                    datetime={deployment.createdAt}
-                    class="text-xs tabular-nums text-muted-foreground"
-                  >
-                    {deploymentTime(deployment.createdAt)}
-                  </time>
+                  <div class="flex flex-col items-start gap-2 sm:items-end">
+                    <StatusBadge status={deploymentStatus(deployment.status)} />
+                    <time
+                      datetime={deployment.createdAt}
+                      class="text-xs tabular-nums text-muted-foreground"
+                    >
+                      {deploymentTime(deployment.createdAt)}
+                    </time>
+                  </div>
                 </Link>
               {/each}
             </div>
@@ -462,7 +455,7 @@
                 <span
                   class={`size-2 rounded-full ${telemetry.available ? "bg-success" : "bg-muted-foreground"}`}
                 ></span>
-                <p class="text-sm font-semibold">system-host</p>
+                <p class="text-sm font-semibold">Registered nodes</p>
               </div>
               {#if telemetry.available}
                 <time
@@ -503,43 +496,6 @@
             </div>
           </div>
         </Card.Content>
-        <Card.Footer
-          class="grid grid-cols-3 border-t border-border bg-muted/20 px-0 py-0"
-        >
-          <Link href={routes.nodes()} class="px-4 py-4 hover:bg-muted/40">
-            <p class="font-mono text-lg font-semibold">
-              {dashboard.metrics.nodes}
-            </p>
-            <p
-              class="text-[9px] uppercase tracking-wider text-muted-foreground"
-            >
-              Nodes
-            </p>
-          </Link>
-          <Link
-            href={routes.resources()}
-            class="border-x border-border px-4 py-4 hover:bg-muted/40"
-          >
-            <p class="font-mono text-lg font-semibold">
-              {dashboard.metrics.resources}
-            </p>
-            <p
-              class="text-[9px] uppercase tracking-wider text-muted-foreground"
-            >
-              Resources
-            </p>
-          </Link>
-          <div class="px-4 py-4">
-            <p class="font-mono text-lg font-semibold">
-              {telemetry.available ? `${highestHostUsage.toFixed(0)}%` : "—"}
-            </p>
-            <p
-              class="text-[9px] uppercase tracking-wider text-muted-foreground"
-            >
-              Peak usage
-            </p>
-          </div>
-        </Card.Footer>
       </Card.Root>
     </section>
 

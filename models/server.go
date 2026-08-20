@@ -55,6 +55,20 @@ func (s server) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (Se
 	return entity, nil
 }
 
+func (server) ActiveConfigured(
+	ctx context.Context,
+	db storage.Executor,
+) ([]ServerEntity, error) {
+	servers := make([]ServerEntity, 0)
+	err := db.NewSelect().
+		Model(&servers).
+		Where("archived_at IS NULL").
+		Where("is_configured = TRUE").
+		OrderExpr("created_at").
+		Scan(ctx)
+	return servers, err
+}
+
 func (server) ActiveWorkers(
 	ctx context.Context,
 	db storage.Executor,
