@@ -66,5 +66,4 @@ var Module = fx.Module(
 		NewResourceHealth,
 		NewResourcePrivateAccess,
 	),
-	fx.Invoke(StartResourceCaddyReconciler),
 )

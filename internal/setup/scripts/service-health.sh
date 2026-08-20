@@ -25,7 +25,7 @@ if grep -Eq "^allowusers ([^ ]+ )*${SERVICE_USER}( |$)" <<<"${sshd_config}"; the
   exit 1
 fi
 
-for unit in wg-quick@wg0.service node-exporter.service docker.service caddy.service otelcol-contrib.service prometheus.service cadvisor.service deploycrate-ce@blue.service; do
+for unit in wg-quick@wg0.service node-exporter.service docker.service caddy.service otelcol-contrib.service prometheus.service cadvisor.service deploycrate-ce@blue.service deploycrate-ce-jobs.service; do
   systemctl is-active --quiet "${unit}" || {
     printf 'Required service is not active: %s\n' "${unit}" >&2
     exit 1

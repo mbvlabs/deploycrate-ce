@@ -524,14 +524,16 @@ func (d deployment) Upsert(
 }
 
 type SystemUpdateCheckpoint struct {
-	ServiceTemplate    string `json:"service_template"`
-	ActiveSlot         string `json:"active_slot"`
-	TargetSlot         string `json:"target_slot"`
-	Phase              string `json:"phase"`
-	PreviousSlotTarget string `json:"previous_slot_target"`
-	TargetStarted      bool   `json:"target_started"`
-	TrafficSwitched    bool   `json:"traffic_switched"`
-	BootStateSwitched  bool   `json:"boot_state_switched"`
+	ServiceTemplate         string `json:"service_template"`
+	ActiveSlot              string `json:"active_slot"`
+	TargetSlot              string `json:"target_slot"`
+	Phase                   string `json:"phase"`
+	PreviousSlotTarget      string `json:"previous_slot_target"`
+	PreviousJobRunnerTarget string `json:"previous_job_runner_target"`
+	TargetStarted           bool   `json:"target_started"`
+	TrafficSwitched         bool   `json:"traffic_switched"`
+	BootStateSwitched       bool   `json:"boot_state_switched"`
+	JobRunnerUpdated        bool   `json:"job_runner_updated"`
 }
 
 type UnresolvedSystemUpdate struct {

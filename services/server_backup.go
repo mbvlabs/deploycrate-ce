@@ -257,8 +257,9 @@ func (service *ServerBackup) createServerRecoveryManifest(
 			"/usr/bin/docker", "ps", "--all", "--format", "{{.Names}}\t{{.Image}}\t{{.Status}}",
 		),
 		Slots: map[string]string{
-			"blue":  symlinkTarget("/opt/deploycrate-ce/slots/blue/deploycrate-ce"),
-			"green": symlinkTarget("/opt/deploycrate-ce/slots/green/deploycrate-ce"),
+			"blue":       symlinkTarget("/opt/deploycrate-ce/slots/blue/deploycrate-ce"),
+			"green":      symlinkTarget("/opt/deploycrate-ce/slots/green/deploycrate-ce"),
+			"job_runner": symlinkTarget("/opt/deploycrate-ce/jobs/deploycrate-ce"),
 		},
 		ReleaseDigests:       releaseDigests,
 		IdentityFingerprints: identityFingerprints,

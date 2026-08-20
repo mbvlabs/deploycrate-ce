@@ -82,8 +82,9 @@ func NewProcessor(params ProcessorParams) (Processor, error) {
 			jobs.ReleaseCommandQueue: {MaxWorkers: 4},
 			jobs.DNSQueue:            {MaxWorkers: 4},
 			jobs.NodeEnrollmentQueue: {MaxWorkers: 1},
+			jobs.SelfUpdateQueue:     {MaxWorkers: 1},
 		},
-		RescueStuckJobsAfter: 13 * time.Hour,
+		RescueStuckJobsAfter: 2 * time.Minute,
 		Logger:               slog.Default(),
 		Workers:              params.Workers,
 	})
@@ -96,6 +97,30 @@ func NewProcessor(params ProcessorParams) (Processor, error) {
 
 type InsertOnly struct {
 	client *river.Client[*sql.Tx]
+}
+
+type JobClient struct {
+	client *river.Client[*sql.Tx]
+}
+
+func (client JobClient) Job(ctx context.Context, id int64) (*rivertype.JobRow, error) {
+	return client.client.JobGet(ctx, id)
+}
+
+func (client JobClient) RunJobNow(ctx context.Context, id int64) (*rivertype.JobRow, error) {
+	return client.client.JobRetry(ctx, id)
+}
+
+func (client JobClient) RestartJob(ctx context.Context, id int64) (*rivertype.JobRow, error) {
+	return client.client.JobRetry(ctx, id)
+}
+
+func (client JobClient) CancelJob(ctx context.Context, id int64) (*rivertype.JobRow, error) {
+	return client.client.JobCancel(ctx, id)
+}
+
+func (client JobClient) DeleteJob(ctx context.Context, id int64) (*rivertype.JobRow, error) {
+	return client.client.JobDelete(ctx, id)
 }
 
 type JobControlOnly struct {
@@ -182,9 +207,9 @@ func (i InsertOnly) InsertTx(
 
 var _ storage.InsertQueue = InsertOnly{}
 
-func NewInsertOnly(db storage.Pool, workers *river.Workers) (InsertOnly, error) {
+func NewInsertOnly(db storage.Pool) (InsertOnly, error) {
 	riverClient, err := river.NewClient(riverdatabasesql.New(db.Conn()), &river.Config{
-		Workers: workers,
+		Workers: river.NewWorkers(),
 	})
 	if err != nil {
 		return InsertOnly{}, err
@@ -197,6 +222,10 @@ func NewInsertQueue(insertOnly InsertOnly) storage.InsertQueue {
 	return &insertOnly
 }
 
+func NewJobClient(insertOnly InsertOnly) JobClient {
+	return JobClient{client: insertOnly.client}
+}
+
 func NewBuildJobControl(insertOnly InsertOnly) services.BuildJobControl {
 	return JobControlOnly{client: insertOnly.client}
 }
@@ -206,10 +235,7 @@ var Module = fx.Module(
 	fx.Provide(
 		NewInsertOnly,
 		NewInsertQueue,
+		NewJobClient,
 		NewBuildJobControl,
-		NewBackupScheduleSeeder,
-		NewProcessor,
-		fx.Annotate(NewMetricRollupPeriodicJob, fx.ResultTags(periodicJobsGroup)),
-		fx.Annotate(NewResourceHealthPeriodicJob, fx.ResultTags(periodicJobsGroup)),
 	),
 )

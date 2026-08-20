@@ -70,8 +70,10 @@ printf '%s\n' \
   /var/lib/deploycrate/ssh-ca/deploycrate-ssh-ca-recovery-v1.age \
   /opt/deploycrate-ce/releases \
   /opt/deploycrate-ce/slots \
+  /opt/deploycrate-ce/jobs \
   /home/admin/.ssh/authorized_keys \
   /etc/systemd/system/deploycrate-ce@.service \
+  /etc/systemd/system/deploycrate-ce-jobs.service \
   /etc/systemd/system/caddy.service \
   /etc/systemd/system/clickhouse.service \
   /etc/systemd/system/otelcol-contrib.service \
