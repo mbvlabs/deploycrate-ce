@@ -67,9 +67,10 @@ func dnsConnectionSummaryQuery(db storage.Executor) *bun.SelectQuery {
 		TableExpr("dns_connections AS connection").
 		ColumnExpr("connection.id, connection.name, connection.provider, connection.account_external_id, connection.verified_at, connection.last_synced_at, connection.archived_at").
 		ColumnExpr("COUNT(DISTINCT zone.id) FILTER (WHERE zone.archived_at IS NULL AND zone.status = 'active') AS active_zones").
-		ColumnExpr("COUNT(DISTINCT binding.id) FILTER (WHERE binding.archived_at IS NULL) AS binding_count").
+		ColumnExpr("COUNT(DISTINCT binding.id) FILTER (WHERE binding.archived_at IS NULL) + COUNT(DISTINCT resource_binding.id) FILTER (WHERE resource_binding.archived_at IS NULL) AS binding_count").
 		Join("LEFT JOIN dns_zones AS zone ON zone.dns_connection_id = connection.id").
 		Join("LEFT JOIN environment_dns_bindings AS binding ON binding.dns_zone_id = zone.id").
+		Join("LEFT JOIN resource_dns_bindings AS resource_binding ON resource_binding.dns_zone_id = zone.id").
 		Where("connection.archived_at IS NULL")
 }
 
@@ -103,12 +104,22 @@ func (dnsConnection) ActiveBindingCount(
 	db storage.Executor,
 	id uuid.UUID,
 ) (int, error) {
-	return db.NewSelect().
+	environmentCount, err := db.NewSelect().
 		TableExpr("environment_dns_bindings AS binding").
 		Join("JOIN dns_zones AS zone ON zone.id = binding.dns_zone_id").
 		Where("zone.dns_connection_id = ?", id).
 		Where("binding.archived_at IS NULL").
 		Count(ctx)
+	if err != nil {
+		return 0, err
+	}
+	resourceCount, err := db.NewSelect().
+		TableExpr("resource_dns_bindings AS binding").
+		Join("JOIN dns_zones AS zone ON zone.id = binding.dns_zone_id").
+		Where("zone.dns_connection_id = ?", id).
+		Where("binding.archived_at IS NULL").
+		Count(ctx)
+	return environmentCount + resourceCount, err
 }
 
 func (entity *DNSConnectionEntity) Validate() error {

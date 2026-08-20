@@ -195,6 +195,12 @@ var EnvironmentDeploymentRetry = routing.NewRouteWithParams[EnvironmentDeploymen
 	ApplicationsPrefix,
 )
 
+var EnvironmentDeploymentStop = routing.NewRouteWithParams[EnvironmentDeploymentParams](
+	"/:applicationID/environments/:environmentID/deployments/:deploymentID/stop",
+	"applications.environments.deployments.stop",
+	ApplicationsPrefix,
+)
+
 var EnvironmentAPITokenRotate = routing.NewRouteWithParams[EnvironmentParams](
 	"/:applicationID/environments/:environmentID/api-token",
 	"applications.environments.api-token.rotate",

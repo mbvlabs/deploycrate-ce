@@ -43,7 +43,7 @@ func (deployment) ActiveCountForEnvironment(
 		TableExpr("deployments AS deployment").
 		Join("JOIN environment_targets AS target ON target.id = deployment.environment_target_id").
 		Where("target.environment_id = ?", environmentID).
-		Where("deployment.status IN ('queued', 'running')").
+		Where("deployment.status IN ('queued', 'running', 'cancelling')").
 		Count(ctx)
 }
 
@@ -83,7 +83,7 @@ func (deployment) UnresolvedWorkloads(
 		Join("JOIN environments AS environment ON environment.id = release.environment_id").
 		Join("JOIN applications AS application ON application.id = environment.application_id").
 		Where("application.slug <> ?", SystemApplicationSlug).
-		Where("deployments.status IN ('queued', 'running')").
+		Where("deployments.status IN ('queued', 'running', 'cancelling')").
 		OrderExpr("deployments.created_at").Scan(ctx)
 	return items, err
 }
@@ -91,9 +91,19 @@ func (deployment) UnresolvedWorkloads(
 func (deployment) SetCurrentStep(
 	ctx context.Context, db storage.Executor, id uuid.UUID, step string, at time.Time,
 ) error {
-	_, err := db.NewUpdate().TableExpr("deployments").Set("current_step = ?", step).
+	result, err := db.NewUpdate().TableExpr("deployments").Set("current_step = ?", step).
 		Set("updated_at = ?", at).Where("id = ?", id).Where("status = 'running'").Exec(ctx)
-	return err
+	if err != nil {
+		return err
+	}
+	updated, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if updated == 0 {
+		return errors.New("Deployment is no longer running")
+	}
+	return nil
 }
 
 func (deployment) MarkSucceeded(
@@ -120,7 +130,7 @@ func (deployment) ActiveCountForTarget(
 ) (int, error) {
 	return db.NewSelect().Model((*DeploymentEntity)(nil)).
 		Where("environment_target_id = ?", targetID).
-		Where("status IN ('queued', 'running')").Count(ctx)
+		Where("status IN ('queued', 'running', 'cancelling')").Count(ctx)
 }
 
 func (e *DeploymentEntity) Validate() error {
@@ -132,7 +142,10 @@ func (e *DeploymentEntity) Validate() error {
 	if e.Attempt < 1 {
 		builder.Add("attempt", "invalid", "Deployment attempt must be positive")
 	}
-	if !slices.Contains([]string{"queued", "running", "succeeded", "failed"}, e.Status) {
+	if !slices.Contains(
+		[]string{"queued", "running", "cancelling", "cancelled", "succeeded", "failed"},
+		e.Status,
+	) {
 		builder.Add("status", "invalid", "Deployment status is invalid")
 	}
 	if !json.Valid(e.Strategy) || !json.Valid(e.ProcessConfiguration) {
@@ -228,7 +241,54 @@ func (d deployment) MarkFailed(
 		Set("error = ?", message).
 		Set("updated_at = ?", at).
 		Where("id = ?", id).
-		Where("status IN ('queued', 'running')").
+		Where("status IN ('queued', 'running', 'cancelling')").
+		Exec(ctx)
+	return err
+}
+
+func (d deployment) MarkCancelling(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	reason string,
+	at time.Time,
+) error {
+	message := strings.TrimSpace(reason)
+	if len(message) > 2048 {
+		message = message[:2048]
+	}
+	_, err := db.NewUpdate().
+		TableExpr("deployments").
+		Set("status = 'cancelling'").
+		Set("current_step = 'rollback'").
+		Set("error = ?", message).
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Where("status IN ('queued', 'running', 'cancelling')").
+		Exec(ctx)
+	return err
+}
+
+func (d deployment) MarkCancelled(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	reason string,
+	at time.Time,
+) error {
+	message := strings.TrimSpace(reason)
+	if len(message) > 2048 {
+		message = message[:2048]
+	}
+	_, err := db.NewUpdate().
+		TableExpr("deployments").
+		Set("status = 'cancelled'").
+		Set("current_step = 'rolled_back'").
+		Set("finished_at = ?", at).
+		Set("error = ?", message).
+		Set("updated_at = ?", at).
+		Where("id = ?", id).
+		Where("status = 'cancelling'").
 		Exec(ctx)
 	return err
 }

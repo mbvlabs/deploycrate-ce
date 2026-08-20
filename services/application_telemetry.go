@@ -7,6 +7,8 @@ import (
 	"time"
 
 	clickhouse "deploycrate-ce/database/clickhouse"
+
+	"golang.org/x/sync/errgroup"
 )
 
 type ApplicationTelemetry struct {
@@ -26,6 +28,7 @@ type ApplicationTelemetry struct {
 	Database              DatabaseTelemetry           `json:"database"`
 	RecentTraces          []TraceSummary              `json:"recentTraces"`
 	Routes                []RouteTelemetry            `json:"routes"`
+	Countries             []CountryTelemetry          `json:"countries"`
 	Queries               []QueryTelemetry            `json:"queries"`
 	MoreQueries           bool                        `json:"moreQueries"`
 }
@@ -33,9 +36,15 @@ type ApplicationTelemetry struct {
 type RouteTelemetry struct {
 	Route             string  `json:"route"`
 	Method            string  `json:"method"`
+	Requests          uint64  `json:"requests"`
 	RequestsPerSecond float64 `json:"requestsPerSecond"`
 	ErrorRate         float64 `json:"errorRate"`
 	P95DurationMS     float64 `json:"p95DurationMs"`
+}
+
+type CountryTelemetry struct {
+	Code     string `json:"code"`
+	Requests uint64 `json:"requests"`
 }
 
 type QueryTelemetry struct {
@@ -75,12 +84,15 @@ type DatabaseTelemetryPoint struct {
 }
 
 type TraceSummary struct {
-	TraceID      string    `json:"traceId"`
-	RootSpanName string    `json:"rootSpanName"`
-	StartedAt    time.Time `json:"startedAt"`
-	DurationNS   uint64    `json:"durationNs"`
-	SpanCount    uint64    `json:"spanCount"`
-	ErrorCount   uint64    `json:"errorCount"`
+	TraceID       string    `json:"traceId"`
+	RootSpanName  string    `json:"rootSpanName"`
+	RequestMethod string    `json:"requestMethod"`
+	RequestRoute  string    `json:"requestRoute"`
+	ResponseCode  uint16    `json:"responseCode"`
+	StartedAt     time.Time `json:"startedAt"`
+	DurationNS    uint64    `json:"durationNs"`
+	SpanCount     uint64    `json:"spanCount"`
+	ErrorCount    uint64    `json:"errorCount"`
 }
 
 type TraceSpan struct {
@@ -99,22 +111,68 @@ type TraceSpan struct {
 	DurationNS         uint64            `json:"durationNs"`
 }
 
+func EmptyApplicationTelemetry() ApplicationTelemetry {
+	return ApplicationTelemetry{
+		History:      []ApplicationTelemetryPoint{},
+		Database:     DatabaseTelemetry{History: []DatabaseTelemetryPoint{}},
+		RecentTraces: []TraceSummary{},
+		Routes:       []RouteTelemetry{},
+		Countries:    []CountryTelemetry{},
+		Queries:      []QueryTelemetry{},
+	}
+}
+
+type applicationTelemetryLoadOptions struct {
+	includeRequestOverview bool
+	includeDatabaseErrors  bool
+	includeSlowQueries     bool
+}
+
 func loadApplicationTelemetry(
 	ctx context.Context,
 	queries clickhouse.Queries,
 	scope clickhouse.TelemetryScope,
 	since time.Time,
 	bucket time.Duration,
+	options applicationTelemetryLoadOptions,
 ) (ApplicationTelemetry, error) {
-	result := ApplicationTelemetry{
-		History:      []ApplicationTelemetryPoint{},
-		Database:     DatabaseTelemetry{History: []DatabaseTelemetryPoint{}},
-		RecentTraces: []TraceSummary{},
-		Routes:       []RouteTelemetry{},
-		Queries:      []QueryTelemetry{},
+	result := EmptyApplicationTelemetry()
+	var (
+		overview       *clickhouse.RequestOverview
+		deltas         []clickhouse.HistogramDelta
+		databaseErrors map[int64]float64
+		slowQueries    []clickhouse.SlowQueryResult
+		moreQueries    bool
+	)
+	group, groupContext := errgroup.WithContext(ctx)
+	group.SetLimit(4)
+	if options.includeRequestOverview {
+		group.Go(func() error {
+			var err error
+			overview, err = queries.RequestOverview(groupContext, scope)
+			return err
+		})
 	}
-	overview, err := queries.RequestOverview(ctx, scope)
-	if err != nil {
+	group.Go(func() error {
+		var err error
+		deltas, err = queries.ApplicationMetricDeltas(groupContext, scope, since, bucket)
+		return err
+	})
+	if options.includeDatabaseErrors {
+		group.Go(func() error {
+			var err error
+			databaseErrors, err = queries.DatabaseErrorHistory(groupContext, scope, since, bucket)
+			return err
+		})
+	}
+	if options.includeSlowQueries {
+		group.Go(func() error {
+			var err error
+			slowQueries, moreQueries, err = queries.SlowQueries(groupContext, scope, since, 10)
+			return err
+		})
+	}
+	if err := group.Wait(); err != nil {
 		return ApplicationTelemetry{}, err
 	}
 	if overview != nil && overview.WindowSeconds > 0 {
@@ -128,51 +186,12 @@ func loadApplicationTelemetry(
 			result.MeanRequestDurationMS = overview.DurationSum / overview.Requests * 1000
 		}
 	}
-	runtime, err := queries.RuntimeOverview(ctx, scope)
-	if err != nil {
-		return ApplicationTelemetry{}, err
-	}
-	for _, metric := range runtime {
-		result.Available = true
-		if metric.ObservedAt.After(result.ObservedAt) {
-			result.ObservedAt = metric.ObservedAt
-		}
-		switch metric.Metric {
-		case "go.memory.used":
-			result.RuntimeMemoryBytes = metric.Value
-		case "go.memory.allocated":
-			result.HeapAllocatedBytes = metric.Value
-		case "go.memory.allocations":
-			result.HeapAllocations = metric.Value
-		case "go.memory.gc.goal":
-			result.HeapGoalBytes = metric.Value
-		case "go.goroutine.count":
-			result.Goroutines = metric.Value
-		}
-	}
-	deltas, err := queries.ApplicationMetricDeltas(ctx, scope, since, bucket)
-	if err != nil {
-		return ApplicationTelemetry{}, err
-	}
-	databaseErrors, err := queries.DatabaseErrorHistory(ctx, scope, since, bucket)
-	if err != nil {
-		return ApplicationTelemetry{}, err
-	}
 	result.History, result.Database, result.Routes = aggregateApplicationHistory(
 		deltas,
 		databaseErrors,
 		bucket,
 		time.Since(since),
 	)
-	recentTraces, err := queries.RecentTraces(ctx, scope, since)
-	if err != nil {
-		return ApplicationTelemetry{}, err
-	}
-	result.RecentTraces = traceSummaries(recentTraces)
-	slowQueries, moreQueries, err := queries.SlowQueries(ctx, scope, since, 10)
-	if err != nil {
-		return ApplicationTelemetry{}, err
-	}
 	result.Queries = queryTelemetry(slowQueries)
 	result.MoreQueries = moreQueries
 	return result, nil
@@ -193,7 +212,9 @@ func traceSummaries(rows []clickhouse.TraceSummaryResult) []TraceSummary {
 	result := make([]TraceSummary, 0, len(rows))
 	for _, row := range rows {
 		result = append(result, TraceSummary{
-			TraceID: row.TraceID, RootSpanName: row.RootSpanName, StartedAt: row.StartedAt,
+			TraceID: row.TraceID, RootSpanName: row.RootSpanName,
+			RequestMethod: row.RequestMethod, RequestRoute: row.RequestRoute,
+			ResponseCode: row.ResponseCode, StartedAt: row.StartedAt,
 			DurationNS: row.DurationNS, SpanCount: row.SpanCount, ErrorCount: row.ErrorCount,
 		})
 	}
@@ -362,6 +383,7 @@ func aggregateApplicationHistory(
 	for _, route := range routesByKey {
 		row := RouteTelemetry{
 			Route: route.route, Method: route.method,
+			Requests:          route.histogram.count,
 			RequestsPerSecond: float64(route.histogram.count) / windowSeconds,
 			P95DurationMS:     route.histogram.quantile(0.95) * 1000,
 		}

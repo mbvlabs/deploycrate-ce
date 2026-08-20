@@ -5,6 +5,7 @@ SELECT
 FROM metric_rollups
 WHERE scope = 'host'
   AND server = {server:String}
+  AND bucket_start >= now() - INTERVAL 10 MINUTE
   AND metric IN (
     'cpu_cores_used',
     'cpu_cores_total',

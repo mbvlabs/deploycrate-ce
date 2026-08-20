@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	prometheusclient "deploycrate-ce/clients/prometheus"
@@ -19,6 +20,7 @@ import (
 	"deploycrate-ce/telemetry"
 
 	"github.com/google/uuid"
+	"golang.org/x/sync/errgroup"
 )
 
 type MetricRollupService struct {
@@ -577,7 +579,7 @@ func (service MetricRollupService) hostTelemetry(
 	since time.Time,
 	bucket time.Duration,
 ) (SystemTelemetry, error) {
-	result := emptySystemTelemetry()
+	result := EmptySystemTelemetry()
 	if !service.enabled || server == "" {
 		return result, nil
 	}
@@ -585,8 +587,20 @@ func (service MetricRollupService) hostTelemetry(
 	if err != nil {
 		return result, err
 	}
-	values, latestErr := client.LatestSystemMetricValues(ctx, server)
-	history, historyErr := client.SystemMetricHistory(ctx, server, since, bucket)
+	var (
+		values     []clickhouseclient.MetricValue
+		history    []clickhouseclient.MetricHistoryValue
+		latestErr  error
+		historyErr error
+	)
+	group := sync.WaitGroup{}
+	group.Go(func() {
+		values, latestErr = client.LatestSystemMetricValues(ctx, server)
+	})
+	group.Go(func() {
+		history, historyErr = client.SystemMetricHistory(ctx, server, since, bucket)
+	})
+	group.Wait()
 	if historyErr == nil {
 		result.MemoryHistory = systemResourceHistory(
 			history,
@@ -669,7 +683,7 @@ func (service MetricRollupService) hostTelemetry(
 	return result, historyErr
 }
 
-func emptySystemTelemetry() SystemTelemetry {
+func EmptySystemTelemetry() SystemTelemetry {
 	return SystemTelemetry{
 		MemoryHistory:    []SystemTelemetryHistoryPoint{},
 		StorageHistory:   []SystemTelemetryHistoryPoint{},
@@ -708,42 +722,54 @@ func (service MetricRollupService) SystemTelemetry(
 		return result, errors.Join(hostErr, inventoryErr, err)
 	}
 	queryErrors := []error{hostErr, inventoryErr}
-	platform, err := client.LatestAttributedMetricValues(ctx, "native", server, "")
-	if err != nil {
-		queryErrors = append(queryErrors, err)
-	} else {
-		platformHistory, historyErr := client.AttributedMetricHistory(
-			ctx,
-			"native",
-			server,
-			"",
-			since,
-			bucket,
+	var (
+		platform            []clickhouseclient.AttributedMetricValue
+		platformHistory     []clickhouseclient.AttributedMetricValue
+		containers          []clickhouseclient.AttributedMetricValue
+		containerHistory    []clickhouseclient.AttributedMetricValue
+		platformErr         error
+		platformHistoryErr  error
+		containerErr        error
+		containerHistoryErr error
+	)
+	group := sync.WaitGroup{}
+	group.Go(func() {
+		platform, platformErr = client.LatestAttributedMetricValues(
+			ctx, "native", server, "", false,
 		)
-		if historyErr != nil {
-			queryErrors = append(queryErrors, historyErr)
+	})
+	group.Go(func() {
+		platformHistory, platformHistoryErr = client.AttributedMetricHistory(
+			ctx, "native", server, "", since, bucket, false,
+		)
+	})
+	group.Go(func() {
+		containers, containerErr = client.LatestAttributedMetricValues(
+			ctx, "container", server, "", true,
+		)
+	})
+	group.Go(func() {
+		containerHistory, containerHistoryErr = client.AttributedMetricHistory(
+			ctx, "container", server, "", since, bucket, true,
+		)
+	})
+	group.Wait()
+	if platformErr != nil {
+		queryErrors = append(queryErrors, platformErr)
+	} else {
+		if platformHistoryErr != nil {
+			queryErrors = append(queryErrors, platformHistoryErr)
 		}
 		result.Platform = latestNativeTelemetryRows(
 			attributedTelemetryRows(platform, platformHistory, service.now().UTC()),
 		)
 	}
-	containers, err := client.LatestAttributedMetricValues(ctx, "container", server, "")
-	if err != nil {
-		queryErrors = append(queryErrors, err)
+	if containerErr != nil {
+		queryErrors = append(queryErrors, containerErr)
 	} else {
-		containers = systemContainerMetricValues(containers)
-		containerHistory, historyErr := client.AttributedMetricHistory(
-			ctx,
-			"container",
-			server,
-			"",
-			since,
-			bucket,
-		)
-		if historyErr != nil {
-			queryErrors = append(queryErrors, historyErr)
+		if containerHistoryErr != nil {
+			queryErrors = append(queryErrors, containerHistoryErr)
 		}
-		containerHistory = systemContainerMetricValues(containerHistory)
 		rows := attributedTelemetryRows(containers, containerHistory, service.now().UTC())
 		result.SystemContainers = mergeSystemContainerInventory(rows, inventory)
 	}
@@ -812,18 +838,6 @@ func mergeSystemContainerInventory(
 	return result
 }
 
-func systemContainerMetricValues(
-	values []clickhouseclient.AttributedMetricValue,
-) []clickhouseclient.AttributedMetricValue {
-	result := make([]clickhouseclient.AttributedMetricValue, 0, len(values))
-	for _, value := range values {
-		if value.Instance == "" {
-			result = append(result, value)
-		}
-	}
-	return result
-}
-
 func freshSystemMetric(
 	metrics map[string]clickhouseclient.MetricValue,
 	name string,
@@ -868,28 +882,46 @@ func (service MetricRollupService) EnvironmentTelemetry(
 	if err != nil {
 		return result, err
 	}
-	current, err := client.LatestAttributedMetricValues(
-		ctx,
-		"container",
-		target.ServerID.String(),
-		environmentID.String(),
+	var (
+		current []clickhouseclient.AttributedMetricValue
+		history []clickhouseclient.AttributedMetricValue
+		usage   EnvironmentHostUsage
 	)
-	if err != nil {
-		return result, err
-	}
-	history, err := client.AttributedMetricHistory(
-		ctx,
-		"container",
-		target.ServerID.String(),
-		environmentID.String(),
-		service.now().UTC().Add(-telemetryRange.Duration()),
-		telemetryRange.Bucket(),
-	)
-	if err != nil {
+	group, groupContext := errgroup.WithContext(ctx)
+	group.SetLimit(3)
+	group.Go(func() error {
+		var queryErr error
+		current, queryErr = client.LatestAttributedMetricValues(
+			groupContext,
+			"container",
+			target.ServerID.String(),
+			environmentID.String(),
+			false,
+		)
+		return queryErr
+	})
+	group.Go(func() error {
+		var queryErr error
+		history, queryErr = client.AttributedMetricHistory(
+			groupContext,
+			"container",
+			target.ServerID.String(),
+			environmentID.String(),
+			service.now().UTC().Add(-telemetryRange.Duration()),
+			telemetryRange.Bucket(),
+			false,
+		)
+		return queryErr
+	})
+	group.Go(func() error {
+		usage = service.environmentHostUsage(groupContext, client, target.ServerID)
+		return nil
+	})
+	if err := group.Wait(); err != nil {
 		return result, err
 	}
 	result.Rows = attributedTelemetryRows(current, history, service.now().UTC())
-	result.HostUsage = service.environmentHostUsage(ctx, client, target.ServerID)
+	result.HostUsage = usage
 	return result, nil
 }
 

@@ -52,6 +52,19 @@ type BuildJobReference struct {
 	State string `bun:"state"`
 }
 
+func (job) FindForDeployment(
+	ctx context.Context,
+	db storage.Executor,
+	deploymentID uuid.UUID,
+) (BuildJobReference, error) {
+	var reference BuildJobReference
+	err := db.NewSelect().TableExpr("river_job").ColumnExpr("id, state::text AS state").
+		Where("kind = 'deploy_release'").
+		Where("args ->> 'deployment_id' = ?", deploymentID.String()).
+		OrderExpr("id DESC").Limit(1).Scan(ctx, &reference)
+	return reference, err
+}
+
 func (job) FindForBuild(
 	ctx context.Context,
 	db storage.Executor,

@@ -57,6 +57,37 @@ func (caddyRouteBackend) LockActiveForRoute(ctx context.Context, db storage.Exec
 	return rows, err
 }
 
+func (caddyRouteBackend) ActiveForRoute(
+	ctx context.Context,
+	db storage.Executor,
+	routeID uuid.UUID,
+) ([]CaddyRouteBackendEntity, error) {
+	rows := make([]CaddyRouteBackendEntity, 0)
+	err := db.NewSelect().Model(&rows).
+		Where("caddy_route_id = ?", routeID).
+		Where("removed_at IS NULL").
+		OrderExpr("created_at, id").
+		Scan(ctx)
+	return rows, err
+}
+
+func (caddyRoute) FindActiveForInstance(
+	ctx context.Context,
+	db storage.Executor,
+	instanceID uuid.UUID,
+) (CaddyRouteEntity, error) {
+	var route CaddyRouteEntity
+	err := db.NewSelect().Model(&route).
+		Join("JOIN caddy_route_backends AS backend ON backend.caddy_route_id = caddy_routes.id").
+		Where("backend.instance_id = ?", instanceID).
+		Where("backend.removed_at IS NULL").
+		Where("caddy_routes.removed_at IS NULL").
+		OrderExpr("caddy_routes.created_at").
+		Limit(1).
+		Scan(ctx)
+	return route, err
+}
+
 func (caddyRouteBackend) LockActive(ctx context.Context, db storage.Executor, routeID, instanceID uuid.UUID) (CaddyRouteBackendEntity, error) {
 	var backend CaddyRouteBackendEntity
 	err := db.NewSelect().Model(&backend).Where("caddy_route_id = ?", routeID).

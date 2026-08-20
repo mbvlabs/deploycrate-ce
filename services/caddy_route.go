@@ -31,10 +31,15 @@ type CaddyClient interface {
 type CaddyRouteService struct {
 	db    storage.Pool
 	caddy CaddyClient
+	dns   *ResourceDNS
 }
 
 func NewCaddyRouteService(db storage.Pool, caddy CaddyClient) CaddyRouteService {
 	return CaddyRouteService{db: db, caddy: caddy}
+}
+
+func NewCaddyRouteServiceWithDNS(db storage.Pool, caddy CaddyClient, dns *ResourceDNS) CaddyRouteService {
+	return CaddyRouteService{db: db, caddy: caddy, dns: dns}
 }
 
 func StartResourceCaddyReconciler(
@@ -63,11 +68,12 @@ func (service CaddyRouteService) runResourceRouteReconciler(ctx context.Context)
 }
 
 func (service CaddyRouteService) reconcileResourceRouteCandidates(ctx context.Context) {
-	if err := service.ReconcileManagedResourceEndpoints(
-		ctx,
-	); err != nil &&
-		!errors.Is(err, context.Canceled) {
-		slog.WarnContext(ctx, "failed to reconcile Resource Caddy endpoints", "error", err)
+	err := errors.Join(
+		service.ReconcileManagedResourceEndpoints(ctx),
+		service.ReconcileManagedCustomRoutes(ctx),
+	)
+	if err != nil && !errors.Is(err, context.Canceled) {
+		slog.WarnContext(ctx, "failed to reconcile managed Caddy routes", "error", err)
 	}
 }
 
@@ -466,6 +472,7 @@ type ManagedCaddyRouteDetail struct {
 	ConfigurationError string                     `json:"configurationError"`
 	EnvironmentRoute   *ManagedCaddyRoute         `json:"environmentRoute,omitempty"`
 	ResourceRoute      *ManagedResourceCaddyRoute `json:"resourceRoute,omitempty"`
+	CustomRoute        *ManagedCustomCaddyRoute   `json:"customRoute,omitempty"`
 	Options            ManagedCaddyRouteOptions   `json:"options"`
 }
 
@@ -510,6 +517,22 @@ func (service CaddyRouteService) RouteDetail(
 				ResourceRoute: &route,
 			}
 			break
+		}
+	}
+	if detail.ExternalID == "" {
+		custom, routeErr := models.CustomCaddyRoute.FindActiveByExternalID(ctx, service.db.Executor(), externalID)
+		if routeErr == nil {
+			managed := managedCustomCaddyRoute(custom)
+			detail = ManagedCaddyRouteDetail{
+				ExternalID: managed.ExternalID, Kind: "custom", Hostname: managed.Hostname,
+				State: managed.State, LastError: managed.LastError, Source: "Direct route",
+				Target: managed.Origin, HealthPath: managed.HealthPath,
+				AppliedAt: managed.AppliedAt, ObservedAt: managed.ObservedAt,
+				Backends:    []ManagedCaddyRouteBackend{{Address: managed.Origin, Weight: 100}},
+				CustomRoute: &managed,
+			}
+		} else if !errors.Is(routeErr, sql.ErrNoRows) {
+			return ManagedCaddyRouteDetail{}, routeErr
 		}
 	}
 	if detail.ExternalID == "" {
@@ -886,6 +909,14 @@ func validateManagedCaddyRoute(
 		return fmt.Errorf("check Caddy route references: %w", err)
 	}
 	if !check.ExternalIDAvailable {
+		return fmt.Errorf("Caddy route identifier %q is already in use", input.ExternalID)
+	}
+	customExternalIDs, err := exec.NewSelect().TableExpr("custom_caddy_routes").
+		Where("external_id = ?", input.ExternalID).Where("removed_at IS NULL").Count(ctx)
+	if err != nil {
+		return fmt.Errorf("check custom Caddy route identifiers: %w", err)
+	}
+	if customExternalIDs > 0 {
 		return fmt.Errorf("Caddy route identifier %q is already in use", input.ExternalID)
 	}
 	if !check.DomainAvailable {

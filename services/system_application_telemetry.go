@@ -91,7 +91,33 @@ func (service *SystemApplicationTelemetry) Snapshot(
 		clickhouseclient.ServiceTelemetryScope(service.serviceName, service.namespace),
 		time.Now().UTC().Add(-telemetryRange.Duration()),
 		telemetryRange.Bucket(),
+		applicationTelemetryLoadOptions{
+			includeRequestOverview: true,
+			includeDatabaseErrors:  true,
+		},
 	)
+}
+
+func (service *SystemApplicationTelemetry) RecentTraces(
+	ctx context.Context,
+	telemetryRange TelemetryRange,
+) (ApplicationTelemetry, error) {
+	result := EmptyApplicationTelemetry()
+	client, err := service.resource.Queries(ctx)
+	if err != nil {
+		return result, err
+	}
+	rows, err := client.RecentTraces(
+		ctx,
+		clickhouseclient.ServiceTelemetryScope(service.serviceName, service.namespace),
+		time.Now().UTC().Add(-telemetryRange.Duration()),
+		0,
+	)
+	if err != nil {
+		return result, err
+	}
+	result.RecentTraces = traceSummaries(rows)
+	return result, nil
 }
 
 func (service *SystemApplicationTelemetry) Trace(

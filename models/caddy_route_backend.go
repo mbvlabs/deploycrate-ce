@@ -63,7 +63,7 @@ func (caddyRouteBackend) RetiredWorkloads(
 		Join("JOIN applications AS application ON application.id = environment.application_id").
 		Join("JOIN instances AS instance ON instance.id = backend.instance_id AND instance.removed_at IS NULL").
 		Join("JOIN environment_targets AS target ON target.id = instance.environment_target_id").
-		Join("JOIN deployments AS deployment ON deployment.id = instance.deployment_id AND deployment.status NOT IN ('queued', 'running')").
+		Join("JOIN deployments AS deployment ON deployment.id = instance.deployment_id AND deployment.status NOT IN ('queued', 'running', 'cancelling')").
 		Where("application.slug <> ?", SystemApplicationSlug).
 		Where("backend.removed_at IS NULL").Where("backend.weight = 0").Scan(ctx, &rows)
 	return rows, err

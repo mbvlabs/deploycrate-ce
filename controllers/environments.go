@@ -96,6 +96,7 @@ func (c Environments) RegisterRoutes(router *router.Router) error {
 		{http.MethodPost, routes.EnvironmentPromoteToProduction, c.PromoteToProduction},
 		{http.MethodPost, routes.EnvironmentReleaseDeploymentsCreate, c.RedeployRelease},
 		{http.MethodPost, routes.EnvironmentDeploymentRetry, c.RetryDeployment},
+		{http.MethodPost, routes.EnvironmentDeploymentStop, c.StopDeployment},
 		{http.MethodPost, routes.EnvironmentAPITokenRotate, c.RotateAPIToken},
 		{http.MethodPost, routes.EnvironmentDNSAdopt, c.AdoptDNS},
 		{http.MethodPost, routes.EnvironmentDNSRetry, c.RetryDNS},
@@ -519,6 +520,36 @@ func (c Environments) RetryDeployment(etx *echo.Context) error {
 	)
 }
 
+func (c Environments) StopDeployment(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	deploymentID, parseErr := uuid.Parse(etx.Param("deploymentID"))
+	if err == nil {
+		err = parseErr
+	}
+	if err == nil {
+		err = c.envSetupSvc.StopDeployment(
+			etx.Request().Context(),
+			params.ApplicationID,
+			params.EnvironmentID,
+			deploymentID,
+		)
+	}
+	if err != nil {
+		_ = cookies.AddFlash(etx, cookies.FlashError, err.Error())
+	} else {
+		_ = cookies.AddFlash(
+			etx,
+			cookies.FlashSuccess,
+			"Deployment stopped and candidate workloads rolled back",
+		)
+	}
+	return inertia.Redirect(
+		etx,
+		environmentSectionReturnURL(etx, params),
+		http.StatusSeeOther,
+	)
+}
+
 func (c Environments) PromoteToProduction(etx *echo.Context) error {
 	params, err := environmentPathParams(etx)
 	var result services.PromotionResult
@@ -871,22 +902,36 @@ func (c Environments) showSection(etx *echo.Context, section string) error {
 	if openTelemetryErr != nil {
 		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
 	}
-	applicationTelemetry := services.ApplicationTelemetry{
-		History: []services.ApplicationTelemetryPoint{},
-		Database: services.DatabaseTelemetry{
-			History: []services.DatabaseTelemetryPoint{},
-		},
-		RecentTraces: []services.TraceSummary{},
-		Routes:       []services.RouteTelemetry{},
-		Queries:      []services.QueryTelemetry{},
-	}
-	if section == "telemetry" && openTelemetryAvailable {
-		applicationTelemetry, err = c.appTelemetrySvc.Snapshot(
-			etx.Request().Context(),
-			params.ApplicationID,
-			params.EnvironmentID,
-			telemetryRange,
-		)
+	applicationTelemetry := services.EmptyApplicationTelemetry()
+	telemetryView := strings.TrimSpace(etx.QueryParam("view"))
+	if section == "telemetry" && openTelemetryAvailable &&
+		telemetryView != "logs" &&
+		inertiaPropRequested(
+			etx.Request(), "Applications/Environments/Show", "applicationTelemetry",
+		) {
+		if telemetryView == "traces" {
+			applicationTelemetry, err = c.appTelemetrySvc.RecentTraces(
+				etx.Request().Context(),
+				params.ApplicationID,
+				params.EnvironmentID,
+				telemetryRange,
+				etx.QueryParam("responseClass"),
+			)
+		} else {
+			applicationTelemetry, err = c.appTelemetrySvc.Snapshot(
+				etx.Request().Context(),
+				params.ApplicationID,
+				params.EnvironmentID,
+				telemetryRange,
+				etx.QueryParam("responseClass"),
+				services.EnvironmentApplicationTelemetryOptions{
+					IncludeRequestOverview: telemetryView != "database",
+					IncludeDatabaseErrors:  telemetryView == "database",
+					IncludeSlowQueries:     telemetryView == "database",
+					IncludeGeography:       telemetryView != "database",
+				},
+			)
+		}
 		if err != nil {
 			slog.WarnContext(
 				etx.Request().Context(),
@@ -896,19 +941,27 @@ func (c Environments) showSection(etx *echo.Context, section string) error {
 			)
 		}
 	}
-	telemetry, telemetryErr := c.metricsSvc.EnvironmentTelemetry(
-		etx.Request().Context(),
-		params.EnvironmentID,
-		telemetryRange,
-	)
-	if telemetryErr != nil {
-		slog.ErrorContext(
-			etx.Request().Context(),
-			"failed to load Environment telemetry",
-			"environment_id", params.EnvironmentID,
-			"error", telemetryErr,
+	telemetry := services.EnvironmentTelemetryResult{Rows: []services.AttributedTelemetryRow{}}
+	var telemetryErr error
+	loadMetrics := (section == "overview" || (section == "telemetry" && !openTelemetryAvailable)) &&
+		inertiaPropRequested(
+			etx.Request(), "Applications/Environments/Show", "telemetry", "host",
 		)
-		telemetry = services.EnvironmentTelemetryResult{Rows: []services.AttributedTelemetryRow{}}
+	if loadMetrics {
+		telemetry, telemetryErr = c.metricsSvc.EnvironmentTelemetry(
+			etx.Request().Context(),
+			params.EnvironmentID,
+			telemetryRange,
+		)
+		if telemetryErr != nil {
+			slog.ErrorContext(
+				etx.Request().Context(),
+				"failed to load Environment telemetry",
+				"environment_id", params.EnvironmentID,
+				"error", telemetryErr,
+			)
+			telemetry = services.EnvironmentTelemetryResult{Rows: []services.AttributedTelemetryRow{}}
+		}
 	}
 	container, containerErr := c.envSetupSvc.ServingContainer(
 		etx.Request().Context(),

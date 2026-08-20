@@ -142,7 +142,7 @@ func (release) ActiveOperationsExcluding(
 		Join("JOIN releases AS release ON release.id = deployment.release_id").
 		Where("release.environment_id = ?", environmentID).
 		Where("deployment.change_id <> ?", changeID).
-		Where("deployment.status IN ('queued', 'running')").
+		Where("deployment.status IN ('queued', 'running', 'cancelling')").
 		Count(ctx)
 	return ActiveReleaseOperations{Commands: commands, Deployments: deployments}, err
 }

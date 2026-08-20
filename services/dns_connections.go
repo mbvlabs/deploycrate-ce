@@ -280,7 +280,7 @@ func (service *DNSConnections) Archive(ctx context.Context, id uuid.UUID) error 
 		return errors.Join(
 			models.ErrDomainValidation,
 			errors.New(
-				"move managed Environment domains to another connection or manual DNS before archiving this connection",
+				"move managed Environment and Resource domains to another connection or manual DNS before archiving this connection",
 			),
 		)
 	}

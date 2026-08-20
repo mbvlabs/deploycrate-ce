@@ -21,6 +21,7 @@ var (
 	latestAttributedMetricsQuery    = mustQuery("latest_attributed_metrics")
 	latestSystemMetricsQuery        = mustQuery("latest_system_metrics")
 	recentTracesQuery               = mustQuery("recent_traces")
+	requestGeographyQuery           = mustQuery("request_geography")
 	slowQueriesQuery                = mustQuery("slow_queries")
 	systemMetricHistoryQuery        = mustQuery("system_metric_history")
 	telemetryLogsIncrementalQuery   = mustQuery("telemetry_logs_incremental")

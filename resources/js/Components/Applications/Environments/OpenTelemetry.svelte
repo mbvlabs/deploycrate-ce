@@ -1,6 +1,7 @@
 <script lang="ts">
   import { page, router } from "@inertiajs/svelte";
   import SearchIcon from "@lucide/svelte/icons/search";
+  import RequestGeography from "@/Components/Applications/Environments/RequestGeography.svelte";
   import LogEntry from "@/Components/TelemetryLogEntry.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import TelemetryHistory from "@/Components/System/TelemetryHistory.svelte";
@@ -17,11 +18,13 @@
     OpenTelemetryLog,
     OpenTelemetryLogSnapshot,
     QueryTelemetry,
+    RouteTelemetry,
     TelemetryRange,
     TraceSpan,
   } from "@/Pages/Applications/Environments/show.types";
 
   type OpenTelemetryView = "insights" | "logs" | "traces" | "database";
+  type TelemetryResponseClass = "" | "2xx" | "3xx" | "4xx" | "5xx";
   type ChartSeries = {
     label: string;
     points: Array<{ observedAt: string; value: number }>;
@@ -47,7 +50,6 @@
   let logConnectionError = $state("");
   let logSearchInput = $state("");
   let logSearch = $state("");
-  let logResponseClass = $state("");
   let logQueryKey = $state("");
   let followingLogs = $state(true);
   let logViewport = $state<HTMLDivElement>();
@@ -68,13 +70,32 @@
   const focusedTraceId = $derived.by(
     () => new URLSearchParams($page.url.split("?")[1] ?? "").get("trace") ?? "",
   );
-  const telemetryHref = (view: OpenTelemetryView, traceId = "") => {
+  const traceResponseClass = $derived.by<TelemetryResponseClass>(() => {
+    const value = new URLSearchParams($page.url.split("?")[1] ?? "").get(
+      "responseClass",
+    );
+    return value === "2xx" ||
+      value === "3xx" ||
+      value === "4xx" ||
+      value === "5xx"
+      ? value
+      : "";
+  });
+  const telemetryHref = (
+    view: OpenTelemetryView,
+    traceId = "",
+    responseClass: TelemetryResponseClass = view === "traces"
+      ? traceResponseClass
+      : "",
+  ) => {
     const query = new URLSearchParams({
       source: "opentelemetry",
       view,
       range: telemetryRange,
     });
     if (view === "traces" && traceId) query.set("trace", traceId);
+    if (view === "traces" && responseClass)
+      query.set("responseClass", responseClass);
     return `${routes.environmentTelemetry(applicationId, environmentId)}?${query.toString()}`;
   };
   const rangeLabel = $derived(
@@ -92,6 +113,26 @@
   const databaseHistory = $derived(telemetry.database?.history ?? []);
   const recentTraces = $derived(telemetry.recentTraces ?? []);
   const slowRoutes = $derived((telemetry.routes ?? []).slice(0, 20));
+  const pageRoute = (route: RouteTelemetry) =>
+    route.method === "GET" &&
+    route.route.startsWith("/") &&
+    !["/api/", "/assets/", "/dist/"].some((prefix) =>
+      route.route.startsWith(prefix),
+    ) &&
+    !["/favicon.ico", "/robots.txt"].includes(route.route);
+  const popularPages = $derived(
+    (telemetry.routes ?? [])
+      .filter(pageRoute)
+      .sort(
+        (left, right) =>
+          right.requests - left.requests ||
+          left.route.localeCompare(right.route),
+      )
+      .slice(0, 8),
+  );
+  const pageRequests = $derived(
+    popularPages.reduce((total, route) => total + route.requests, 0),
+  );
   const slowQueriesKey = $derived(
     `${applicationId}:${environmentId}:${telemetryRange}`,
   );
@@ -264,7 +305,6 @@
   async function loadLogs(
     range: TelemetryRange,
     search: string,
-    responseClass: string,
     signal: AbortSignal,
   ) {
     const endpoint = new URL(
@@ -273,8 +313,6 @@
     );
     endpoint.searchParams.set("range", range);
     if (search) endpoint.searchParams.set("search", search);
-    if (responseClass)
-      endpoint.searchParams.set("responseClass", responseClass);
     if (logCursor) endpoint.searchParams.set("after", logCursor);
     const response = await window.fetch(endpoint, {
       cache: "no-store",
@@ -379,6 +417,15 @@
     });
   }
 
+  function filterTraces(event: Event) {
+    const responseClass = (event.currentTarget as HTMLSelectElement)
+      .value as TelemetryResponseClass;
+    router.visit(telemetryHref("traces", "", responseClass), {
+      preserveScroll: true,
+      preserveState: true,
+    });
+  }
+
   $effect(() => {
     const search = logSearchInput.trim();
     const timer = window.setTimeout(() => (logSearch = search), 300);
@@ -387,7 +434,7 @@
 
   $effect(() => {
     if (activeView !== "logs") return;
-    const nextQueryKey = `${telemetryRange}:${logSearch}:${logResponseClass}`;
+    const nextQueryKey = `${telemetryRange}:${logSearch}`;
     if (nextQueryKey === logQueryKey) return;
     logQueryKey = nextQueryKey;
     logs = [];
@@ -423,7 +470,6 @@
     if (activeView !== "logs" || !logQueryKey) return;
     const range = telemetryRange;
     const search = logSearch;
-    const responseClass = logResponseClass;
     const shouldPoll = live;
     const abortController = new AbortController();
     let timer: number | undefined;
@@ -431,12 +477,7 @@
 
     async function poll() {
       try {
-        const snapshot = await loadLogs(
-          range,
-          search,
-          responseClass,
-          abortController.signal,
-        );
+        const snapshot = await loadLogs(range, search, abortController.signal);
         if (abortController.signal.aborted) return;
         retryDelay = 2000;
         if (shouldPoll)
@@ -564,6 +605,56 @@
       />
     </div>
 
+    <div class="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
+      <RequestGeography countries={telemetry.countries ?? []} />
+      <Card.Root class="h-full gap-0 py-0">
+        <Card.Header class="border-b border-border py-4">
+          <Card.Title>Popular pages</Card.Title>
+          <Card.Description
+            >GET routes ranked by requests across {rangeLabel}.</Card.Description
+          >
+        </Card.Header>
+        <Card.Content class="p-4">
+          {#if popularPages.length}
+            <ol class="space-y-2">
+              {#each popularPages as route (`${route.method}:${route.route}`)}
+                <li class="relative overflow-hidden px-3 py-2">
+                  <div
+                    class="absolute inset-y-0 left-0 bg-muted"
+                    style:width={`${Math.max(
+                      pageRequests > 0
+                        ? (route.requests / pageRequests) * 100
+                        : 0,
+                      3,
+                    )}%`}
+                  ></div>
+                  <div class="relative flex items-center justify-between gap-3">
+                    <span class="truncate font-mono text-xs font-medium"
+                      >{route.route}</span
+                    >
+                    <span
+                      class="shrink-0 text-xs tabular-nums text-muted-foreground"
+                      >{route.requests.toLocaleString()}</span
+                    >
+                  </div>
+                </li>
+              {/each}
+            </ol>
+          {:else}
+            <Empty.Root class="py-10">
+              <Empty.Header>
+                <Empty.Title>No page metrics yet</Empty.Title>
+                <Empty.Description
+                  >Instrumented GET routes appear here after traffic is
+                  observed.</Empty.Description
+                >
+              </Empty.Header>
+            </Empty.Root>
+          {/if}
+        </Card.Content>
+      </Card.Root>
+    </div>
+
     <Card.Root>
       <Card.Header>
         <Card.Title>Slow endpoints</Card.Title>
@@ -649,30 +740,12 @@
             <Input
               id="environment-otel-log-search"
               type="search"
-              maxlength="256"
+              maxlength={256}
               bind:value={logSearchInput}
               placeholder="Search messages, attributes, traces, or services"
               class="pl-8"
             />
           </span>
-        </label>
-        <label class="grid gap-1.5 text-xs font-medium">
-          <span class="text-muted-foreground">Response code</span>
-          <NativeSelect.Root
-            class="w-full sm:w-40 [&_select]:h-9 [&_select]:text-sm"
-            bind:value={logResponseClass}
-            aria-label="Filter logs by response code"
-          >
-            <NativeSelect.Option value="">All responses</NativeSelect.Option>
-            <NativeSelect.Option value="2xx">2xx success</NativeSelect.Option>
-            <NativeSelect.Option value="3xx">3xx redirect</NativeSelect.Option>
-            <NativeSelect.Option value="4xx"
-              >4xx client error</NativeSelect.Option
-            >
-            <NativeSelect.Option value="5xx"
-              >5xx server error</NativeSelect.Option
-            >
-          </NativeSelect.Root>
         </label>
         <p class="shrink-0 text-xs text-muted-foreground sm:ml-auto">
           {logs.length}
@@ -744,7 +817,7 @@
         {:else}
           <p class="p-4 text-sm text-muted-foreground">
             {logsLoaded
-              ? logSearch || logResponseClass
+              ? logSearch
                 ? `No logs in ${rangeLabel} match the current filters.`
                 : `No OpenTelemetry logs were collected in ${rangeLabel}.`
               : "Loading OpenTelemetry logs..."}
@@ -878,20 +951,43 @@
   {:else}
     <Card.Root>
       <Card.Header>
+        <Card.Action>
+          <label class="grid gap-1.5 text-xs font-medium">
+            <span class="text-muted-foreground">HTTP response</span>
+            <NativeSelect.Root
+              class="w-44"
+              value={traceResponseClass}
+              onchange={filterTraces}
+              aria-label="Filter traces by HTTP response code"
+            >
+              <NativeSelect.Option value="">All traces</NativeSelect.Option>
+              <NativeSelect.Option value="2xx">2xx success</NativeSelect.Option>
+              <NativeSelect.Option value="3xx">3xx redirect</NativeSelect.Option
+              >
+              <NativeSelect.Option value="4xx"
+                >4xx client error</NativeSelect.Option
+              >
+              <NativeSelect.Option value="5xx"
+                >5xx server error</NativeSelect.Option
+              >
+            </NativeSelect.Root>
+          </label>
+        </Card.Action>
         <Card.Title>Recent traces</Card.Title>
         <Card.Description
-          >Up to 100 environment traces from {rangeLabel}. Select a trace to
-          inspect all correlated spans.</Card.Description
+          >Up to 100 {traceResponseClass || "environment"} traces from {rangeLabel}.
+          Select a trace to inspect all correlated spans.</Card.Description
         >
       </Card.Header>
       <Card.Content>
         {#if recentTraces.length}
           <div class="overflow-x-auto border border-border">
-            <Table.Root class="min-w-[780px] text-xs">
+            <Table.Root class="min-w-[920px] text-xs">
               <Table.Header>
                 <Table.Row>
-                  <Table.Head>Started</Table.Head><Table.Head
-                    >Root span</Table.Head
+                  <Table.Head>Started</Table.Head><Table.Head>Method</Table.Head
+                  ><Table.Head>Route</Table.Head><Table.Head
+                    >Response</Table.Head
                   >
                   <Table.Head>Duration</Table.Head><Table.Head>Spans</Table.Head
                   >
@@ -904,9 +1000,28 @@
                     <Table.Cell class="whitespace-nowrap"
                       >{stamp(trace.startedAt)}</Table.Cell
                     >
-                    <Table.Cell class="font-medium"
-                      >{trace.rootSpanName || "Unknown root span"}</Table.Cell
+                    <Table.Cell class="font-mono"
+                      >{trace.requestMethod || "—"}</Table.Cell
                     >
+                    <Table.Cell class="font-mono font-medium"
+                      >{trace.requestRoute ||
+                        trace.rootSpanName ||
+                        "Unknown"}</Table.Cell
+                    >
+                    <Table.Cell>
+                      {#if trace.responseCode}
+                        <StatusBadge
+                          status={trace.responseCode >= 500
+                            ? "error"
+                            : trace.responseCode >= 400
+                              ? "warning"
+                              : "healthy"}
+                          label={String(trace.responseCode)}
+                        />
+                      {:else}
+                        —
+                      {/if}
+                    </Table.Cell>
                     <Table.Cell
                       >{formatSpanDuration(trace.durationNs)}</Table.Cell
                     >
@@ -935,7 +1050,9 @@
             <Empty.Header>
               <Empty.Title>No traces in this range</Empty.Title>
               <Empty.Description
-                >Traces will appear after instrumented requests are sampled.</Empty.Description
+                >{traceResponseClass
+                  ? `No sampled ${traceResponseClass} HTTP requests were found.`
+                  : "Traces will appear after instrumented requests are sampled."}</Empty.Description
               >
             </Empty.Header>
           </Empty.Root>

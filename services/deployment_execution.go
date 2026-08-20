@@ -23,6 +23,8 @@ import (
 
 const maximumManagedWorkloadNameLength = 128
 
+const DeploymentExecutionTimeout = 15 * time.Minute
+
 type PermanentDeploymentError struct{ Err error }
 
 func (failure *PermanentDeploymentError) Error() string { return failure.Err.Error() }
@@ -94,8 +96,17 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	if err != nil {
 		return err
 	}
-	if deployment.Status == "succeeded" || deployment.Status == "failed" {
+	if deployment.Status == "cancelling" {
+		return service.FinishCancellation(ctx, deploymentID)
+	}
+	if deployment.Status != "running" {
 		return nil
+	}
+	if deployment.StartedAt.Valid {
+		deadline := deployment.StartedAt.Time.Add(DeploymentExecutionTimeout)
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
 	}
 	if err := service.recordEvent(
 		ctx,
@@ -640,6 +651,250 @@ func (service *DeploymentExecution) Fail(
 	)
 }
 
+func (service *DeploymentExecution) Cancel(
+	ctx context.Context,
+	deploymentID uuid.UUID,
+	reason string,
+) error {
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	deployment, err := models.Deployment.Lock(ctx, tx, deploymentID)
+	if err != nil {
+		return err
+	}
+	if deployment.Status == "cancelled" {
+		return tx.Commit()
+	}
+	if deployment.Status != "queued" && deployment.Status != "running" &&
+		deployment.Status != "cancelling" {
+		return errors.New("only an active Deployment can be stopped")
+	}
+	now := time.Now().UTC()
+	if err := models.Deployment.MarkCancelling(ctx, tx, deployment.ID, reason, now); err != nil {
+		return err
+	}
+	if err := models.Change.MarkCancelling(ctx, tx, deployment.ChangeID, reason, now); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return service.FinishCancellation(ctx, deploymentID)
+}
+
+func (service *DeploymentExecution) FinishCancellation(
+	ctx context.Context,
+	deploymentID uuid.UUID,
+) error {
+	deployment, err := models.Deployment.Find(ctx, service.db.Executor(), deploymentID)
+	if err != nil {
+		return err
+	}
+	if deployment.Status == "cancelled" {
+		return nil
+	}
+	if deployment.Status != "cancelling" {
+		return errors.New("Deployment is not awaiting rollback")
+	}
+	reason := deployment.Error.String
+	if strings.TrimSpace(reason) == "" {
+		reason = "Deployment cancelled"
+	}
+	_ = service.recordEvent(
+		ctx,
+		deployment.ID,
+		"rollback",
+		"running",
+		"rollback",
+		"Stopping candidate workloads and restoring the previous serving release",
+		nil,
+	)
+	instances, err := models.Instance.ActiveForDeployment(
+		ctx,
+		service.db.Executor(),
+		deployment.ID,
+	)
+	if err != nil {
+		return err
+	}
+	target, err := models.EnvironmentTarget.Find(
+		ctx,
+		service.db.Executor(),
+		deployment.EnvironmentTargetID,
+	)
+	if err != nil {
+		return err
+	}
+	var webCandidate *models.InstanceEntity
+	for index := range instances {
+		if instances[index].ProcessKind == models.EnvironmentProcessWeb {
+			webCandidate = &instances[index]
+			break
+		}
+	}
+	if webCandidate != nil {
+		if err := service.rollbackCandidateRoute(ctx, *webCandidate); err != nil {
+			_ = service.recordEvent(
+				ctx, deployment.ID, "rollback", "warning", "rollback",
+				"Deployment rollback could not restore the previous route", err,
+			)
+			return err
+		}
+	}
+	for _, instance := range instances {
+		if err := service.workloads.Remove(
+			ctx,
+			target.ServerID,
+			deployment.ID,
+			instance.ID,
+		); err != nil {
+			return fmt.Errorf("remove candidate workload %s: %w", instance.ID, err)
+		}
+		if err := models.Instance.MarkRemoved(
+			ctx,
+			service.db.Executor(),
+			instance.ID,
+			time.Now().UTC(),
+		); err != nil {
+			return err
+		}
+	}
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	locked, err := models.Deployment.Lock(ctx, tx, deployment.ID)
+	if err != nil {
+		return err
+	}
+	if locked.Status == "cancelled" {
+		return tx.Commit()
+	}
+	if locked.Status != "cancelling" {
+		return errors.New("Deployment is no longer awaiting rollback")
+	}
+	now := time.Now().UTC()
+	if err := models.EnvironmentTargetState.RestoreAppliedAfterDeploymentCancellation(
+		ctx,
+		tx,
+		deployment.ID,
+		now,
+	); err != nil {
+		return err
+	}
+	if err := models.Deployment.MarkCancelled(
+		ctx,
+		tx,
+		deployment.ID,
+		reason,
+		now,
+	); err != nil {
+		return err
+	}
+	if err := models.Change.MarkCancelled(
+		ctx,
+		tx,
+		deployment.ChangeID,
+		reason,
+		now,
+	); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return service.recordEvent(
+		ctx,
+		deployment.ID,
+		"cancelled",
+		"cancelled",
+		"rolled_back",
+		"Deployment stopped; the previous serving release was preserved",
+		nil,
+	)
+}
+
+func (service *DeploymentExecution) rollbackCandidateRoute(
+	ctx context.Context,
+	candidate models.InstanceEntity,
+) error {
+	route, err := models.CaddyRoute.FindActiveForInstance(
+		ctx,
+		service.db.Executor(),
+		candidate.ID,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	backends, err := models.CaddyRouteBackend.ActiveForRoute(
+		ctx,
+		service.db.Executor(),
+		route.ID,
+	)
+	if err != nil {
+		return err
+	}
+	candidateBackend := false
+	for _, backend := range backends {
+		if backend.InstanceID == candidate.ID {
+			candidateBackend = true
+			break
+		}
+	}
+	if !candidateBackend {
+		return nil
+	}
+	previous, err := models.Instance.PreviousForRoute(
+		ctx,
+		service.db.Executor(),
+		route.ID,
+		candidate.ID,
+	)
+	if err != nil {
+		return err
+	}
+	fallback := uuid.Nil
+	for _, instance := range previous {
+		if instance.State == "serving" {
+			fallback = instance.ID
+			break
+		}
+	}
+	if fallback == uuid.Nil {
+		if len(backends) != 1 {
+			return errors.New("no previous serving workload is available for rollback")
+		}
+		return service.caddy.DestroyManaged(ctx, route.ID)
+	}
+	weights := make(map[uuid.UUID]int32, len(backends))
+	for _, backend := range backends {
+		weights[backend.InstanceID] = 0
+	}
+	weights[fallback] = 100
+	if err := service.caddy.SwitchTraffic(
+		ctx,
+		route.ID,
+		previousRelease(previous, fallback),
+		weights,
+	); err != nil {
+		return fmt.Errorf("restore previous serving workload: %w", err)
+	}
+	if err := service.caddy.Verify(ctx, route.ExternalID); err != nil {
+		return fmt.Errorf("verify restored serving route: %w", err)
+	}
+	if err := service.caddy.RemoveBackend(ctx, route.ID, candidate.ID); err != nil {
+		return fmt.Errorf("remove candidate route backend: %w", err)
+	}
+	return nil
+}
+
 func (service *DeploymentExecution) claim(
 	ctx context.Context,
 	id uuid.UUID,
@@ -662,6 +917,9 @@ func (service *DeploymentExecution) claim(
 			return deployment, err
 		}
 		deployment.Status = "running"
+		if !deployment.StartedAt.Valid {
+			deployment.StartedAt = sql.NullTime{Time: now, Valid: true}
+		}
 	}
 	return deployment, tx.Commit()
 }

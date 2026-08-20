@@ -18,21 +18,24 @@ import (
 )
 
 type ResourceCaddyPublicationInput struct {
-	Enabled    bool   `json:"enabled"`
-	Hostname   string `json:"hostname"`
-	HealthPath string `json:"healthPath"`
+	Enabled    bool       `json:"enabled"`
+	Hostname   string     `json:"hostname"`
+	HealthPath string     `json:"healthPath"`
+	DNSMode    string     `json:"dnsMode"`
+	DNSZoneID  *uuid.UUID `json:"dnsZoneId"`
 }
 
 type ResourceCaddyPublication struct {
-	ID                 string `json:"id"`
-	ResourceEndpointID string `json:"resourceEndpointId"`
-	ExternalID         string `json:"externalId"`
-	Hostname           string `json:"hostname"`
-	HealthPath         string `json:"healthPath"`
-	State              string `json:"state"`
-	LastError          string `json:"lastError"`
-	AppliedAt          string `json:"appliedAt"`
-	ObservedAt         string `json:"observedAt"`
+	ID                 string            `json:"id"`
+	ResourceEndpointID string            `json:"resourceEndpointId"`
+	ExternalID         string            `json:"externalId"`
+	Hostname           string            `json:"hostname"`
+	HealthPath         string            `json:"healthPath"`
+	State              string            `json:"state"`
+	LastError          string            `json:"lastError"`
+	AppliedAt          string            `json:"appliedAt"`
+	ObservedAt         string            `json:"observedAt"`
+	DNS                ResourceDNSStatus `json:"dns"`
 }
 
 type ManagedResourceCaddyRoute struct {
@@ -61,6 +64,13 @@ type ResourceCaddyRouteUpdateInput struct {
 	OriginProtocol string `json:"originProtocol"`
 	OriginTLSMode  string `json:"originTlsMode"`
 	HealthPath     string `json:"healthPath"`
+}
+
+func (service CaddyRouteService) ResourceDNSOptions(ctx context.Context) ([]EnvironmentDNSOption, error) {
+	if service.dns == nil {
+		return []EnvironmentDNSOption{}, nil
+	}
+	return service.dns.Options(ctx)
 }
 
 type managedResourceEndpoint struct {
@@ -127,6 +137,19 @@ func (service CaddyRouteService) ValidateResourcePublication(
 	}
 	if conflicts > 0 {
 		return domainError("hostname", "unique", "an active Caddy route already uses this hostname")
+	}
+	customConflicts, err := service.db.Executor().NewSelect().TableExpr("custom_caddy_routes").
+		Where("lower(hostname) = ?", hostname).Where("removed_at IS NULL").Count(ctx)
+	if err != nil {
+		return err
+	}
+	if customConflicts > 0 {
+		return domainError("hostname", "unique", "an active Caddy route already uses this hostname")
+	}
+	if service.dns != nil {
+		if err := service.dns.ValidateSelection(ctx, hostname, input.DNSMode, input.DNSZoneID); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -325,6 +348,11 @@ func (service CaddyRouteService) UpdateResourceRoute(
 	); err != nil {
 		return "", err
 	}
+	if service.dns != nil {
+		if err := service.dns.Reconcile(ctx, endpoint.ID); err != nil {
+			slog.WarnContext(ctx, "Resource DNS endpoint is pending reconciliation", "endpoint_id", endpoint.ID, "error", err)
+		}
+	}
 	return resourceCaddyRouteID(endpoint.ID), nil
 }
 
@@ -343,6 +371,13 @@ func (service CaddyRouteService) ResourcePublications(
 			continue
 		}
 		state, lastError, observedAt := service.observeResourceRoute(ctx, item.Endpoint.ID)
+		dnsStatus := ResourceDNSStatus{Mode: DNSModeManual, State: "manual", Records: []DNSRecordStatus{}}
+		if service.dns != nil {
+			dnsStatus, err = service.dns.Status(ctx, item.Endpoint.ID)
+			if err != nil {
+				return nil, err
+			}
+		}
 		result = append(result, ResourceCaddyPublication{
 			ID:                 item.Endpoint.ID.String(),
 			ResourceEndpointID: item.Endpoint.ID.String(),
@@ -352,6 +387,7 @@ func (service CaddyRouteService) ResourcePublications(
 			State:              state,
 			LastError:          lastError,
 			ObservedAt:         observedAt,
+			DNS:                dnsStatus,
 		})
 	}
 	return result, nil
@@ -383,6 +419,11 @@ func (service CaddyRouteService) SyncResourcePublication(
 			err,
 		)
 	}
+	if service.dns != nil && strings.TrimSpace(input.DNSMode) != "" {
+		if err := service.dns.Configure(ctx, endpoint, input); err != nil {
+			slog.WarnContext(ctx, "Resource DNS endpoint is pending reconciliation", "endpoint_id", endpointID, "error", err)
+		}
+	}
 	return nil
 }
 
@@ -400,7 +441,12 @@ func (service CaddyRouteService) RemoveResourcePublication(
 	if endpoint.ResourceID != resourceID {
 		return models.ErrNotFound
 	}
-	return service.caddy.DeleteRoute(ctx, resourceCaddyRouteID(endpointID))
+	var result error
+	if service.dns != nil {
+		result = errors.Join(result, service.dns.Remove(ctx, endpointID))
+	}
+	result = errors.Join(result, service.caddy.DeleteRoute(ctx, resourceCaddyRouteID(endpointID)))
+	return result
 }
 
 func (service CaddyRouteService) ReconcileResourceRoute(
@@ -446,6 +492,13 @@ func (service CaddyRouteService) ReconcileManagedResourceEndpoints(ctx context.C
 	var result error
 	for _, item := range items {
 		result = errors.Join(result, service.ReconcileResourceRoute(ctx, item.Endpoint.ID))
+		if service.dns != nil {
+			status, statusErr := service.dns.Status(ctx, item.Endpoint.ID)
+			result = errors.Join(result, statusErr)
+			if statusErr == nil && status.Mode == DNSModeCloudflare && status.State != models.EnvironmentDNSApplied {
+				result = errors.Join(result, service.dns.Reconcile(ctx, item.Endpoint.ID))
+			}
+		}
 	}
 	return result
 }

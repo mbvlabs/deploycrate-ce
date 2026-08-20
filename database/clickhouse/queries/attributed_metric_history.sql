@@ -18,6 +18,7 @@ FROM metric_rollups
 WHERE scope = {scope:String}
   AND server = {server:String}
   AND ({environment:String} = '' OR environment = {environment:String})
+  AND ({root_only:UInt8} = 0 OR instance = '')
   AND bucket_start >= toDateTime({since_seconds:UInt32})
 GROUP BY
   toStartOfInterval(bucket_start, toIntervalSecond({bucket_seconds:UInt32})) AS history_bucket,

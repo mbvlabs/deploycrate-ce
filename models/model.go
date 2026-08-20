@@ -34,6 +34,8 @@ type (
 	resourceInstallation         struct{}
 	resourceInstallationStatus   struct{}
 	resourceEndpoint             struct{}
+	resourceDNSBinding           struct{}
+	resourceDNSRecord            struct{}
 	resourceCredential           struct{}
 	environmentResource          struct{}
 	resourceVolume               struct{}
@@ -60,6 +62,7 @@ type (
 	instance                     struct{}
 	caddyRoute                   struct{}
 	caddyRouteBackend            struct{}
+	customCaddyRoute             struct{}
 	backupDestination            struct{}
 	backupPolicy                 struct{}
 	backup                       struct{}
@@ -111,6 +114,8 @@ var (
 	ResourceInstallation         resourceInstallation
 	ResourceInstallationStatus   resourceInstallationStatus
 	ResourceEndpoint             resourceEndpoint
+	ResourceDNSBinding           resourceDNSBinding
+	ResourceDNSRecord            resourceDNSRecord
 	ResourceCredential           resourceCredential
 	EnvironmentResource          environmentResource
 	ResourceVolume               resourceVolume
@@ -137,6 +142,7 @@ var (
 	Instance                     instance
 	CaddyRoute                   caddyRoute
 	CaddyRouteBackend            caddyRouteBackend
+	CustomCaddyRoute             customCaddyRoute
 	BackupDestination            backupDestination
 	BackupPolicy                 backupPolicy
 	Backup                       backup

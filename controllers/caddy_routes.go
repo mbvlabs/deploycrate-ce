@@ -67,6 +67,18 @@ func (controller CaddyRoutes) RegisterRoutes(r *router.Router) error {
 			[]echo.MiddlewareFunc{middleware.AdminOnly},
 		},
 		{
+			http.MethodPatch,
+			routes.CaddyCustomRouteUpdate,
+			controller.UpdateCustom,
+			[]echo.MiddlewareFunc{middleware.AdminOnly},
+		},
+		{
+			http.MethodDelete,
+			routes.CaddyCustomRouteDestroy,
+			controller.DestroyCustom,
+			[]echo.MiddlewareFunc{middleware.AdminOnly},
+		},
+		{
 			http.MethodDelete,
 			routes.CaddyRouteDestroy,
 			controller.Destroy,
@@ -108,6 +120,34 @@ func (controller CaddyRoutes) UpdateResource(etx *echo.Context) error {
 	return inertia.Redirect(etx, routes.CaddyRouteShow.URL(externalID), http.StatusSeeOther)
 }
 
+func (controller CaddyRoutes) UpdateCustom(etx *echo.Context) error {
+	id, err := uuid.Parse(etx.Param("id"))
+	var input services.CustomCaddyRouteInput
+	if err == nil {
+		err = etx.Bind(&input)
+	}
+	if err == nil {
+		err = controller.service.UpdateCustom(etx.Request().Context(), id, input)
+	}
+	if err != nil {
+		return controller.redirectWithError(etx, err)
+	}
+	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Caddy route updated and reconciled")
+	return inertia.Redirect(etx, routes.CaddyRouteShow.URL(input.ExternalID), http.StatusSeeOther)
+}
+
+func (controller CaddyRoutes) DestroyCustom(etx *echo.Context) error {
+	id, err := uuid.Parse(etx.Param("id"))
+	if err == nil {
+		err = controller.service.DestroyCustom(etx.Request().Context(), id)
+	}
+	if err != nil {
+		return controller.redirectWithError(etx, err)
+	}
+	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Caddy route removed")
+	return inertia.Redirect(etx, routes.CaddyRoutes.URL(), http.StatusSeeOther)
+}
+
 func (controller CaddyRoutes) Show(etx *echo.Context) error {
 	detail, err := controller.service.RouteDetail(etx.Request().Context(), etx.Param("id"))
 	if errors.Is(err, models.ErrNotFound) {
@@ -147,21 +187,27 @@ func (controller CaddyRoutes) Index(etx *echo.Context) error {
 		)
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
+	customRoutes, err := controller.service.CustomRouteSnapshot(etx.Request().Context())
+	if err != nil {
+		slog.ErrorContext(etx.Request().Context(), "failed to load custom Caddy routes", "error", err)
+		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
+	}
 	return inertia.Page(etx, "System/CaddyRoutes/Index", inertia.Props{
 		"auth": authProps(
 			etx,
 		),
 		"routes":         snapshot.Routes,
 		"resourceRoutes": resourceRoutes,
+		"customRoutes":   customRoutes,
 		"options":        snapshot.Options,
 	})
 }
 
 func (controller CaddyRoutes) Create(etx *echo.Context) error {
-	var input services.ManagedCaddyRouteInput
+	var input services.CustomCaddyRouteInput
 	err := etx.Bind(&input)
 	if err == nil {
-		_, err = controller.service.CreateManaged(etx.Request().Context(), input)
+		_, err = controller.service.CreateCustom(etx.Request().Context(), input)
 	}
 	if err != nil {
 		return controller.redirectWithError(etx, err)
