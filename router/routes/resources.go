@@ -94,6 +94,18 @@ var ResourceDatabaseDestroy = routing.NewRouteWithParams[ResourceDatabaseParams]
 	ResourcesPrefix,
 )
 
+var ResourceDatabaseEditor = routing.NewRouteWithParams[ResourceDatabaseParams](
+	"/:id/databases/:databaseName/editor",
+	"resources.databases.editor",
+	ResourcesPrefix,
+)
+
+var ResourceDatabaseEditorQuery = routing.NewRouteWithParams[ResourceDatabaseParams](
+	"/:id/databases/:databaseName/editor/query",
+	"resources.databases.editor.query",
+	ResourcesPrefix,
+)
+
 var ResourcePrivateAccessCreate = routing.NewRouteWithUUIDID(
 	"/:id/private-access",
 	"resources.private-access.create",

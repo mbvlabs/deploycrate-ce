@@ -18,6 +18,7 @@ type Connection struct {
 	Port     int32
 	Username string
 	Password string
+	TLSMode  string
 }
 
 type Client struct{}

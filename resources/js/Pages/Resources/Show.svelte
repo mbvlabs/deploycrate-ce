@@ -1323,7 +1323,10 @@
       confirmationLabel: "Archive credential",
     });
   }
-  function confirmDatabaseDelete(databaseName: string, credentialCount: number) {
+  function confirmDatabaseDelete(
+    databaseName: string,
+    credentialCount: number,
+  ) {
     const credentialDescription =
       credentialCount === 0
         ? ""
@@ -1712,8 +1715,24 @@
                           <Button
                             size="sm"
                             variant="ghost"
+                            disabled={attachedCredentials.length === 0}
+                          >
+                            {#snippet child({ props })}
+                              <Link
+                                {...props}
+                                href={routes.resourceDatabaseEditor(
+                                  resource.id,
+                                  encodeURIComponent(item.name),
+                                )}>Editor</Link
+                              >
+                            {/snippet}
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
                             disabled={!canAddApplicationUser}
-                            onclick={() => openCredentialDialog(null, item.name)}
+                            onclick={() =>
+                              openCredentialDialog(null, item.name)}
                             >Add credential</Button
                           >
                           {#if backup?.policy}
@@ -2180,12 +2199,21 @@
                               ><StatusBadge status={publication.state} />
                             </div>
                             {#if publication.dns.mode === "cloudflare"}
-                              <div class="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                                <span>{publication.dns.connectionName} · {publication.dns.zoneName}</span>
+                              <div
+                                class="mt-1 flex flex-wrap items-center gap-2 text-xs text-muted-foreground"
+                              >
+                                <span
+                                  >{publication.dns.connectionName} · {publication
+                                    .dns.zoneName}</span
+                                >
                                 <StatusBadge status={publication.dns.state} />
                               </div>
                               {#if publication.dns.lastError}
-                                <p class="mt-1 max-w-sm text-xs text-destructive">{publication.dns.lastError}</p>
+                                <p
+                                  class="mt-1 max-w-sm text-xs text-destructive"
+                                >
+                                  {publication.dns.lastError}
+                                </p>
                               {/if}
                             {/if}
                             {#if publication.lastError}<p
@@ -3323,8 +3351,7 @@
         <Dialog.Header
           ><Dialog.Title>Add Database</Dialog.Title><Dialog.Description
             >Create a logical Database and attach its initial application
-            credential. You can add more credentials from the Databases
-            screen.</Dialog.Description
+            credential. You can add more credentials from the Databases screen.</Dialog.Description
           ></Dialog.Header
         >
         <div class="grid gap-4 sm:grid-cols-2">

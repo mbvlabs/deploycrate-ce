@@ -122,6 +122,25 @@ func (resourceCredential) LockActiveApplicationsForDatabase(
 	return credentials, err
 }
 
+func (resourceCredential) FindActiveApplicationForDatabase(
+	ctx context.Context,
+	db storage.Executor,
+	resourceID uuid.UUID,
+	databaseName string,
+) (ResourceCredentialEntity, error) {
+	var credential ResourceCredentialEntity
+	err := db.NewSelect().
+		Model(&credential).
+		Where("resource_id = ?", resourceID).
+		Where("metadata ->> 'purpose' = 'application'").
+		Where("lower(metadata ->> 'database') = lower(?)", strings.TrimSpace(databaseName)).
+		Where("archived_at IS NULL").
+		OrderExpr("created_at, id").
+		Limit(1).
+		Scan(ctx)
+	return credential, err
+}
+
 type CreateResourceCredentialData struct {
 	Name       string
 	Username   sql.NullString

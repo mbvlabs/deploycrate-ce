@@ -28,6 +28,7 @@ type Resources struct {
 	backups     *services.DatabaseBackups
 	restore     *services.DatabaseRestoreWorkflow
 	credentials *services.ResourceCredentials
+	editor      *services.DatabaseEditor
 	caddy       services.CaddyRouteService
 }
 
@@ -37,6 +38,7 @@ func NewResources(
 	backups *services.DatabaseBackups,
 	restore *services.DatabaseRestoreWorkflow,
 	credentials *services.ResourceCredentials,
+	editor *services.DatabaseEditor,
 	caddy services.CaddyRouteService,
 ) Resources {
 	return Resources{
@@ -45,6 +47,7 @@ func NewResources(
 		backups:     backups,
 		restore:     restore,
 		credentials: credentials,
+		editor:      editor,
 		caddy:       caddy,
 	}
 }
@@ -101,6 +104,8 @@ func (controller Resources) RegisterRoutes(r *router.Router) error {
 		},
 		{http.MethodPost, routes.ResourceDatabaseCreateForResource, controller.CreateDatabase},
 		{http.MethodDelete, routes.ResourceDatabaseDestroy, controller.DestroyDatabase},
+		{http.MethodGet, routes.ResourceDatabaseEditor, controller.DatabaseEditor},
+		{http.MethodPost, routes.ResourceDatabaseEditorQuery, controller.ExecuteDatabaseQuery},
 		{http.MethodPost, routes.ResourceInstallationCreate, controller.CreateInstallation},
 		{http.MethodGet, routes.ResourceInstallationLogs, controller.InstallationLogs},
 		{http.MethodPost, routes.ResourceInstallationStart, controller.StartInstallation},
@@ -302,6 +307,95 @@ func (controller Resources) Show(etx *echo.Context) error {
 
 func (controller Resources) Databases(etx *echo.Context) error {
 	return controller.showSection(etx, "databases")
+}
+
+func (controller Resources) DatabaseEditor(etx *echo.Context) error {
+	resourceID, databaseName, err := parseDatabaseEditorTarget(etx)
+	if err != nil {
+		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
+	}
+	details, err := controller.editor.Details(
+		etx.Request().Context(),
+		resourceID,
+		databaseName,
+	)
+	if errors.Is(err, services.ErrDatabaseEditorNotFound) {
+		return inertia.Page(etx, "Errors/NotFound", inertia.Props{})
+	}
+	if errors.Is(err, services.ErrDatabaseEditorUnavailable) {
+		return controller.redirectError(etx, routes.ResourceDatabases.URL(resourceID), err)
+	}
+	if err != nil {
+		return controller.renderLoadError(etx, err)
+	}
+	return inertia.Page(etx, "Resources/DatabaseEditor", inertia.Props{
+		"auth": authProps(etx),
+		"resource": inertia.Props{
+			"id": details.Resource.ID, "name": details.Resource.Name,
+			"engine":        details.Resource.Engine(),
+			"resourceType":  details.Resource.ResourceType.String(),
+			"systemManaged": details.Resource.SystemManaged,
+		},
+		"database": inertia.Props{
+			"name": details.Database.Name, "encoding": details.Database.Encoding,
+			"collation":      details.Database.Collation,
+			"credentialName": details.CredentialName,
+			"credentialUser": details.CredentialUser,
+		},
+		"catalog": details.Catalog,
+	})
+}
+
+func (controller Resources) ExecuteDatabaseQuery(etx *echo.Context) error {
+	etx.Response().Header().Set("Cache-Control", "no-store")
+	resourceID, databaseName, err := parseDatabaseEditorTarget(etx)
+	if err != nil {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Database not found"})
+	}
+	var payload struct {
+		SQL string `json:"sql"`
+	}
+	if err := etx.Bind(&payload); err != nil {
+		return etx.JSON(http.StatusUnprocessableEntity, map[string]string{
+			"error": "A SQL statement is required",
+		})
+	}
+	result, err := controller.editor.Execute(
+		etx.Request().Context(),
+		resourceID,
+		databaseName,
+		payload.SQL,
+	)
+	if err == nil {
+		return etx.JSON(http.StatusOK, result)
+	}
+	if errors.Is(err, services.ErrDatabaseEditorNotFound) {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Database not found"})
+	}
+	if errors.Is(err, services.ErrDatabaseEditorUnavailable) {
+		return etx.JSON(http.StatusConflict, map[string]string{"error": err.Error()})
+	}
+	if errors.Is(err, services.ErrDatabaseEditorInvalidSQL) {
+		return etx.JSON(http.StatusUnprocessableEntity, map[string]string{
+			"error": "Enter one SQL statement no larger than 100 KB",
+		})
+	}
+	var queryError *services.DatabaseEditorQueryError
+	if errors.As(err, &queryError) {
+		return etx.JSON(http.StatusUnprocessableEntity, map[string]any{
+			"error": queryError,
+		})
+	}
+	slog.ErrorContext(
+		etx.Request().Context(),
+		"failed to execute read-only PostgreSQL query",
+		"resource_id", resourceID,
+		"database", databaseName,
+		"error", err,
+	)
+	return etx.JSON(http.StatusBadGateway, map[string]string{
+		"error": "The PostgreSQL query could not be executed",
+	})
 }
 
 func (controller Resources) Backups(etx *echo.Context) error {
@@ -1606,6 +1700,16 @@ func parseChildIDs(etx *echo.Context, childParam string) (uuid.UUID, uuid.UUID, 
 	resourceID, resourceErr := uuid.Parse(etx.Param("id"))
 	childID, childErr := uuid.Parse(etx.Param(childParam))
 	return resourceID, childID, errors.Join(resourceErr, childErr)
+}
+
+func parseDatabaseEditorTarget(etx *echo.Context) (uuid.UUID, string, error) {
+	resourceID, resourceErr := uuid.Parse(etx.Param("id"))
+	databaseName := strings.TrimSpace(etx.Param("databaseName"))
+	var databaseErr error
+	if databaseName == "" {
+		databaseErr = errors.New("database is required")
+	}
+	return resourceID, databaseName, errors.Join(resourceErr, databaseErr)
 }
 
 func parseResourceDatabasePolicyIDs(etx *echo.Context) (uuid.UUID, string, uuid.UUID, error) {

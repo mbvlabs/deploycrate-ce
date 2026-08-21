@@ -24,6 +24,7 @@ var Module = fx.Module(
 		NewEnvironmentApplicationTelemetry,
 		NewTelemetryIdentity,
 		NewResourceCredentials,
+		NewDatabaseEditor,
 		func() CloudflareDNSClient { return cloudflareclient.NewDNS() },
 		NewDNSConnections,
 		NewEnvironmentDNS,

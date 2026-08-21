@@ -53,6 +53,7 @@ func TestResourcesControllerCredentialLifecycleUsesDatabase(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 		services.NewCaddyRouteService(db, &fakeCaddyClient{}),
 	)
 
@@ -169,6 +170,7 @@ func TestResourcesControllerEndpointAndHealthCheckLifecycleUsesDatabase(t *testi
 			&fakeResourceContainers{},
 		),
 		services.NewResourcePrivateAccess(db, nil),
+		nil,
 		nil,
 		nil,
 		nil,
@@ -482,7 +484,7 @@ func TestResourcesControllerDatabaseLifecycle(t *testing.T) {
 	configuration := controllerTestConfig(t)
 	containers := &fakeResourceContainers{}
 	service := services.NewResourceManagement(db, configuration, nil, containers)
-	controller := NewResources(service, nil, nil, nil, nil, services.CaddyRouteService{})
+	controller := NewResources(service, nil, nil, nil, nil, nil, services.CaddyRouteService{})
 
 	invalidPage := requireControllerComponent(t, controllerRequest(
 		t,
@@ -642,7 +644,7 @@ func TestResourcesControllerIndexUsesSeedData(t *testing.T) {
 		nil,
 		&fakeResourceContainers{},
 	)
-	controller := NewResources(service, nil, nil, nil, nil, services.CaddyRouteService{})
+	controller := NewResources(service, nil, nil, nil, nil, nil, services.CaddyRouteService{})
 
 	page := requireControllerComponent(t, controllerRequest(
 		t,
