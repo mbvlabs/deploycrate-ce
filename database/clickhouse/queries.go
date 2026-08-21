@@ -42,6 +42,44 @@ type MetricRollupExport struct {
 	LastBucket  string `json:"last_bucket,omitempty"`
 }
 
+type CaddyRequest struct {
+	ObservedAt    time.Time
+	Fingerprint   uint64
+	Host          string
+	Method        string
+	URI           string
+	StatusCode    uint16
+	DurationMS    float64
+	ClientAddress string
+}
+
+type RequestObservation struct {
+	ObservedAt    time.Time `json:"ObservedAt"`
+	ProcessedAt   time.Time `json:"ProcessedAt"`
+	Fingerprint   uint64    `json:"Fingerprint"`
+	ApplicationID string    `json:"ApplicationID"`
+	EnvironmentID string    `json:"EnvironmentID"`
+	Domain        string    `json:"Domain"`
+	Method        string    `json:"Method"`
+	Path          string    `json:"Path"`
+	StatusCode    uint16    `json:"StatusCode"`
+	CountryCode   string    `json:"CountryCode"`
+	DurationMS    float64   `json:"DurationMS"`
+}
+
+type RequestPathResult struct {
+	Method        string
+	Path          string
+	Requests      uint64
+	Errors        uint64
+	P95DurationMS float64
+}
+
+type RequestCountryResult struct {
+	Code     string
+	Requests uint64
+}
+
 type MetricValue struct {
 	Metric     string
 	Value      float64
@@ -155,6 +193,143 @@ func (client Queries) InsertMetricRollups(ctx context.Context, rollups []MetricR
 		return fmt.Errorf("insert ClickHouse metric rollups: %w", err)
 	}
 	return nil
+}
+
+func (client Queries) LatestRequestObservation(ctx context.Context) (time.Time, error) {
+	type timestampRow struct {
+		TimestampNanoseconds string `json:"timestamp_nanoseconds"`
+	}
+	rows, err := queryJSONRows[timestampRow](ctx, client, latestRequestObservationQuery, nil)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("query latest request observation: %w", err)
+	}
+	if len(rows) == 0 || rows[0].TimestampNanoseconds == "" {
+		return time.Time{}, nil
+	}
+	nanoseconds, err := strconv.ParseInt(rows[0].TimestampNanoseconds, 10, 64)
+	if err != nil || nanoseconds <= 0 {
+		return time.Time{}, nil
+	}
+	return time.Unix(0, nanoseconds).UTC(), nil
+}
+
+func (client Queries) CaddyRequests(
+	ctx context.Context,
+	since time.Time,
+	before time.Time,
+	limit uint64,
+) ([]CaddyRequest, error) {
+	type requestRow struct {
+		TimestampNanoseconds string  `json:"timestamp_nanoseconds"`
+		Fingerprint          string  `json:"fingerprint"`
+		Host                 string  `json:"host"`
+		Method               string  `json:"method"`
+		URI                  string  `json:"uri"`
+		StatusCode           uint16  `json:"status_code"`
+		DurationMS           float64 `json:"duration_ms"`
+		ClientAddress        string  `json:"client_address"`
+	}
+	rows, err := queryJSONRows[requestRow](ctx, client, caddyRequestsQuery, map[string]string{
+		"since_nanoseconds":  strconv.FormatInt(since.UnixNano(), 10),
+		"before_nanoseconds": strconv.FormatInt(before.UnixNano(), 10),
+		"limit":              strconv.FormatUint(limit, 10),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query Caddy requests: %w", err)
+	}
+	result := make([]CaddyRequest, 0, len(rows))
+	for _, row := range rows {
+		nanoseconds, timestampErr := strconv.ParseInt(row.TimestampNanoseconds, 10, 64)
+		fingerprint, fingerprintErr := strconv.ParseUint(row.Fingerprint, 10, 64)
+		if timestampErr != nil || fingerprintErr != nil {
+			return nil, fmt.Errorf("decode Caddy request identity: %w", errors.Join(timestampErr, fingerprintErr))
+		}
+		result = append(result, CaddyRequest{
+			ObservedAt: time.Unix(0, nanoseconds).UTC(), Fingerprint: fingerprint,
+			Host: row.Host, Method: row.Method, URI: row.URI, StatusCode: row.StatusCode,
+			DurationMS: row.DurationMS, ClientAddress: row.ClientAddress,
+		})
+	}
+	return result, nil
+}
+
+func (client Queries) InsertRequestObservations(
+	ctx context.Context,
+	observations []RequestObservation,
+) error {
+	if len(observations) == 0 {
+		return nil
+	}
+	var body bytes.Buffer
+	encoder := json.NewEncoder(&body)
+	for _, observation := range observations {
+		if err := encoder.Encode(observation); err != nil {
+			return fmt.Errorf("encode request observation: %w", err)
+		}
+	}
+	if err := client.client.Insert(
+		ctx,
+		insertRequestObservationsQuery,
+		nil,
+		map[string]string{"date_time_input_format": "best_effort"},
+		&body,
+		"application/x-ndjson",
+	); err != nil {
+		return fmt.Errorf("insert request observations: %w", err)
+	}
+	return nil
+}
+
+func (client Queries) RequestPaths(
+	ctx context.Context,
+	environment string,
+	since time.Time,
+) ([]RequestPathResult, error) {
+	type pathRow struct {
+		Method        string  `json:"method"`
+		Path          string  `json:"path"`
+		Requests      uint64  `json:"requests"`
+		Errors        uint64  `json:"errors"`
+		P95DurationMS float64 `json:"p95_duration_ms"`
+	}
+	rows, err := queryJSONRows[pathRow](ctx, client, requestPathsQuery, map[string]string{
+		"environment":   environment,
+		"since_seconds": strconv.FormatInt(since.Unix(), 10),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query request paths: %w", err)
+	}
+	result := make([]RequestPathResult, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, RequestPathResult{
+			Method: row.Method, Path: row.Path, Requests: row.Requests,
+			Errors: row.Errors, P95DurationMS: row.P95DurationMS,
+		})
+	}
+	return result, nil
+}
+
+func (client Queries) RequestCountries(
+	ctx context.Context,
+	environment string,
+	since time.Time,
+) ([]RequestCountryResult, error) {
+	type countryRow struct {
+		Code     string `json:"code"`
+		Requests uint64 `json:"requests"`
+	}
+	rows, err := queryJSONRows[countryRow](ctx, client, requestCountriesQuery, map[string]string{
+		"environment":   environment,
+		"since_seconds": strconv.FormatInt(since.Unix(), 10),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("query request countries: %w", err)
+	}
+	result := make([]RequestCountryResult, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, RequestCountryResult{Code: row.Code, Requests: row.Requests})
+	}
+	return result, nil
 }
 
 func (client Queries) LatestSystemMetricValues(

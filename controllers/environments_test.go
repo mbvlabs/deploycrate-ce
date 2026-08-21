@@ -90,6 +90,7 @@ func TestEnvironmentsControllerIndexUsesDatabase(t *testing.T) {
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 
 	page := requireControllerComponent(t, controllerRequest(
@@ -138,6 +139,7 @@ func TestEnvironmentsControllerDestroyDeletesEnvironmentAndEmptyApplication(t *t
 		nil,
 		services.NewApplicationSetup(db, controllerTestConfig(t)),
 		services.MetricRollupService{},
+		nil,
 		nil,
 		nil,
 		nil,

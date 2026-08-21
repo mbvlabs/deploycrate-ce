@@ -322,6 +322,11 @@ export type CountryTelemetry = {
   requests: number;
 };
 
+export type RequestTelemetry = {
+  routes: RouteTelemetry[];
+  countries: CountryTelemetry[];
+};
+
 export type QueryTelemetry = {
   query: string;
   databaseSystem: string;
@@ -354,7 +359,6 @@ export type ApplicationTelemetry = {
   };
   recentTraces: TraceSummary[];
   routes: RouteTelemetry[];
-  countries: CountryTelemetry[];
   queries: QueryTelemetry[];
   moreQueries: boolean;
 };

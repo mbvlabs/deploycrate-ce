@@ -1,7 +1,7 @@
 <script lang="ts">
   import { page, router } from "@inertiajs/svelte";
   import SearchIcon from "@lucide/svelte/icons/search";
-  import RequestGeography from "@/Components/Applications/Environments/RequestGeography.svelte";
+  import RequestInsights from "@/Components/Applications/Environments/RequestInsights.svelte";
   import LogEntry from "@/Components/TelemetryLogEntry.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import TelemetryHistory from "@/Components/System/TelemetryHistory.svelte";
@@ -18,7 +18,7 @@
     OpenTelemetryLog,
     OpenTelemetryLogSnapshot,
     QueryTelemetry,
-    RouteTelemetry,
+    RequestTelemetry,
     TelemetryRange,
     TraceSpan,
   } from "@/Pages/Applications/Environments/show.types";
@@ -34,12 +34,14 @@
     applicationId,
     environmentId,
     telemetry,
+    requestTelemetry,
     telemetryRange,
     live,
   }: {
     applicationId: string;
     environmentId: string;
     telemetry: ApplicationTelemetry;
+    requestTelemetry: RequestTelemetry;
     telemetryRange: TelemetryRange;
     live: boolean;
   } = $props();
@@ -113,26 +115,6 @@
   const databaseHistory = $derived(telemetry.database?.history ?? []);
   const recentTraces = $derived(telemetry.recentTraces ?? []);
   const slowRoutes = $derived((telemetry.routes ?? []).slice(0, 20));
-  const pageRoute = (route: RouteTelemetry) =>
-    route.method === "GET" &&
-    route.route.startsWith("/") &&
-    !["/api/", "/assets/", "/dist/"].some((prefix) =>
-      route.route.startsWith(prefix),
-    ) &&
-    !["/favicon.ico", "/robots.txt"].includes(route.route);
-  const popularPages = $derived(
-    (telemetry.routes ?? [])
-      .filter(pageRoute)
-      .sort(
-        (left, right) =>
-          right.requests - left.requests ||
-          left.route.localeCompare(right.route),
-      )
-      .slice(0, 8),
-  );
-  const pageRequests = $derived(
-    popularPages.reduce((total, route) => total + route.requests, 0),
-  );
   const slowQueriesKey = $derived(
     `${applicationId}:${environmentId}:${telemetryRange}`,
   );
@@ -605,55 +587,11 @@
       />
     </div>
 
-    <div class="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(18rem,1fr)]">
-      <RequestGeography countries={telemetry.countries ?? []} />
-      <Card.Root class="h-full gap-0 py-0">
-        <Card.Header class="border-b border-border py-4">
-          <Card.Title>Popular pages</Card.Title>
-          <Card.Description
-            >GET routes ranked by requests across {rangeLabel}.</Card.Description
-          >
-        </Card.Header>
-        <Card.Content class="p-4">
-          {#if popularPages.length}
-            <ol class="space-y-2">
-              {#each popularPages as route (`${route.method}:${route.route}`)}
-                <li class="relative overflow-hidden px-3 py-2">
-                  <div
-                    class="absolute inset-y-0 left-0 bg-muted"
-                    style:width={`${Math.max(
-                      pageRequests > 0
-                        ? (route.requests / pageRequests) * 100
-                        : 0,
-                      3,
-                    )}%`}
-                  ></div>
-                  <div class="relative flex items-center justify-between gap-3">
-                    <span class="truncate font-mono text-xs font-medium"
-                      >{route.route}</span
-                    >
-                    <span
-                      class="shrink-0 text-xs tabular-nums text-muted-foreground"
-                      >{route.requests.toLocaleString()}</span
-                    >
-                  </div>
-                </li>
-              {/each}
-            </ol>
-          {:else}
-            <Empty.Root class="py-10">
-              <Empty.Header>
-                <Empty.Title>No page metrics yet</Empty.Title>
-                <Empty.Description
-                  >Instrumented GET routes appear here after traffic is
-                  observed.</Empty.Description
-                >
-              </Empty.Header>
-            </Empty.Root>
-          {/if}
-        </Card.Content>
-      </Card.Root>
-    </div>
+    <RequestInsights
+      routes={requestTelemetry.routes}
+      countries={requestTelemetry.countries}
+      {telemetryRange}
+    />
 
     <Card.Root>
       <Card.Header>

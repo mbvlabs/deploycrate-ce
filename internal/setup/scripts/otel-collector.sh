@@ -126,6 +126,17 @@ processors:
       - set(log.attributes["container.name"], log.body["CONTAINER_NAME"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil
       - set(log.attributes["log.iostream"], "stderr") where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil and log.body["PRIORITY"] == "3"
       - set(log.attributes["log.iostream"], "stdout") where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil and log.body["PRIORITY"] != "3"
+      - set(resource.attributes["deploycrate.application.id"], log.attributes["deploycrate.application.id"]) where log.attributes["deploycrate.environment.id"] != nil
+      - set(resource.attributes["deploycrate.environment.id"], log.attributes["deploycrate.environment.id"]) where log.attributes["deploycrate.environment.id"] != nil
+      - set(resource.attributes["deploycrate.target.id"], log.attributes["deploycrate.target.id"]) where log.attributes["deploycrate.environment.id"] != nil
+      - set(resource.attributes["deploycrate.deployment.id"], log.attributes["deploycrate.deployment.id"]) where log.attributes["deploycrate.environment.id"] != nil
+      - set(resource.attributes["deploycrate.instance.id"], log.attributes["deploycrate.instance.id"]) where log.attributes["deploycrate.environment.id"] != nil
+      - set(resource.attributes["deploycrate.release.id"], log.attributes["deploycrate.release.id"]) where log.attributes["deploycrate.environment.id"] != nil
+      - set(resource.attributes["deploycrate.process.name"], log.attributes["deploycrate.process.name"]) where log.attributes["deploycrate.environment.id"] != nil
+      - set(resource.attributes["deploycrate.process.kind"], log.attributes["deploycrate.process.kind"]) where log.attributes["deploycrate.environment.id"] != nil
+      - set(resource.attributes["deploycrate.process.replica"], log.attributes["deploycrate.process.replica"]) where log.attributes["deploycrate.environment.id"] != nil
+      - set(resource.attributes["container.id"], log.attributes["container.id"]) where log.attributes["deploycrate.environment.id"] != nil
+      - set(resource.attributes["telemetry.source"], "journald") where log.attributes["deploycrate.environment.id"] != nil
       - set(log.body, log.body["MESSAGE"]) where IsMap(log.body) and log.body["COM_DEPLOYCRATE_ENVIRONMENT"] != nil and log.body["MESSAGE"] != nil
       - replace_pattern(log.body, "\\\\x1B\\\\[[0-?]*[ -/]*[@-~]", "") where log.attributes["deploycrate.environment.id"] != nil and IsString(log.body)
   filter/duplicate_workload_logs:
@@ -148,6 +159,9 @@ processors:
       - key: deploycrate.server.id
         from_context: auth.claims.deploycrate_server_id
         action: upsert
+      - key: telemetry.source
+        value: otlp
+        action: insert
 exporters:
   clickhouse:
     endpoint: tcp://127.0.0.1:9000?dial_timeout=10s
