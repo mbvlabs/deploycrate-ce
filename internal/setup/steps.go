@@ -158,7 +158,7 @@ func DefaultSteps(operations Operations) []Step {
 		),
 		clickHouseMigrationStep(operations.RunClickHouseMigrations),
 		scriptSetupStep(
-			"otel-collector-"+OpenTelemetryCollectorVersion+"-deduplicate-workload-logs-v1",
+			"otel-collector-"+OpenTelemetryCollectorVersion+"-isolate-environment-logs-v1",
 			"Install durable logs, traces, and metrics collection",
 			"otel-collector.sh",
 			func(cfg Config) map[string]string {

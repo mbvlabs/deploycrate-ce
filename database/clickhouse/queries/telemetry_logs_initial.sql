@@ -1,4 +1,4 @@
-SELECT
+SELECT DISTINCT
   toString(toUnixTimestamp64Nano(Timestamp)) AS timestamp_nanoseconds,
   toString(sipHash64(SeverityText, Body, TraceId, SpanId, ScopeName, toString(LogAttributes), toString(ResourceAttributes))) AS fingerprint,
   Body AS message,
@@ -10,12 +10,12 @@ SELECT
   ScopeName AS scope,
   LogAttributes['code.file.path'] AS source,
   LogAttributes['code.line.number'] AS line,
-  ResourceAttributes['service.instance.id'] AS instance,
+  if(coalesce(nullIf(LogAttributes['telemetry.source'], ''), ResourceAttributes['telemetry.source']) = 'journald', LogAttributes['deploycrate.instance.id'], coalesce(nullIf(LogAttributes['service.instance.id'], ''), ResourceAttributes['service.instance.id'])) AS instance,
   ResourceAttributes['deploycrate.slot'] AS slot,
   ServiceName AS service,
-  ResourceAttributes['deploycrate.process.name'] AS process_name,
-  ResourceAttributes['deploycrate.process.kind'] AS process_kind,
-  ResourceAttributes['deploycrate.process.replica'] AS process_replica,
+  if(coalesce(nullIf(LogAttributes['telemetry.source'], ''), ResourceAttributes['telemetry.source']) = 'journald', LogAttributes['deploycrate.process.name'], coalesce(nullIf(LogAttributes['deploycrate.process.name'], ''), ResourceAttributes['deploycrate.process.name'])) AS process_name,
+  if(coalesce(nullIf(LogAttributes['telemetry.source'], ''), ResourceAttributes['telemetry.source']) = 'journald', LogAttributes['deploycrate.process.kind'], coalesce(nullIf(LogAttributes['deploycrate.process.kind'], ''), ResourceAttributes['deploycrate.process.kind'])) AS process_kind,
+  if(coalesce(nullIf(LogAttributes['telemetry.source'], ''), ResourceAttributes['telemetry.source']) = 'journald', LogAttributes['deploycrate.process.replica'], coalesce(nullIf(LogAttributes['deploycrate.process.replica'], ''), ResourceAttributes['deploycrate.process.replica'])) AS process_replica,
   coalesce(
     nullIf(LogAttributes['url.path'], ''),
     nullIf(LogAttributes['http.target'], ''),
@@ -30,7 +30,13 @@ FROM otel_logs
 WHERE (
     ({scope:String} = 'system' AND ServiceName = {service:String} AND SeverityNumber >= 9)
     OR
-    ({scope:String} = 'environment' AND ResourceAttributes['deploycrate.environment.id'] = {environment:String})
+    ({scope:String} = 'environment' AND (
+      LogAttributes['deploycrate.environment.id'] = {environment:String}
+      OR (
+        coalesce(nullIf(LogAttributes['telemetry.source'], ''), ResourceAttributes['telemetry.source']) != 'journald'
+        AND ResourceAttributes['deploycrate.environment.id'] = {environment:String}
+      )
+    ))
   )
   AND Timestamp >= fromUnixTimestamp64Nano({since_nanoseconds:Int64})
   AND (
