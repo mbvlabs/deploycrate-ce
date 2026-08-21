@@ -11,6 +11,7 @@ var wrksConstructors = fx.Provide(
 	NewBackupScheduleSeeder,
 	NewProcessor,
 	fx.Annotate(NewMetricRollupPeriodicJob, fx.ResultTags(periodicJobsGroup)),
+	fx.Annotate(NewRequestObservationPeriodicJob, fx.ResultTags(periodicJobsGroup)),
 	fx.Annotate(NewResourceHealthPeriodicJob, fx.ResultTags(periodicJobsGroup)),
 	fx.Annotate(
 		NewSelfUpdateReconciliationPeriodicJob,
@@ -19,6 +20,7 @@ var wrksConstructors = fx.Provide(
 	NewSendTransactionalEmailWorker,
 	NewSendMarketingEmailWorker,
 	NewMetricRollupWorker,
+	NewRequestObservationWorker,
 	NewResourceHealthSweepWorker,
 	NewBackupScheduleWorker,
 	NewBackupExecuteWorker,
@@ -45,6 +47,9 @@ var WorkersModule = fx.Module(
 		return worker.Register(workers)
 	}),
 	fx.Invoke(func(workers *river.Workers, worker *MetricRollupWorker) error {
+		return worker.Register(workers)
+	}),
+	fx.Invoke(func(workers *river.Workers, worker *RequestObservationWorker) error {
 		return worker.Register(workers)
 	}),
 	fx.Invoke(func(workers *river.Workers, worker *ResourceHealthSweepWorker) error {

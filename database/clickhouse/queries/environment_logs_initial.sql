@@ -3,16 +3,16 @@ SELECT
   Body AS message,
   LogAttributes['log.iostream'] AS stream,
   LogAttributes['container.name'] AS container,
-  LogAttributes['deploycrate.deployment.id'] AS deployment,
-  LogAttributes['deploycrate.instance.id'] AS instance,
-  LogAttributes['deploycrate.release.id'] AS release,
-  LogAttributes['deploycrate.process.name'] AS process_name,
-  LogAttributes['deploycrate.process.kind'] AS process_kind,
-  LogAttributes['deploycrate.process.replica'] AS process_replica,
+  ResourceAttributes['deploycrate.deployment.id'] AS deployment,
+  ResourceAttributes['deploycrate.instance.id'] AS instance,
+  ResourceAttributes['deploycrate.release.id'] AS release,
+  ResourceAttributes['deploycrate.process.name'] AS process_name,
+  ResourceAttributes['deploycrate.process.kind'] AS process_kind,
+  ResourceAttributes['deploycrate.process.replica'] AS process_replica,
   LogAttributes['deploycrate.log.epoch'] AS epoch,
   LogAttributes['deploycrate.log.ordinal'] AS ordinal
 FROM otel_logs
-WHERE LogAttributes['deploycrate.environment.id'] = {environment:String}
+WHERE ResourceAttributes['deploycrate.environment.id'] = {environment:String}
 ORDER BY
   Timestamp DESC,
   epoch DESC,

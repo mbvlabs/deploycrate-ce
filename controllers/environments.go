@@ -30,6 +30,7 @@ type Environments struct {
 	metricsSvc         services.MetricRollupService
 	logsSvc            *services.EnvironmentLogs
 	appTelemetrySvc    *services.EnvironmentApplicationTelemetry
+	requestAnalytics   *services.RequestAnalytics
 	dnsSvc             *services.EnvironmentDNS
 	releaseCommandsSvc *services.ReleaseCommandExecution
 }
@@ -41,6 +42,7 @@ func NewEnvironments(
 	metric services.MetricRollupService,
 	logs *services.EnvironmentLogs,
 	appTelemetry *services.EnvironmentApplicationTelemetry,
+	requestAnalytics *services.RequestAnalytics,
 	dns *services.EnvironmentDNS,
 	releaseCommands *services.ReleaseCommandExecution,
 ) Environments {
@@ -51,6 +53,7 @@ func NewEnvironments(
 		metricsSvc:         metric,
 		logsSvc:            logs,
 		appTelemetrySvc:    appTelemetry,
+		requestAnalytics:   requestAnalytics,
 		dnsSvc:             dns,
 		releaseCommandsSvc: releaseCommands,
 	}
@@ -915,7 +918,6 @@ func (c Environments) showSection(etx *echo.Context, section string) error {
 					IncludeRequestOverview: telemetryView != "database",
 					IncludeDatabaseErrors:  telemetryView == "database",
 					IncludeSlowQueries:     telemetryView == "database",
-					IncludeGeography:       telemetryView != "database",
 				},
 			)
 		}
@@ -923,6 +925,29 @@ func (c Environments) showSection(etx *echo.Context, section string) error {
 			slog.WarnContext(
 				etx.Request().Context(),
 				"failed to load Environment application telemetry",
+				"environment_id", params.EnvironmentID,
+				"error", err,
+			)
+		}
+	}
+	requestTelemetry := services.RequestTelemetry{
+		Routes: []services.RouteTelemetry{}, Countries: []services.CountryTelemetry{},
+	}
+	if section == "telemetry" && telemetryView != "logs" && telemetryView != "traces" &&
+		telemetryView != "database" &&
+		inertiaPropRequested(
+			etx.Request(), "Applications/Environments/Show", "requestTelemetry",
+		) {
+		requestTelemetry, err = c.requestAnalytics.Snapshot(
+			etx.Request().Context(),
+			params.ApplicationID,
+			params.EnvironmentID,
+			telemetryRange,
+		)
+		if err != nil {
+			slog.WarnContext(
+				etx.Request().Context(),
+				"failed to load Environment request telemetry",
 				"environment_id", params.EnvironmentID,
 				"error", err,
 			)
@@ -970,6 +995,7 @@ func (c Environments) showSection(etx *echo.Context, section string) error {
 		"host": telemetry.HostUsage, "telemetryRange": telemetryRange,
 		"openTelemetryAvailable": openTelemetryAvailable,
 		"applicationTelemetry":   applicationTelemetry,
+		"requestTelemetry":       requestTelemetry,
 		"section":                section, "flash": environmentFlashProps(etx),
 	})
 }

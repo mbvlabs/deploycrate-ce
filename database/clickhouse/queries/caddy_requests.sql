@@ -4,7 +4,6 @@ WITH
     JSONExtractString(Body, 'MESSAGE'),
     Body
   ) AS access_log,
-  JSONExtractString(access_log, 'request', 'host') AS request_host,
   JSONExtract(
     access_log,
     'request',
@@ -25,14 +24,18 @@ WITH
     JSONExtractString(access_log, 'request', 'remote_ip')
   ) AS client_address
 SELECT
-  client_address,
-  count() AS request_count
+  toString(toUnixTimestamp64Nano(Timestamp)) AS timestamp_nanoseconds,
+  toString(sipHash64(toString(Timestamp), access_log)) AS fingerprint,
+  JSONExtractString(access_log, 'request', 'host') AS host,
+  JSONExtractString(access_log, 'request', 'method') AS method,
+  JSONExtractString(access_log, 'request', 'uri') AS uri,
+  toUInt16(JSONExtractUInt(access_log, 'status')) AS status_code,
+  JSONExtractFloat(access_log, 'duration') * 1000 AS duration_ms,
+  client_address
 FROM otel_logs
 WHERE startsWith(JSONExtractString(access_log, 'logger'), 'http.log.access')
-  AND lower(splitByChar(':', request_host)[1]) = lower({domain:String})
-  AND client_address != ''
-  AND Timestamp >= toDateTime({since_seconds:UInt32})
-GROUP BY client_address
-ORDER BY request_count DESC, client_address
-LIMIT 100
+  AND Timestamp >= fromUnixTimestamp64Nano({since_nanoseconds:Int64})
+  AND Timestamp < fromUnixTimestamp64Nano({before_nanoseconds:Int64})
+ORDER BY Timestamp ASC
+LIMIT {limit:UInt64}
 FORMAT JSONEachRow

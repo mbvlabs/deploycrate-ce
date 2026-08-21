@@ -87,41 +87,6 @@ type RequestOverview struct {
 	DurationSum   float64
 }
 
-type RequestAddressResult struct {
-	Address  string
-	Requests uint64
-}
-
-func (client Queries) RequestAddresses(
-	ctx context.Context,
-	domain string,
-	since time.Time,
-) ([]RequestAddressResult, error) {
-	type addressRow struct {
-		Address  string `json:"client_address"`
-		Requests uint64 `json:"request_count"`
-	}
-	rows, err := queryJSONRows[addressRow](
-		ctx,
-		client,
-		requestGeographyQuery,
-		map[string]string{
-			"domain":        domain,
-			"since_seconds": strconv.FormatInt(since.Unix(), 10),
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("query ClickHouse request addresses: %w", err)
-	}
-	result := make([]RequestAddressResult, 0, len(rows))
-	for _, row := range rows {
-		result = append(result, RequestAddressResult{
-			Address: row.Address, Requests: row.Requests,
-		})
-	}
-	return result, nil
-}
-
 type RuntimeMetric struct {
 	Metric     string
 	Value      float64

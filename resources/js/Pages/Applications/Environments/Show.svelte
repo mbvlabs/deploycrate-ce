@@ -14,6 +14,7 @@
   import LogEntry from "@/Components/TelemetryLogEntry.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import OpenTelemetry from "@/Components/Applications/Environments/OpenTelemetry.svelte";
+  import RequestInsights from "@/Components/Applications/Environments/RequestInsights.svelte";
   import TelemetryHistory from "@/Components/Applications/Environments/TelemetryHistory.svelte";
   import UsageDonut from "@/Components/System/UsageDonut.svelte";
   import BulkEnvironmentSecretsDialog from "@/Components/BulkEnvironmentSecretsDialog.svelte";
@@ -37,6 +38,7 @@
     Overview,
     ReleaseCommand,
     ReleaseCommandLog,
+    RequestTelemetry,
     Secret,
     ServingContainer,
     TelemetryRange,
@@ -53,6 +55,7 @@
     section = "overview",
     openTelemetryAvailable = false,
     applicationTelemetry,
+    requestTelemetry,
   }: {
     auth: { email: string };
     environment: Overview;
@@ -63,6 +66,7 @@
     section: EnvironmentSection;
     openTelemetryAvailable: boolean;
     applicationTelemetry: ApplicationTelemetry;
+    requestTelemetry: RequestTelemetry;
   } = $props();
   const requestedDeploymentId = new URLSearchParams(
     untrack(() => $page.url.split("?")[1] ?? ""),
@@ -907,8 +911,8 @@
       router.reload({
         only:
           telemetryMode === "opentelemetry"
-            ? ["applicationTelemetry"]
-            : ["telemetry"],
+            ? ["applicationTelemetry", "requestTelemetry"]
+            : ["telemetry", "requestTelemetry"],
         preserveScroll: true,
         preserveState: true,
         onFinish: () => (refreshing = false),
@@ -1620,6 +1624,11 @@
               </p>
             </div>
           {/if}
+          <RequestInsights
+            routes={requestTelemetry.routes}
+            countries={requestTelemetry.countries}
+            {telemetryRange}
+          />
         </section>
 
         <Collapsible.Root bind:open={workloadLogsOpen}>
@@ -1703,6 +1712,7 @@
           applicationId={environment.applicationId}
           environmentId={environment.environment.id}
           telemetry={applicationTelemetry}
+          {requestTelemetry}
           {telemetryRange}
           live={telemetryLive}
         />

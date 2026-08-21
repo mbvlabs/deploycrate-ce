@@ -256,6 +256,31 @@ func (ed environmentDomain) All(
 	return entities, nil
 }
 
+type RequestObservationIdentity struct {
+	Hostname      string    `bun:"hostname"`
+	ApplicationID uuid.UUID `bun:"application_id"`
+	EnvironmentID uuid.UUID `bun:"environment_id"`
+}
+
+func (ed environmentDomain) ActiveRequestObservationIdentities(
+	ctx context.Context,
+	db storage.Executor,
+) ([]RequestObservationIdentity, error) {
+	identities := make([]RequestObservationIdentity, 0)
+	if err := db.NewSelect().
+		TableExpr("environment_domains AS domain").
+		ColumnExpr("domain.hostname AS hostname").
+		ColumnExpr("environment.application_id AS application_id").
+		ColumnExpr("domain.environment_id AS environment_id").
+		Join("JOIN environments AS environment ON environment.id = domain.environment_id").
+		Where("domain.archived_at IS NULL").
+		Where("environment.archived_at IS NULL").
+		Scan(ctx, &identities); err != nil {
+		return nil, err
+	}
+	return identities, nil
+}
+
 type PaginatedEnvironmentDomains struct {
 	EnvironmentDomains []EnvironmentDomainEntity
 	TotalCount         int64

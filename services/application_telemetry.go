@@ -28,7 +28,6 @@ type ApplicationTelemetry struct {
 	Database              DatabaseTelemetry           `json:"database"`
 	RecentTraces          []TraceSummary              `json:"recentTraces"`
 	Routes                []RouteTelemetry            `json:"routes"`
-	Countries             []CountryTelemetry          `json:"countries"`
 	Queries               []QueryTelemetry            `json:"queries"`
 	MoreQueries           bool                        `json:"moreQueries"`
 }
@@ -117,7 +116,6 @@ func EmptyApplicationTelemetry() ApplicationTelemetry {
 		Database:     DatabaseTelemetry{History: []DatabaseTelemetryPoint{}},
 		RecentTraces: []TraceSummary{},
 		Routes:       []RouteTelemetry{},
-		Countries:    []CountryTelemetry{},
 		Queries:      []QueryTelemetry{},
 	}
 }

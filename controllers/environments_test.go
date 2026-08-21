@@ -72,6 +72,7 @@ func TestEnvironmentsControllerDestroyDeletesEnvironmentAndEmptyApplication(t *t
 		nil,
 		nil,
 		nil,
+		nil,
 	)
 	params := routes.EnvironmentParams{
 		ApplicationID: application.ID.String(),
