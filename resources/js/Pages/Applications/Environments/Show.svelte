@@ -2,6 +2,8 @@
   import BoxesIcon from "@lucide/svelte/icons/boxes";
   import ContainerIcon from "@lucide/svelte/icons/container";
   import DatabaseIcon from "@lucide/svelte/icons/database";
+  import EyeIcon from "@lucide/svelte/icons/eye";
+  import EyeOffIcon from "@lucide/svelte/icons/eye-off";
   import ServerIcon from "@lucide/svelte/icons/server";
   import { page, router } from "@inertiajs/svelte";
   import { untrack } from "svelte";
@@ -68,9 +70,10 @@
     applicationTelemetry: ApplicationTelemetry;
     requestTelemetry: RequestTelemetry;
   } = $props();
-  const requestedDeploymentId = new URLSearchParams(
-    untrack(() => $page.url.split("?")[1] ?? ""),
-  ).get("deployment") ?? "";
+  const requestedDeploymentId =
+    new URLSearchParams(untrack(() => $page.url.split("?")[1] ?? "")).get(
+      "deployment",
+    ) ?? "";
   const requestedReleaseId = untrack(
     () =>
       environment.deployments.find(
@@ -80,6 +83,7 @@
   let key = $state("");
   let value = $state("");
   let bulkSecretDialogOpen = $state(false);
+  let sensitiveInformationVisible = $state(false);
   let bulkSecretImporting = $state(false);
   let secretAddError = $state("");
   let imageReference = $state(untrack(() => environment.reference));
@@ -1027,6 +1031,15 @@
           </div>
         </div>
         <div class="flex flex-wrap gap-2">
+          <Button
+            variant="outline"
+            aria-pressed={sensitiveInformationVisible}
+            onclick={() =>
+              (sensitiveInformationVisible = !sensitiveInformationVisible)}
+          >
+            {#if sensitiveInformationVisible}<EyeOffIcon />Hide sensitive
+              information{:else}<EyeIcon />Reveal sensitive information{/if}
+          </Button>
           {#if environment.sourceType === "buildpacks"}<Button
               disabled={deploymentCreationProcessing || !deploymentRequestReady}
               aria-busy={deploymentCreationProcessing}
@@ -1247,7 +1260,9 @@
                           <span class="font-mono text-xs">
                             {instance.processKind === "web" &&
                             instance.ports?.http
-                              ? `${instance.ports.host || "127.0.0.1"}:${instance.ports.http}`
+                              ? sensitiveInformationVisible
+                                ? `${instance.ports.host || "127.0.0.1"}:${instance.ports.http}`
+                                : "••••••••"
                               : "Private"}
                           </span>
                         </div>
@@ -1376,8 +1391,14 @@
                 {#each environment.dns.records as record (`${record.type}:${record.name}`)}<div
                     class="grid gap-1 border border-border p-3 font-mono text-sm sm:grid-cols-[auto_1fr_1fr]"
                   >
-                    <span>{record.type}</span><span>{record.name}</span><span
-                      >{record.content}</span
+                    <span>{record.type}</span><span
+                      >{sensitiveInformationVisible
+                        ? record.name
+                        : "••••••••"}</span
+                    ><span
+                      >{sensitiveInformationVisible
+                        ? record.content
+                        : "••••••••"}</span
                     >
                   </div>{/each}
               </div>{/if}
@@ -1433,22 +1454,39 @@
         <Card.Content class="grid gap-5 sm:grid-cols-2 lg:grid-cols-4"
           ><DataField
             label="Repository"
-            value={environment.repository}
+            value={sensitiveInformationVisible
+              ? environment.repository
+              : "••••••••"}
           /><DataField
             label="Reference"
-            value={environment.reference}
+            value={sensitiveInformationVisible
+              ? environment.reference
+              : "••••••••"}
           /><DataField
             label="Build context"
-            value={environment.contextPath}
-          /><DataField label="Domain" value={environment.domain} /><DataField
+            value={sensitiveInformationVisible
+              ? environment.contextPath
+              : "••••••••"}
+          /><DataField
+            label="Domain"
+            value={sensitiveInformationVisible
+              ? environment.domain
+              : "••••••••"}
+          /><DataField
             label="Runtime Server targets"
-            value={environment.runtimeServers.join(", ")}
+            value={sensitiveInformationVisible
+              ? environment.runtimeServers.join(", ")
+              : "••••••••"}
           /><DataField
             label="Registry"
-            value={environment.registryName}
+            value={sensitiveInformationVisible
+              ? environment.registryName
+              : "••••••••"}
           /><DataField
             label="Registry endpoint"
-            value={environment.registryEndpoint}
+            value={sensitiveInformationVisible
+              ? environment.registryEndpoint
+              : "••••••••"}
           />{#if !environment.deployability.deployable}<DataField
               label="Missing"
               value={environment.deployability.missing.join(", ")}
@@ -1465,7 +1503,13 @@
                 sha256 digest.</Card.Description
               ></Card.Header
             ><Card.Content class="flex flex-col gap-3 sm:flex-row"
-              ><Input bind:value={imageReference} placeholder="latest" /><Button
+              ><Input
+                bind:value={imageReference}
+                type={sensitiveInformationVisible ? "text" : "password"}
+                autocomplete="off"
+                placeholder="latest"
+                aria-label="Image reference"
+              /><Button
                 disabled={deploymentCreationProcessing ||
                   !imageReference.trim() ||
                   !deploymentRequestReady}
@@ -1495,11 +1539,15 @@
               ></Card.Header
             ><Card.Content class="space-y-2 text-sm"
               ><p class="font-mono">
-                POST /api/environments/{environment.environment.id}/deployments
+                {sensitiveInformationVisible
+                  ? `POST /api/environments/${environment.environment.id}/deployments`
+                  : "POST /api/environments/••••••••/deployments"}
               </p>
               <p class="text-xs text-muted-foreground">
                 JSON: {`{"reference":"1.2.3"}`} · Token: {environment.apiTokenPrefix
-                  ? `${environment.apiTokenPrefix}...`
+                  ? sensitiveInformationVisible
+                    ? `${environment.apiTokenPrefix}...`
+                    : "••••••••"
                   : "Not configured"}
               </p>
               {#if apiTokenError}<p class="text-xs text-destructive">
