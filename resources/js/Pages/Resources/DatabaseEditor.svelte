@@ -77,8 +77,6 @@
   let running = $state(false);
   let result = $state.raw<QueryResult | null>(null);
   let queryError = $state.raw<QueryFailure | null>(null);
-  let selectedRelation = $state("");
-  let selectedHistoryID = $state("");
   let queryHistory = $state.raw<QueryHistoryEntry[]>([]);
   let queryAbortController: AbortController | undefined;
   const queryHistoryKey = $derived(
@@ -160,38 +158,28 @@
     return `"${value.replaceAll('"', '""')}"`;
   }
 
-  function chooseRelation() {
-    if (!selectedRelation) return;
-    try {
-      const [schema, relation] = JSON.parse(selectedRelation) as [
-        string,
-        string,
-      ];
-      sql = `SELECT *\nFROM ${quoteIdentifier(schema)}.${quoteIdentifier(relation)}\nLIMIT 100;`;
-      result = null;
-      queryError = null;
-    } finally {
-      selectedRelation = "";
-    }
+  function chooseRelation(event: Event) {
+    const select = event.currentTarget as HTMLSelectElement;
+    if (!select.value) return;
+    const [schema, relation] = JSON.parse(select.value) as [string, string];
+    sql = `SELECT *\nFROM ${quoteIdentifier(schema)}.${quoteIdentifier(relation)}\nLIMIT 100;`;
+    result = null;
+    queryError = null;
   }
 
-  function chooseHistoryQuery() {
-    const entry = queryHistory.find(
-      (candidate) => candidate.id === selectedHistoryID,
-    );
-    if (entry) {
-      sql = entry.sql;
-      result = null;
-      queryError = null;
-    }
-    selectedHistoryID = "";
+  function chooseHistoryQuery(entry: QueryHistoryEntry) {
+    sql = entry.sql;
+    result = null;
+    queryError = null;
   }
 
-  function historyLabel(entry: QueryHistoryEntry) {
+  function historyPreview(entry: QueryHistoryEntry) {
     const statement = entry.sql.replaceAll(/\s+/g, " ").trim();
-    const preview =
-      statement.length > 72 ? `${statement.slice(0, 72)}…` : statement;
-    return `${new Date(entry.executedAt).toLocaleString()} — ${preview}`;
+    return statement.length > 90 ? `${statement.slice(0, 90)}…` : statement;
+  }
+
+  function historyTimestamp(entry: QueryHistoryEntry) {
+    return new Date(entry.executedAt).toLocaleString();
   }
 
   function rememberQuery(statement: string) {
@@ -321,67 +309,89 @@
             Run one statement with Ctrl/⌘ + Enter.
           </Card.Description>
         </Card.Header>
-        <Card.Content class="space-y-4">
-          <div class="grid gap-3 lg:grid-cols-2">
-            <label class="grid gap-1.5 text-xs font-medium">
-              Schema relation
-              <NativeSelect.Root
-                bind:value={selectedRelation}
-                onchange={chooseRelation}
-                class="w-full"
-                aria-label="Choose a schema relation"
-              >
-                <NativeSelect.Option value=""
-                  >Choose a table or view…</NativeSelect.Option
+        <Card.Content>
+          <div class="grid min-w-0 gap-4 lg:grid-cols-[24rem_minmax(0,1fr)]">
+            <div class="min-w-0 space-y-4 lg:order-2">
+              <label class="grid gap-1.5 text-xs font-medium">
+                Schema relation
+                <NativeSelect.Root
+                  onchange={chooseRelation}
+                  class="w-full"
+                  aria-label="Choose a schema relation"
                 >
-                {#each schemas as schema (schema.name)}
-                  <NativeSelect.OptGroup label={schema.name}>
-                    {#each schema.relations as relation (`${schema.name}.${relation.name}`)}
-                      <NativeSelect.Option
-                        value={JSON.stringify([schema.name, relation.name])}
+                  <NativeSelect.Option value=""
+                    >Choose a table or view…</NativeSelect.Option
+                  >
+                  {#each schemas as schema (schema.name)}
+                    <NativeSelect.OptGroup label={schema.name}>
+                      {#each schema.relations as relation (`${schema.name}.${relation.name}`)}
+                        <NativeSelect.Option
+                          value={JSON.stringify([schema.name, relation.name])}
+                        >
+                          {relation.name} · {relation.kind} · {relation.columns
+                            .length} columns
+                        </NativeSelect.Option>
+                      {/each}
+                    </NativeSelect.OptGroup>
+                  {/each}
+                </NativeSelect.Root>
+              </label>
+              {#if catalog.truncated}
+                <p class="text-xs text-muted-foreground">
+                  The relation picker is limited to the first 5,000 visible
+                  columns.
+                </p>
+              {/if}
+              <Textarea
+                bind:value={sql}
+                onkeydown={handleEditorKeydown}
+                spellcheck="false"
+                class="min-h-96 resize-y font-mono text-xs leading-5"
+                aria-label="SQL statement"
+              />
+            </div>
+
+            <aside
+              class="min-w-0 border-t border-border pt-4 lg:order-1 lg:flex lg:min-h-0 lg:flex-col lg:border-t-0 lg:border-r lg:pt-0 lg:pr-4"
+              aria-labelledby="recent-queries-heading"
+            >
+              <h3 id="recent-queries-heading" class="text-xs font-medium">
+                Recent queries
+              </h3>
+              {#if queryHistory.length === 0}
+                <p class="mt-2 text-xs leading-5 text-muted-foreground">
+                  Queries you run will be saved in this browser.
+                </p>
+              {:else}
+                <ol
+                  class="mt-2 max-h-96 min-h-0 space-y-1 overflow-y-auto pr-1 lg:max-h-none lg:flex-1"
+                >
+                  {#each queryHistory as entry (entry.id)}
+                    <li>
+                      <button
+                        type="button"
+                        class="w-full border border-transparent px-2 py-2 text-left transition-colors hover:border-border hover:bg-muted/50 focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 focus-visible:outline-none"
+                        title={entry.sql}
+                        onclick={() => chooseHistoryQuery(entry)}
                       >
-                        {relation.name} · {relation.kind} · {relation.columns
-                          .length} columns
-                      </NativeSelect.Option>
-                    {/each}
-                  </NativeSelect.OptGroup>
-                {/each}
-              </NativeSelect.Root>
-            </label>
-            <label class="grid gap-1.5 text-xs font-medium">
-              Recent queries
-              <NativeSelect.Root
-                bind:value={selectedHistoryID}
-                onchange={chooseHistoryQuery}
-                class="w-full"
-                disabled={queryHistory.length === 0}
-                aria-label="Choose a recent query"
-              >
-                <NativeSelect.Option value="">
-                  {queryHistory.length === 0
-                    ? "No queries saved in this browser"
-                    : "Choose a recent query…"}
-                </NativeSelect.Option>
-                {#each queryHistory as entry (entry.id)}
-                  <NativeSelect.Option value={entry.id}>
-                    {historyLabel(entry)}
-                  </NativeSelect.Option>
-                {/each}
-              </NativeSelect.Root>
-            </label>
+                        <span
+                          class="block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs"
+                        >
+                          {historyPreview(entry)}
+                        </span>
+                        <time
+                          class="mt-1 block text-[10px] text-muted-foreground"
+                          datetime={entry.executedAt}
+                        >
+                          {historyTimestamp(entry)}
+                        </time>
+                      </button>
+                    </li>
+                  {/each}
+                </ol>
+              {/if}
+            </aside>
           </div>
-          {#if catalog.truncated}
-            <p class="text-xs text-muted-foreground">
-              The relation picker is limited to the first 5,000 visible columns.
-            </p>
-          {/if}
-          <Textarea
-            bind:value={sql}
-            onkeydown={handleEditorKeydown}
-            spellcheck="false"
-            class="min-h-48 resize-y font-mono text-xs leading-5"
-            aria-label="SQL statement"
-          />
         </Card.Content>
       </Card.Root>
 
