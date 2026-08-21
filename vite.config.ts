@@ -17,6 +17,9 @@ export default defineConfig({
     outDir: 'assets/dist',
     rollupOptions: {
       input: 'resources/js/app.ts',
+      output: {
+        assetFileNames: '[name]-v2-[hash][extname]',
+      },
     },
   },
   server: {
