@@ -13,18 +13,6 @@ import (
 	"github.com/uptrace/bun"
 )
 
-type EnvironmentListItem struct {
-	ID                uuid.UUID `json:"id" bun:"id"`
-	Name              string    `json:"name" bun:"name"`
-	Kind              string    `json:"kind" bun:"kind"`
-	ApplicationID     uuid.UUID `json:"applicationId" bun:"application_id"`
-	ApplicationName   string    `json:"applicationName" bun:"application_name"`
-	SetupComplete     bool      `json:"setupComplete" bun:"setup_complete"`
-	Domain            string    `json:"domain" bun:"domain"`
-	Repository        string    `json:"repository" bun:"repository"`
-	Reference         string    `json:"reference" bun:"reference"`
-	LatestBuildStatus string    `json:"latestBuildStatus" bun:"latest_build_status"`
-}
 type EnvironmentOverviewSource struct {
 	ApplicationName  string `bun:"application_name"`
 	SourceType       string `bun:"source_type"`
@@ -122,18 +110,6 @@ type EnvironmentOverviewRows struct {
 	Deployments     []EnvironmentDeploymentActivity
 	Instances       []EnvironmentInstanceActivity
 	ReleaseCommands []EnvironmentReleaseCommandActivity
-}
-
-func (environment) ListCatalog(ctx context.Context, db storage.Executor) ([]EnvironmentListItem, error) {
-	rows := make([]EnvironmentListItem, 0)
-	err := db.NewSelect().TableExpr("environments AS environment").ColumnExpr("environment.id, environment.name, environment.kind").ColumnExpr("application.id AS application_id, application.name AS application_name").
-		ColumnExpr(`EXISTS (SELECT 1 FROM changes AS setup_change JOIN change_state_revisions AS setup_result ON setup_result.change_id = setup_change.id AND setup_result.role = 'result' JOIN environment_state_revisions AS setup_revision ON setup_revision.id = setup_result.environment_state_revision_id AND setup_revision.environment_id = environment.id WHERE setup_change.environment_id = environment.id AND setup_change.kind = 'environment_setup' AND setup_change.committed_at IS NOT NULL AND setup_change.cancelled_at IS NULL) AS setup_complete`).
-		ColumnExpr("COALESCE((SELECT hostname FROM environment_domains WHERE environment_id = environment.id AND is_primary AND archived_at IS NULL ORDER BY created_at DESC LIMIT 1), '') AS domain").
-		ColumnExpr("COALESCE((SELECT repository FROM environment_sources WHERE environment_id = environment.id AND archived_at IS NULL ORDER BY created_at DESC LIMIT 1), '') AS repository").
-		ColumnExpr("COALESCE((SELECT reference FROM environment_sources WHERE environment_id = environment.id AND archived_at IS NULL ORDER BY created_at DESC LIMIT 1), '') AS reference").
-		ColumnExpr("COALESCE((SELECT status FROM builds WHERE environment_id = environment.id ORDER BY created_at DESC LIMIT 1), '') AS latest_build_status").
-		Join("JOIN applications AS application ON application.id = environment.application_id AND application.archived_at IS NULL").Where("environment.archived_at IS NULL").Where("application.slug <> ?", SystemApplicationSlug).OrderExpr("application.name, environment.name").Scan(ctx, &rows)
-	return rows, err
 }
 
 func (environment) OverviewCatalog(ctx context.Context, db storage.Executor, applicationID, environmentID uuid.UUID, includeRuntime bool) (EnvironmentOverviewRows, error) {

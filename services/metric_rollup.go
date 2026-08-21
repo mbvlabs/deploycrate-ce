@@ -573,6 +573,48 @@ func (service MetricRollupService) HostTelemetry(
 	)
 }
 
+func (service MetricRollupService) FleetTelemetry(
+	ctx context.Context,
+	servers []string,
+) (SystemTelemetry, error) {
+	result := EmptySystemTelemetry()
+	if len(servers) == 0 {
+		return result, nil
+	}
+
+	telemetry := make([]SystemTelemetry, len(servers))
+	errs := make([]error, len(servers))
+	group := sync.WaitGroup{}
+	for index, server := range servers {
+		group.Go(func() {
+			telemetry[index], errs[index] = service.HostTelemetry(ctx, server)
+		})
+	}
+	group.Wait()
+
+	for index, host := range telemetry {
+		if errs[index] != nil || !host.Available {
+			return result, errors.Join(errs...)
+		}
+		result.CPUCoresUsed += host.CPUCoresUsed
+		result.CPUCoresTotal += host.CPUCoresTotal
+		result.Memory.Used += host.Memory.Used
+		result.Memory.Free += host.Memory.Free
+		result.Storage.Used += host.Storage.Used
+		result.Storage.Free += host.Storage.Free
+		if result.ObservedAt.IsZero() || host.ObservedAt.Before(result.ObservedAt) {
+			result.ObservedAt = host.ObservedAt
+		}
+	}
+	if result.CPUCoresTotal <= 0 {
+		return EmptySystemTelemetry(), errors.Join(errs...)
+	}
+	cpuPercent := result.CPUCoresUsed / result.CPUCoresTotal * 100
+	result.CPU = SystemResourceUsage{Used: cpuPercent, Free: 100 - cpuPercent}
+	result.Available = true
+	return result, errors.Join(errs...)
+}
+
 func (service MetricRollupService) hostTelemetry(
 	ctx context.Context,
 	server string,

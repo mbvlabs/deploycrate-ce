@@ -11,7 +11,7 @@ import (
 const SelfUpdateQueue = "system_updates"
 
 type SelfUpdateArgs struct {
-	ActorID uuid.UUID `json:"actor_id"`
+	DeploymentID uuid.UUID `json:"deployment_id"`
 }
 
 func (SelfUpdateArgs) Kind() string { return "self_update" }

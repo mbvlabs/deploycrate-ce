@@ -19,10 +19,11 @@ import (
 )
 
 type Pages struct {
-	db         storage.Pool
-	insertOnly queue.InsertOnly
-	dashboard  *services.Dashboard
-	metric     services.MetricRollupService
+	db           storage.Pool
+	insertOnly   queue.InsertOnly
+	dashboard    *services.Dashboard
+	metric       services.MetricRollupService
+	appTelemetry *services.SystemApplicationTelemetry
 }
 
 func NewPages(
@@ -30,8 +31,12 @@ func NewPages(
 	insertOnly queue.InsertOnly,
 	dashboard *services.Dashboard,
 	metric services.MetricRollupService,
+	appTelemetry *services.SystemApplicationTelemetry,
 ) Pages {
-	return Pages{db: db, insertOnly: insertOnly, dashboard: dashboard, metric: metric}
+	return Pages{
+		db: db, insertOnly: insertOnly, dashboard: dashboard,
+		metric: metric, appTelemetry: appTelemetry,
+	}
 }
 
 func (p Pages) RegisterRoutes(r *router.Router) error {
@@ -90,22 +95,35 @@ func (p Pages) Home(etx *echo.Context) error {
 		slog.ErrorContext(ctx, "failed to load dashboard", "error", err)
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
-	overview, err := models.Application.FindSystemOverview(ctx, p.db.Executor())
+	servers, err := models.Server.ActiveConfigured(ctx, p.db.Executor())
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to load system server for dashboard telemetry", "error", err)
+		slog.ErrorContext(ctx, "failed to load servers for dashboard telemetry", "error", err)
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
-	telemetry, err := p.metric.HostTelemetry(ctx, overview.ServerID)
+	serverIDs := make([]string, 0, len(servers))
+	for _, server := range servers {
+		serverIDs = append(serverIDs, server.ID.String())
+	}
+	telemetry, err := p.metric.FleetTelemetry(ctx, serverIDs)
 	if err != nil {
-		slog.WarnContext(ctx, "failed to load dashboard host telemetry", "error", err)
+		slog.WarnContext(ctx, "failed to load dashboard fleet telemetry", "error", err)
+	}
+	applicationTelemetry, err := p.appTelemetry.Snapshot(
+		ctx,
+		services.TelemetryRangeSevenDays,
+	)
+	if err != nil {
+		slog.WarnContext(ctx, "failed to load dashboard application telemetry", "error", err)
+		applicationTelemetry = services.EmptyApplicationTelemetry()
 	}
 
 	return inertia.Page(etx, "Home", inertia.Props{
 		"auth": inertia.Props{
 			"email": appSession.Email,
 		},
-		"dashboard": dashboard,
-		"telemetry": telemetry,
+		"dashboard":            dashboard,
+		"telemetry":            telemetry,
+		"applicationTelemetry": applicationTelemetry,
 	})
 }
 

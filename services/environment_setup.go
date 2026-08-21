@@ -271,12 +271,6 @@ type EnvironmentOverview struct {
 	LatestSuccessfulReleaseID    *uuid.UUID                          `json:"latestSuccessfulReleaseId,omitempty"`
 }
 
-type EnvironmentListItem = models.EnvironmentListItem
-
-func (service *EnvironmentSetup) List(ctx context.Context) ([]EnvironmentListItem, error) {
-	return models.Environment.ListCatalog(ctx, service.db.Executor())
-}
-
 type EnvironmentResourceActivity = models.EnvironmentResourceActivity
 
 type EnvironmentVariableActivity struct {

@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -368,8 +367,8 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		"running",
 		"health_check",
 		fmt.Sprintf(
-			"Waiting for candidate web workload to become healthy at 0.0.0.0:%d%s",
-			webCandidate.HostPort,
+			"Waiting for candidate web workload to become healthy at http://%s%s",
+			net.JoinHostPort("0.0.0.0", strconv.Itoa(int(webCandidate.HostPort))),
 			webProcess.HealthPath,
 		),
 		nil,
@@ -379,7 +378,6 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	healthStarted := time.Now()
 	if err := waitForWorkloadHealth(
 		ctx,
-		webCandidate.HostAddress,
 		webCandidate.HostPort,
 		webProcess.HealthPath,
 	); err != nil {
@@ -461,7 +459,6 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	)
 	if err := waitForWorkloadHealth(
 		ctx,
-		webCandidate.HostAddress,
 		webCandidate.HostPort,
 		webProcess.HealthPath,
 	); err != nil {
@@ -1345,64 +1342,25 @@ func validateCandidateOwnership(
 	return nil
 }
 
-func waitForWorkloadHealth(ctx context.Context, host string, port int32, healthPath string) error {
-	deadline := time.NewTimer(90 * time.Second)
+func waitForWorkloadHealth(ctx context.Context, port int32, healthPath string) error {
+	const timeout = 90 * time.Second
+	address := net.JoinHostPort("0.0.0.0", strconv.Itoa(int(port)))
+	endpoint := "tcp://" + address
+	if healthPath != "" {
+		endpoint = "http://" + address + healthPath
+	}
+	deadline := time.NewTimer(timeout)
 	defer deadline.Stop()
 
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
-	check := func() bool {
-		address := net.JoinHostPort("0.0.0.0", strconv.Itoa(int(port)))
-
-		slog.InfoContext(
-			ctx,
-			"waitForWorkloadHealth",
-			"address",
-			address,
-			"health_path",
-			healthPath,
-			"port",
-			port,
-		)
-
-		if healthPath == "" {
-			connection, err := net.DialTimeout("tcp", address, time.Second)
-			slog.InfoContext(ctx, "healthPath empty", "connection", connection)
-			if err == nil {
-				_ = connection.Close()
-				return true
-			}
-
-			return false
-		}
-
-		request, err := http.NewRequestWithContext(
-			ctx,
-			http.MethodGet,
-			"http://"+address+healthPath,
-			nil,
-		)
-		if err != nil {
-			slog.InfoContext(ctx, "healthPath not empty | NewRequest", "err", err)
-			return false
-		}
-
-		response, err := telemetry.NewHTTPClient(2 * time.Second).Do(request)
-		if err != nil {
-			slog.InfoContext(ctx, "healthPath not empty | NewHTTPClient", "err", err)
-			return false
-		}
-
-		slog.InfoContext(ctx, "healthPath not empty", "status_code", response.StatusCode)
-
-		_ = response.Body.Close()
-
-		return response.StatusCode >= 200 && response.StatusCode < 400
-	}
-
+	client := telemetry.NewHTTPClient(2 * time.Second)
+	lastResult := "no probe completed"
 	for {
-		if check() {
+		healthy, result := probeWorkloadHealth(ctx, client, address, healthPath)
+		lastResult = result
+		if healthy {
 			return nil
 		}
 
@@ -1410,10 +1368,52 @@ func waitForWorkloadHealth(ctx context.Context, host string, port int32, healthP
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline.C:
-			return errors.New("candidate workload health check timed out")
+			return fmt.Errorf(
+				"candidate workload health check timed out after %s for %s; last probe: %s",
+				timeout,
+				endpoint,
+				lastResult,
+			)
 		case <-ticker.C:
 		}
 	}
+}
+
+func probeWorkloadHealth(
+	ctx context.Context,
+	client *http.Client,
+	address string,
+	healthPath string,
+) (bool, string) {
+	if healthPath == "" {
+		probeCtx, cancel := context.WithTimeout(ctx, time.Second)
+		defer cancel()
+		connection, err := (&net.Dialer{}).DialContext(probeCtx, "tcp", address)
+		if err != nil {
+			return false, "TCP connection failed: " + err.Error()
+		}
+		_ = connection.Close()
+		return true, "TCP connection succeeded"
+	}
+
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		"http://"+address+healthPath,
+		nil,
+	)
+	if err != nil {
+		return false, "HTTP request could not be created: " + err.Error()
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return false, "HTTP request failed: " + err.Error()
+	}
+	_ = response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusBadRequest {
+		return false, "HTTP probe returned " + response.Status
+	}
+	return true, "HTTP probe returned " + response.Status
 }
 
 func (service *DeploymentExecution) prepareCaddy(

@@ -538,6 +538,7 @@ type SystemUpdateCheckpoint struct {
 
 type UnresolvedSystemUpdate struct {
 	DeploymentID         uuid.UUID       `bun:"deployment_id"`
+	DeploymentStatus     string          `bun:"deployment_status"`
 	ChangeID             uuid.UUID       `bun:"change_id"`
 	ReleaseID            uuid.UUID       `bun:"release_id"`
 	Version              string          `bun:"version"`
@@ -565,6 +566,7 @@ func (d deployment) FindUnresolvedSystemUpdate(
 	err := db.NewSelect().
 		TableExpr("deployments AS deployment").
 		ColumnExpr("deployment.id AS deployment_id").
+		ColumnExpr("deployment.status AS deployment_status").
 		ColumnExpr("deployment.change_id AS change_id").
 		ColumnExpr("deployment.release_id AS release_id").
 		ColumnExpr("COALESCE(release.version, '') AS version").

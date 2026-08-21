@@ -53,6 +53,7 @@
     resourceNavigation = null,
     applicationNavigation = null,
     environmentNavigation = null,
+    fullWidth = false,
   }: {
     children: Snippet;
     email: string;
@@ -60,13 +61,13 @@
     resourceNavigation?: ResourceNavigation | null;
     applicationNavigation?: ApplicationNavigation | null;
     environmentNavigation?: EnvironmentNavigation | null;
+    fullWidth?: boolean;
   } = $props();
   const appVersion = $derived(
     version ?? String($page.props.appVersion ?? "dev"),
   );
   const environmentPage = $derived(
-    $page.url.startsWith(routes.environments()) ||
-      /^\/applications\/[^/]+\/environments(?:\/|$)/.test($page.url),
+    /^\/applications\/[^/]+\/environments(?:\/|$)/.test($page.url),
   );
   const contextualResourceRoutes = $derived.by(
     (): Record<string, string> | null => {
@@ -249,7 +250,7 @@
     if (environmentPage)
       return [
         { label: "Applications", href: routes.applications() },
-        { label: path === routes.environments() ? "Environments" : leaf },
+        { label: leaf },
       ];
     if (path.startsWith(routes.applications()))
       return [
@@ -1031,7 +1032,7 @@
     </header>
 
     <div class="flex-1 p-4 sm:p-6 lg:p-8">
-      <div class="mx-auto w-full max-w-6xl">
+      <div class={fullWidth ? "w-full" : "mx-auto w-full max-w-6xl"}>
         {@render children()}
       </div>
     </div>

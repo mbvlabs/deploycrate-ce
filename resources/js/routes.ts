@@ -64,7 +64,6 @@ export const routes = {
   environmentTelemetryQueries: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/telemetry/queries`,
   environmentTelemetryTrace: (applicationID: string, environmentID: string, traceID: string) => `/applications/${applicationID}/environments/${environmentID}/telemetry/traces/${traceID}`,
   environmentUpdate: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}`,
-  environments: () => '/environments',
   gitHubAppCallback: () => '/connections/github/app/callback',
   gitHubAppDestroy: () => '/connections/github/app',
   gitHubAppSetup: () => '/connections/github/app/setup',

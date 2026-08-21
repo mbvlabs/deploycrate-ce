@@ -19,6 +19,7 @@
   import UsageDonut from "@/Components/System/UsageDonut.svelte";
   import BulkEnvironmentSecretsDialog from "@/Components/BulkEnvironmentSecretsDialog.svelte";
   import { Input } from "@/Components/ui/input";
+  import * as NativeSelect from "@/Components/ui/native-select";
   import { Spinner } from "@/Components/ui/spinner";
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
   import { cn } from "@/lib/utils";
@@ -67,6 +68,15 @@
     applicationTelemetry: ApplicationTelemetry;
     requestTelemetry: RequestTelemetry;
   } = $props();
+  const requestedDeploymentId = new URLSearchParams(
+    untrack(() => $page.url.split("?")[1] ?? ""),
+  ).get("deployment") ?? "";
+  const requestedReleaseId = untrack(
+    () =>
+      environment.deployments.find(
+        (deployment) => deployment.id === requestedDeploymentId,
+      )?.releaseId ?? "",
+  );
   let key = $state("");
   let value = $state("");
   let bulkSecretDialogOpen = $state(false);
@@ -88,8 +98,12 @@
   let deploymentStopping = $state("");
   let deploymentStopError = $state("");
   let expandedBuildId = $state("");
-  let expandedReleaseId = $state("");
-  let selectedDeploymentId = $state("");
+  let buildSearch = $state("");
+  let buildStatus = $state("all");
+  let expandedReleaseId = $state(requestedReleaseId);
+  let releaseSearch = $state("");
+  let releaseStatusFilter = $state("all");
+  let selectedDeploymentId = $state(requestedDeploymentId);
   let autoSelectedForRelease = $state("");
   let environmentLogsPaused = $state(false);
   let followingEnvironmentLogs = $state(true);
@@ -247,6 +261,36 @@
       builds.find((build) => build.status === "pending")?.id ??
       "",
   );
+  const activeBuildCount = $derived(
+    builds.filter((build) => ["pending", "running"].includes(build.status))
+      .length,
+  );
+  const filteredBuilds = $derived.by(() => {
+    const query = buildSearch.trim().toLowerCase();
+    return builds.filter((build) => {
+      const matchesStatus =
+        buildStatus === "all" ||
+        (buildStatus === "active"
+          ? ["pending", "running"].includes(build.status)
+          : build.status === buildStatus);
+      const matchesQuery =
+        !query ||
+        [
+          build.id,
+          build.sourceRevision,
+          build.registryEndpoint,
+          build.currentStep,
+          build.status,
+        ].some((value) => value.toLowerCase().includes(query));
+      return matchesStatus && matchesQuery;
+    });
+  });
+  const selectedBuild = $derived(
+    builds.find((build) => build.id === expandedBuildId) ?? null,
+  );
+  const selectedBuildLogs = $derived(
+    expandedBuildId ? (buildStream.logs[expandedBuildId] ?? []) : [],
+  );
   const short = (value: string) => (value ? value.slice(0, 12) : "Unavailable");
   const formatBytes = (value: number) => {
     if (!Number.isFinite(value) || value < 0) return "Unavailable";
@@ -299,13 +343,36 @@
     deployments.filter((deployment) => deployment.releaseId === releaseId);
   const releaseStatus = (releaseId: string) => {
     const own = deploymentsFor(releaseId);
-    if (own.some(deploymentIsActive))
-      return "running";
+    if (own.some(deploymentIsActive)) return "running";
     if (own.some((d) => d.status === "succeeded")) return "succeeded";
     if (own.some((d) => d.status === "failed")) return "failed";
     if (own.some((d) => d.status === "cancelled")) return "cancelled";
     return "";
   };
+  const activeReleaseCount = $derived(
+    releases.filter((release) => releaseStatus(release.id) === "running")
+      .length,
+  );
+  const filteredReleases = $derived.by(() => {
+    const query = releaseSearch.trim().toLowerCase();
+    return releases.filter((release) => {
+      const status = releaseStatus(release.id);
+      const matchesStatus =
+        releaseStatusFilter === "all" ||
+        (releaseStatusFilter === "active"
+          ? status === "running"
+          : status === releaseStatusFilter);
+      const matchesQuery =
+        !query ||
+        [release.id, release.sourceRevision, release.artifactReference].some(
+          (value) => value.toLowerCase().includes(query),
+        );
+      return matchesStatus && matchesQuery;
+    });
+  });
+  const selectedRelease = $derived(
+    releases.find((release) => release.id === expandedReleaseId) ?? null,
+  );
   const releaseCommandForRelease = $derived(
     environment.releaseCommands.find(
       (execution) => execution.releaseId === expandedReleaseId,
@@ -752,11 +819,8 @@
       },
     );
   }
-  async function toggleBuildLogs(buildId: string) {
-    if (expandedBuildId === buildId) {
-      expandedBuildId = "";
-      return;
-    }
+  async function selectBuild(buildId: string) {
+    if (!buildId) return;
     expandedBuildId = buildId;
     if (!(buildId in buildStream.logs)) {
       try {
@@ -802,8 +866,10 @@
   $effect(() => {
     if (section !== "builds") return;
     const buildId = activeBuildId;
+    const preferredBuildId = buildId || builds[0]?.id || "";
+    if (!expandedBuildId && preferredBuildId)
+      void selectBuild(preferredBuildId);
     if (!buildId) return;
-    if (!expandedBuildId) expandedBuildId = buildId;
     return buildStream.poll(buildId);
   });
 
@@ -894,7 +960,9 @@
     if (autoSelectedForRelease === releaseId) return;
     autoSelectedForRelease = releaseId;
     const preferred =
-      own.find(deploymentIsActive) ?? own[0];
+      own.find((deployment) => deployment.id === selectedDeploymentId) ??
+      own.find(deploymentIsActive) ??
+      own[0];
     selectedDeploymentId = preferred.id;
   });
 
@@ -934,25 +1002,30 @@
     id: environment.environment.id,
     name: environment.environment.name,
   }}
+  fullWidth={section === "builds" || section === "releases"}
 >
   <div class="space-y-8">
-    <header
-      class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"
-    >
-      <div>
-        <p
-          class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary"
-        >
-          {environment.applicationName} · {environment.environment.kind}
-        </p>
-        <div class="mt-3 flex flex-wrap items-center gap-3">
-          <h1 class="text-3xl font-semibold">{environment.environment.name}</h1>
-          <StatusBadge
-            status={environment.deployability.deployable ? "ready" : "blocked"}
-          />
+    {#if section === "overview"}
+      <header
+        class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between"
+      >
+        <div>
+          <p
+            class="text-[10px] font-medium uppercase tracking-[0.24em] text-primary"
+          >
+            {environment.applicationName} · {environment.environment.kind}
+          </p>
+          <div class="mt-3 flex flex-wrap items-center gap-3">
+            <h1 class="text-3xl font-semibold">
+              {environment.environment.name}
+            </h1>
+            <StatusBadge
+              status={environment.deployability.deployable
+                ? "ready"
+                : "blocked"}
+            />
+          </div>
         </div>
-      </div>
-      {#if section === "overview"}
         <div class="flex flex-wrap gap-2">
           {#if environment.sourceType === "buildpacks"}<Button
               disabled={deploymentCreationProcessing || !deploymentRequestReady}
@@ -961,10 +1034,7 @@
               >{#if deploymentCreationProcessing}<Spinner />{/if}Build & deploy</Button
             >{/if}
         </div>
-      {/if}
-    </header>
-
-    {#if section === "overview"}
+      </header>
       <Card.Root
         class="gap-0 border-primary/25 bg-primary/[0.03] py-0"
         aria-label="Environment status"
@@ -1584,7 +1654,8 @@
               >
               <Card.Title>Workload logs</Card.Title>
               <Card.Description
-                >Live stdout and stderr from this Environment's containers.
+                >Live process output from this Environment's containers.
+                stdout/stderr identifies the process stream, not severity.
                 ClickHouse retains logs for seven days.</Card.Description
               >
             </Card.Header>
@@ -1604,7 +1675,7 @@
                     <LogEntry
                       occurredAt={log.occurredAt}
                       message={log.message}
-                      status={log.stream === "stderr" ? "warning" : "info"}
+                      status="info"
                       statusLabel={log.stream || "stdout"}
                       source={`${log.processKind || "process"} · ${log.processName || "unknown"}${log.processReplica ? ` · ${log.processReplica}` : ""}`}
                       metadata={[
@@ -1736,422 +1807,581 @@
     {/if}
 
     {#if section === "builds"}
-      <div class="grid gap-8 xl:grid-cols-5">
-        <Card.Root class="min-w-0 xl:col-span-2">
-          <Card.Header
-            ><Card.Title>Builds</Card.Title><Card.Description
-              >Select a build to view its output.</Card.Description
-            ></Card.Header
+      <Card.Root class="min-w-0">
+        <Card.Header class="gap-4 border-b border-border">
+          <div
+            class="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"
           >
-          <Card.Content class="space-y-2">
-            {#if buildStream.connectionError}<p class="text-xs text-warning">
-                {buildStream.connectionError}
-              </p>{/if}
-            {#each builds as build (build.id)}
-              <div
-                class={cn(
-                  "border text-sm",
-                  expandedBuildId === build.id
-                    ? "border-primary/40 bg-primary/[0.04]"
-                    : "border-border",
-                )}
+            <div>
+              <Card.Title>Build output</Card.Title>
+              <Card.Description>
+                Inspect build history and follow active output in real time.
+              </Card.Description>
+            </div>
+            <NativeSelect.Root
+              class="w-full lg:w-[24rem]"
+              value={expandedBuildId}
+              aria-label="Select a build"
+              onchange={(event) => void selectBuild(event.currentTarget.value)}
+            >
+              <NativeSelect.Option value="" disabled
+                >Select a build</NativeSelect.Option
               >
-                <div class="flex items-start gap-2 p-3">
+              {#each builds as build (build.id)}
+                <NativeSelect.Option value={build.id}>
+                  {short(build.sourceRevision)} · {build.status} · {stamp(
+                    build.createdAt,
+                  )}
+                </NativeSelect.Option>
+              {/each}
+            </NativeSelect.Root>
+          </div>
+          <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_12rem]">
+            <Input
+              bind:value={buildSearch}
+              placeholder="Search ID, commit, step, or registry"
+              aria-label="Search builds"
+            />
+            <NativeSelect.Root
+              class="w-full"
+              bind:value={buildStatus}
+              aria-label="Filter builds by status"
+            >
+              <NativeSelect.Option value="all"
+                >All builds ({builds.length})</NativeSelect.Option
+              >
+              <NativeSelect.Option value="active"
+                >Active ({activeBuildCount})</NativeSelect.Option
+              >
+              <NativeSelect.Option value="succeeded"
+                >Succeeded</NativeSelect.Option
+              >
+              <NativeSelect.Option value="failed">Failed</NativeSelect.Option>
+              <NativeSelect.Option value="cancelled"
+                >Cancelled</NativeSelect.Option
+              >
+            </NativeSelect.Root>
+          </div>
+        </Card.Header>
+
+        <Card.Content class="min-h-0 p-0">
+          {#if buildStream.connectionError}<p
+              class="border-b border-warning/30 bg-warning/5 px-4 py-2 text-xs text-warning"
+            >
+              {buildStream.connectionError}
+            </p>{/if}
+          <div class="grid min-h-0 xl:grid-cols-[19rem_minmax(0,1fr)]">
+            <aside
+              class="max-h-80 overflow-auto border-b border-border xl:h-[calc(100vh-18rem)] xl:max-h-none xl:border-r xl:border-b-0"
+              aria-label="Build history"
+            >
+              {#each filteredBuilds as build (build.id)}
+                <div
+                  class={cn(
+                    "border-b border-border border-l-2 p-3 text-sm",
+                    expandedBuildId === build.id
+                      ? "border-l-primary"
+                      : "border-l-transparent",
+                  )}
+                >
+                  <div class="flex items-start gap-2">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      class="h-auto min-w-0 flex-1 flex-col items-stretch p-0 text-left whitespace-normal hover:bg-transparent"
+                      onclick={() => void selectBuild(build.id)}
+                      aria-current={expandedBuildId === build.id
+                        ? "true"
+                        : undefined}
+                    >
+                      <div class="flex justify-between gap-3">
+                        <span class="font-mono"
+                          >{short(build.sourceRevision)}</span
+                        >
+                        <StatusBadge status={build.status} />
+                      </div>
+                      <p
+                        class="mt-1 font-mono text-[11px] text-muted-foreground"
+                      >
+                        {short(build.id)} · {stamp(build.createdAt)}
+                      </p>
+                      <p class="mt-1 truncate text-xs text-muted-foreground">
+                        {stepLabel(build.currentStep)}
+                      </p>
+                    </Button>
+                    <div class="flex shrink-0 flex-col gap-1">
+                      {#if build.status === "pending" || (build.status === "running" && ["scheduled", "retryable", "pending"].includes(build.jobState))}<Button
+                          size="xs"
+                          disabled={Boolean(activeBuildAction)}
+                          onclick={() => askForBuildAction("start", build)}
+                          >{#if activeBuildAction === `start:${build.id}`}<Spinner
+                            />{/if}Run</Button
+                        >{/if}
+                      {#if build.status === "pending" || build.status === "running"}<Button
+                          size="xs"
+                          variant="outline"
+                          disabled={Boolean(activeBuildAction)}
+                          onclick={() => askForBuildAction("stop", build)}
+                          >{#if activeBuildAction === `stop:${build.id}`}<Spinner
+                            />{/if}Stop</Button
+                        >{/if}
+                      {#if build.status === "failed" || build.status === "cancelled"}<Button
+                          size="xs"
+                          variant="outline"
+                          disabled={Boolean(activeBuildAction)}
+                          onclick={() => askForBuildAction("retry", build)}
+                          >{#if activeBuildAction === `retry:${build.id}`}<Spinner
+                            />{/if}Retry</Button
+                        >{/if}
+                    </div>
+                  </div>
+                </div>
+              {:else}
+                <p class="p-6 text-center text-sm text-muted-foreground">
+                  No builds match these filters.
+                </p>
+              {/each}
+            </aside>
+
+            <section
+              class="min-w-0 p-3 lg:p-4"
+              aria-label="Selected build logs"
+            >
+              {#if selectedBuild}
+                <div
+                  class="mb-3 flex flex-wrap items-center justify-between gap-2"
+                >
+                  <div class="min-w-0">
+                    <p class="truncate font-mono text-xs">
+                      Commit {short(selectedBuild.sourceRevision)}
+                    </p>
+                    <p class="truncate text-[11px] text-muted-foreground">
+                      {selectedBuild.registryEndpoint || "Registry unavailable"}
+                      {selectedBuild.jobId
+                        ? ` · Job #${selectedBuild.jobId}`
+                        : ""}
+                    </p>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    {#if selectedBuild.id === activeBuildId}<span
+                        class="text-xs text-primary"
+                        aria-label="Receiving live output">● Live</span
+                      >{/if}
+                    <StatusBadge status={selectedBuild.status} />
+                  </div>
+                </div>
+                <div
+                  class="h-[calc(100vh-22rem)] min-h-[32rem] space-y-2 overflow-auto border border-border bg-black/30 p-3 font-mono text-[11px] leading-relaxed"
+                >
+                  {#each selectedBuildLogs as log (log.id)}
+                    <div
+                      class={cn({ "text-primary": log.stream === "system" })}
+                    >
+                      <span class="select-none text-muted-foreground">
+                        {stamp(log.occurredAt)} · {log.stream}
+                      </span>
+                      <pre
+                        class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
+                    </div>
+                  {:else}
+                    {#if selectedBuild.error}<pre
+                        class="whitespace-pre-wrap break-words text-destructive">{selectedBuild.error}</pre>
+                    {:else}<p class="text-muted-foreground">
+                        Waiting for build output...
+                      </p>{/if}
+                  {/each}
+                </div>
+              {:else}
+                <div
+                  class="flex h-[calc(100vh-22rem)] min-h-[32rem] items-center justify-center border border-dashed border-border p-6 text-sm text-muted-foreground"
+                >
+                  Select a build to view its logs.
+                </div>
+              {/if}
+            </section>
+          </div>
+        </Card.Content>
+      </Card.Root>
+    {/if}
+
+    {#if section === "releases"}
+      <Card.Root class="min-w-0">
+        <Card.Header class="gap-4 border-b border-border">
+          <div
+            class="flex flex-col justify-between gap-4 lg:flex-row lg:items-end"
+          >
+            <div>
+              <Card.Title>Release activity</Card.Title>
+              <Card.Description>
+                Inspect immutable artifacts, deployments, and release commands.
+              </Card.Description>
+            </div>
+            <NativeSelect.Root
+              class="w-full lg:w-[24rem]"
+              value={expandedReleaseId}
+              aria-label="Select a release"
+              onchange={(event) =>
+                (expandedReleaseId = event.currentTarget.value)}
+            >
+              <NativeSelect.Option value="" disabled
+                >Select a release</NativeSelect.Option
+              >
+              {#each releases as release (release.id)}
+                <NativeSelect.Option value={release.id}>
+                  {short(release.sourceRevision)} · {releaseStatus(
+                    release.id,
+                  ) || "not deployed"} · {stamp(release.createdAt)}
+                </NativeSelect.Option>
+              {/each}
+            </NativeSelect.Root>
+          </div>
+          <div class="grid gap-2 sm:grid-cols-[minmax(0,1fr)_12rem]">
+            <Input
+              bind:value={releaseSearch}
+              placeholder="Search ID, commit, or artifact"
+              aria-label="Search releases"
+            />
+            <NativeSelect.Root
+              class="w-full"
+              bind:value={releaseStatusFilter}
+              aria-label="Filter releases by status"
+            >
+              <NativeSelect.Option value="all"
+                >All releases ({releases.length})</NativeSelect.Option
+              >
+              <NativeSelect.Option value="active"
+                >Active ({activeReleaseCount})</NativeSelect.Option
+              >
+              <NativeSelect.Option value="succeeded"
+                >Succeeded</NativeSelect.Option
+              >
+              <NativeSelect.Option value="failed">Failed</NativeSelect.Option>
+              <NativeSelect.Option value="cancelled"
+                >Cancelled</NativeSelect.Option
+              >
+            </NativeSelect.Root>
+          </div>
+        </Card.Header>
+
+        <Card.Content class="min-h-0 p-0">
+          {#if deploymentStream.connectionError}<p
+              class="border-b border-warning/30 bg-warning/5 px-4 py-2 text-xs text-warning"
+            >
+              {deploymentStream.connectionError}
+            </p>{/if}
+          <div class="grid min-h-0 xl:grid-cols-[19rem_minmax(0,1fr)]">
+            <aside
+              class="max-h-80 overflow-auto border-b border-border xl:h-[calc(100vh-18rem)] xl:max-h-none xl:border-r xl:border-b-0"
+              aria-label="Release history"
+            >
+              {#each filteredReleases as release (release.id)}
+                <div
+                  class={cn(
+                    "border-b border-border border-l-2 text-sm",
+                    expandedReleaseId === release.id
+                      ? "border-l-primary"
+                      : "border-l-transparent",
+                  )}
+                >
                   <Button
                     type="button"
                     variant="ghost"
-                    class="h-auto min-w-0 flex-1 flex-col items-stretch p-0 text-left whitespace-normal hover:bg-transparent"
-                    onclick={() => toggleBuildLogs(build.id)}
-                    aria-expanded={expandedBuildId === build.id}
+                    class="h-auto min-w-0 w-full flex-col items-stretch p-3 text-left whitespace-normal hover:bg-transparent"
+                    onclick={() => (expandedReleaseId = release.id)}
+                    aria-current={expandedReleaseId === release.id
+                      ? "true"
+                      : undefined}
                   >
                     <div class="flex justify-between gap-3">
-                      <span class="font-mono">{short(build.id)}</span
-                      ><StatusBadge status={build.status} />
+                      <span class="font-mono">{short(release.id)}</span>
+                      {#if releaseStatus(release.id)}<StatusBadge
+                          status={releaseStatus(release.id)}
+                        />{/if}
                     </div>
                     <p
                       class="mt-1 break-all font-mono text-xs text-muted-foreground"
                     >
-                      {short(build.sourceRevision)} · {stamp(build.createdAt)}
-                    </p>
-                    <p class="mt-1 text-xs text-muted-foreground">
-                      {stepLabel(build.currentStep)}
+                      {short(release.sourceRevision)} · {stamp(
+                        release.createdAt,
+                      )}
                     </p>
                     <p
                       class="mt-1 break-all font-mono text-[11px] text-muted-foreground"
                     >
-                      {build.registryEndpoint ||
-                        "Registry unavailable"}{build.jobId
-                        ? ` · Job #${build.jobId} · ${build.jobState}`
-                        : ""}
+                      {release.artifactReference}
                     </p>
                   </Button>
-                  <div class="flex shrink-0 flex-wrap justify-end gap-1">
-                    {#if build.status === "pending" || (build.status === "running" && ["scheduled", "retryable", "pending"].includes(build.jobState))}<Button
-                        size="xs"
-                        disabled={Boolean(activeBuildAction)}
-                        onclick={() => askForBuildAction("start", build)}
-                        >{#if activeBuildAction === `start:${build.id}`}<Spinner
-                          />{/if}Run now</Button
-                      >{/if}
-                    {#if build.status === "pending" || build.status === "running"}<Button
-                        size="xs"
-                        variant="outline"
-                        disabled={Boolean(activeBuildAction)}
-                        onclick={() => askForBuildAction("stop", build)}
-                        >{#if activeBuildAction === `stop:${build.id}`}<Spinner
-                          />{/if}Stop</Button
-                      >{/if}
-                    {#if build.status === "failed" || build.status === "cancelled"}<Button
-                        size="xs"
-                        variant="outline"
-                        disabled={Boolean(activeBuildAction)}
-                        onclick={() => askForBuildAction("retry", build)}
-                        >{#if activeBuildAction === `retry:${build.id}`}<Spinner
-                          />{/if}Retry</Button
-                      >{/if}
+                  <div
+                    class="flex items-center justify-between gap-3 px-3 pb-3"
+                  >
+                    <span class="text-xs text-muted-foreground"
+                      >{deploymentsFor(release.id).length} deployment
+                      {deploymentsFor(release.id).length === 1 ? "" : "s"}</span
+                    >
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={Boolean(activeReleaseDeployment)}
+                      onclick={() => redeployRelease(release.id)}
+                      >{#if activeReleaseDeployment === release.id}<Spinner
+                        />{/if}Deploy now</Button
+                    >
                   </div>
                 </div>
-              </div>
-            {:else}<p class="text-sm text-muted-foreground">
-                No Builds yet.
-              </p>{/each}
-          </Card.Content>
-        </Card.Root>
+              {:else}<p class="p-6 text-center text-sm text-muted-foreground">
+                  No releases match these filters.
+                </p>{/each}
+            </aside>
 
-        <Card.Root class="min-w-0 xl:col-span-3">
-          <Card.Header
-            ><Card.Title>Build logs</Card.Title><Card.Description
-              >Live output for the selected build.</Card.Description
-            ></Card.Header
-          >
-          <Card.Content class="min-h-0">
-            {#if expandedBuildId}
-              {@const selectedBuild = builds.find(
-                (item) => item.id === expandedBuildId,
-              )}
-              <div
-                class="max-h-[32rem] space-y-2 overflow-auto border border-border bg-black/30 p-3 font-mono text-[11px] leading-relaxed"
-              >
-                {#each buildStream.logs[expandedBuildId] ?? [] as log (log.id)}
-                  <div
-                    class={cn({
-                      "text-primary": log.stream === "system",
-                    })}
-                  >
-                    <span class="select-none text-muted-foreground"
-                      >{stamp(log.occurredAt)} · {log.stream}</span
-                    >
-                    <pre
-                      class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
-                  </div>
-                {:else}
-                  <p class="text-muted-foreground">
-                    Waiting for Build output...
-                  </p>
-                {/each}
-              </div>
-              {#if selectedBuild?.error}<pre
-                  class="mt-3 whitespace-pre-wrap break-words border-t border-destructive/30 pt-3 text-xs text-destructive">{selectedBuild.error}</pre>{/if}
-            {:else}
-              <div
-                class="flex min-h-64 items-center justify-center border border-dashed border-border p-6 text-sm text-muted-foreground"
-              >
-                Select a build to view its logs.
-              </div>
-            {/if}
-          </Card.Content>
-        </Card.Root>
-      </div>
-    {/if}
-
-    {#if section === "releases"}
-      <div class="grid gap-8 xl:grid-cols-5">
-        <Card.Root class="min-w-0 xl:col-span-2">
-          <Card.Header
-            ><Card.Title>Releases</Card.Title><Card.Description
-              >Immutable workload artifacts. Select a release to inspect its
-              deployments.</Card.Description
-            ></Card.Header
-          >
-          <Card.Content class="space-y-2">
-            {#if deploymentStream.connectionError}<p
-                class="text-xs text-warning"
-              >
-                {deploymentStream.connectionError}
-              </p>{/if}
-            {#each releases as release (release.id)}
-              <div
-                class={cn(
-                  "border text-sm",
-                  expandedReleaseId === release.id
-                    ? "border-primary/40 bg-primary/[0.04]"
-                    : "border-border",
-                )}
-              >
-                <Button
-                  type="button"
-                  variant="ghost"
-                  class="h-auto min-w-0 w-full flex-col items-stretch p-3 text-left whitespace-normal hover:bg-transparent"
-                  onclick={() => (expandedReleaseId = release.id)}
-                  aria-expanded={expandedReleaseId === release.id}
+            <section
+              class="min-w-0 overflow-auto p-3 xl:h-[calc(100vh-18rem)] lg:p-4"
+              aria-label="Selected release activity"
+            >
+              {#if selectedRelease}
+                <div
+                  class="mb-3 flex flex-wrap items-center justify-between gap-2"
                 >
-                  <div class="flex justify-between gap-3">
-                    <span class="font-mono">{short(release.id)}</span>
-                    {#if releaseStatus(release.id)}<StatusBadge
-                        status={releaseStatus(release.id)}
+                  <div class="min-w-0">
+                    <p class="truncate font-mono text-xs">
+                      Commit {short(selectedRelease.sourceRevision)}
+                    </p>
+                    <p class="truncate text-[11px] text-muted-foreground">
+                      {selectedRelease.artifactReference}
+                    </p>
+                  </div>
+                  <div class="flex items-center gap-2">
+                    {#if releaseStatus(selectedRelease.id) === "running"}<span
+                        class="text-xs text-primary"
+                        aria-label="Deployment activity is live">● Live</span
+                      >{/if}
+                    {#if releaseStatus(selectedRelease.id)}<StatusBadge
+                        status={releaseStatus(selectedRelease.id)}
                       />{/if}
                   </div>
-                  <p
-                    class="mt-1 break-all font-mono text-xs text-muted-foreground"
-                  >
-                    {short(release.sourceRevision)} · {stamp(release.createdAt)}
-                  </p>
-                  <p
-                    class="mt-1 break-all font-mono text-[11px] text-muted-foreground"
-                  >
-                    {release.artifactReference}
-                  </p>
-                </Button>
-                <div class="flex items-center justify-between gap-3 px-3 pb-3">
-                  <span class="text-xs text-muted-foreground"
-                    >{deploymentsFor(release.id).length} deployment
-                    {deploymentsFor(release.id).length === 1 ? "" : "s"}</span
-                  >
-                  <Button
-                    size="xs"
-                    variant="outline"
-                    disabled={Boolean(activeReleaseDeployment)}
-                    onclick={() => redeployRelease(release.id)}
-                    >{#if activeReleaseDeployment === release.id}<Spinner
-                      />{/if}Deploy now</Button
-                  >
                 </div>
-              </div>
-            {:else}<p class="text-sm text-muted-foreground">
-                No Releases yet.
-              </p>{/each}
-          </Card.Content>
-        </Card.Root>
-
-        <Card.Root class="min-w-0 xl:col-span-3">
-          <Card.Header
-            ><Card.Title>Deployments</Card.Title><Card.Description
-              >Deployments and their release commands for the selected release.
-              Select a deployment to examine it in detail.</Card.Description
-            ></Card.Header
-          >
-          <Card.Content class="min-h-0 space-y-4">
-            {#if expandedReleaseId}
-              {#if deploymentsFor(expandedReleaseId).length > 0 || releaseCommandForRelease}
-                <div class="border border-border text-sm">
-                  {#if releaseCommandForRelease}
-                    {@const execution = releaseCommandForRelease}
-                    <div class="border-b border-border bg-muted/20 px-3 py-2">
-                      <p
-                        class="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
-                      >
-                        Release command
-                      </p>
-                    </div>
-                    <div
-                      class="grid gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_auto]"
-                    >
-                      <div class="min-w-0">
-                        <div class="flex flex-wrap items-center gap-2">
-                          <span class="font-mono">{short(execution.id)}</span
-                          ><StatusBadge status={execution.status} /><span
-                            class="text-xs text-muted-foreground"
-                            >Attempt {execution.attempt} · {execution.targetName}</span
+                {#if deploymentsFor(expandedReleaseId).length > 0 || releaseCommandForRelease}
+                  <div class="space-y-4 text-sm">
+                    {#if releaseCommandForRelease}
+                      {@const execution = releaseCommandForRelease}
+                      <section class="overflow-hidden border border-border">
+                        <div class="border-b border-border px-4 py-3">
+                          <p
+                            class="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground"
                           >
-                        </div>
-                        <p
-                          class="mt-2 break-all font-mono text-xs text-muted-foreground"
-                        >
-                          {[execution.command, ...execution.arguments].join(
-                            " ",
-                          )}
-                        </p>
-                        {#if execution.error}<p
-                            class="mt-2 text-xs text-destructive"
-                          >
-                            {execution.error}
-                          </p>{/if}
-                      </div>
-                      {#if execution.status === "failed" || execution.status === "ambiguous"}
-                        <div class="flex flex-wrap items-center gap-2">
-                          <select
-                            class="h-8 border border-input bg-background px-2 text-xs"
-                            value={releaseCommandRetryTarget(execution)}
-                            onchange={(event) =>
-                              (releaseCommandRetryTargets = {
-                                ...releaseCommandRetryTargets,
-                                [execution.id]: event.currentTarget.value,
-                              })}
-                            aria-label="Release command retry target"
-                          >
-                            {#each environment.runtimeTargetIds as targetId, index (targetId)}<option
-                                value={targetId}
-                                >{environment.runtimeServers[index]}</option
-                              >{/each}
-                          </select>
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={Boolean(releaseCommandRetrying) ||
-                              environment.runtimeTargetIds.length === 0}
-                            onclick={() => askToRetryReleaseCommand(execution)}
-                            >Review retry</Button
-                          >
-                        </div>
-                      {/if}
-                    </div>
-                    <div
-                      class="max-h-96 overflow-auto border-t border-border bg-black/30 p-3 font-mono text-[11px] leading-relaxed"
-                    >
-                      {#each releaseCommandLogs[execution.id] ?? [] as log (log.id)}<div
-                          class={cn({
-                            "text-destructive": log.stream === "stderr",
-                            "text-primary": log.stream === "system",
-                          })}
-                        >
-                          <span class="text-muted-foreground"
-                            >{stamp(log.occurredAt)} · release command · attempt
-                            {log.attempt} ·
-                            {log.stream}</span
-                          >
-                          <pre
-                            class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
-                        </div>{:else}<p class="text-muted-foreground">
-                          {releaseCommandLoading === execution.id
-                            ? "Loading release command output..."
-                            : "No release command output was persisted."}
-                        </p>{/each}
-                    </div>
-                  {/if}
-                  {#if deploymentsFor(expandedReleaseId).length > 0}
-                    <div
-                      class="flex flex-wrap items-center gap-2 border-b border-border bg-muted/20 p-3"
-                    >
-                      <label
-                        for="deployment-select"
-                        class="text-xs font-medium text-muted-foreground"
-                        >Deployment</label
-                      >
-                      <select
-                        id="deployment-select"
-                        class="h-9 min-w-0 flex-1 border border-input bg-background px-2 text-xs"
-                        bind:value={selectedDeploymentId}
-                      >
-                        {#each deploymentsFor(expandedReleaseId) as deployment (deployment.id)}
-                          <option value={deployment.id}>
-                            {short(deployment.id)} · {deployment.status}{deployment.attempt >
-                            1
-                              ? ` · attempt ${deployment.attempt}`
-                              : ""} · {stamp(deployment.createdAt)}
-                          </option>
-                        {/each}
-                      </select>
-                    </div>
-                    {#if selectedDeployment}
-                      {@const deployment = selectedDeployment}
-                      <div
-                        class="grid gap-3 p-3 lg:grid-cols-[minmax(0,1fr)_auto]"
-                      >
-                        <div class="min-w-0">
-                          <div class="flex flex-wrap items-center gap-2">
-                            <span class="font-mono">{short(deployment.id)}</span
-                            ><StatusBadge
-                              status={deployment.status}
-                            /><StatusBadge
-                              status={deploymentStep(deployment)}
-                            />
-                          </div>
-                          <p class="mt-1 text-xs text-muted-foreground">
-                            {stamp(deployment.createdAt)} · {deployment.targetName}
-                            {deployment.attempt > 1
-                              ? ` · attempt ${deployment.attempt}`
-                              : ""}
+                            Release command
                           </p>
-                          {#if deployment.error}<p
-                              class="mt-2 text-xs text-destructive"
-                            >
-                              {deployment.error}
-                            </p>{/if}
                         </div>
-                        <div class="flex flex-wrap gap-2">
-                          {#if deploymentIsActive(deployment)}<Button
-                              size="sm"
-                              variant="destructive"
-                              disabled={Boolean(deploymentStopping)}
-                              aria-busy={deploymentStopping === deployment.id}
-                              onclick={() => askToStopDeployment(deployment)}
-                              >{deployment.status === "cancelling"
-                                ? "Finish rollback"
-                                : "Stop & roll back"}</Button
-                            >{/if}
-                          {#if deployment.status === "failed" || deployment.status === "cancelled"}<Button
-                            size="sm"
-                            variant="outline"
-                            disabled={Boolean(deploymentRetrying)}
-                            aria-busy={deploymentRetrying === deployment.id}
-                            onclick={() => retryDeployment(deployment.id)}
-                            >{#if deploymentRetrying === deployment.id}<Spinner
-                              />{/if}Retry</Button
-                            >{/if}
-                        </div>
-                      </div>
-                      <div class="border-t border-border bg-muted/20 p-3">
                         <div
-                          class="max-h-80 space-y-3 overflow-auto font-mono text-[11px] leading-relaxed"
+                          class="grid gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_auto]"
                         >
-                          {#each deploymentStream.events[deployment.id] ?? [] as event (event.id)}
-                            <div
+                          <div class="min-w-0">
+                            <div class="flex flex-wrap items-center gap-2">
+                              <span class="font-mono"
+                                >{short(execution.id)}</span
+                              ><StatusBadge status={execution.status} /><span
+                                class="text-xs text-muted-foreground"
+                                >Attempt {execution.attempt} · {execution.targetName}</span
+                              >
+                            </div>
+                            <p
+                              class="mt-2 break-all font-mono text-xs text-muted-foreground"
+                            >
+                              {[execution.command, ...execution.arguments].join(
+                                " ",
+                              )}
+                            </p>
+                            {#if execution.error && (releaseCommandLogs[execution.id] ?? []).length === 0}<p
+                                class="mt-2 text-xs text-destructive"
+                              >
+                                {execution.error}
+                              </p>{/if}
+                          </div>
+                          {#if execution.status === "failed" || execution.status === "ambiguous"}
+                            <div class="flex flex-wrap items-center gap-2">
+                              <NativeSelect.Root
+                                value={releaseCommandRetryTarget(execution)}
+                                onchange={(event) =>
+                                  (releaseCommandRetryTargets = {
+                                    ...releaseCommandRetryTargets,
+                                    [execution.id]: event.currentTarget.value,
+                                  })}
+                                aria-label="Release command retry target"
+                              >
+                                {#each environment.runtimeTargetIds as targetId, index (targetId)}<NativeSelect.Option
+                                    value={targetId}
+                                    >{environment.runtimeServers[
+                                      index
+                                    ]}</NativeSelect.Option
+                                  >{/each}
+                              </NativeSelect.Root>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={Boolean(releaseCommandRetrying) ||
+                                  environment.runtimeTargetIds.length === 0}
+                                onclick={() =>
+                                  askToRetryReleaseCommand(execution)}
+                                >Review retry</Button
+                              >
+                            </div>
+                          {/if}
+                        </div>
+                        <div
+                          class="max-h-96 min-h-32 space-y-2 overflow-auto border-t border-border bg-black/30 p-4 font-mono text-[11px] leading-relaxed"
+                        >
+                          {#each releaseCommandLogs[execution.id] ?? [] as log (log.id)}<div
                               class={cn({
-                                "text-destructive": event.status === "failed",
-                                "text-warning": event.status === "warning",
-                                "text-success": event.status === "succeeded",
+                                "text-primary": log.stream === "system",
                               })}
                             >
-                              <p class="select-none text-muted-foreground">
-                                {stamp(event.occurredAt)} · deployment · {event.step ||
-                                  event.eventType} · {event.status}
-                              </p>
+                              <span class="text-muted-foreground"
+                                >{stamp(log.occurredAt)} · release command · attempt
+                                {log.attempt} ·
+                                {log.stream}</span
+                              >
                               <pre
-                                class="whitespace-pre-wrap break-words font-mono">{event.message}</pre>
-                              {#if event.error && event.error !== event.message}<pre
-                                  class="whitespace-pre-wrap break-words font-mono text-destructive">{event.error}</pre>{/if}
-                            </div>
-                          {:else}
-                            <p class="text-muted-foreground">
-                              {deployment.status === "queued" ||
-                              deployment.status === "running" ||
-                              deployment.status === "cancelling"
-                                ? "Waiting for Deployment events..."
-                                : "No deployment events recorded yet."}
-                            </p>
-                          {/each}
+                                class="whitespace-pre-wrap break-words font-mono">{log.message}</pre>
+                            </div>{:else}<p class="text-muted-foreground">
+                              {releaseCommandLoading === execution.id
+                                ? "Loading release command output..."
+                                : "No release command output was persisted."}
+                            </p>{/each}
                         </div>
-                      </div>
+                      </section>
                     {/if}
-                  {/if}
-                </div>
+                    {#if deploymentsFor(expandedReleaseId).length > 0}
+                      <section class="overflow-hidden border border-border">
+                        <div
+                          class="flex flex-wrap items-center gap-3 border-b border-border px-4 py-3"
+                        >
+                          <label
+                            for="deployment-select"
+                            class="text-xs font-medium text-muted-foreground"
+                            >Deployment</label
+                          >
+                          <NativeSelect.Root
+                            id="deployment-select"
+                            class="min-w-0 flex-1"
+                            bind:value={selectedDeploymentId}
+                          >
+                            {#each deploymentsFor(expandedReleaseId) as deployment (deployment.id)}
+                              <NativeSelect.Option value={deployment.id}>
+                                {short(deployment.id)} · {deployment.status}{deployment.attempt >
+                                1
+                                  ? ` · attempt ${deployment.attempt}`
+                                  : ""} · {stamp(deployment.createdAt)}
+                              </NativeSelect.Option>
+                            {/each}
+                          </NativeSelect.Root>
+                        </div>
+                        {#if selectedDeployment}
+                          {@const deployment = selectedDeployment}
+                          <div
+                            class="grid gap-3 px-4 py-3 lg:grid-cols-[minmax(0,1fr)_auto]"
+                          >
+                            <div class="min-w-0">
+                              <div class="flex flex-wrap items-center gap-2">
+                                <span class="font-mono"
+                                  >{short(deployment.id)}</span
+                                ><StatusBadge
+                                  status={deployment.status}
+                                />{#if deploymentStep(deployment) !== deployment.status}<StatusBadge
+                                    status={deploymentStep(deployment)}
+                                  />{/if}
+                              </div>
+                              <p class="mt-1 text-xs text-muted-foreground">
+                                {stamp(deployment.createdAt)} · {deployment.targetName}
+                                {deployment.attempt > 1
+                                  ? ` · attempt ${deployment.attempt}`
+                                  : ""}
+                              </p>
+                              {#if deployment.error && (deploymentStream.events[deployment.id] ?? []).length === 0}<p
+                                  class="mt-2 text-xs text-destructive"
+                                >
+                                  {deployment.error}
+                                </p>{/if}
+                            </div>
+                            <div class="flex flex-wrap gap-2">
+                              {#if deploymentIsActive(deployment)}<Button
+                                  size="sm"
+                                  variant="destructive"
+                                  disabled={Boolean(deploymentStopping)}
+                                  aria-busy={deploymentStopping ===
+                                    deployment.id}
+                                  onclick={() =>
+                                    askToStopDeployment(deployment)}
+                                  >{deployment.status === "cancelling"
+                                    ? "Finish rollback"
+                                    : "Stop & roll back"}</Button
+                                >{/if}
+                              {#if deployment.status === "failed" || deployment.status === "cancelled"}<Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={Boolean(deploymentRetrying)}
+                                  aria-busy={deploymentRetrying ===
+                                    deployment.id}
+                                  onclick={() => retryDeployment(deployment.id)}
+                                  >{#if deploymentRetrying === deployment.id}<Spinner
+                                    />{/if}Retry</Button
+                                >{/if}
+                            </div>
+                          </div>
+                          <div class="border-t border-border bg-black/30 p-4">
+                            <div
+                              class="max-h-96 min-h-32 space-y-3 overflow-auto font-mono text-[11px] leading-relaxed"
+                            >
+                              {#each deploymentStream.events[deployment.id] ?? [] as event (event.id)}
+                                <div
+                                  class={cn({
+                                    "text-destructive":
+                                      event.status === "failed",
+                                    "text-warning": event.status === "warning",
+                                    "text-success":
+                                      event.status === "succeeded",
+                                  })}
+                                >
+                                  <p class="select-none text-muted-foreground">
+                                    {stamp(event.occurredAt)} · deployment · {event.step ||
+                                      event.eventType} · {event.status}
+                                  </p>
+                                  <pre
+                                    class="whitespace-pre-wrap break-words font-mono">{event.message}</pre>
+                                  {#if event.error && event.error !== event.message}<pre
+                                      class="whitespace-pre-wrap break-words font-mono text-destructive">{event.error}</pre>{/if}
+                                </div>
+                              {:else}
+                                <p class="text-muted-foreground">
+                                  {deployment.status === "queued" ||
+                                  deployment.status === "running" ||
+                                  deployment.status === "cancelling"
+                                    ? "Waiting for Deployment events..."
+                                    : "No deployment events recorded yet."}
+                                </p>
+                              {/each}
+                            </div>
+                          </div>
+                        {/if}
+                      </section>
+                    {/if}
+                  </div>
+                {:else}
+                  <p
+                    class="border border-dashed border-border p-4 text-sm text-muted-foreground"
+                  >
+                    No deployments or release commands for this release yet.
+                  </p>
+                {/if}
               {:else}
-                <p
-                  class="border border-dashed border-border p-4 text-sm text-muted-foreground"
+                <div
+                  class="flex h-full min-h-[32rem] items-center justify-center border border-dashed border-border p-6 text-sm text-muted-foreground"
                 >
-                  No deployments or release commands for this release yet.
-                </p>
+                  Select a release to view its deployments.
+                </div>
               {/if}
-            {:else}
-              <div
-                class="flex min-h-64 items-center justify-center border border-dashed border-border p-6 text-sm text-muted-foreground"
-              >
-                Select a release to view its deployments.
-              </div>
-            {/if}
-          </Card.Content>
-        </Card.Root>
-      </div>
+            </section>
+          </div>
+        </Card.Content>
+      </Card.Root>
     {/if}
   </div>
 
