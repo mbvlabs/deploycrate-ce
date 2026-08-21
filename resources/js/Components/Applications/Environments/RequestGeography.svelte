@@ -37,6 +37,10 @@
     const code = iso.whereNumeric(String(id))?.alpha2;
     return code ? byCode.get(code) : undefined;
   };
+  const countryKey = (country: (typeof worldCountries.features)[number]) =>
+    country.id === undefined
+      ? `name:${country.properties?.name ?? "unknown"}`
+      : `id:${country.id}`;
   const countryName = (country: CountryTelemetry) =>
     iso.whereAlpha2(country.code)?.country ?? country.code;
 </script>
@@ -57,7 +61,7 @@
         role="img"
         aria-label="Requests by country"
       >
-        {#each worldCountries.features as country (country.id)}
+        {#each worldCountries.features as country (countryKey(country))}
           {@const telemetry = countryFor(country.id)}
           {@const requests = telemetry?.requests ?? 0}
           <path

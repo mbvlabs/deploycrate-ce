@@ -306,7 +306,10 @@
       throw new Error(`OpenTelemetry logs returned ${response.status}`);
     const snapshot = (await response.json()) as OpenTelemetryLogSnapshot;
     const cutoff = Date.now() - rangeSeconds * 1000;
-    logs = [...logs, ...snapshot.logs]
+    const logsById = new Map(
+      [...logs, ...snapshot.logs].map((log) => [log.id, log]),
+    );
+    logs = [...logsById.values()]
       .filter((log) => new Date(log.occurredAt).getTime() >= cutoff)
       .slice(-2000);
     logCursor = snapshot.nextCursor;
