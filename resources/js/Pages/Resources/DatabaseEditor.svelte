@@ -352,44 +352,48 @@
             </div>
 
             <aside
-              class="min-w-0 border-t border-border pt-4 lg:order-1 lg:flex lg:min-h-0 lg:flex-col lg:border-t-0 lg:border-r lg:pt-0 lg:pr-4"
+              class="min-w-0 border-t border-border pt-4 lg:relative lg:order-1 lg:min-h-0 lg:border-t-0 lg:border-r lg:pt-0"
               aria-labelledby="recent-queries-heading"
             >
-              <h3 id="recent-queries-heading" class="text-xs font-medium">
-                Recent queries
-              </h3>
-              {#if queryHistory.length === 0}
-                <p class="mt-2 text-xs leading-5 text-muted-foreground">
-                  Queries you run will be saved in this browser.
-                </p>
-              {:else}
-                <ol
-                  class="mt-2 max-h-96 min-h-0 space-y-1 overflow-y-auto pr-1 lg:max-h-none lg:flex-1"
-                >
-                  {#each queryHistory as entry (entry.id)}
-                    <li>
-                      <button
-                        type="button"
-                        class="w-full border border-transparent px-2 py-2 text-left transition-colors hover:border-border hover:bg-muted/50 focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 focus-visible:outline-none"
-                        title={entry.sql}
-                        onclick={() => chooseHistoryQuery(entry)}
-                      >
-                        <span
-                          class="block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs"
+              <div
+                class="lg:absolute lg:inset-0 lg:flex lg:min-h-0 lg:flex-col lg:pr-4"
+              >
+                <h3 id="recent-queries-heading" class="text-xs font-medium">
+                  Recent queries
+                </h3>
+                {#if queryHistory.length === 0}
+                  <p class="mt-2 text-xs leading-5 text-muted-foreground">
+                    Queries you run will be saved in this browser.
+                  </p>
+                {:else}
+                  <ol
+                    class="mt-2 max-h-96 min-h-0 space-y-1 overflow-y-auto pr-1 lg:max-h-none lg:flex-1"
+                  >
+                    {#each queryHistory as entry (entry.id)}
+                      <li>
+                        <button
+                          type="button"
+                          class="w-full border border-transparent px-2 py-2 text-left transition-colors hover:border-border hover:bg-muted/50 focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring/50 focus-visible:outline-none"
+                          title={entry.sql}
+                          onclick={() => chooseHistoryQuery(entry)}
                         >
-                          {historyPreview(entry)}
-                        </span>
-                        <time
-                          class="mt-1 block text-[10px] text-muted-foreground"
-                          datetime={entry.executedAt}
-                        >
-                          {historyTimestamp(entry)}
-                        </time>
-                      </button>
-                    </li>
-                  {/each}
-                </ol>
-              {/if}
+                          <span
+                            class="block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-xs"
+                          >
+                            {historyPreview(entry)}
+                          </span>
+                          <time
+                            class="mt-1 block text-[10px] text-muted-foreground"
+                            datetime={entry.executedAt}
+                          >
+                            {historyTimestamp(entry)}
+                          </time>
+                        </button>
+                      </li>
+                    {/each}
+                  </ol>
+                {/if}
+              </div>
             </aside>
           </div>
         </Card.Content>
