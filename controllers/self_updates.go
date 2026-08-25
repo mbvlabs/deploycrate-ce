@@ -90,9 +90,10 @@ func (s SelfUpdates) Show(etx *echo.Context) error {
 		"auth": inertia.Props{
 			"email": cookies.ExtractFromCookieApp(etx).Email,
 		},
-		"currentVersion": s.service.CurrentVersion(),
-		"update":         s.service.Status(),
-		"deployments":    deployments,
+		"currentVersion":  s.service.CurrentVersion(),
+		"availableUpdate": s.service.CheckForUpdates(etx.Request().Context()),
+		"update":          s.service.Status(),
+		"deployments":     deployments,
 	})
 }
 
@@ -110,7 +111,8 @@ func (s SelfUpdates) Create(etx *echo.Context) error {
 	switch {
 	case err == nil:
 		err = cookies.AddFlash(etx, cookies.FlashSuccess, "DeployCrate CE update started")
-	case errors.Is(err, services.ErrUpdateInProgress):
+	case errors.Is(err, services.ErrUpdateInProgress),
+		errors.Is(err, services.ErrNoUpdateAvailable):
 		err = cookies.AddFlash(etx, cookies.FlashInfo, err.Error())
 	default:
 		slog.ErrorContext(

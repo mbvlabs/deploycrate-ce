@@ -111,6 +111,9 @@ func (s *SelfUpdate) createDeploymentRecords(
 		ActiveSlot:      systemState.ActiveInstanceSlot,
 		TargetSlot:      inactiveSlot,
 		Phase:           "queued",
+		ReleaseChannel:  release.Channel,
+		ArtifactURL:     release.ArtifactURL,
+		ArtifactSHA256:  release.ArtifactSHA256,
 	}
 	runtimeConfiguration, err := json.Marshal(checkpoint)
 	if err != nil {

@@ -1,0 +1,54 @@
+name: Publish stable
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-stable
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: stable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.22.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: pnpm
+      - name: Build stable release
+        run: scripts/build-release.sh "${GITHUB_REF_NAME#v}" stable "${{ vars.R2_PUBLIC_URL }}"
+      - name: Verify tagged source
+        run: |
+          go fix ./...
+          test -z "$(gofmt -l $(git ls-files '*.go'))"
+          git diff --exit-code
+          go vet ./...
+          go test ./...
+      - name: Upload immutable artifacts and channel files
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          AWS_DEFAULT_REGION: auto
+        run: |
+          aws s3 cp dist/release-stable/releases "s3://${{ vars.R2_BUCKET }}/releases" --recursive \
+            --cache-control 'public,max-age=31536000,immutable' --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          aws s3 cp dist/release-stable/install.sh "s3://${{ vars.R2_BUCKET }}/install.sh" \
+            --cache-control no-cache --content-type text/x-shellscript --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          aws s3 cp dist/release-stable/install.sh "s3://${{ vars.R2_BUCKET }}/ce" \
+            --cache-control no-cache --content-type text/x-shellscript --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+          aws s3 cp dist/release-stable/manifest.json "s3://${{ vars.R2_BUCKET }}/manifest.json" \
+            --content-type application/json --cache-control no-cache \
+            --endpoint-url "${{ secrets.R2_ENDPOINT }}"

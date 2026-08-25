@@ -7,29 +7,49 @@ import (
 )
 
 const (
-	DevelopmentReleaseBaseURL = "https://get-dev.deploycrate.com"
-	ReleaseApplicationPath    = "/dc-ce-app/deploycrate-ce"
-	ReleaseChecksumPath       = "/dc-ce-app/deploycrate-ce.sha256"
+	StableReleaseBaseURL = "https://get.deploycrate.com"
+	EdgeReleaseBaseURL   = "https://get-dev.deploycrate.com"
+	ReleaseChannelStable = "stable"
+	ReleaseChannelEdge   = "edge"
 )
 
 var ErrReleaseSourceUnavailable = errors.New(
-	"self-update is unavailable for this build; set DEPLOYCRATE_CE_RELEASE_BASE_URL to a Cloudflare R2 endpoint",
+	"self-update is unavailable: DEPLOYCRATE_CE_UPDATE_CHANNEL must be stable or edge",
 )
 
 type ReleaseSource struct {
-	BaseURL     string
-	Development bool
+	BaseURL string
+	Channel string
 }
 
 func ResolveReleaseSource(version string) (ReleaseSource, error) {
-	if override := strings.TrimSpace(os.Getenv("DEPLOYCRATE_CE_RELEASE_BASE_URL")); override != "" {
-		return ReleaseSource{BaseURL: strings.TrimRight(override, "/")}, nil
+	channel := strings.ToLower(strings.TrimSpace(os.Getenv("DEPLOYCRATE_CE_UPDATE_CHANNEL")))
+	if channel == "" {
+		version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+		if version == "dev" || strings.HasPrefix(version, "development-") ||
+			strings.HasPrefix(version, "edge-") {
+			channel = ReleaseChannelEdge
+		} else {
+			channel = ReleaseChannelStable
+		}
 	}
 
-	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
-	if version == "dev" || strings.HasPrefix(version, "development-") {
-		return ReleaseSource{BaseURL: DevelopmentReleaseBaseURL, Development: true}, nil
+	baseURL := strings.TrimSpace(os.Getenv("DEPLOYCRATE_CE_RELEASE_BASE_URL"))
+	if baseURL == "" {
+		switch channel {
+		case ReleaseChannelStable:
+			baseURL = StableReleaseBaseURL
+		case ReleaseChannelEdge:
+			baseURL = EdgeReleaseBaseURL
+		default:
+			return ReleaseSource{}, ErrReleaseSourceUnavailable
+		}
 	}
-
-	return ReleaseSource{}, ErrReleaseSourceUnavailable
+	if channel != ReleaseChannelStable && channel != ReleaseChannelEdge {
+		return ReleaseSource{}, ErrReleaseSourceUnavailable
+	}
+	return ReleaseSource{
+		BaseURL: strings.TrimRight(baseURL, "/"),
+		Channel: channel,
+	}, nil
 }

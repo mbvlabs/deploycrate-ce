@@ -1,37 +1,9 @@
 set shell := ["bash", "-cu"]
 
-# Build upload-ready Linux AMD64 development binaries.
+# Build the same edge artifacts produced by GitHub Actions, without publishing them.
 development-assets:
-    #!/usr/bin/env bash
-    set -euo pipefail
+    scripts/build-release.sh "edge-$(git rev-parse --short=12 HEAD)" edge "https://get-dev.deploycrate.com"
 
-    version="development-$(git describe --always --dirty)"
-    output_root="dist/deploycrate-ce-development"
-    remote="dc-ce-dev:deploycrate-development"
-    cli_output="${output_root}/dc-ce-cli"
-    app_output="${output_root}/dc-ce-app"
-
-    install -d "${cli_output}" "${app_output}"
-
-    GOARCH=amd64 andurel build --version "${version}"
-    mv deploycrate-ce "${app_output}/deploycrate-ce"
-
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-        -trimpath \
-        -ldflags "-s -w -X main.version=${version}" \
-        -o "${cli_output}/bootstrap" \
-        ./cmd/bootstrap
-
-    (
-        cd "${cli_output}"
-        sha256sum bootstrap > bootstrap.sha256
-    )
-    (
-        cd "${app_output}"
-        sha256sum deploycrate-ce > deploycrate-ce.sha256
-    )
-    install -m 0644 scripts/install-development.sh "${output_root}/install.sh"
-
-    rclone sync "${output_root}" "${remote}"
-
-    printf 'Development assets generated in %s and synced to %s\n' "${output_root}" "${remote}"
+# Build a local stable release snapshot without publishing it.
+stable-assets version:
+    scripts/build-release.sh "{{version}}" stable "https://get.deploycrate.com"

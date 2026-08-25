@@ -5,35 +5,103 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 )
 
-const (
-	defaultDevelopmentReleaseBaseURL = "https://get-dev.deploycrate.com"
-	developmentApplicationPath       = "dc-ce-app/deploycrate-ce"
-	developmentChecksumLimit         = 4096
-)
+type releaseArtifact struct {
+	URL    string `json:"url"`
+	SHA256 string `json:"sha256"`
+}
 
-func acquireDevelopmentApplicationBinary(ctx context.Context) (string, func(), error) {
-	baseURL := strings.TrimRight(os.Getenv("DEPLOYCRATE_DEVELOPMENT_BASE_URL"), "/")
-	if baseURL == "" {
-		baseURL = defaultDevelopmentReleaseBaseURL
+type releaseManifest struct {
+	SchemaVersion int                        `json:"schemaVersion"`
+	Channel       string                     `json:"channel"`
+	Version       string                     `json:"version"`
+	Artifacts     map[string]releaseArtifact `json:"artifacts"`
+}
+
+func ResolveReleaseVersion(ctx context.Context, channel string) (string, error) {
+	baseURL := releaseBaseURL(channel)
+	overrideName := "DEPLOYCRATE_STABLE_BASE_URL"
+	if channel == UpdateChannelEdge {
+		overrideName = "DEPLOYCRATE_EDGE_BASE_URL"
 	}
-	binaryURL := baseURL + "/" + developmentApplicationPath
-	checksumURL := binaryURL + ".sha256"
-	client := &http.Client{Timeout: 10 * time.Minute}
+	if override := strings.TrimRight(os.Getenv(overrideName), "/"); override != "" {
+		baseURL = override
+	}
+	manifest, err := loadReleaseManifest(ctx, channel, baseURL)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(manifest.Version), nil
+}
 
-	expectedChecksum, err := fetchDevelopmentChecksum(ctx, client, checksumURL)
+func loadReleaseManifest(
+	ctx context.Context,
+	channel, baseURL string,
+) (releaseManifest, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/manifest.json", nil)
+	if err != nil {
+		return releaseManifest{}, err
+	}
+	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(request)
+	if err != nil {
+		return releaseManifest{}, fmt.Errorf("load %s release manifest: %w", channel, err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return releaseManifest{}, fmt.Errorf("load %s release manifest: status %d", channel, response.StatusCode)
+	}
+	var manifest releaseManifest
+	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&manifest); err != nil {
+		return releaseManifest{}, fmt.Errorf("decode %s release manifest: %w", channel, err)
+	}
+	if manifest.SchemaVersion != 1 || manifest.Channel != channel ||
+		strings.TrimSpace(manifest.Version) == "" {
+		return releaseManifest{}, fmt.Errorf("invalid %s release manifest", channel)
+	}
+	return manifest, nil
+}
+
+func acquireReleaseApplicationBinary(
+	ctx context.Context,
+	channel, expectedVersion string,
+) (string, func(), error) {
+	overrideName := "DEPLOYCRATE_STABLE_BASE_URL"
+	if channel == UpdateChannelEdge {
+		overrideName = "DEPLOYCRATE_EDGE_BASE_URL"
+	}
+	baseURL := strings.TrimRight(os.Getenv(overrideName), "/")
+	if baseURL == "" {
+		baseURL = releaseBaseURL(channel)
+	}
+	manifest, err := loadReleaseManifest(ctx, channel, baseURL)
 	if err != nil {
 		return "", nil, err
 	}
+	if strings.TrimSpace(manifest.Version) != strings.TrimSpace(expectedVersion) {
+		return "", nil, errors.New("selected channel advanced; restart bootstrap to use the new release")
+	}
+	artifact, found := manifest.Artifacts[runtime.GOOS+"/"+runtime.GOARCH]
+	if !found || !strings.HasPrefix(artifact.URL, baseURL+"/") {
+		return "", nil, fmt.Errorf("release manifest does not contain this platform")
+	}
+	expectedChecksum, err := hex.DecodeString(artifact.SHA256)
+	if err != nil || len(expectedChecksum) != sha256.Size {
+		return "", nil, fmt.Errorf("release manifest contains an invalid checksum")
+	}
+	binaryURL := artifact.URL
+	client := &http.Client{Timeout: 10 * time.Minute}
 
-	temporary, err := os.CreateTemp("", "deploycrate-ce-development-*")
+	temporary, err := os.CreateTemp("", "deploycrate-ce-release-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("create temporary application binary: %w", err)
 	}
@@ -51,14 +119,14 @@ func acquireDevelopmentApplicationBinary(ctx context.Context) (string, func(), e
 	if err != nil {
 		_ = temporary.Close()
 		cleanup()
-		return "", nil, fmt.Errorf("download development application binary: %w", err)
+		return "", nil, fmt.Errorf("download release application binary: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		_ = temporary.Close()
 		cleanup()
 		return "", nil, fmt.Errorf(
-			"download development application binary: status %d",
+			"download release application binary: status %d",
 			response.StatusCode,
 		)
 	}
@@ -68,59 +136,16 @@ func acquireDevelopmentApplicationBinary(ctx context.Context) (string, func(), e
 	closeErr := temporary.Close()
 	if copyErr != nil {
 		cleanup()
-		return "", nil, fmt.Errorf("download development application binary: %w", copyErr)
+		return "", nil, fmt.Errorf("download release application binary: %w", copyErr)
 	}
 	if closeErr != nil {
 		cleanup()
-		return "", nil, fmt.Errorf("close development application binary: %w", closeErr)
+		return "", nil, fmt.Errorf("close release application binary: %w", closeErr)
 	}
 	if !bytes.Equal(hash.Sum(nil), expectedChecksum) {
 		cleanup()
-		return "", nil, fmt.Errorf("development application checksum verification failed")
+		return "", nil, fmt.Errorf("release application checksum verification failed")
 	}
 
 	return temporaryPath, cleanup, nil
-}
-
-func fetchDevelopmentChecksum(
-	ctx context.Context,
-	client *http.Client,
-	checksumURL string,
-) ([]byte, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, checksumURL, nil)
-	if err != nil {
-		return nil, fmt.Errorf("create application checksum request: %w", err)
-	}
-	request.Header.Set("User-Agent", "deploycrate-development-installer")
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, fmt.Errorf("download development application checksum: %w", err)
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf(
-			"download development application checksum: status %d",
-			response.StatusCode,
-		)
-	}
-
-	content, err := io.ReadAll(io.LimitReader(response.Body, developmentChecksumLimit+1))
-	if err != nil {
-		return nil, fmt.Errorf("read development application checksum: %w", err)
-	}
-	if len(content) > developmentChecksumLimit {
-		return nil, fmt.Errorf(
-			"development application checksum exceeds %d bytes",
-			developmentChecksumLimit,
-		)
-	}
-	fields := strings.Fields(string(content))
-	if len(fields) != 2 || strings.TrimPrefix(fields[1], "*") != "deploycrate-ce" {
-		return nil, fmt.Errorf("invalid development application checksum file")
-	}
-	checksum, err := hex.DecodeString(fields[0])
-	if err != nil || len(checksum) != sha256.Size {
-		return nil, fmt.Errorf("invalid development application SHA-256 checksum")
-	}
-	return checksum, nil
 }

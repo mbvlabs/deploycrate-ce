@@ -266,6 +266,8 @@ func applicationEnvironmentValues(cfg Config) [][2]string {
 		{"SESSION_MAX_AGE", "604800"},
 		{"TOKEN_SIGNING_KEY", cfg.Secrets.TokenSigningKey},
 		{"SSH_CA_USER_PRINCIPAL", cfg.AdminUser},
+		{"DEPLOYCRATE_CE_UPDATE_CHANNEL", cfg.UpdateChannel},
+		{"DEPLOYCRATE_CE_RELEASE_BASE_URL", releaseBaseURL(cfg.UpdateChannel)},
 		{"DEPLOYCRATE_CE_UPDATE_STATUS_PATH", "/var/lib/deploycrate-ce/runtime/self-update.json"},
 		{"CORS_ALLOWED_ORIGINS", "https://" + cfg.Domain},
 		{"CSRF_STRATEGY", "header_only"},
@@ -324,11 +326,18 @@ func InstallApplicationBinary(source string) error {
 }
 
 func InstallApplicationReleaseBinary(ctx context.Context, source, version string) error {
+	return installApplicationReleaseBinary(ctx, source, version, UpdateChannelStable)
+}
+
+func installApplicationReleaseBinary(
+	ctx context.Context,
+	source, version, channel string,
+) error {
 	if source == "" {
 		source = os.Getenv("DEPLOYCRATE_CE_RELEASE_BINARY")
 	}
 	if source == "" {
-		acquired, cleanup, err := acquireDevelopmentApplicationBinary(ctx)
+		acquired, cleanup, err := acquireReleaseApplicationBinary(ctx, channel, version)
 		if err != nil {
 			return err
 		}
@@ -336,6 +345,13 @@ func InstallApplicationReleaseBinary(ctx context.Context, source, version string
 		source = acquired
 	}
 	return installApplicationBinary(source, version)
+}
+
+func releaseBaseURL(channel string) string {
+	if channel == UpdateChannelEdge {
+		return "https://get-dev.deploycrate.com"
+	}
+	return "https://get.deploycrate.com"
 }
 
 func installApplicationBinary(source, version string) error {
