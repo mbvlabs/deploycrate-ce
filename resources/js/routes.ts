@@ -74,6 +74,7 @@ export const routes = {
   gitHubInstallationShow: (id: string) => `/connections/github/installations/${id}`,
   gitHubInstallationSync: (id: string) => `/connections/github/installations/${id}/sync`,
   gitHubInstallationVerify: (id: string) => `/connections/github/installations/${id}/verify`,
+  gitHubRepositoryBuildHints: (repositoryId: string) => `/applications/github-repositories/${repositoryId}/build-hints`,
   gitHubWebhook: () => '/webhooks/github',
   homePage: () => '/',
   networkWireGuardDeviceDestroy: (id: string) => `/networks/wireguard-devices/${id}`,

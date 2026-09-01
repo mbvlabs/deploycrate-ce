@@ -50,6 +50,7 @@ func (c Applications) RegisterRoutes(r *router.Router) error {
 		{http.MethodPatch, routes.ApplicationUpdate, c.Update},
 		{http.MethodGet, routes.ApplicationSourceEdit, c.EditSource},
 		{http.MethodPatch, routes.ApplicationSourceUpdate, c.UpdateSource},
+		{http.MethodGet, routes.GitHubRepositoryBuildHints, c.RepositoryBuildHints},
 		{http.MethodDelete, routes.ApplicationDestroy, c.Destroy},
 	}
 	errList := make([]error, 0, len(definitions))
@@ -523,6 +524,23 @@ func (c Applications) Destroy(etx *echo.Context) error {
 	}
 
 	return inertia.Redirect(etx, routes.Applications.URL(), http.StatusSeeOther)
+}
+
+func (c Applications) RepositoryBuildHints(etx *echo.Context) error {
+	repositoryID, err := uuid.Parse(etx.Param("repositoryId"))
+	if err != nil {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Repository not found"})
+	}
+	hints, err := c.service.RepositoryBuildHints(
+		etx.Request().Context(),
+		repositoryID,
+		etx.QueryParam("reference"),
+		etx.QueryParam("contextPath"),
+	)
+	if err != nil {
+		return etx.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+	return etx.JSON(http.StatusOK, hints)
 }
 
 func (c Applications) renderCreationError(etx *echo.Context, err error) error {

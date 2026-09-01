@@ -7,6 +7,14 @@ if [[ ! "${script}" =~ ^[A-Za-z0-9][A-Za-z0-9:_-]{0,63}$ ]]; then
   echo "DeployCrate frontend script must be a package script name" >&2
   exit 1
 fi
+ssr_script=""
+if [[ "${BP_DEPLOYCRATE_FRONTEND_SSR:-}" == "true" ]]; then
+  ssr_script="${BP_DEPLOYCRATE_FRONTEND_SSR_SCRIPT:-build:ssr}"
+  if [[ ! "${ssr_script}" =~ ^[A-Za-z0-9][A-Za-z0-9:_-]{0,63}$ ]]; then
+    echo "DeployCrate SSR build script must be a package script name" >&2
+    exit 1
+  fi
+fi
 asset_directory="${BP_DEPLOYCRATE_FRONTEND_DIRECTORY:-.}"
 if [[ "${asset_directory}" == /* || "${asset_directory}" == ".." || "${asset_directory}" == ../* || "${asset_directory}" == */../* ]]; then
   echo "DeployCrate frontend directory must stay inside the build context" >&2
@@ -52,6 +60,13 @@ if ! node -e 'const manifest = require("./package.json"); const script = process
   echo "package.json must define a non-empty ${script} script" >&2
   exit 1
 fi
+if [[ -n "${ssr_script}" ]]; then
+  export BP_DEPLOYCRATE_FRONTEND_SSR_SCRIPT="${ssr_script}"
+  if ! node -e 'const manifest = require("./package.json"); const script = process.env.BP_DEPLOYCRATE_FRONTEND_SSR_SCRIPT; process.exit(manifest.scripts && typeof manifest.scripts[script] === "string" && manifest.scripts[script].trim() ? 0 : 1)'; then
+    echo "package.json must define a non-empty ${ssr_script} script" >&2
+    exit 1
+  fi
+fi
 
 buildpack_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 default_version="$(sed -n "s/^default-${manager}-version = \"\([^\"]*\)\"$/\1/p" "${buildpack_root}/buildpack.toml")"
@@ -83,18 +98,22 @@ case "${manager}" in
   npm)
     install_command="npm ci"
     build_command="npm run ${script}"
+    ssr_build_command="npm run ${ssr_script}"
     ;;
   pnpm)
     install_command="pnpm install --frozen-lockfile"
     build_command="pnpm run ${script}"
+    ssr_build_command="pnpm run ${ssr_script}"
     ;;
   yarn)
     install_command="yarn install --frozen-lockfile"
     build_command="yarn run ${script}"
+    ssr_build_command="yarn run ${ssr_script}"
     ;;
   bun)
     install_command="bun install --frozen-lockfile"
     build_command="bun run ${script}"
+    ssr_build_command="bun run ${ssr_script}"
     ;;
 esac
 
@@ -102,7 +121,11 @@ echo "DeployCrate Node Assets Buildpack"
 echo "  Package manager: ${manager} ${manager_version}"
 echo "  Lockfile: ${lockfile}"
 echo "  Install command: ${install_command}"
-echo "  Build command: ${build_command}"
+echo "  Client build command: ${build_command}"
+if [[ -n "${ssr_script}" ]]; then
+  echo "  SSR build command: ${ssr_build_command}"
+  echo "  Runtime Node: enabled"
+fi
 
 cache_layer="${CNB_LAYERS_DIR}/${manager}-cache"
 mkdir -p "${cache_layer}/bootstrap" "${cache_layer}/store"
@@ -151,6 +174,9 @@ LAYER
 export PATH="${tool_layer}/bin:${PATH}"
 
 cleanup() {
+  if [[ -n "${ssr_script}" ]]; then
+    return
+  fi
   find . -type d -name node_modules -prune -exec rm -rf -- '{}' +
 }
 trap cleanup EXIT
@@ -159,17 +185,29 @@ case "${manager}" in
   npm)
     npm ci
     npm run "${script}"
+    if [[ -n "${ssr_script}" ]]; then
+      npm run "${ssr_script}"
+    fi
     ;;
   pnpm)
     pnpm install --frozen-lockfile
     pnpm run "${script}"
+    if [[ -n "${ssr_script}" ]]; then
+      pnpm run "${ssr_script}"
+    fi
     ;;
   yarn)
     yarn install --frozen-lockfile
     yarn run "${script}"
+    if [[ -n "${ssr_script}" ]]; then
+      yarn run "${ssr_script}"
+    fi
     ;;
   bun)
     bun install --frozen-lockfile
     bun run "${script}"
+    if [[ -n "${ssr_script}" ]]; then
+      bun run "${ssr_script}"
+    fi
     ;;
 esac

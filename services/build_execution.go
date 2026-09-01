@@ -539,10 +539,9 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 		return err
 	}
 	frontendScript := ""
-	frontendDirectory := ""
+	packEnvironment := snapshot.parsedSettings.PackEnvironment()
 	if snapshot.parsedSettings.Frontend != nil {
 		frontendScript = snapshot.parsedSettings.Frontend.Script
-		frontendDirectory = snapshot.parsedSettings.Frontend.Directory
 	}
 	packStarted := time.Now()
 	buildSpec := buildpacksclient.BuildSpec{
@@ -557,7 +556,7 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 		DockerEnvironment:  dockerEnvironment,
 		BPGOTargets:        snapshot.BPGOTargets,
 		FrontendScript:     frontendScript,
-		FrontendDirectory:  frontendDirectory,
+		PackEnvironment:    packEnvironment,
 		Runtime:            string(snapshot.parsedSettings.Runtime),
 		Output:             logger,
 	}
@@ -865,11 +864,10 @@ func remotePackArguments(
 			buildpacksclient.NodeEngineBuildpack,
 			"--buildpack",
 			assetsBuildpack,
-			"--env",
-			"BP_DEPLOYCRATE_FRONTEND_SCRIPT="+spec.FrontendScript,
-			"--env",
-			"BP_DEPLOYCRATE_FRONTEND_DIRECTORY="+spec.FrontendDirectory,
 		)
+		for _, environment := range spec.PackEnvironment {
+			arguments = append(arguments, "--env", environment)
+		}
 	}
 	arguments = append(
 		arguments,

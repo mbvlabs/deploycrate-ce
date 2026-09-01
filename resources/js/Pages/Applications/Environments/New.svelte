@@ -4,6 +4,7 @@
 
   import BulkEnvironmentSecretsDialog from "@/Components/BulkEnvironmentSecretsDialog.svelte";
   import BuildpackSettingsEditor, {
+    defaultBuildpackSettings,
     type BuildpackSettings,
     type BuildServer,
   } from "@/Components/BuildpackSettingsEditor.svelte";
@@ -101,11 +102,7 @@
   let githubRepositoryId = $state("");
   let reference = $state("");
   let autoBuild = $state(false);
-  let buildpackSettings = $state<BuildpackSettings>({
-    schema_version: 3,
-    runtime: "go",
-    frontend: null,
-  });
+  let buildpackSettings = $state<BuildpackSettings>(defaultBuildpackSettings());
   let contextPath = $state(".");
   let registryResourceId = $state(untrack(() => registries[0]?.id ?? ""));
   let imageRepository = $state("");
@@ -179,6 +176,20 @@
   function updateName(value: string) {
     environmentName = value;
     if (!slugCustomized) environmentSlug = slugify(value);
+  }
+
+  function repositoryFullName() {
+    return (
+      repositoriesForInstallation.find(
+        (repository) => repository.id === githubRepositoryId,
+      )?.fullName ?? ""
+    );
+  }
+
+  function webGoTargets() {
+    return processes
+      .map((process) => process.target?.trim())
+      .filter((target): target is string => Boolean(target));
   }
 
   function chooseInstallation(value: string) {
@@ -377,8 +388,9 @@
 
     <Card.Root>
       <Card.Header
-        ><Card.Title>Delivery method</Card.Title><Card.Description
-          >Choose how this Environment receives its application.</Card.Description
+        ><Card.Title>Build</Card.Title><Card.Description
+          >Choose the source repository, buildpack settings, and image
+          destination.</Card.Description
         ></Card.Header
       >
       <Card.Content class="space-y-5">
@@ -448,6 +460,11 @@
               bind:settings={buildpackSettings}
               bind:buildServerId
               {buildServers}
+              {contextPath}
+              {reference}
+              {githubRepositoryId}
+              repositoryFullName={repositoryFullName()}
+              goTargets={webGoTargets()}
             />
             <FormField label="Build context"
               ><Input
@@ -514,7 +531,12 @@
     </Card.Root>
 
     <Card.Root>
-      <Card.Header><Card.Title>Target servers</Card.Title></Card.Header>
+      <Card.Header
+        ><Card.Title>Runtime</Card.Title><Card.Description
+          >Choose target servers, DNS, and the processes that run in the built
+          image.</Card.Description
+        ></Card.Header
+      >
       <Card.Content class="space-y-5">
         {#if servers.length === 0}<div
             class="flex flex-col items-start justify-between gap-4 border border-dashed border-border p-4 sm:flex-row sm:items-center"
@@ -578,23 +600,12 @@
               </p></FormField
             >{/if}
         </div>
-      </Card.Content>
-    </Card.Root>
-
-    <Card.Root>
-      <Card.Header
-        ><Card.Title>Processes</Card.Title><Card.Description
-          >Configure the public web process, private workers, and an optional
-          one-off release command.</Card.Description
-        ></Card.Header
-      >
-      <Card.Content
-        ><EnvironmentProcessEditor
+        <EnvironmentProcessEditor
           bind:processes
           showGoTargets={sourceType === "buildpacks" &&
             buildpackSettings.runtime === "go"}
-        /></Card.Content
-      >
+        />
+      </Card.Content>
     </Card.Root>
 
     <Card.Root>

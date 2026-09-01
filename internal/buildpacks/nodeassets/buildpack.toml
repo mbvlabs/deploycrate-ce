@@ -3,7 +3,7 @@ api = "0.12"
 [buildpack]
 id = "com.deploycrate.node-assets"
 name = "DeployCrate Node Assets"
-version = "0.4.0"
+version = "0.5.0"
 
 [metadata]
 default-npm-version = "11.5.2"
