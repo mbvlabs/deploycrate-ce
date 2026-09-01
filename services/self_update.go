@@ -24,6 +24,7 @@ import (
 
 	"deploycrate-ce/clients/cloudflare"
 	"deploycrate-ce/config"
+	"deploycrate-ce/internal/releaseauth"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/sudo"
 	"deploycrate-ce/models"
@@ -155,20 +156,21 @@ type caddyUpstream struct {
 }
 
 type SelfUpdate struct {
-	mu             sync.RWMutex
-	status         SelfUpdateStatus
-	currentVersion string
-	releaseRoot    string
-	slotsRoot      string
-	statusPath     string
-	jobRunnerPath  string
-	caddyAdminURL  string
-	publicHealth   string
-	client         *http.Client
-	r2             *cloudflare.R2
-	jobs           storage.InsertQueue
-	db             storage.Pool
-	routes         CaddyRouteService
+	mu              sync.RWMutex
+	status          SelfUpdateStatus
+	currentVersion  string
+	releaseRoot     string
+	slotsRoot       string
+	statusPath      string
+	jobRunnerPath   string
+	caddyAdminURL   string
+	publicHealth    string
+	client          *http.Client
+	releaseVerifier releaseauth.Verifier
+	r2              *cloudflare.R2
+	jobs            storage.InsertQueue
+	db              storage.Pool
+	routes          CaddyRouteService
 
 	currentDeployment *selfUpdateDeployment
 }
@@ -203,11 +205,12 @@ func NewSelfUpdate(
 			"DEPLOYCRATE_CE_PUBLIC_HEALTH_URL",
 			strings.TrimRight(config.BaseURL, "/")+"/api/health",
 		),
-		client: httpClient,
-		r2:     cloudflare.NewR2(httpClient),
-		jobs:   jobs,
-		db:     db,
-		routes: routes,
+		client:          httpClient,
+		releaseVerifier: releaseauth.New(httpClient),
+		r2:              cloudflare.NewR2(httpClient),
+		jobs:            jobs,
+		db:              db,
+		routes:          routes,
 	}
 	service.loadStatus()
 	if service.status.UpdatedAt.IsZero() {
@@ -260,17 +263,39 @@ func (s *SelfUpdate) fetchReleaseManifest(
 	if response.StatusCode != http.StatusOK {
 		return releaseManifest{}, fmt.Errorf("release manifest returned status %d", response.StatusCode)
 	}
+	content, err := io.ReadAll(io.LimitReader(response.Body, (64<<10)+1))
+	if err != nil || len(content) > 64<<10 {
+		return releaseManifest{}, errors.New("release manifest could not be read")
+	}
 	var manifest releaseManifest
-	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&manifest); err != nil {
+	if err := json.Unmarshal(content, &manifest); err != nil {
 		return releaseManifest{}, errors.New("release manifest could not be decoded")
 	}
 	artifact, found := manifest.Artifacts[runtime.GOOS+"/"+runtime.GOARCH]
+	checksum, checksumErr := hex.DecodeString(artifact.SHA256)
 	if manifest.SchemaVersion != 1 || manifest.Channel != source.Channel ||
 		strings.TrimSpace(manifest.Version) == "" || !found ||
-		!strings.HasPrefix(artifact.URL, source.BaseURL+"/") || len(artifact.SHA256) != 64 {
+		!strings.HasPrefix(artifact.URL, source.BaseURL+"/") ||
+		checksumErr != nil || len(checksum) != sha256.Size {
 		return releaseManifest{}, errors.New("release manifest is invalid")
 	}
+	if err := s.signatureVerifier().VerifyBytes(
+		ctx,
+		content,
+		source.BaseURL+"/manifest.json.sigstore.json",
+		source.Channel,
+		strings.TrimSpace(manifest.Version),
+	); err != nil {
+		return releaseManifest{}, fmt.Errorf("authenticate release manifest: %w", err)
+	}
 	return manifest, nil
+}
+
+func (s *SelfUpdate) signatureVerifier() releaseauth.Verifier {
+	if s.releaseVerifier != nil {
+		return s.releaseVerifier
+	}
+	return releaseauth.New(s.client)
 }
 
 func (s *SelfUpdate) Status() SelfUpdateStatus {
@@ -704,6 +729,17 @@ func (s *SelfUpdate) execute(
 	s.transition(SelfUpdateInProgress, "verify_checksum", "Verifying release checksum")
 	if err := verifyReleaseChecksum(stagedBinary, checksumPath, "deploycrate-ce"); err != nil {
 		s.fail("verify_checksum", err)
+		return
+	}
+	s.transition(SelfUpdateInProgress, "verify_signature", "Authenticating release signature")
+	if err := s.signatureVerifier().VerifyFile(
+		ctx,
+		stagedBinary,
+		deployment.Checkpoint.ArtifactURL+".sigstore.json",
+		source.Channel,
+		deployment.Version,
+	); err != nil {
+		s.fail("verify_signature", err)
 		return
 	}
 	if err := os.Chmod(stagedBinary, 0o700); err != nil {
@@ -1930,7 +1966,7 @@ func normalizeVersion(version string) string {
 func stableVersionNewer(candidate, current string) bool {
 	parse := func(value string) ([3]int, bool) {
 		var parsed [3]int
-		core := strings.SplitN(normalizeVersion(value), "-", 2)[0]
+		core, _, _ := strings.Cut(normalizeVersion(value), "-")
 		parts := strings.Split(core, ".")
 		if len(parts) != len(parsed) {
 			return parsed, false

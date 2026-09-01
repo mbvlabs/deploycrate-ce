@@ -10,7 +10,15 @@ if [ "${channel}" = stable ] && [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
   echo "stable versions must use MAJOR.MINOR.PATCH" >&2
   exit 1
 fi
+if [ "${channel}" = edge ] && [[ ! "${version}" =~ ^edge-[0-9a-f]{12}$ ]]; then
+  echo "edge versions must use edge- followed by a 12-character commit hash" >&2
+  exit 1
+fi
 base_url="${base_url%/}"
+if [[ ! "${base_url}" =~ ^https://[^[:space:]\"\\]+$ ]]; then
+  echo "base URL must be an HTTPS URL without whitespace, quotes, or backslashes" >&2
+  exit 1
+fi
 output="dist/release-${channel}"
 rm -rf "${output}"
 mkdir -p "${output}/releases/${version}/linux"
@@ -32,7 +40,10 @@ for arch in amd64 arm64; do
   (cd "${platform_dir}" && sha256sum deploycrate-ce > deploycrate-ce.sha256 && sha256sum bootstrap > bootstrap.sha256)
 done
 
-sed "s|https://get.deploycrate.com|${base_url}|g" scripts/install-channel.sh > "${output}/install.sh"
+sed \
+  -e "s|https://ce-stable.deploycrate.com|${base_url}|g" \
+  -e "s|release_channel=\"stable\"|release_channel=\"${channel}\"|g" \
+  scripts/install-channel.sh > "${output}/install.sh"
 chmod 0755 "${output}/install.sh"
 amd64_sha="$(sha256sum "${output}/releases/${version}/linux/amd64/deploycrate-ce" | awk '{print $1}')"
 arm64_sha="$(sha256sum "${output}/releases/${version}/linux/arm64/deploycrate-ce" | awk '{print $1}')"

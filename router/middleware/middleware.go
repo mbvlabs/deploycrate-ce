@@ -203,8 +203,7 @@ func Logger(tel *telemetry.Telemetry) echo.MiddlewareFunc {
 			}
 			if statusCode == 0 {
 				statusCode = http.StatusOK
-				var httpError *echo.HTTPError
-				if errors.As(err, &httpError) {
+				if httpError, ok := errors.AsType[*echo.HTTPError](err); ok {
 					statusCode = httpError.Code
 				} else if err != nil {
 					statusCode = http.StatusInternalServerError

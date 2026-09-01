@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -1064,8 +1065,8 @@ func (m Model) progressStatus() string {
 		}
 		return "Saving installer configuration..."
 	}
-	for index := len(m.events) - 1; index >= 0; index-- {
-		event := m.events[index]
+	for _, event := range slices.Backward(m.events) {
+
 		switch event.Kind {
 		case setup.EventStarted:
 			return event.Description + "..."

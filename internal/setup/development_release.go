@@ -14,6 +14,8 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"deploycrate-ce/internal/releaseauth"
 )
 
 type releaseArtifact struct {
@@ -48,11 +50,27 @@ func loadReleaseManifest(
 	ctx context.Context,
 	channel, baseURL string,
 ) (releaseManifest, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	return loadReleaseManifestWithVerifier(
+		ctx,
+		channel,
+		baseURL,
+		client,
+		releaseauth.New(client),
+	)
+}
+
+func loadReleaseManifestWithVerifier(
+	ctx context.Context,
+	channel, baseURL string,
+	client *http.Client,
+	verifier releaseauth.Verifier,
+) (releaseManifest, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/manifest.json", nil)
 	if err != nil {
 		return releaseManifest{}, err
 	}
-	response, err := (&http.Client{Timeout: 30 * time.Second}).Do(request)
+	response, err := client.Do(request)
 	if err != nil {
 		return releaseManifest{}, fmt.Errorf("load %s release manifest: %w", channel, err)
 	}
@@ -60,13 +78,29 @@ func loadReleaseManifest(
 	if response.StatusCode != http.StatusOK {
 		return releaseManifest{}, fmt.Errorf("load %s release manifest: status %d", channel, response.StatusCode)
 	}
+	content, err := io.ReadAll(io.LimitReader(response.Body, (64<<10)+1))
+	if err != nil {
+		return releaseManifest{}, fmt.Errorf("read %s release manifest: %w", channel, err)
+	}
+	if len(content) > 64<<10 {
+		return releaseManifest{}, fmt.Errorf("read %s release manifest", channel)
+	}
 	var manifest releaseManifest
-	if err := json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&manifest); err != nil {
+	if err := json.Unmarshal(content, &manifest); err != nil {
 		return releaseManifest{}, fmt.Errorf("decode %s release manifest: %w", channel, err)
 	}
 	if manifest.SchemaVersion != 1 || manifest.Channel != channel ||
 		strings.TrimSpace(manifest.Version) == "" {
 		return releaseManifest{}, fmt.Errorf("invalid %s release manifest", channel)
+	}
+	if err := verifier.VerifyBytes(
+		ctx,
+		content,
+		baseURL+"/manifest.json.sigstore.json",
+		channel,
+		strings.TrimSpace(manifest.Version),
+	); err != nil {
+		return releaseManifest{}, fmt.Errorf("authenticate %s release manifest: %w", channel, err)
 	}
 	return manifest, nil
 }
@@ -74,6 +108,14 @@ func loadReleaseManifest(
 func acquireReleaseApplicationBinary(
 	ctx context.Context,
 	channel, expectedVersion string,
+) (string, func(), error) {
+	return acquireReleaseApplicationBinaryWithVerifier(ctx, channel, expectedVersion, nil)
+}
+
+func acquireReleaseApplicationBinaryWithVerifier(
+	ctx context.Context,
+	channel, expectedVersion string,
+	verifier releaseauth.Verifier,
 ) (string, func(), error) {
 	overrideName := "DEPLOYCRATE_STABLE_BASE_URL"
 	if channel == UpdateChannelEdge {
@@ -83,7 +125,11 @@ func acquireReleaseApplicationBinary(
 	if baseURL == "" {
 		baseURL = releaseBaseURL(channel)
 	}
-	manifest, err := loadReleaseManifest(ctx, channel, baseURL)
+	client := &http.Client{Timeout: 10 * time.Minute}
+	if verifier == nil {
+		verifier = releaseauth.New(client)
+	}
+	manifest, err := loadReleaseManifestWithVerifier(ctx, channel, baseURL, client, verifier)
 	if err != nil {
 		return "", nil, err
 	}
@@ -99,7 +145,6 @@ func acquireReleaseApplicationBinary(
 		return "", nil, fmt.Errorf("release manifest contains an invalid checksum")
 	}
 	binaryURL := artifact.URL
-	client := &http.Client{Timeout: 10 * time.Minute}
 
 	temporary, err := os.CreateTemp("", "deploycrate-ce-release-*")
 	if err != nil {
@@ -145,6 +190,16 @@ func acquireReleaseApplicationBinary(
 	if !bytes.Equal(hash.Sum(nil), expectedChecksum) {
 		cleanup()
 		return "", nil, fmt.Errorf("release application checksum verification failed")
+	}
+	if err := verifier.VerifyFile(
+		ctx,
+		temporaryPath,
+		binaryURL+".sigstore.json",
+		channel,
+		manifest.Version,
+	); err != nil {
+		cleanup()
+		return "", nil, fmt.Errorf("authenticate release application binary: %w", err)
 	}
 
 	return temporaryPath, cleanup, nil

@@ -349,9 +349,9 @@ func installApplicationReleaseBinary(
 
 func releaseBaseURL(channel string) string {
 	if channel == UpdateChannelEdge {
-		return "https://get-dev.deploycrate.com"
+		return "https://ce-edge.deploycrate.com"
 	}
-	return "https://get.deploycrate.com"
+	return "https://ce-stable.deploycrate.com"
 }
 
 func installApplicationBinary(source, version string) error {

@@ -380,8 +380,7 @@ func (controller Resources) ExecuteDatabaseQuery(etx *echo.Context) error {
 			"error": "Enter one SQL statement no larger than 100 KB",
 		})
 	}
-	var queryError *services.DatabaseEditorQueryError
-	if errors.As(err, &queryError) {
+	if queryError, ok := errors.AsType[*services.DatabaseEditorQueryError](err); ok {
 		return etx.JSON(http.StatusUnprocessableEntity, map[string]any{
 			"error": queryError,
 		})

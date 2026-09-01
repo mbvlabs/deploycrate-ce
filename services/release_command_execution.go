@@ -572,9 +572,8 @@ func (service *ReleaseCommandExecution) fail(
 	logger *releaseCommandLogger,
 	operationErr error,
 ) error {
-	var exitFailure *releaseExitError
 	var exitCode *int32
-	if errors.As(operationErr, &exitFailure) {
+	if exitFailure, ok := errors.AsType[*releaseExitError](operationErr); ok {
 		exitCode = exitFailure.exitCode
 	}
 	if logger != nil {

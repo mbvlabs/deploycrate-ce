@@ -569,8 +569,8 @@ func (service *ResourceManagement) ArchiveResource(
 			installation.ID.String(),
 			installation.ContainerName,
 		); stopErr != nil {
-			for index := len(running) - 1; index >= 0; index-- {
-				stopped := running[index]
+			for _, stopped := range slices.Backward(running) {
+
 				stopErr = errors.Join(
 					stopErr,
 					service.container.Start(
@@ -591,8 +591,8 @@ func (service *ResourceManagement) ArchiveResource(
 		if !restoreContainers {
 			return
 		}
-		for index := len(running) - 1; index >= 0; index-- {
-			installation := running[index]
+		for _, installation := range slices.Backward(running) {
+
 			err = errors.Join(
 				err,
 				service.container.Start(

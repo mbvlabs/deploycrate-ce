@@ -7,8 +7,8 @@ import (
 )
 
 const (
-	StableReleaseBaseURL = "https://get.deploycrate.com"
-	EdgeReleaseBaseURL   = "https://get-dev.deploycrate.com"
+	StableReleaseBaseURL = "https://ce-stable.deploycrate.com"
+	EdgeReleaseBaseURL   = "https://ce-edge.deploycrate.com"
 	ReleaseChannelStable = "stable"
 	ReleaseChannelEdge   = "edge"
 )

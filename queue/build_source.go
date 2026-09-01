@@ -34,8 +34,7 @@ func (worker *BuildSourceWorker) Work(
 	job *river.Job[jobs.BuildSourceArgs],
 ) error {
 	err := worker.service.Execute(ctx, job.Args.BuildID)
-	var permanent *services.PermanentBuildError
-	if errors.As(err, &permanent) {
+	if _, ok := errors.AsType[*services.PermanentBuildError](err); ok {
 		return river.JobCancel(err)
 	}
 	if err != nil && job.Attempt >= job.MaxAttempts {

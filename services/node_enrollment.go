@@ -32,7 +32,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-const nodeInstallerURL = "https://get.deploycrate.com/ce"
+const nodeInstallerURL = "https://ce-stable.deploycrate.com/ce"
 
 type NodeEnrollment struct {
 	db        storage.Pool

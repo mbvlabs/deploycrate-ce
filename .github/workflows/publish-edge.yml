@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
   group: publish-edge
@@ -19,32 +20,45 @@ jobs:
     runs-on: ubuntu-latest
     environment: edge
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
           cache: true
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
         with:
           version: 11.22.0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 26
           cache: pnpm
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v3.0.6
+      - name: Validate release configuration
+        env:
+          R2_BUCKET: ${{ vars.R2_BUCKET }}
+          R2_PUBLIC_URL: ${{ vars.R2_PUBLIC_URL }}
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+        run: |
+          test -n "${R2_BUCKET}" || { echo "R2_BUCKET is not configured" >&2; exit 1; }
+          test -n "${R2_PUBLIC_URL}" || { echo "R2_PUBLIC_URL is not configured" >&2; exit 1; }
+          test -n "${R2_ENDPOINT}" || { echo "R2_ENDPOINT is not configured" >&2; exit 1; }
+          test -n "${R2_ACCESS_KEY_ID}" || { echo "R2_ACCESS_KEY_ID is not configured" >&2; exit 1; }
+          test -n "${R2_SECRET_ACCESS_KEY}" || { echo "R2_SECRET_ACCESS_KEY is not configured" >&2; exit 1; }
       - name: Build edge release
-        run: scripts/build-release.sh "edge-${GITHUB_SHA::12}" edge "${{ vars.R2_PUBLIC_URL }}"
+        env:
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: scripts/build-release.sh "edge-${RELEASE_SHA::12}" edge "${{ vars.R2_PUBLIC_URL }}"
+      - name: Sign and verify edge release
+        run: scripts/sign-release.sh dist/release-edge
       - name: Upload immutable artifacts and channel files
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
           AWS_DEFAULT_REGION: auto
-        run: |
-          aws s3 cp dist/release-edge/releases "s3://${{ vars.R2_BUCKET }}/releases" --recursive \
-            --cache-control 'public,max-age=31536000,immutable' --endpoint-url "${{ secrets.R2_ENDPOINT }}"
-          aws s3 cp dist/release-edge/install.sh "s3://${{ vars.R2_BUCKET }}/install.sh" \
-            --cache-control no-cache --content-type text/x-shellscript --endpoint-url "${{ secrets.R2_ENDPOINT }}"
-          aws s3 cp dist/release-edge/manifest.json "s3://${{ vars.R2_BUCKET }}/manifest.json" \
-            --content-type application/json --cache-control no-cache \
-            --endpoint-url "${{ secrets.R2_ENDPOINT }}"
+        run: scripts/upload-release.sh dist/release-edge "${{ vars.R2_BUCKET }}" "${{ secrets.R2_ENDPOINT }}"

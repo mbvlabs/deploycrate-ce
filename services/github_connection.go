@@ -414,12 +414,12 @@ func (service *GitHubConnection) installationTarget(
 			)
 		}
 		return sql.NullString{
-				String: "Organization",
-				Valid:  true,
-			}, sql.NullString{
-				String: account.Login,
-				Valid:  true,
-			}, account.ID, nil
+			String: "Organization",
+			Valid:  true,
+		}, sql.NullString{
+			String: account.Login,
+			Valid:  true,
+		}, account.ID, nil
 	default:
 		return sql.NullString{}, sql.NullString{}, 0, errors.Join(
 			models.ErrDomainValidation,

@@ -177,12 +177,12 @@ func (client Client) run(
 			message = err.Error()
 		}
 		return Result{
-				Stdout: stdout.String(),
-				Stderr: stderr.String(),
-			}, fmt.Errorf(
-				"run SSH command: %s",
-				message,
-			)
+			Stdout: stdout.String(),
+			Stderr: stderr.String(),
+		}, fmt.Errorf(
+			"run SSH command: %s",
+			message,
+		)
 	}
 	return Result{Stdout: stdout.String(), Stderr: stderr.String()}, nil
 }
