@@ -36,7 +36,10 @@ jobs:
           test -z "$(gofmt -l $(git ls-files '*.go'))"
           git diff --exit-code
       - run: go vet ./...
-      - run: go test ./...
+      - name: Run tests
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: true
+        run: go test -p 2 ./...
       - name: Build release commands
         run: |
           CGO_ENABLED=0 go build ./cmd/app
