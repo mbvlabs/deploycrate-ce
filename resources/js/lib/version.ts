@@ -10,3 +10,9 @@ export function formatVersion(version: string): string {
   }
   return `v${normalized}`;
 }
+
+export function releaseUpdateSummary(version: string): string {
+  const formatted = formatVersion(version);
+  if (formatted === "Unavailable") return "Update DeployCrate CE";
+  return `Update DeployCrate CE to ${formatted}`;
+}
