@@ -4,7 +4,7 @@
 
 Edge and stable releases use different triggers:
 
-1. **Edge** — merge (or push) to `master` starts **CI**. After CI succeeds, **Publish edge** starts automatically. There is a gap between merge and publish while CI runs (~6 minutes today).
+1. **Edge** — merge (or push) to `master` starts **Publish edge**.
 2. **Stable** — pushing a `v*` tag starts **Publish stable** directly. The tagged commit must be on `master`.
 
 Local get-dev publishes are separate: run `just development-assets` on your machine. They are not part of GitHub Actions.
@@ -18,9 +18,7 @@ Configure GitHub environments named `edge` and `stable`. Each needs:
 
 The credentials need object read/write access and permission to list the bucket. Protect the `stable` environment and restrict stable tags to trusted maintainers.
 
-After a merge to `master`, open the Actions tab and watch **CI** first. **Publish edge** appears only once that run succeeds.
-
-Successful `master` CI runs publish edge; `v*` tags publish stable only when the tagged commit belongs to `master`. Both publishing jobs need `id-token: write` so Cosign can obtain a short-lived Fulcio certificate from GitHub's OIDC identity. No signing key or signing secret is stored in GitHub.
+Pushes to `master` publish edge; `v*` tags publish stable only when the tagged commit belongs to `master`. Both publishing jobs need `id-token: write` so Cosign can obtain a short-lived Fulcio certificate from GitHub's OIDC identity. No signing key or signing secret is stored in GitHub.
 
 The workflows sign and immediately verify `manifest.json`, both architecture-specific bootstrap binaries, and both application binaries. Verification pins the certificate issuer to `https://token.actions.githubusercontent.com` and the certificate identity to the exact publishing workflow reference. Sigstore bundles use the `.sigstore.json` suffix and are published beside their authenticated files.
 
