@@ -155,12 +155,12 @@ func (Client) Build(ctx context.Context, spec BuildSpec) (Result, error) {
 	command.Stderr = commandOutput
 	if err := command.Run(); err != nil {
 		return Result{
-			Output: output.String(),
-		}, fmt.Errorf(
-			"Pack build failed: %w: %s",
-			err,
-			output.String(),
-		)
+				Output: output.String(),
+			}, fmt.Errorf(
+				"Pack build failed: %w: %s",
+				err,
+				output.String(),
+			)
 	}
 	return Result{Output: output.String()}, nil
 }

@@ -113,12 +113,12 @@ func (service *DatabaseRestoreEngine) Run(
 		)
 		_ = service.setConnections(context.WithoutCancel(ctx), target, target.DatabaseName, true)
 		return DatabaseRestoreResult{
-			CutoverAt:  &cutoverAt,
-			RolledBack: rollbackErr == nil,
-		}, errors.Join(
-			fmt.Errorf("activate restored database: %w", err),
-			rollbackErr,
-		)
+				CutoverAt:  &cutoverAt,
+				RolledBack: rollbackErr == nil,
+			}, errors.Join(
+				fmt.Errorf("activate restored database: %w", err),
+				rollbackErr,
+			)
 	}
 	cleanupStaging = false
 	if err := service.setConnections(ctx, target, target.DatabaseName, true); err != nil {
@@ -173,14 +173,14 @@ func (service *DatabaseRestoreEngine) resumeCutover(
 		_ = service.setConnections(context.WithoutCancel(ctx), target, target.DatabaseName, true)
 		_ = service.dropDatabase(context.WithoutCancel(ctx), target, stagingName)
 		return true, DatabaseRestoreResult{
-			CutoverAt:  &cutoverAt,
-			RolledBack: rollbackErr == nil,
-		}, errors.Join(
-			errors.New(
-				"restore cutover was interrupted and the original database was recovered",
-			),
-			rollbackErr,
-		)
+				CutoverAt:  &cutoverAt,
+				RolledBack: rollbackErr == nil,
+			}, errors.Join(
+				errors.New(
+					"restore cutover was interrupted and the original database was recovered",
+				),
+				rollbackErr,
+			)
 	}
 	if err := service.verifyDatabase(ctx, target, target.DatabaseName); err != nil {
 		result, rollbackErr := service.rollback(
@@ -225,11 +225,11 @@ func (service *DatabaseRestoreEngine) rollback(
 			stagingName,
 		); err != nil {
 			return DatabaseRestoreResult{
-				CutoverAt: &cutoverAt,
-			}, errors.Join(
-				operationErr,
-				fmt.Errorf("preserve failed restored database: %w", err),
-			)
+					CutoverAt: &cutoverAt,
+				}, errors.Join(
+					operationErr,
+					fmt.Errorf("preserve failed restored database: %w", err),
+				)
 		}
 	}
 	if err := service.renameDatabase(
@@ -239,11 +239,11 @@ func (service *DatabaseRestoreEngine) rollback(
 		target.DatabaseName,
 	); err != nil {
 		return DatabaseRestoreResult{
-			CutoverAt: &cutoverAt,
-		}, errors.Join(
-			operationErr,
-			fmt.Errorf("restore original database: %w", err),
-		)
+				CutoverAt: &cutoverAt,
+			}, errors.Join(
+				operationErr,
+				fmt.Errorf("restore original database: %w", err),
+			)
 	}
 	if err := service.setConnections(
 		rollbackContext,
@@ -252,11 +252,11 @@ func (service *DatabaseRestoreEngine) rollback(
 		true,
 	); err != nil {
 		return DatabaseRestoreResult{
-			CutoverAt: &cutoverAt,
-		}, errors.Join(
-			operationErr,
-			fmt.Errorf("reopen original database: %w", err),
-		)
+				CutoverAt: &cutoverAt,
+			}, errors.Join(
+				operationErr,
+				fmt.Errorf("reopen original database: %w", err),
+			)
 	}
 	_ = service.dropDatabase(rollbackContext, target, stagingName)
 	return DatabaseRestoreResult{CutoverAt: &cutoverAt, RolledBack: true}, operationErr
