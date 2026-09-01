@@ -38,3 +38,9 @@ var ApplicationDestroy = routing.NewRouteWithUUIDID(
 	"applications.destroy",
 	ApplicationsPrefix,
 )
+
+var GitHubRepositoryBuildHints = routing.NewRouteWithUUIDID(
+	"/github-repositories/:repositoryId/build-hints",
+	"applications.github-repository.build-hints",
+	ApplicationsPrefix,
+)

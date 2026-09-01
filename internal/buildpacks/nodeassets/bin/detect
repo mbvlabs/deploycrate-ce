@@ -40,13 +40,22 @@ if (( ${#found_lockfiles[@]} > 1 )); then
   exit 1
 fi
 
-cat > "${CNB_BUILD_PLAN_PATH}" <<'PLAN'
+ssr_enabled=false
+if [[ "${BP_DEPLOYCRATE_FRONTEND_SSR:-}" == "true" ]]; then
+  ssr_enabled=true
+fi
+launch_node=false
+if [[ "${ssr_enabled}" == "true" ]]; then
+  launch_node=true
+fi
+
+cat > "${CNB_BUILD_PLAN_PATH}" <<PLAN
 [[requires]]
 name = "node"
 
 [requires.metadata]
 build = true
-launch = false
+launch = ${launch_node}
 
 [[requires]]
 name = "npm"

@@ -54,6 +54,7 @@ type BuildSpec struct {
 	BPGOTargets        string
 	FrontendScript     string
 	FrontendDirectory  string
+	PackEnvironment    []string
 	Runtime            string
 	Output             io.Writer
 }
@@ -112,9 +113,10 @@ func (Client) Build(ctx context.Context, spec BuildSpec) (Result, error) {
 		arguments = append(arguments,
 			"--buildpack", NodeEngineBuildpack,
 			"--buildpack", assetsBuildpack,
-			"--env", "BP_DEPLOYCRATE_FRONTEND_SCRIPT="+spec.FrontendScript,
-			"--env", "BP_DEPLOYCRATE_FRONTEND_DIRECTORY="+spec.FrontendDirectory,
 		)
+		for _, environment := range spec.PackEnvironment {
+			arguments = append(arguments, "--env", environment)
+		}
 	}
 	arguments = append(
 		arguments,

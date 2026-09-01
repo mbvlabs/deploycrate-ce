@@ -1,6 +1,7 @@
 <script lang="ts">
   import { Link, useForm } from "@inertiajs/svelte";
   import BuildpackSettingsEditor, {
+    normalizeBuildpackSettings,
     type BuildpackSettings,
     type BuildServer,
   } from "@/Components/BuildpackSettingsEditor.svelte";
@@ -70,18 +71,11 @@
     autoBuild: application.autoBuild,
     contextPath: application.contextPath,
     builderReference: "",
-    buildpackSettings: {
-      schema_version: 3,
-      runtime:
-        application.runtime || application.buildpackSettings?.runtime || "go",
-      frontend: application.buildpackSettings?.frontend
-        ? {
-            runtime: "node",
-            directory: application.buildpackSettings.frontend.directory ?? ".",
-            script: application.buildpackSettings.frontend.script ?? "build",
-          }
-        : null,
-    } as BuildpackSettings,
+    buildpackSettings: normalizeBuildpackSettings(
+      application.buildpackSettings ?? {
+        runtime: application.runtime || "go",
+      },
+    ),
     registryResourceId: application.registryId,
     imageRepository: application.imageRepository,
     buildServerId:
@@ -94,6 +88,10 @@
       (repository) =>
         repository.githubInstallationId === $form.githubInstallationId,
     ),
+  );
+  const repositoryFullName = $derived(
+    repositories.find((repository) => repository.id === $form.githubRepositoryId)
+      ?.fullName ?? application.repositoryFullName ?? "",
   );
   function submit(event: SubmitEvent) {
     event.preventDefault();
@@ -111,8 +109,8 @@
     <Card.Root
       ><Card.Header
         ><Card.Title>Edit deployment source</Card.Title><Card.Description
-          >Choose a GitHub Buildpacks build or an existing image from a
-          connected registry.</Card.Description
+          >Update GitHub source, buildpack settings, image destination, and
+          build options. Runtime processes stay on the Environment page.</Card.Description
         ></Card.Header
       >
       <Card.Content class="grid gap-5 sm:grid-cols-2">
@@ -166,6 +164,10 @@
             bind:buildServerId={$form.buildServerId}
             buildServers={options.buildServers}
             runtimeLocked={Boolean(application.setupComplete)}
+            contextPath={$form.contextPath}
+            reference={$form.reference}
+            githubRepositoryId={$form.githubRepositoryId}
+            {repositoryFullName}
           />
           <FormField label="Output image repository"
             ><Input bind:value={$form.imageRepository} required /></FormField

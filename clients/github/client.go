@@ -270,6 +270,60 @@ func (c *Client) ResolveRevision(
 	return strings.ToLower(commit.SHA), nil
 }
 
+func (c *Client) GetFileContent(
+	ctx context.Context,
+	auth AppAuthentication,
+	installationID int64,
+	repository, filePath, reference string,
+) ([]byte, bool, error) {
+	repository = strings.Trim(strings.TrimSpace(repository), "/")
+	filePath = strings.TrimPrefix(strings.TrimSpace(filePath), "/")
+	reference = strings.TrimSpace(reference)
+	if installationID <= 0 || strings.Count(repository, "/") != 1 || filePath == "" ||
+		reference == "" {
+		return nil, false, errors.New("GitHub repository, file path, and reference are required")
+	}
+	token, err := c.createInstallationToken(ctx, auth, installationID)
+	if err != nil {
+		return nil, false, err
+	}
+	segments := strings.Split(filePath, "/")
+	for index, segment := range segments {
+		segments[index] = url.PathEscape(segment)
+	}
+	requestPath := "/repos/" + repository + "/contents/" + strings.Join(segments, "/") +
+		"?ref=" + url.QueryEscape(reference)
+	var response struct {
+		Type     string `json:"type"`
+		Encoding string `json:"encoding"`
+		Content  string `json:"content"`
+	}
+	if err := c.request(
+		ctx,
+		http.MethodGet,
+		requestPath,
+		"Bearer "+token,
+		nil,
+		&response,
+	); err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return nil, false, nil
+		}
+		return nil, false, fmt.Errorf("load GitHub file %s: %w", filePath, err)
+	}
+	if response.Type != "file" || response.Encoding != "base64" {
+		return nil, false, errors.New("GitHub returned an unsupported content entry")
+	}
+	payload, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(response.Content, "\n", ""))
+	if err != nil {
+		return nil, false, fmt.Errorf("decode GitHub file %s: %w", filePath, err)
+	}
+	if len(payload) > maxResponseBody {
+		return nil, false, errors.New("GitHub file exceeded the allowed size")
+	}
+	return payload, true, nil
+}
+
 func (c *Client) createInstallationToken(
 	ctx context.Context,
 	auth AppAuthentication,

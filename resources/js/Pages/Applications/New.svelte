@@ -4,6 +4,7 @@
   import * as Card from "@/Components/ui/card";
   import BulkEnvironmentSecretsDialog from "@/Components/BulkEnvironmentSecretsDialog.svelte";
   import BuildpackSettingsEditor, {
+    defaultBuildpackSettings,
     type BuildpackSettings,
     type BuildServer,
   } from "@/Components/BuildpackSettingsEditor.svelte";
@@ -130,11 +131,7 @@
       githubRepositoryId: "",
       reference: "",
       autoBuild: false,
-      buildpackSettings: {
-        schema_version: 3,
-        runtime: "go",
-        frontend: null,
-      },
+      buildpackSettings: defaultBuildpackSettings(),
       contextPath: ".",
       registryResourceId: registries[0]?.id ?? "",
       imageRepository: "",
@@ -187,6 +184,20 @@
   ) {
     environment.githubInstallationId = installationId;
     environment.githubRepositoryId = "";
+  }
+
+  function repositoryFullName(environment: EnvironmentForm) {
+    return (
+      repositories.find(
+        (candidate) => candidate.id === environment.githubRepositoryId,
+      )?.fullName ?? ""
+    );
+  }
+
+  function webGoTargets(environment: EnvironmentForm) {
+    return environment.processes
+      .map((process) => process.target?.trim())
+      .filter((target): target is string => Boolean(target));
   }
 
   function chooseRepository(
@@ -402,9 +413,9 @@
       <Card.Content class="space-y-6">
         <section class="space-y-3">
           <div>
-            <p class="text-sm font-medium">Delivery method</p>
+            <p class="text-sm font-medium">Build</p>
             <p class="mt-1 text-xs text-muted-foreground">
-              This choice belongs only to the {title} Environment.
+              Source repository, buildpack configuration, and image destination.
             </p>
           </div>
           <RadioGroup.Root
@@ -487,6 +498,11 @@
               bind:settings={environment.buildpackSettings}
               bind:buildServerId={environment.buildServerId}
               {buildServers}
+              contextPath={environment.contextPath}
+              reference={environment.reference}
+              githubRepositoryId={environment.githubRepositoryId}
+              repositoryFullName={repositoryFullName(environment)}
+              goTargets={webGoTargets(environment)}
             />
             <FormField label="Build context"
               ><Input
@@ -570,6 +586,13 @@
         {/if}
 
         <section class="space-y-5 border-t border-border pt-5">
+          <div>
+            <p class="text-sm font-medium">Runtime</p>
+            <p class="mt-1 text-xs text-muted-foreground">
+              Target servers, DNS, and the processes that run in the built
+              image.
+            </p>
+          </div>
           <p class="text-sm font-medium">Target servers</p>
           {#if servers.length === 0}
             <div
