@@ -307,7 +307,8 @@ func validateBackupScope(scope BackupScope) error {
 		scope.InstallationServerID == nil || scope.Backup.ResourceInstallationID == nil ||
 		scope.ResourceInstallationID == nil || *scope.ResourceInstallationID != *scope.Backup.ResourceInstallationID ||
 		scope.InstallationArchived || scope.ResourceArchived || scope.ResourceEngine != "postgresql" ||
-		strings.TrimSpace(scope.DatabaseName) == "" || strings.TrimSpace(scope.InstallationContainer) == "" ||
+		strings.TrimSpace(scope.DatabaseName) == "" ||
+		strings.TrimSpace(scope.InstallationContainer) == "" ||
 		scope.AdministratorCount != 1 ||
 		strings.TrimSpace(scope.AdministratorUsername) == "" ||
 		len(scope.AdministratorPayload) < 2 {

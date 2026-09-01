@@ -93,7 +93,8 @@ func (server) ApplicationBuildOptions(
 		Where("server.archived_at IS NULL").Where("server.is_configured = TRUE").
 		Where("server.kind IN ('self_hosted', 'worker')").
 		Where("server.capabilities @> '{\"build\":true}'::jsonb").
-		OrderExpr("CASE WHEN server.kind = 'self_hosted' THEN 0 ELSE 1 END, server.name").Scan(ctx, &rows)
+		OrderExpr("CASE WHEN server.kind = 'self_hosted' THEN 0 ELSE 1 END, server.name").
+		Scan(ctx, &rows)
 	return rows, err
 }
 

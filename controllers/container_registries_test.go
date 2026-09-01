@@ -92,7 +92,11 @@ func TestRegistryResourcesControllerDestroyArchivesExternalRegistry(t *testing.T
 	if err != nil {
 		t.Fatalf("create Registry Resource fixture: %v", err)
 	}
-	if _, err := factories.CreateRegistryResource(t.Context(), db.Executor(), resource.ID); err != nil {
+	if _, err := factories.CreateRegistryResource(
+		t.Context(),
+		db.Executor(),
+		resource.ID,
+	); err != nil {
 		t.Fatalf("create Registry backing fixture: %v", err)
 	}
 	controller := NewRegistryResources(services.NewRegistryResources(
@@ -110,7 +114,12 @@ func TestRegistryResourcesControllerDestroyArchivesExternalRegistry(t *testing.T
 		controller.Destroy,
 	)
 	if response.Code != http.StatusSeeOther {
-		t.Fatalf("destroy status = %d, want %d; body: %s", response.Code, http.StatusSeeOther, response.Body)
+		t.Fatalf(
+			"destroy status = %d, want %d; body: %s",
+			response.Code,
+			http.StatusSeeOther,
+			response.Body,
+		)
 	}
 	archived, err := models.Resource.Find(t.Context(), db.Executor(), resource.ID)
 	if err != nil {

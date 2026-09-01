@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -24,6 +25,7 @@ type screen int
 
 const (
 	screenWelcome screen = iota
+	screenChannel
 	screenServer
 	screenAccess
 	screenAdmin
@@ -43,6 +45,11 @@ const (
 type runEventMsg struct{ event setup.Event }
 type runClosedMsg struct{}
 type validationMsg struct{ err error }
+type channelReleaseMsg struct {
+	channel string
+	version string
+	err     error
+}
 type rebootMsg struct{ err error }
 
 const installerConfigStepID = "installer-config"
@@ -137,6 +144,15 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width, m.height = msg.Width, msg.Height
 		return m, nil
+	case channelReleaseMsg:
+		if msg.err != nil {
+			m.err = msg.err
+			return m, nil
+		}
+		m.config.UpdateChannel = msg.channel
+		m.config.Version = msg.version
+		m.setScreen(screenServer)
+		return m, textinput.Blink
 	case validationMsg:
 		if msg.err != nil {
 			m.err = msg.err
@@ -221,15 +237,16 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.screen == screenHandoff {
 			return m.updateHandoff(msg)
 		}
-		if m.screen == screenDatabaseChoice || m.screen == screenStorageChoice ||
-			m.screen == screenStorageProvider {
+		if m.screen == screenChannel || m.screen == screenDatabaseChoice ||
+			m.screen == screenStorageChoice || m.screen == screenStorageProvider {
 			return m.updateChoice(key)
 		}
 		if m.screen == screenWelcome || m.screen == screenReview {
 			if key == "enter" {
 				if m.screen == screenWelcome {
-					m.setScreen(screenServer)
-					return m, textinput.Blink
+					m.screen = screenChannel
+					m.choice = 0
+					return m, nil
 				}
 				return m.startInstall()
 			}
@@ -583,6 +600,19 @@ func (m Model) updateChoice(key string) (tea.Model, tea.Cmd) {
 	if key != "enter" {
 		return m, nil
 	}
+	if m.screen == screenChannel {
+		channel := setup.UpdateChannelStable
+		if m.choice == 1 {
+			channel = setup.UpdateChannelEdge
+		}
+		if m.dryRun {
+			m.config.UpdateChannel = channel
+			m.setScreen(screenServer)
+			return m, textinput.Blink
+		}
+		m.err = nil
+		return m, resolveChannelRelease(channel)
+	}
 	if m.screen == screenDatabaseChoice {
 		m.config.Database.External = m.choice == 1
 		if m.config.Database.External {
@@ -623,6 +653,15 @@ func (m Model) updateChoice(key string) (tea.Model, tea.Cmd) {
 		validateRemoteServices(m.config, m.dryRun, m.operations.ValidateRemoteServices),
 		m.activity.Tick,
 	)
+}
+
+func resolveChannelRelease(channel string) tea.Cmd {
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		version, err := setup.ResolveReleaseVersion(ctx, channel)
+		return channelReleaseMsg{channel: channel, version: version, err: err}
+	}
 }
 
 func validateRemoteServices(
@@ -760,6 +799,13 @@ func (m Model) renderScreen(width int) string {
 			warnStyle.Render(
 				"The admin and deploycrate users receive passwordless sudo and Docker access; deploycrate remains non-login.",
 			) + "\n\nPress enter to begin."
+	case screenChannel:
+		content = m.renderChoice(
+			"Which release channel should this installation follow?",
+			[]string{"Stable — recommended releases", "Edge — latest successful master build"},
+		) + "\n" + warnStyle.Render(
+			"Edge receives features sooner and may be less reliable.",
+		)
 	case screenServer:
 		content = m.renderForm([]string{"Public domain", "SSH port"}) + "\n\n" +
 			warnStyle.Render("Required DNS records before continuing") + "\n" +
@@ -912,6 +958,11 @@ func (m Model) renderReview() string {
 	rows := []string{
 		labelStyle.Render("Server") + "       https://" + m.config.Domain,
 		labelStyle.Render(
+			"Updates",
+		) + "      " + strings.ToUpper(
+			m.config.UpdateChannel,
+		) + " channel",
+		labelStyle.Render(
 			"App DNS A",
 		) + "    " + m.config.Domain + " -> " + m.config.PublicIPv4 + " (DNS only)",
 		labelStyle.Render(
@@ -1018,8 +1069,8 @@ func (m Model) progressStatus() string {
 		}
 		return "Saving installer configuration..."
 	}
-	for index := len(m.events) - 1; index >= 0; index-- {
-		event := m.events[index]
+	for _, event := range slices.Backward(m.events) {
+
 		switch event.Kind {
 		case setup.EventStarted:
 			return event.Description + "..."
@@ -1202,6 +1253,7 @@ func registryDomain(domain string) string {
 func (m Model) stepLabel() string {
 	labels := map[screen]string{
 		screenWelcome:              "welcome",
+		screenChannel:              "release channel",
 		screenServer:               "server",
 		screenAccess:               "access",
 		screenAdmin:                "admin",

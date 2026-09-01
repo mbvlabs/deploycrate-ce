@@ -206,7 +206,8 @@ func (registryResource) ValidApplicationSelection(
 		ColumnExpr("(SELECT count(*) FROM resource_credentials credential WHERE credential.resource_id = resource.id AND credential.archived_at IS NULL) AS credential_count").
 		Join("JOIN resources AS resource ON resource.id = registry.resource_id AND resource.archived_at IS NULL").
 		Where("registry.resource_id = ?", resourceID).Scan(ctx, &selection)
-	return selection.Engine == "registry" && selection.EndpointCount == 1 && selection.CredentialCount == 1, err
+	return selection.Engine == "registry" && selection.EndpointCount == 1 &&
+		selection.CredentialCount == 1, err
 }
 
 func (registryResource) FindManagedAccess(

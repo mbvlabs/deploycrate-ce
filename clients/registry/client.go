@@ -322,7 +322,8 @@ func (Client) DeleteManifest(ctx context.Context, credentials Credentials, refer
 	if !validSHA256Digest(digest) {
 		return errors.New("image digest is invalid")
 	}
-	if strings.Trim(repository, "/") != repository || strings.ContainsAny(repository, " \\?#\t\r\n") {
+	if strings.Trim(repository, "/") != repository ||
+		strings.ContainsAny(repository, " \\?#\t\r\n") {
 		return errors.New("image repository is invalid")
 	}
 	apiRepository := repository
@@ -337,7 +338,10 @@ func (Client) DeleteManifest(ctx context.Context, credentials Credentials, refer
 	for index := range segments {
 		segments[index] = url.PathEscape(segments[index])
 	}
-	requestURL := "https://" + apiEndpoint + "/v2/" + strings.Join(segments, "/") + "/manifests/" + digest
+	requestURL := "https://" + apiEndpoint + "/v2/" + strings.Join(
+		segments,
+		"/",
+	) + "/manifests/" + digest
 	client := telemetry.NewHTTPClient(30 * time.Second)
 	client.CheckRedirect = func(*http.Request, []*http.Request) error {
 		return errors.New("registry image deletion does not allow redirects")
@@ -353,7 +357,13 @@ func (Client) DeleteManifest(ctx context.Context, credentials Credentials, refer
 	if response.StatusCode == http.StatusUnauthorized {
 		challenge := response.Header.Get("WWW-Authenticate")
 		_ = response.Body.Close()
-		token, tokenErr := registryBearerToken(ctx, client, challenge, credentials, "repository:"+apiRepository+":pull,delete")
+		token, tokenErr := registryBearerToken(
+			ctx,
+			client,
+			challenge,
+			credentials,
+			"repository:"+apiRepository+":pull,delete",
+		)
 		if tokenErr != nil {
 			return fmt.Errorf("authenticate registry image deletion: %w", tokenErr)
 		}

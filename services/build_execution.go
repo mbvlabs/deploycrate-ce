@@ -706,7 +706,9 @@ func (service *BuildExecution) buildRemote(
 			"-f",
 			filepath.Join(contextPath, "go.mod"),
 		); err != nil {
-			return errors.New("Go Buildpacks context must contain go.mod on the selected Build Server")
+			return errors.New(
+				"Go Buildpacks context must contain go.mod on the selected Build Server",
+			)
 		}
 	}
 

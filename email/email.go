@@ -60,8 +60,7 @@ func (e PermanentError) Unwrap() error {
 }
 
 func IsValidationError(err error) bool {
-	var validationErr ValidationError
-	if errors.As(err, &validationErr) {
+	if _, ok := errors.AsType[ValidationError](err); ok {
 		return true
 	}
 
@@ -73,13 +72,11 @@ func IsValidationError(err error) bool {
 }
 
 func IsRetryable(err error) bool {
-	var tempErr TemporaryError
-	if errors.As(err, &tempErr) {
+	if _, ok := errors.AsType[TemporaryError](err); ok {
 		return true
 	}
 
-	var permErr PermanentError
-	if errors.As(err, &permErr) {
+	if _, ok := errors.AsType[PermanentError](err); ok {
 		return false
 	}
 

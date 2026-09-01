@@ -360,10 +360,12 @@ func (service *ReleaseCommandExecution) Execute(ctx context.Context, executionID
 			ContainerName: "dc-release-" + release.ID.String() + "-" + fmt.Sprint(
 				execution.Attempt,
 			),
-			ImageReference:       release.ArtifactReference,
-			NetworkName:          networkName,
-			Environment:          environment,
-			Command:              append([]string{configuration.Command}, configuration.Arguments...),
+			ImageReference: release.ArtifactReference,
+			NetworkName:    networkName,
+			Environment:    environment,
+			Command: append(
+				[]string{configuration.Command},
+				configuration.Arguments...),
 			OpenTelemetryEnabled: scope.OpenTelemetryEnabled,
 			Stdout:               releaseCommandStreamWriter{logger: logger, stream: "stdout"},
 			Stderr:               releaseCommandStreamWriter{logger: logger, stream: "stderr"},
@@ -572,9 +574,8 @@ func (service *ReleaseCommandExecution) fail(
 	logger *releaseCommandLogger,
 	operationErr error,
 ) error {
-	var exitFailure *releaseExitError
 	var exitCode *int32
-	if errors.As(operationErr, &exitFailure) {
+	if exitFailure, ok := errors.AsType[*releaseExitError](operationErr); ok {
 		exitCode = exitFailure.exitCode
 	}
 	if logger != nil {

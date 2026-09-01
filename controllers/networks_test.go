@@ -43,6 +43,11 @@ func TestNetworksControllerDestroyMissingDeviceIsIdempotent(t *testing.T) {
 		controller.DestroyWireGuardDevice,
 	)
 	if response.Code != http.StatusSeeOther {
-		t.Fatalf("destroy status = %d, want %d; body: %s", response.Code, http.StatusSeeOther, response.Body)
+		t.Fatalf(
+			"destroy status = %d, want %d; body: %s",
+			response.Code,
+			http.StatusSeeOther,
+			response.Body,
+		)
 	}
 }

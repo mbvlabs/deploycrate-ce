@@ -218,14 +218,20 @@ func (service *DatabaseEditor) credentialValues(
 		resourceCredentialPurpose,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("%w: the application credential cannot be decrypted", ErrDatabaseEditorUnavailable)
+		return nil, fmt.Errorf(
+			"%w: the application credential cannot be decrypted",
+			ErrDatabaseEditorUnavailable,
+		)
 	}
 	var payload struct {
 		SchemaVersion int               `json:"schema_version"`
 		Values        map[string]string `json:"values"`
 	}
 	if json.Unmarshal(plaintext, &payload) != nil || payload.SchemaVersion != 1 {
-		return nil, fmt.Errorf("%w: the application credential is invalid", ErrDatabaseEditorUnavailable)
+		return nil, fmt.Errorf(
+			"%w: the application credential is invalid",
+			ErrDatabaseEditorUnavailable,
+		)
 	}
 	return payload.Values, nil
 }

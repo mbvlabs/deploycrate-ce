@@ -115,7 +115,12 @@ func createManagedResourcePrivateEndpoint(
 	db storage.Executor,
 	resourceID, privateNetworkID uuid.UUID,
 ) (models.ResourceEndpointEntity, error) {
-	privateEndpoints, err := models.ResourceEndpoint.ActivePrivateCount(ctx, db, resourceID, uuid.Nil)
+	privateEndpoints, err := models.ResourceEndpoint.ActivePrivateCount(
+		ctx,
+		db,
+		resourceID,
+		uuid.Nil,
+	)
 	if err != nil {
 		return models.ResourceEndpointEntity{}, err
 	}
@@ -138,7 +143,12 @@ func createManagedResourcePrivateEndpoint(
 	if err != nil {
 		return models.ResourceEndpointEntity{}, err
 	}
-	attachment, err := models.ServerNetwork.ResourceAttachment(ctx, db, resourceID, privateNetworkID)
+	attachment, err := models.ServerNetwork.ResourceAttachment(
+		ctx,
+		db,
+		resourceID,
+		privateNetworkID,
+	)
 	if errors.Is(err, sql.ErrNoRows) || strings.TrimSpace(attachment.Address) == "" {
 		return models.ResourceEndpointEntity{}, domainError(
 			"privateNetworkId",

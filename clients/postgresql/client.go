@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -339,13 +340,13 @@ func (Client) ReconcileLoginRoleAcrossDatabases(
 					),
 				)
 			} else {
-				for index := len(appliedDatabases) - 1; index >= 0; index-- {
+				for _, appliedDatabase := range slices.Backward(appliedDatabases) {
 					compensationErrors = append(
 						compensationErrors,
 						(Client{}).RevokeLoginRoleDatabase(
 							context.WithoutCancel(ctx),
 							connection,
-							appliedDatabases[index],
+							appliedDatabase,
 							username,
 						),
 					)

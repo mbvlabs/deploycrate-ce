@@ -48,14 +48,22 @@ func (entity *ResourceDNSRecordEntity) Validate() error {
 	return builder.Err()
 }
 
-func (resourceDNSRecord) ActiveForBinding(ctx context.Context, db storage.Executor, bindingID uuid.UUID) ([]ResourceDNSRecordEntity, error) {
+func (resourceDNSRecord) ActiveForBinding(
+	ctx context.Context,
+	db storage.Executor,
+	bindingID uuid.UUID,
+) ([]ResourceDNSRecordEntity, error) {
 	rows := make([]ResourceDNSRecordEntity, 0)
 	err := db.NewSelect().Model(&rows).Where("resource_dns_binding_id = ?", bindingID).
 		Where("archived_at IS NULL").OrderExpr("external_id").Scan(ctx)
 	return rows, err
 }
 
-func (resourceDNSRecord) TrackedRemovals(ctx context.Context, db storage.Executor, bindingID uuid.UUID) ([]DNSTrackedRemoval, error) {
+func (resourceDNSRecord) TrackedRemovals(
+	ctx context.Context,
+	db storage.Executor,
+	bindingID uuid.UUID,
+) ([]DNSTrackedRemoval, error) {
 	rows := make([]DNSTrackedRemoval, 0)
 	err := db.NewSelect().TableExpr("resource_dns_records AS record").
 		ColumnExpr("record.id AS record_id, record.external_id, record.observed_name, zone.id AS zone_id, zone.external_id AS zone_external_id, credential.enc_payload AS credential_payload").
@@ -75,7 +83,11 @@ type UpsertResourceDNSRecordData struct {
 	DNSZoneID            uuid.UUID
 }
 
-func (resourceDNSRecord) Upsert(ctx context.Context, db storage.Executor, data UpsertResourceDNSRecordData) (ResourceDNSRecordEntity, error) {
+func (resourceDNSRecord) Upsert(
+	ctx context.Context,
+	db storage.Executor,
+	data UpsertResourceDNSRecordData,
+) (ResourceDNSRecordEntity, error) {
 	now := time.Now().UTC()
 	entity := ResourceDNSRecordEntity{
 		ID: uuid.New(), CreatedAt: now, UpdatedAt: now, ExternalID: data.ExternalID,
@@ -85,12 +97,19 @@ func (resourceDNSRecord) Upsert(ctx context.Context, db storage.Executor, data U
 	if err := validation.Validate(&entity); err != nil {
 		return ResourceDNSRecordEntity{}, errors.Join(ErrDomainValidation, err)
 	}
-	if err := lockUnique(ctx, db, "resource-dns-record:"+data.ResourceDNSBindingID.String()+":"+data.ExternalID); err != nil {
+	if err := lockUnique(
+		ctx,
+		db,
+		"resource-dns-record:"+data.ResourceDNSBindingID.String()+":"+data.ExternalID,
+	); err != nil {
 		return ResourceDNSRecordEntity{}, err
 	}
 	var existing ResourceDNSRecordEntity
-	err := db.NewSelect().Model(&existing).Where("resource_dns_binding_id = ?", data.ResourceDNSBindingID).
-		Where("external_id = ?", data.ExternalID).Scan(ctx)
+	err := db.NewSelect().
+		Model(&existing).
+		Where("resource_dns_binding_id = ?", data.ResourceDNSBindingID).
+		Where("external_id = ?", data.ExternalID).
+		Scan(ctx)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return ResourceDNSRecordEntity{}, err
 	}
@@ -107,9 +126,16 @@ func (resourceDNSRecord) Upsert(ctx context.Context, db storage.Executor, data U
 	return entity, err
 }
 
-func (resourceDNSRecord) ArchiveMissing(ctx context.Context, db storage.Executor, bindingID uuid.UUID, externalIDs []string, at time.Time) error {
+func (resourceDNSRecord) ArchiveMissing(
+	ctx context.Context,
+	db storage.Executor,
+	bindingID uuid.UUID,
+	externalIDs []string,
+	at time.Time,
+) error {
 	query := db.NewUpdate().Model((*ResourceDNSRecordEntity)(nil)).Set("updated_at = ?", at).
-		Set("archived_at = ?", at).Where("resource_dns_binding_id = ?", bindingID).Where("archived_at IS NULL")
+		Set("archived_at = ?", at).
+		Where("resource_dns_binding_id = ?", bindingID).Where("archived_at IS NULL")
 	if len(externalIDs) > 0 {
 		query = query.Where("external_id NOT IN (?)", bun.In(externalIDs))
 	}

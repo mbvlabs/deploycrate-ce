@@ -110,7 +110,8 @@ func (Client) Catalog(
 
 	catalog := Catalog{Relations: make([]CatalogRelation, 0)}
 	for rows.Next() {
-		if len(catalog.Relations) > 0 && catalogColumnCount(catalog.Relations) >= catalogColumnLimit {
+		if len(catalog.Relations) > 0 &&
+			catalogColumnCount(catalog.Relations) >= catalogColumnLimit {
 			catalog.Truncated = true
 			break
 		}
@@ -292,8 +293,7 @@ func beginReadOnly(ctx context.Context, postgres *pgx.Conn) (pgx.Tx, error) {
 }
 
 func normalizeQueryError(err error) error {
-	var postgresError *pgconn.PgError
-	if errors.As(err, &postgresError) {
+	if postgresError, ok := errors.AsType[*pgconn.PgError](err); ok {
 		return &QueryError{
 			Code: postgresError.Code, Message: postgresError.Message,
 			Detail: postgresError.Detail, Hint: postgresError.Hint,

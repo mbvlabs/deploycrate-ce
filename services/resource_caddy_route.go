@@ -66,7 +66,9 @@ type ResourceCaddyRouteUpdateInput struct {
 	HealthPath     string `json:"healthPath"`
 }
 
-func (service CaddyRouteService) ResourceDNSOptions(ctx context.Context) ([]EnvironmentDNSOption, error) {
+func (service CaddyRouteService) ResourceDNSOptions(
+	ctx context.Context,
+) ([]EnvironmentDNSOption, error) {
 	if service.dns == nil {
 		return []EnvironmentDNSOption{}, nil
 	}
@@ -147,7 +149,12 @@ func (service CaddyRouteService) ValidateResourcePublication(
 		return domainError("hostname", "unique", "an active Caddy route already uses this hostname")
 	}
 	if service.dns != nil {
-		if err := service.dns.ValidateSelection(ctx, hostname, input.DNSMode, input.DNSZoneID); err != nil {
+		if err := service.dns.ValidateSelection(
+			ctx,
+			hostname,
+			input.DNSMode,
+			input.DNSZoneID,
+		); err != nil {
 			return err
 		}
 	}
@@ -350,7 +357,14 @@ func (service CaddyRouteService) UpdateResourceRoute(
 	}
 	if service.dns != nil {
 		if err := service.dns.Reconcile(ctx, endpoint.ID); err != nil {
-			slog.WarnContext(ctx, "Resource DNS endpoint is pending reconciliation", "endpoint_id", endpoint.ID, "error", err)
+			slog.WarnContext(
+				ctx,
+				"Resource DNS endpoint is pending reconciliation",
+				"endpoint_id",
+				endpoint.ID,
+				"error",
+				err,
+			)
 		}
 	}
 	return resourceCaddyRouteID(endpoint.ID), nil
@@ -371,7 +385,11 @@ func (service CaddyRouteService) ResourcePublications(
 			continue
 		}
 		state, lastError, observedAt := service.observeResourceRoute(ctx, item.Endpoint.ID)
-		dnsStatus := ResourceDNSStatus{Mode: DNSModeManual, State: "manual", Records: []DNSRecordStatus{}}
+		dnsStatus := ResourceDNSStatus{
+			Mode:    DNSModeManual,
+			State:   "manual",
+			Records: []DNSRecordStatus{},
+		}
 		if service.dns != nil {
 			dnsStatus, err = service.dns.Status(ctx, item.Endpoint.ID)
 			if err != nil {
@@ -421,7 +439,14 @@ func (service CaddyRouteService) SyncResourcePublication(
 	}
 	if service.dns != nil && strings.TrimSpace(input.DNSMode) != "" {
 		if err := service.dns.Configure(ctx, endpoint, input); err != nil {
-			slog.WarnContext(ctx, "Resource DNS endpoint is pending reconciliation", "endpoint_id", endpointID, "error", err)
+			slog.WarnContext(
+				ctx,
+				"Resource DNS endpoint is pending reconciliation",
+				"endpoint_id",
+				endpointID,
+				"error",
+				err,
+			)
 		}
 	}
 	return nil
@@ -495,7 +520,8 @@ func (service CaddyRouteService) ReconcileManagedResourceEndpoints(ctx context.C
 		if service.dns != nil {
 			status, statusErr := service.dns.Status(ctx, item.Endpoint.ID)
 			result = errors.Join(result, statusErr)
-			if statusErr == nil && status.Mode == DNSModeCloudflare && status.State != models.EnvironmentDNSApplied {
+			if statusErr == nil && status.Mode == DNSModeCloudflare &&
+				status.State != models.EnvironmentDNSApplied {
 				result = errors.Join(result, service.dns.Reconcile(ctx, item.Endpoint.ID))
 			}
 		}

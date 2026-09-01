@@ -12,12 +12,14 @@ import (
 func TestProbeWorkloadHealthReportsSuccess(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		if request.URL.Path != "/health" {
-			t.Errorf("health probe path = %q, want /health", request.URL.Path)
-		}
-		writer.WriteHeader(http.StatusNoContent)
-	}))
+	server := httptest.NewServer(
+		http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			if request.URL.Path != "/health" {
+				t.Errorf("health probe path = %q, want /health", request.URL.Path)
+			}
+			writer.WriteHeader(http.StatusNoContent)
+		}),
+	)
 	defer server.Close()
 
 	client := &http.Client{Timeout: time.Second}
@@ -38,9 +40,11 @@ func TestProbeWorkloadHealthReportsSuccess(t *testing.T) {
 func TestProbeWorkloadHealthReportsHTTPStatus(t *testing.T) {
 	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writer.WriteHeader(http.StatusServiceUnavailable)
-	}))
+	server := httptest.NewServer(
+		http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			writer.WriteHeader(http.StatusServiceUnavailable)
+		}),
+	)
 	defer server.Close()
 
 	healthy, result := probeWorkloadHealth(

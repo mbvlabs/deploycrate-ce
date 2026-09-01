@@ -145,7 +145,10 @@ func (wireGuardPeer) ActiveWorkerPeers(
 	if includeUnconfiguredServerID == uuid.Nil {
 		query = query.Where("server.is_configured = TRUE")
 	} else {
-		query = query.Where("(server.is_configured = TRUE OR server.id = ?)", includeUnconfiguredServerID)
+		query = query.Where(
+			"(server.is_configured = TRUE OR server.id = ?)",
+			includeUnconfiguredServerID,
+		)
 	}
 	err := query.OrderExpr("peer.private_address").Scan(ctx, &rows)
 	return rows, err

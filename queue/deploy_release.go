@@ -47,8 +47,7 @@ func (worker *DeployReleaseWorker) Work(
 		)
 		return river.JobCancel(errors.Join(err, timeoutErr))
 	}
-	var permanent *services.PermanentDeploymentError
-	if errors.As(err, &permanent) {
+	if _, ok := errors.AsType[*services.PermanentDeploymentError](err); ok {
 		return river.JobCancel(err)
 	}
 	if err != nil && job.Attempt >= job.MaxAttempts {

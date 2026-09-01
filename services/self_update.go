@@ -15,6 +15,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -22,6 +24,7 @@ import (
 
 	"deploycrate-ce/clients/cloudflare"
 	"deploycrate-ce/config"
+	"deploycrate-ce/internal/releaseauth"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/sudo"
 	"deploycrate-ce/models"
@@ -56,6 +59,7 @@ const (
 
 var (
 	ErrUpdateInProgress       = errors.New("a self-update is already in progress")
+	ErrNoUpdateAvailable      = errors.New("no newer release is available on the selected channel")
 	ErrBlueGreenNotConfigured = errors.New("blue-green services are not configured")
 )
 
@@ -94,8 +98,32 @@ func (s SelfUpdateStatus) Running() bool {
 	return s.State == SelfUpdateQueued || s.State == SelfUpdateInProgress
 }
 
+type AvailableUpdate struct {
+	Channel        string `json:"channel"`
+	Version        string `json:"version"`
+	Available      bool   `json:"available"`
+	Error          string `json:"error,omitempty"`
+	artifactURL    string
+	artifactSHA256 string
+}
+
+type releaseArtifact struct {
+	URL    string `json:"url"`
+	SHA256 string `json:"sha256"`
+}
+
+type releaseManifest struct {
+	SchemaVersion int                        `json:"schemaVersion"`
+	Channel       string                     `json:"channel"`
+	Version       string                     `json:"version"`
+	Artifacts     map[string]releaseArtifact `json:"artifacts"`
+}
+
 type updateRelease struct {
-	Version string
+	Version        string
+	Channel        string
+	ArtifactURL    string
+	ArtifactSHA256 string
 }
 
 type caddyRoute struct {
@@ -128,20 +156,21 @@ type caddyUpstream struct {
 }
 
 type SelfUpdate struct {
-	mu             sync.RWMutex
-	status         SelfUpdateStatus
-	currentVersion string
-	releaseRoot    string
-	slotsRoot      string
-	statusPath     string
-	jobRunnerPath  string
-	caddyAdminURL  string
-	publicHealth   string
-	client         *http.Client
-	r2             *cloudflare.R2
-	jobs           storage.InsertQueue
-	db             storage.Pool
-	routes         CaddyRouteService
+	mu              sync.RWMutex
+	status          SelfUpdateStatus
+	currentVersion  string
+	releaseRoot     string
+	slotsRoot       string
+	statusPath      string
+	jobRunnerPath   string
+	caddyAdminURL   string
+	publicHealth    string
+	client          *http.Client
+	releaseVerifier releaseauth.Verifier
+	r2              *cloudflare.R2
+	jobs            storage.InsertQueue
+	db              storage.Pool
+	routes          CaddyRouteService
 
 	currentDeployment *selfUpdateDeployment
 }
@@ -176,11 +205,12 @@ func NewSelfUpdate(
 			"DEPLOYCRATE_CE_PUBLIC_HEALTH_URL",
 			strings.TrimRight(config.BaseURL, "/")+"/api/health",
 		),
-		client: httpClient,
-		r2:     cloudflare.NewR2(httpClient),
-		jobs:   jobs,
-		db:     db,
-		routes: routes,
+		client:          httpClient,
+		releaseVerifier: releaseauth.New(httpClient),
+		r2:              cloudflare.NewR2(httpClient),
+		jobs:            jobs,
+		db:              db,
+		routes:          routes,
 	}
 	service.loadStatus()
 	if service.status.UpdatedAt.IsZero() {
@@ -192,6 +222,88 @@ func NewSelfUpdate(
 
 func (s *SelfUpdate) CurrentVersion() string {
 	return s.currentVersion
+}
+
+func (s *SelfUpdate) CheckForUpdates(ctx context.Context) AvailableUpdate {
+	source, err := config.ResolveReleaseSource(s.currentVersion)
+	if err != nil {
+		return AvailableUpdate{Error: err.Error()}
+	}
+	result := AvailableUpdate{Channel: source.Channel}
+	manifest, err := s.fetchReleaseManifest(ctx, source)
+	if err != nil {
+		result.Error = err.Error()
+		return result
+	}
+	artifact := manifest.Artifacts[runtime.GOOS+"/"+runtime.GOARCH]
+	result.Version = normalizeVersion(manifest.Version)
+	result.artifactURL = artifact.URL
+	result.artifactSHA256 = artifact.SHA256
+	if source.Channel == config.ReleaseChannelEdge {
+		result.Available = result.Version != s.currentVersion
+	} else {
+		result.Available = stableVersionNewer(result.Version, s.currentVersion)
+	}
+	return result
+}
+
+func (s *SelfUpdate) fetchReleaseManifest(
+	ctx context.Context,
+	source config.ReleaseSource,
+) (releaseManifest, error) {
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		source.BaseURL+"/manifest.json",
+		nil,
+	)
+	if err != nil {
+		return releaseManifest{}, err
+	}
+	response, err := s.client.Do(request)
+	if err != nil {
+		return releaseManifest{}, fmt.Errorf("load release manifest: %w", err)
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return releaseManifest{}, fmt.Errorf(
+			"release manifest returned status %d",
+			response.StatusCode,
+		)
+	}
+	content, err := io.ReadAll(io.LimitReader(response.Body, (64<<10)+1))
+	if err != nil || len(content) > 64<<10 {
+		return releaseManifest{}, errors.New("release manifest could not be read")
+	}
+	var manifest releaseManifest
+	if err := json.Unmarshal(content, &manifest); err != nil {
+		return releaseManifest{}, errors.New("release manifest could not be decoded")
+	}
+	artifact, found := manifest.Artifacts[runtime.GOOS+"/"+runtime.GOARCH]
+	checksum, checksumErr := hex.DecodeString(artifact.SHA256)
+	if manifest.SchemaVersion != 1 || manifest.Channel != source.Channel ||
+		strings.TrimSpace(manifest.Version) == "" || !found ||
+		!strings.HasPrefix(artifact.URL, source.BaseURL+"/") ||
+		checksumErr != nil || len(checksum) != sha256.Size {
+		return releaseManifest{}, errors.New("release manifest is invalid")
+	}
+	if err := s.signatureVerifier().VerifyBytes(
+		ctx,
+		content,
+		source.BaseURL+"/manifest.json.sigstore.json",
+		source.Channel,
+		strings.TrimSpace(manifest.Version),
+	); err != nil {
+		return releaseManifest{}, fmt.Errorf("authenticate release manifest: %w", err)
+	}
+	return manifest, nil
+}
+
+func (s *SelfUpdate) signatureVerifier() releaseauth.Verifier {
+	if s.releaseVerifier != nil {
+		return s.releaseVerifier
+	}
+	return releaseauth.New(s.client)
 }
 
 func (s *SelfUpdate) Status() SelfUpdateStatus {
@@ -211,6 +323,13 @@ func (s *SelfUpdate) Start(ctx context.Context, actorID uuid.UUID) (SelfUpdateSt
 	}
 	if unresolved != nil {
 		return s.Status(), ErrUpdateInProgress
+	}
+	available := s.CheckForUpdates(ctx)
+	if available.Error != "" {
+		return s.Status(), errors.New(available.Error)
+	}
+	if !available.Available {
+		return s.Status(), ErrNoUpdateAvailable
 	}
 
 	_, err = config.ResolveReleaseSource(s.currentVersion)
@@ -247,7 +366,10 @@ func (s *SelfUpdate) Start(ctx context.Context, actorID uuid.UUID) (SelfUpdateSt
 	deployment, err := s.createDeploymentRecords(
 		ctx,
 		actorID,
-		updateRelease{Version: "pending"},
+		updateRelease{
+			Version: available.Version, Channel: available.Channel,
+			ArtifactURL: available.artifactURL, ArtifactSHA256: available.artifactSHA256,
+		},
 		systemState,
 	)
 	if err != nil {
@@ -593,29 +715,39 @@ func (s *SelfUpdate) execute(
 
 	stagedBinary := filepath.Join(workDir, "deploycrate-ce")
 	checksumPath := filepath.Join(workDir, "deploycrate-ce.sha256")
+	s.transition(SelfUpdateInProgress, "resolve_release", "Resolving selected release")
+	if deployment.Checkpoint.ReleaseChannel != source.Channel ||
+		!strings.HasPrefix(deployment.Checkpoint.ArtifactURL, source.BaseURL+"/") ||
+		len(deployment.Checkpoint.ArtifactSHA256) != 64 {
+		s.fail("resolve_release", errors.New("selected release metadata is invalid"))
+		return
+	}
+	artifactPath := strings.TrimPrefix(deployment.Checkpoint.ArtifactURL, source.BaseURL)
 	s.transition(SelfUpdateInProgress, "download_artifact", "Downloading release artifact")
-	if err := s.r2.Download(
-		ctx,
-		source.BaseURL,
-		config.ReleaseApplicationPath,
-		stagedBinary,
-	); err != nil {
+	if err := s.r2.Download(ctx, source.BaseURL, artifactPath, stagedBinary); err != nil {
 		s.fail("download_artifact", err)
 		return
 	}
-	if err := s.r2.Download(
-		ctx,
-		source.BaseURL,
-		config.ReleaseChecksumPath,
-		checksumPath,
-	); err != nil {
-		s.fail("download_checksum", err)
+	checksumContent := []byte(deployment.Checkpoint.ArtifactSHA256 + "  deploycrate-ce\n")
+	if err := os.WriteFile(checksumPath, checksumContent, 0o600); err != nil {
+		s.fail("prepare_checksum", err)
 		return
 	}
 
 	s.transition(SelfUpdateInProgress, "verify_checksum", "Verifying release checksum")
 	if err := verifyReleaseChecksum(stagedBinary, checksumPath, "deploycrate-ce"); err != nil {
 		s.fail("verify_checksum", err)
+		return
+	}
+	s.transition(SelfUpdateInProgress, "verify_signature", "Authenticating release signature")
+	if err := s.signatureVerifier().VerifyFile(
+		ctx,
+		stagedBinary,
+		deployment.Checkpoint.ArtifactURL+".sigstore.json",
+		source.Channel,
+		deployment.Version,
+	); err != nil {
+		s.fail("verify_signature", err)
 		return
 	}
 	if err := os.Chmod(stagedBinary, 0o700); err != nil {
@@ -627,10 +759,23 @@ func (s *SelfUpdate) execute(
 		s.fail("verify_version", err)
 		return
 	}
-	if source.Development && !strings.HasPrefix(stagedVersion, "development-") {
+	if source.Channel == config.ReleaseChannelEdge &&
+		!strings.HasPrefix(stagedVersion, "development-") &&
+		!strings.HasPrefix(stagedVersion, "edge-") {
 		s.fail(
 			"verify_version",
-			fmt.Errorf("development release reported unexpected version %q", stagedVersion),
+			fmt.Errorf("edge release reported unexpected version %q", stagedVersion),
+		)
+		return
+	}
+	if stagedVersion != normalizeVersion(deployment.Version) {
+		s.fail(
+			"verify_version",
+			fmt.Errorf(
+				"selected version %q does not match binary version %q",
+				deployment.Version,
+				stagedVersion,
+			),
 		)
 		return
 	}
@@ -1828,6 +1973,36 @@ func normalizeDial(dial string) string {
 
 func normalizeVersion(version string) string {
 	return strings.TrimPrefix(strings.TrimSpace(version), "v")
+}
+
+func stableVersionNewer(candidate, current string) bool {
+	parse := func(value string) ([3]int, bool) {
+		var parsed [3]int
+		core, _, _ := strings.Cut(normalizeVersion(value), "-")
+		parts := strings.Split(core, ".")
+		if len(parts) != len(parsed) {
+			return parsed, false
+		}
+		for index, part := range parts {
+			number, err := strconv.Atoi(part)
+			if err != nil || number < 0 {
+				return parsed, false
+			}
+			parsed[index] = number
+		}
+		return parsed, true
+	}
+	candidateParts, candidateOK := parse(candidate)
+	currentParts, currentOK := parse(current)
+	if !candidateOK || !currentOK {
+		return false
+	}
+	for index := range candidateParts {
+		if candidateParts[index] != currentParts[index] {
+			return candidateParts[index] > currentParts[index]
+		}
+	}
+	return false
 }
 
 func environmentOr(name, fallback string) string {

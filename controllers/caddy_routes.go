@@ -189,7 +189,12 @@ func (controller CaddyRoutes) Index(etx *echo.Context) error {
 	}
 	customRoutes, err := controller.service.CustomRouteSnapshot(etx.Request().Context())
 	if err != nil {
-		slog.ErrorContext(etx.Request().Context(), "failed to load custom Caddy routes", "error", err)
+		slog.ErrorContext(
+			etx.Request().Context(),
+			"failed to load custom Caddy routes",
+			"error",
+			err,
+		)
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 	return inertia.Page(etx, "System/CaddyRoutes/Index", inertia.Props{

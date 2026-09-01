@@ -24,20 +24,30 @@
     update: UpdateStatus;
   };
 
+  type AvailableUpdate = {
+    channel: "stable" | "edge" | "";
+    version: string;
+    available: boolean;
+    error?: string;
+  };
+
   let {
     auth,
     currentVersion: initialCurrentVersion,
     update: initialUpdate,
+    availableUpdate,
     deployments,
   }: {
     auth: { email: string };
     currentVersion: string;
     update: UpdateStatus;
+    availableUpdate: AvailableUpdate;
     deployments: Deployment[];
   } = $props();
 
   let liveStatus = $state<UpdateStatusResponse | null>(null);
   let starting = $state(false);
+  let checking = $state(false);
   let reconnecting = $state(false);
   let updateDialogOpen = $state(false);
   let updateDialogTracking = $state(false);
@@ -50,7 +60,7 @@
   const running = $derived(
     update.state === "queued" || update.state === "in_progress",
   );
-  const canUpdate = $derived(!running);
+  const canUpdate = $derived(!running && availableUpdate.available);
 
   $effect(() => {
     if (!running) return;
@@ -105,6 +115,14 @@
       if (timer !== undefined) window.clearTimeout(timer);
     };
   });
+
+  function checkForUpdates() {
+    router.reload({
+      only: ["availableUpdate"],
+      onStart: () => (checking = true),
+      onFinish: () => (checking = false),
+    });
+  }
 
   function startUpdate() {
     updateDialogTracking = true;
@@ -169,15 +187,16 @@
       <div class="flex flex-wrap items-center gap-2">
         <Button
           variant="outline"
-          disabled
-          title="Update checks are not available yet"
+          onclick={checkForUpdates}
+          disabled={checking || running}
+          aria-busy={checking}
         >
-          <RefreshCwIcon />
+          {#if checking}<Spinner />{:else}<RefreshCwIcon />{/if}
           Check for updates
         </Button>
         <Button
           onclick={openUpdateDialog}
-          disabled={starting}
+          disabled={starting || !availableUpdate.available}
           aria-busy={running || starting}
         >
           {#if running || starting}
@@ -204,9 +223,16 @@
           {/if}
         </Card.Action>
         <Card.Title>Current installation</Card.Title>
-        <Card.Description
-          >Development builds published to get-dev.deploycrate.com.</Card.Description
-        >
+        <Card.Description>
+          {#if availableUpdate.error}
+            Update check failed: {availableUpdate.error}
+          {:else if availableUpdate.available}
+            Version {versionLabel(availableUpdate.version)} is available on the
+            {availableUpdate.channel} channel.
+          {:else}
+            This installation is current on the {availableUpdate.channel} channel.
+          {/if}
+        </Card.Description>
       </Card.Header>
       <Card.Content>
         <div

@@ -22,21 +22,20 @@ The installer changes SSH access near the end of bootstrap. Root login and passw
 The released installer is intended to be run as root from an interactive SSH session:
 
 ```bash
-curl -fsSL https://get.deploycrate.com/ce | sudo bash
+curl -fsSL https://ce-stable.deploycrate.com/ce | sudo bash
 ```
 
-The shell installer downloads the release archive, verifies its SHA-256 checksum, verifies its Sigstore bundle when `cosign` is available, installs `bootstrap` and `deploycrate-ce` under `/usr/local/bin`, and opens the wizard through `/dev/tty`. Without a usable TTY it installs the binaries and prints the command needed to continue. GitHub Releases is the default asset source. `DEPLOYCRATE_VERSION`, `DEPLOYCRATE_RELEASE_REPOSITORY`, and `DEPLOYCRATE_RELEASE_BASE_URL` can select a version or compatible release mirror.
+The shell installer downloads a pinned Cosign verifier from Sigstore's GitHub release, verifies its hard-coded SHA-256 digest, and installs it under `/usr/local/lib/deploycrate-ce`. It then authenticates the channel manifest and architecture-specific bootstrap binary against the exact DeployCrate GitHub Actions workflow identity before checking the binary's SHA-256 checksum and installing it under `/usr/local/bin`. The wizard applies the same signature and checksum policy when it resolves the application release. Without a usable TTY, the shell installer prints the command needed to continue. `DEPLOYCRATE_INSTALLER_BASE_URL` can select a compatible mirror, but the mirror must serve the original Sigstore bundles.
 
-For the current AMD64 development build:
+Bootstrap asks whether the installation should follow the stable channel or the latest successful edge build. Stable is recommended. To start with the edge-hosted bootstrap directly:
 
 ```bash
-curl -fsSL https://get-dev.deploycrate.com/install.sh | sudo bash
+curl -fsSL https://ce-edge.deploycrate.com/install.sh | sudo bash
 ```
 
-The development installer verifies the CLI checksum and installs the CLI first. During bootstrap, the CLI downloads and verifies the matching application binary from the same development endpoint. `DEPLOYCRATE_DEVELOPMENT_BASE_URL` can select a compatible mirror. Maintainers publish both development binaries, checksums, and the installer with `just development-assets`; the recipe synchronizes the resulting directory to `dc-ce-dev:deploycrate-development`.
+GitHub Actions publishes successful `master` builds to the edge R2 bucket and version tags to the stable R2 bucket. Both AMD64 and ARM64 are supported. Every published manifest, bootstrap binary, and application binary has a keyless Sigstore bundle whose Fulcio certificate must identify the channel's pinned workflow and whose transparency proof must verify. `just development-assets` creates an unsigned local edge artifact layout without publishing it.
 
-> [!WARNING]
-> Development self-updates currently verify SHA-256 checksums but do not authenticate the checksum metadata. Before this channel is used for production releases, publish signed checksum metadata and pin the accepted signing identity or public key in DeployCrate CE. A checksum by itself does not protect against an attacker replacing both the binary and checksum in the release bucket.
+The initial `curl | sudo bash` still trusts HTTPS delivery of the small shell installer. Everything it downloads afterward is independently authenticated. For the strongest first-install audit, inspect the public repository's `scripts/install.sh` before running the hosted copy.
 
 ### Wizard Inputs
 
@@ -301,7 +300,7 @@ Caddy sends public traffic to the 100-weight slot
 
 DeployCrate queries `systemctl is-active` for both slot services. It refuses to update if both are running, neither is running, or the running service disagrees with the active slot recorded by the 100-weight database backend.
 
-Development builds use the fixed `https://get-dev.deploycrate.com/dc-ce-app/deploycrate-ce` object and its `.sha256` file. The updater executes the checksum-verified binary's `version` command to identify the target. Builds named `dev` or `development-*` select this source automatically. Other versions require an explicit Cloudflare R2 base URL in `DEPLOYCRATE_CE_RELEASE_BASE_URL`.
+Each R2 channel publishes `manifest.json` last, after immutable architecture-specific artifacts and their Sigstore bundles are available. Bootstrap persists the selected `stable` or `edge` channel, and the updater downloads the exact Linux AMD64 or ARM64 artifact referenced by that channel manifest. It verifies the manifest and binary against the pinned GitHub Actions workflow identity, checks the binary's SHA-256 digest, and requires the staged binary's `version` output to match the manifest before installation.
 
 During an update, the durable `system_updates` River job installs the checksum-verified binary in a new immutable release directory, runs that binary's embedded database migrations, repoints only the inactive slot symlink, starts that slot, and checks its database-backed health endpoint. It writes the desired `100/0` to `0/100` traffic switch to PostgreSQL, reconciles that desired route into Caddy, waits until Caddy's admin API reports the selected slot, and requires the public health response to identify the target slot and version. Only then does it update systemd boot state, repoint the independent job-runner symlink, and stop the previous web slot. Database checkpoints record each external side effect so the job runner can complete a healthy cutover or restore traffic, service enablement, service state, and both prior symlink targets after interruption. Success is recorded only after the old service is inactive and the persisted topology is committed. System-update execution has a hard ten-minute deadline; exceeding it initiates rollback with a separate two-minute cleanup allowance and records the update as failed.
 

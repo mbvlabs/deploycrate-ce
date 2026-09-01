@@ -825,7 +825,7 @@ complete records    restore old traffic/slot/service
 ### Review checklist
 
 - [ ] Decide whether starting a system update should require `AdminOnly` rather than `AuthOnly`.
-- [ ] Verify checksum authenticity, not only checksum equality, for every production channel.
+- [x] Verify checksum authenticity, not only checksum equality, for every production channel. Keyless Sigstore bundles pin each manifest and binary to its channel's GitHub Actions workflow identity before SHA-256 verification.
 - [ ] Verify database migrations are compatible with rollback to the old binary.
 - [ ] Verify every checkpoint accurately follows the external effect it claims.
 - [ ] Simulate process termination after every checkpoint and during every Caddy/systemd operation.

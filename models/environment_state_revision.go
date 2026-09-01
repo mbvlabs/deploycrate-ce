@@ -160,13 +160,21 @@ func validateEnvironmentDesiredState(state *EnvironmentDesiredState) error {
 	}
 	state.Runtime.Runtime = strings.ToLower(strings.TrimSpace(state.Runtime.Runtime))
 	if !IsSupportedBuildpackRuntime(BuildpackRuntime(state.Runtime.Runtime)) {
-		builder.Add("runtime.runtime", "unsupported", "runtime must be go, rails, laravel, or django")
+		builder.Add(
+			"runtime.runtime",
+			"unsupported",
+			"runtime must be go, rails, laravel, or django",
+		)
 	}
 	if state.Runtime.RestartPolicy != "unless-stopped" {
 		builder.Add("runtime.restartPolicy", "unsupported", "restart policy must be unless-stopped")
 	}
 	if state.Runtime.Runtime != string(BuildpackRuntimeGo) && len(state.Runtime.BPGOTargets) > 0 {
-		builder.Add("runtime.bpGoTargets", "unsupported", "Go process targets require the Go runtime")
+		builder.Add(
+			"runtime.bpGoTargets",
+			"unsupported",
+			"Go process targets require the Go runtime",
+		)
 	} else if err := ValidateGoProcessTargets(state.Runtime.BPGOTargets); err != nil {
 		builder.Add("runtime.bpGoTargets", "invalid", err.Error())
 	}

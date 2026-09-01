@@ -170,7 +170,12 @@ func (environmentDNSBinding) MarkReconciling(
 }
 
 func (environmentDNSBinding) MarkState(
-	ctx context.Context, db storage.Executor, id uuid.UUID, generation int64, state, message string, at time.Time,
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+	generation int64,
+	state, message string,
+	at time.Time,
 ) error {
 	query := db.NewUpdate().TableExpr("environment_dns_bindings").
 		Set("updated_at = ?", at).Set("state = ?", state).

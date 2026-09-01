@@ -352,7 +352,7 @@ func applicationBinaryStep() Step {
 				)
 				return nil
 			}
-			return InstallApplicationReleaseBinary(ctx, "", cfg.Version)
+			return installApplicationReleaseBinary(ctx, "", cfg.Version, cfg.UpdateChannel)
 		},
 	}
 }

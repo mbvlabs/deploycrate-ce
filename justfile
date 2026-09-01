@@ -1,37 +1,5 @@
 set shell := ["bash", "-cu"]
 
-# Build upload-ready Linux AMD64 development binaries.
+# Build and publish an unsigned edge release to get-dev for migrating a running instance.
 development-assets:
-    #!/usr/bin/env bash
-    set -euo pipefail
-
-    version="development-$(git describe --always --dirty)"
-    output_root="dist/deploycrate-ce-development"
-    remote="dc-ce-dev:deploycrate-development"
-    cli_output="${output_root}/dc-ce-cli"
-    app_output="${output_root}/dc-ce-app"
-
-    install -d "${cli_output}" "${app_output}"
-
-    GOARCH=amd64 andurel build --version "${version}"
-    mv deploycrate-ce "${app_output}/deploycrate-ce"
-
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
-        -trimpath \
-        -ldflags "-s -w -X main.version=${version}" \
-        -o "${cli_output}/bootstrap" \
-        ./cmd/bootstrap
-
-    (
-        cd "${cli_output}"
-        sha256sum bootstrap > bootstrap.sha256
-    )
-    (
-        cd "${app_output}"
-        sha256sum deploycrate-ce > deploycrate-ce.sha256
-    )
-    install -m 0644 scripts/install-development.sh "${output_root}/install.sh"
-
-    rclone sync "${output_root}" "${remote}"
-
-    printf 'Development assets generated in %s and synced to %s\n' "${output_root}" "${remote}"
+    scripts/publish-development-release.sh

@@ -76,7 +76,11 @@ func (dashboard) Snapshot(ctx context.Context, exec storage.Executor) (Dashboard
 		return DashboardSnapshot{}, fmt.Errorf("load dashboard metrics: %w", err)
 	}
 	if metrics.FinishedDeploys > 0 {
-		metrics.DeploymentSuccess = float64(metrics.SuccessfulDeploys) / float64(metrics.FinishedDeploys) * 100
+		metrics.DeploymentSuccess = float64(
+			metrics.SuccessfulDeploys,
+		) / float64(
+			metrics.FinishedDeploys,
+		) * 100
 	}
 
 	activityRows := make([]DashboardDeploymentActivity, 0, 7)

@@ -22,6 +22,9 @@ import (
 const (
 	DefaultEtcDir   = "/etc/deploycrate-ce"
 	DefaultStateDir = "/var/lib/deploycrate-ce"
+
+	UpdateChannelStable = "stable"
+	UpdateChannelEdge   = "edge"
 )
 
 type DatabaseConfig struct {
@@ -79,6 +82,7 @@ type Secrets struct {
 type Config struct {
 	InstanceID        string         `json:"instance_id"`
 	Version           string         `json:"version"`
+	UpdateChannel     string         `json:"update_channel"`
 	Domain            string         `json:"domain"`
 	PublicIPv4        string         `json:"public_ipv4"`
 	SSHPort           int            `json:"ssh_port"`
@@ -140,12 +144,13 @@ func NewConfig(version string) (Config, error) {
 	}
 
 	return Config{
-		InstanceID:  uuid.NewString(),
-		Version:     version,
-		SSHPort:     22,
-		Timezone:    "UTC",
-		AdminUser:   "admin",
-		ServiceUser: "deploycrate",
+		InstanceID:    uuid.NewString(),
+		Version:       version,
+		UpdateChannel: UpdateChannelStable,
+		SSHPort:       22,
+		Timezone:      "UTC",
+		AdminUser:     "admin",
+		ServiceUser:   "deploycrate",
 		Database: DatabaseConfig{
 			Host:    "127.0.0.1",
 			Port:    5432,
@@ -187,6 +192,9 @@ func (c Config) Validate(normalizeObjectStorage func(S3Config) (S3Config, error)
 	var errs []error
 	if _, err := uuid.Parse(c.InstanceID); err != nil {
 		errs = append(errs, errors.New("instance ID is invalid"))
+	}
+	if c.UpdateChannel != UpdateChannelStable && c.UpdateChannel != UpdateChannelEdge {
+		errs = append(errs, errors.New("update channel must be stable or edge"))
 	}
 	if c.AdminUser != "admin" {
 		errs = append(errs, errors.New("server administrator user must be admin"))

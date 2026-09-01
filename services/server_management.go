@@ -78,7 +78,10 @@ func (service *ServerManagement) All(ctx context.Context) ([]models.ServerEntity
 	return models.Server.All(ctx, service.db.Executor())
 }
 
-func (service *ServerManagement) Find(ctx context.Context, serverID uuid.UUID) (models.ServerEntity, error) {
+func (service *ServerManagement) Find(
+	ctx context.Context,
+	serverID uuid.UUID,
+) (models.ServerEntity, error) {
 	return models.Server.Find(ctx, service.db.Executor(), serverID)
 }
 

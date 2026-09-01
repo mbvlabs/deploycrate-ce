@@ -366,8 +366,7 @@ func isRetryableTransportError(ctx context.Context, err error) bool {
 		return false
 	}
 
-	var urlError *url.Error
-	if errors.As(err, &urlError) {
+	if _, ok := errors.AsType[*url.Error](err); ok {
 		return true
 	}
 

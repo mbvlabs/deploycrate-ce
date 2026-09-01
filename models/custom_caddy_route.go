@@ -79,7 +79,11 @@ type SaveCustomCaddyRouteData struct {
 	RemovedAt      sql.NullTime
 }
 
-func (customCaddyRoute) Create(ctx context.Context, db storage.Executor, data SaveCustomCaddyRouteData) (CustomCaddyRouteEntity, error) {
+func (customCaddyRoute) Create(
+	ctx context.Context,
+	db storage.Executor,
+	data SaveCustomCaddyRouteData,
+) (CustomCaddyRouteEntity, error) {
 	now := time.Now().UTC()
 	entity := CustomCaddyRouteEntity{
 		ID: uuid.New(), CreatedAt: now, UpdatedAt: now, ExternalID: data.ExternalID,
@@ -96,7 +100,11 @@ func (customCaddyRoute) Create(ctx context.Context, db storage.Executor, data Sa
 	return entity, nil
 }
 
-func (customCaddyRoute) Update(ctx context.Context, db storage.Executor, data SaveCustomCaddyRouteData) (CustomCaddyRouteEntity, error) {
+func (customCaddyRoute) Update(
+	ctx context.Context,
+	db storage.Executor,
+	data SaveCustomCaddyRouteData,
+) (CustomCaddyRouteEntity, error) {
 	entity := CustomCaddyRouteEntity{
 		ID: data.ID, UpdatedAt: time.Now().UTC(), ExternalID: data.ExternalID,
 		Hostname: data.Hostname, OriginAddress: data.OriginAddress, OriginPort: data.OriginPort,
@@ -113,22 +121,36 @@ func (customCaddyRoute) Update(ctx context.Context, db storage.Executor, data Sa
 	return entity, err
 }
 
-func (customCaddyRoute) Find(ctx context.Context, db storage.Executor, id uuid.UUID) (CustomCaddyRouteEntity, error) {
+func (customCaddyRoute) Find(
+	ctx context.Context,
+	db storage.Executor,
+	id uuid.UUID,
+) (CustomCaddyRouteEntity, error) {
 	var entity CustomCaddyRouteEntity
 	err := db.NewSelect().Model(&entity).Where("id = ?", id).Scan(ctx)
 	return entity, err
 }
 
-func (customCaddyRoute) FindActiveByExternalID(ctx context.Context, db storage.Executor, externalID string) (CustomCaddyRouteEntity, error) {
+func (customCaddyRoute) FindActiveByExternalID(
+	ctx context.Context,
+	db storage.Executor,
+	externalID string,
+) (CustomCaddyRouteEntity, error) {
 	var entity CustomCaddyRouteEntity
 	err := db.NewSelect().Model(&entity).Where("external_id = ?", strings.TrimSpace(externalID)).
 		Where("removed_at IS NULL").Limit(1).Scan(ctx)
 	return entity, err
 }
 
-func (customCaddyRoute) Active(ctx context.Context, db storage.Executor) ([]CustomCaddyRouteEntity, error) {
+func (customCaddyRoute) Active(
+	ctx context.Context,
+	db storage.Executor,
+) ([]CustomCaddyRouteEntity, error) {
 	rows := make([]CustomCaddyRouteEntity, 0)
-	err := db.NewSelect().Model(&rows).Where("removed_at IS NULL OR state = ?", CaddyRouteRemovalPending).
-		OrderExpr("hostname").Scan(ctx)
+	err := db.NewSelect().
+		Model(&rows).
+		Where("removed_at IS NULL OR state = ?", CaddyRouteRemovalPending).
+		OrderExpr("hostname").
+		Scan(ctx)
 	return rows, err
 }

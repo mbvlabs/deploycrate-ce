@@ -972,7 +972,9 @@ func (c Environments) showSection(etx *echo.Context, section string) error {
 				"environment_id", params.EnvironmentID,
 				"error", telemetryErr,
 			)
-			telemetry = services.EnvironmentTelemetryResult{Rows: []services.AttributedTelemetryRow{}}
+			telemetry = services.EnvironmentTelemetryResult{
+				Rows: []services.AttributedTelemetryRow{},
+			}
 		}
 	}
 	container, containerErr := c.envSetupSvc.ServingContainer(

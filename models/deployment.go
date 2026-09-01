@@ -528,6 +528,9 @@ type SystemUpdateCheckpoint struct {
 	ActiveSlot              string `json:"active_slot"`
 	TargetSlot              string `json:"target_slot"`
 	Phase                   string `json:"phase"`
+	ReleaseChannel          string `json:"release_channel"`
+	ArtifactURL             string `json:"artifact_url"`
+	ArtifactSHA256          string `json:"artifact_sha256"`
 	PreviousSlotTarget      string `json:"previous_slot_target"`
 	PreviousJobRunnerTarget string `json:"previous_job_runner_target"`
 	TargetStarted           bool   `json:"target_started"`
