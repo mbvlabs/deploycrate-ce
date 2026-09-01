@@ -85,7 +85,12 @@ func TestApplicationsControllerDestroyDeletesEmptyApplication(t *testing.T) {
 		controller.Destroy,
 	)
 	if response.Code != http.StatusSeeOther {
-		t.Fatalf("destroy status = %d, want %d; body: %s", response.Code, http.StatusSeeOther, response.Body)
+		t.Fatalf(
+			"destroy status = %d, want %d; body: %s",
+			response.Code,
+			http.StatusSeeOther,
+			response.Body,
+		)
 	}
 	if _, err := models.Application.Find(t.Context(), db.Executor(), application.ID); err == nil {
 		t.Fatal("Application still exists after destroy")

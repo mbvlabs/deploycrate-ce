@@ -957,7 +957,11 @@ func (m Model) renderReview() string {
 	}
 	rows := []string{
 		labelStyle.Render("Server") + "       https://" + m.config.Domain,
-		labelStyle.Render("Updates") + "      " + strings.ToUpper(m.config.UpdateChannel) + " channel",
+		labelStyle.Render(
+			"Updates",
+		) + "      " + strings.ToUpper(
+			m.config.UpdateChannel,
+		) + " channel",
 		labelStyle.Render(
 			"App DNS A",
 		) + "    " + m.config.Domain + " -> " + m.config.PublicIPv4 + " (DNS only)",

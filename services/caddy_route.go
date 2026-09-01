@@ -38,7 +38,11 @@ func NewCaddyRouteService(db storage.Pool, caddy CaddyClient) CaddyRouteService 
 	return CaddyRouteService{db: db, caddy: caddy}
 }
 
-func NewCaddyRouteServiceWithDNS(db storage.Pool, caddy CaddyClient, dns *ResourceDNS) CaddyRouteService {
+func NewCaddyRouteServiceWithDNS(
+	db storage.Pool,
+	caddy CaddyClient,
+	dns *ResourceDNS,
+) CaddyRouteService {
 	return CaddyRouteService{db: db, caddy: caddy, dns: dns}
 }
 
@@ -96,7 +100,12 @@ func (service CaddyRouteService) Reconcile(ctx context.Context, routeID uuid.UUI
 	if domain.ArchivedAt.Valid {
 		return "", errors.New("cannot reconcile a Caddy route for an archived domain")
 	}
-	healthPath, err := models.CaddyRoute.DesiredHealthPath(ctx, service.db.Executor(), routeID, domain.EnvironmentID)
+	healthPath, err := models.CaddyRoute.DesiredHealthPath(
+		ctx,
+		service.db.Executor(),
+		routeID,
+		domain.EnvironmentID,
+	)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("load Environment route health path: %w", err)
 	}
@@ -520,7 +529,11 @@ func (service CaddyRouteService) RouteDetail(
 		}
 	}
 	if detail.ExternalID == "" {
-		custom, routeErr := models.CustomCaddyRoute.FindActiveByExternalID(ctx, service.db.Executor(), externalID)
+		custom, routeErr := models.CustomCaddyRoute.FindActiveByExternalID(
+			ctx,
+			service.db.Executor(),
+			externalID,
+		)
 		if routeErr == nil {
 			managed := managedCustomCaddyRoute(custom)
 			detail = ManagedCaddyRouteDetail{
@@ -835,7 +848,12 @@ func (service CaddyRouteService) DestroyManaged(ctx context.Context, routeID uui
 		); err != nil {
 			return fmt.Errorf("mark Caddy route for removal: %w", err)
 		}
-		if err := models.CaddyRouteBackend.RetireActiveForRoute(ctx, tx, routeID, now.Time); err != nil {
+		if err := models.CaddyRouteBackend.RetireActiveForRoute(
+			ctx,
+			tx,
+			routeID,
+			now.Time,
+		); err != nil {
 			return fmt.Errorf("retire Caddy route backends: %w", err)
 		}
 	}

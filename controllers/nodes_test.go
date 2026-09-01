@@ -145,7 +145,10 @@ func TestNodesControllerCreateValidationDoesNotWriteDatabase(t *testing.T) {
 	if validationErrors["name"] == "" || validationErrors["address"] == "" {
 		t.Fatalf("Node validation errors = %v", validationErrors)
 	}
-	serverCount, err := db.Executor().NewSelect().Model((*models.ServerEntity)(nil)).Count(t.Context())
+	serverCount, err := db.Executor().
+		NewSelect().
+		Model((*models.ServerEntity)(nil)).
+		Count(t.Context())
 	if err != nil {
 		t.Fatalf("count Servers after invalid create: %v", err)
 	}
@@ -193,7 +196,12 @@ func TestNodesControllerConfirmRollsBackWhenQueueInsertFails(t *testing.T) {
 		controller.Confirm,
 	)
 	if response.Code != http.StatusSeeOther {
-		t.Fatalf("confirm status = %d, want %d; body: %s", response.Code, http.StatusSeeOther, response.Body)
+		t.Fatalf(
+			"confirm status = %d, want %d; body: %s",
+			response.Code,
+			http.StatusSeeOther,
+			response.Body,
+		)
 	}
 	after, err := models.NodeEnrollment.Find(t.Context(), db.Executor(), enrollment.ID)
 	if err != nil {

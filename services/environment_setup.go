@@ -486,7 +486,11 @@ func (service *EnvironmentSetup) ServingContainer(
 	); err != nil {
 		return container, err
 	}
-	instance, err := models.Instance.ServingForEnvironment(ctx, service.db.Executor(), environmentID)
+	instance, err := models.Instance.ServingForEnvironment(
+		ctx,
+		service.db.Executor(),
+		environmentID,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return container, nil
 	}
@@ -566,7 +570,11 @@ func (service *EnvironmentSetup) environmentSecretActivity(
 	ctx context.Context,
 	environmentID uuid.UUID,
 ) ([]EnvironmentSecretActivity, error) {
-	targetStates, err := models.EnvironmentTargetState.ActiveForEnvironment(ctx, service.db.Executor(), environmentID)
+	targetStates, err := models.EnvironmentTargetState.ActiveForEnvironment(
+		ctx,
+		service.db.Executor(),
+		environmentID,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -864,7 +872,12 @@ func (service *EnvironmentSetup) DeploymentEvents(
 	environmentID, deploymentID uuid.UUID,
 	after int64,
 ) (EnvironmentDeploymentEventSnapshot, error) {
-	deployment, err := models.Deployment.EnvironmentActivity(ctx, service.db.Executor(), environmentID, deploymentID)
+	deployment, err := models.Deployment.EnvironmentActivity(
+		ctx,
+		service.db.Executor(),
+		environmentID,
+		deploymentID,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return EnvironmentDeploymentEventSnapshot{}, sql.ErrNoRows
 	}
@@ -2661,7 +2674,11 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	input.Slug = slug.Make(strings.TrimSpace(input.Slug))
 	input.Kind = strings.TrimSpace(input.Kind)
 	input.HealthPath = strings.TrimSpace(input.HealthPath)
-	currentRuntime, err := models.RuntimeConfiguration.FindForEnvironment(ctx, service.db.Executor(), environmentID)
+	currentRuntime, err := models.RuntimeConfiguration.FindForEnvironment(
+		ctx,
+		service.db.Executor(),
+		environmentID,
+	)
 	if err != nil {
 		return err
 	}
@@ -2695,7 +2712,11 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	if err != nil {
 		return err
 	}
-	networkID, err := models.EnvironmentNetwork.ActivePrivateNetworkID(ctx, service.db.Executor(), environmentID)
+	networkID, err := models.EnvironmentNetwork.ActivePrivateNetworkID(
+		ctx,
+		service.db.Executor(),
+		environmentID,
+	)
 	if err != nil {
 		return fmt.Errorf("load Environment network: %w", err)
 	}
@@ -2768,7 +2789,11 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 	if err != nil {
 		return err
 	}
-	activeReleaseCommands, err := models.ReleaseCommandExecution.ActiveCountForEnvironment(ctx, tx, environmentID)
+	activeReleaseCommands, err := models.ReleaseCommandExecution.ActiveCountForEnvironment(
+		ctx,
+		tx,
+		environmentID,
+	)
 	if err != nil {
 		return err
 	}
@@ -2862,8 +2887,12 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 		"schema_version": 4, "bp_go_targets": goTargets,
 	})
 	if _, err := models.RuntimeConfiguration.Update(ctx, tx, models.UpdateRuntimeConfigurationData{
-		ID: persistedRuntime.ID, Runtime: string(runtime), ResourceLimits: persistedRuntime.ResourceLimits,
-		RestartPolicy: "unless-stopped", Settings: runtimeSettings, EnvironmentID: environmentID,
+		ID:             persistedRuntime.ID,
+		Runtime:        string(runtime),
+		ResourceLimits: persistedRuntime.ResourceLimits,
+		RestartPolicy:  "unless-stopped",
+		Settings:       runtimeSettings,
+		EnvironmentID:  environmentID,
 	}); err != nil {
 		return err
 	}
@@ -2941,7 +2970,11 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 			return err
 		}
 	}
-	currentConnections, err := models.EnvironmentResource.ActiveForEnvironment(ctx, tx, environmentID)
+	currentConnections, err := models.EnvironmentResource.ActiveForEnvironment(
+		ctx,
+		tx,
+		environmentID,
+	)
 	if err != nil {
 		return err
 	}
@@ -3035,7 +3068,12 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 			continue
 		}
 		now := time.Now().UTC()
-		if archiveCredentialErr := models.ResourceCredential.ArchiveID(ctx, tx, credential.ID, now); archiveCredentialErr != nil {
+		if archiveCredentialErr := models.ResourceCredential.ArchiveID(
+			ctx,
+			tx,
+			credential.ID,
+			now,
+		); archiveCredentialErr != nil {
 			return archiveCredentialErr
 		}
 	}
@@ -3107,7 +3145,13 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 			return err
 		}
 	}
-	if err := models.EnvironmentTargetState.MarkEnvironmentPending(ctx, tx, environmentID, revision.ID, now); err != nil {
+	if err := models.EnvironmentTargetState.MarkEnvironmentPending(
+		ctx,
+		tx,
+		environmentID,
+		revision.ID,
+		now,
+	); err != nil {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
@@ -3134,7 +3178,11 @@ func (service *EnvironmentSetup) cleanupEnvironment(
 		}
 	}
 
-	routeIDs, err := models.CaddyRoute.ExternalIDsForEnvironment(ctx, service.db.Executor(), environmentID)
+	routeIDs, err := models.CaddyRoute.ExternalIDsForEnvironment(
+		ctx,
+		service.db.Executor(),
+		environmentID,
+	)
 	if err != nil {
 		return fmt.Errorf("load Environment Caddy routes: %w", err)
 	}
@@ -3143,7 +3191,11 @@ func (service *EnvironmentSetup) cleanupEnvironment(
 			return fmt.Errorf("delete Environment Caddy route: %w", err)
 		}
 	}
-	serverIDs, err := models.EnvironmentTarget.ServerIDsForEnvironment(ctx, service.db.Executor(), environmentID)
+	serverIDs, err := models.EnvironmentTarget.ServerIDsForEnvironment(
+		ctx,
+		service.db.Executor(),
+		environmentID,
+	)
 	if err != nil {
 		return fmt.Errorf("load Environment workload Servers: %w", err)
 	}
@@ -3180,7 +3232,12 @@ func (service *EnvironmentSetup) rehomeDurableChanges(
 	if len(environmentIDs) == 0 {
 		return nil
 	}
-	if err := models.Change.RehomeDurableForEnvironments(ctx, db, environmentIDs, time.Now().UTC()); err != nil {
+	if err := models.Change.RehomeDurableForEnvironments(
+		ctx,
+		db,
+		environmentIDs,
+		time.Now().UTC(),
+	); err != nil {
 		return fmt.Errorf("rehome durable Environment history: %w", err)
 	}
 	return nil
@@ -3307,7 +3364,11 @@ func (service *EnvironmentSetup) deleteEnvironmentBuildCaches(
 	if err != nil {
 		return err
 	}
-	configuredServerID, err := models.BuildpackConfiguration.ServerIDForEnvironment(ctx, service.db.Executor(), environmentID)
+	configuredServerID, err := models.BuildpackConfiguration.ServerIDForEnvironment(
+		ctx,
+		service.db.Executor(),
+		environmentID,
+	)
 	if err == nil {
 		serverIDs = append(serverIDs, configuredServerID)
 	} else if !errors.Is(
@@ -4024,7 +4085,10 @@ func (service *EnvironmentSetup) prepareResources(
 		if resource.Engine() == "opentelemetry" {
 			if identityToken == "" {
 				existingCredential, findCredentialErr := models.ResourceCredential.ActiveApplicationForEnvironment(
-					ctx, service.db.Executor(), resource.ID, environmentID,
+					ctx,
+					service.db.Executor(),
+					resource.ID,
+					environmentID,
 				)
 				if findCredentialErr == nil {
 					credentialValues, err = service.resources.credentialSecretValues(

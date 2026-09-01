@@ -84,11 +84,13 @@ func TestFetchReleaseManifest(t *testing.T) {
 			platform: {SHA256: strings.Repeat("a", sha256.Size*2)},
 		},
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		if err := json.NewEncoder(writer).Encode(manifest); err != nil {
-			t.Errorf("encode manifest: %v", err)
-		}
-	}))
+	server := httptest.NewServer(
+		http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			if err := json.NewEncoder(writer).Encode(manifest); err != nil {
+				t.Errorf("encode manifest: %v", err)
+			}
+		}),
+	)
 	defer server.Close()
 
 	manifest.Artifacts[platform] = releaseArtifact{

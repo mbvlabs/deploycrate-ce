@@ -360,10 +360,12 @@ func (service *ReleaseCommandExecution) Execute(ctx context.Context, executionID
 			ContainerName: "dc-release-" + release.ID.String() + "-" + fmt.Sprint(
 				execution.Attempt,
 			),
-			ImageReference:       release.ArtifactReference,
-			NetworkName:          networkName,
-			Environment:          environment,
-			Command:              append([]string{configuration.Command}, configuration.Arguments...),
+			ImageReference: release.ArtifactReference,
+			NetworkName:    networkName,
+			Environment:    environment,
+			Command: append(
+				[]string{configuration.Command},
+				configuration.Arguments...),
 			OpenTelemetryEnabled: scope.OpenTelemetryEnabled,
 			Stdout:               releaseCommandStreamWriter{logger: logger, stream: "stdout"},
 			Stderr:               releaseCommandStreamWriter{logger: logger, stream: "stderr"},

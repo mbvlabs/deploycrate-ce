@@ -78,9 +78,11 @@ func TestVerifyFileRejectsInvalidIdentityBeforeDownloadingBundle(t *testing.T) {
 }
 
 func TestDownloadBundleRejectsOversizedContent(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		_, _ = writer.Write(make([]byte, maxBundleSize+1))
-	}))
+	server := httptest.NewServer(
+		http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+			_, _ = writer.Write(make([]byte, maxBundleSize+1))
+		}),
+	)
 	defer server.Close()
 
 	verifier := New(server.Client())

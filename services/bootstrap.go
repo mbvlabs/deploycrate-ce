@@ -256,7 +256,8 @@ func loadManagedRegistry(ctx context.Context, db storage.Executor) (managedRegis
 	var metadata struct {
 		BasicAuthHash string `json:"basic_auth_hash"`
 	}
-	if json.Unmarshal(row.Configuration, &configuration) != nil || strings.TrimSpace(configuration.RouteHost) == "" ||
+	if json.Unmarshal(row.Configuration, &configuration) != nil ||
+		strings.TrimSpace(configuration.RouteHost) == "" ||
 		json.Unmarshal(row.CredentialMetadata, &metadata) != nil ||
 		strings.TrimSpace(row.Username) == "" ||
 		strings.TrimSpace(metadata.BasicAuthHash) == "" {
@@ -1381,7 +1382,8 @@ func validateBootstrapInput(input BootstrapInput) error {
 		return errors.New("bootstrap encrypted WireGuard private key is required")
 	}
 	if input.Backup.Enabled {
-		if input.Backup.InstanceID == "" || input.Backup.Provider == "" || input.Backup.Region == "" ||
+		if input.Backup.InstanceID == "" || input.Backup.Provider == "" ||
+			input.Backup.Region == "" ||
 			input.Backup.Bucket == "" ||
 			len(input.Backup.EncryptedCredentialPayload) == 0 ||
 			input.Backup.ValidatedAt.IsZero() ||

@@ -76,7 +76,11 @@ func loadReleaseManifestWithVerifier(
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return releaseManifest{}, fmt.Errorf("load %s release manifest: status %d", channel, response.StatusCode)
+		return releaseManifest{}, fmt.Errorf(
+			"load %s release manifest: status %d",
+			channel,
+			response.StatusCode,
+		)
 	}
 	content, err := io.ReadAll(io.LimitReader(response.Body, (64<<10)+1))
 	if err != nil {
@@ -134,7 +138,9 @@ func acquireReleaseApplicationBinaryWithVerifier(
 		return "", nil, err
 	}
 	if strings.TrimSpace(manifest.Version) != strings.TrimSpace(expectedVersion) {
-		return "", nil, errors.New("selected channel advanced; restart bootstrap to use the new release")
+		return "", nil, errors.New(
+			"selected channel advanced; restart bootstrap to use the new release",
+		)
 	}
 	artifact, found := manifest.Artifacts[runtime.GOOS+"/"+runtime.GOARCH]
 	if !found || !strings.HasPrefix(artifact.URL, baseURL+"/") {

@@ -71,7 +71,12 @@ func TestResourcesControllerCredentialLifecycleUsesDatabase(t *testing.T) {
 		controller.CreateCredential,
 	)
 	if createResponse.Code != http.StatusSeeOther {
-		t.Fatalf("create credential status = %d, want %d; body: %s", createResponse.Code, http.StatusSeeOther, createResponse.Body)
+		t.Fatalf(
+			"create credential status = %d, want %d; body: %s",
+			createResponse.Code,
+			http.StatusSeeOther,
+			createResponse.Body,
+		)
 	}
 	var credentials []models.ResourceCredentialEntity
 	if err := db.Executor().NewSelect().
@@ -109,7 +114,12 @@ func TestResourcesControllerCredentialLifecycleUsesDatabase(t *testing.T) {
 		controller.UpdateCredential,
 	)
 	if updateResponse.Code != http.StatusSeeOther {
-		t.Fatalf("update credential status = %d, want %d; body: %s", updateResponse.Code, http.StatusSeeOther, updateResponse.Body)
+		t.Fatalf(
+			"update credential status = %d, want %d; body: %s",
+			updateResponse.Code,
+			http.StatusSeeOther,
+			updateResponse.Body,
+		)
 	}
 	updated, err := models.ResourceCredential.Find(t.Context(), db.Executor(), credential.ID)
 	if err != nil {
@@ -135,7 +145,12 @@ func TestResourcesControllerCredentialLifecycleUsesDatabase(t *testing.T) {
 		controller.DestroyCredential,
 	)
 	if destroyResponse.Code != http.StatusSeeOther {
-		t.Fatalf("destroy credential status = %d, want %d; body: %s", destroyResponse.Code, http.StatusSeeOther, destroyResponse.Body)
+		t.Fatalf(
+			"destroy credential status = %d, want %d; body: %s",
+			destroyResponse.Code,
+			http.StatusSeeOther,
+			destroyResponse.Body,
+		)
 	}
 	archived, err := models.ResourceCredential.Find(t.Context(), db.Executor(), credential.ID)
 	if err != nil {
@@ -254,7 +269,8 @@ func TestResourcesControllerEndpointAndHealthCheckLifecycleUsesDatabase(t *testi
 	if err != nil {
 		t.Fatalf("load updated Resource endpoint: %v", err)
 	}
-	if updatedEndpoint.Name != "Renamed Redis" || updatedEndpoint.Address != "renamed-redis.internal" ||
+	if updatedEndpoint.Name != "Renamed Redis" ||
+		updatedEndpoint.Address != "renamed-redis.internal" ||
 		updatedEndpoint.Port != 6380 {
 		t.Fatalf("updated Resource endpoint = %+v", updatedEndpoint)
 	}
@@ -547,7 +563,12 @@ func TestResourcesControllerDatabaseLifecycle(t *testing.T) {
 		controller.Create,
 	)
 	if createResponse.Code != http.StatusSeeOther {
-		t.Fatalf("create status = %d, want %d; body: %s", createResponse.Code, http.StatusSeeOther, createResponse.Body)
+		t.Fatalf(
+			"create status = %d, want %d; body: %s",
+			createResponse.Code,
+			http.StatusSeeOther,
+			createResponse.Body,
+		)
 	}
 	location := createResponse.Header().Get("Location")
 	resourceID, err := uuid.Parse(location[strings.LastIndex(location, "/")+1:])
@@ -598,7 +619,12 @@ func TestResourcesControllerDatabaseLifecycle(t *testing.T) {
 		controller.Update,
 	)
 	if updateResponse.Code != http.StatusSeeOther {
-		t.Fatalf("update status = %d, want %d; body: %s", updateResponse.Code, http.StatusSeeOther, updateResponse.Body)
+		t.Fatalf(
+			"update status = %d, want %d; body: %s",
+			updateResponse.Code,
+			http.StatusSeeOther,
+			updateResponse.Body,
+		)
 	}
 	updated, err := models.Resource.Find(t.Context(), db.Executor(), resourceID)
 	if err != nil {
@@ -617,7 +643,12 @@ func TestResourcesControllerDatabaseLifecycle(t *testing.T) {
 		controller.Destroy,
 	)
 	if destroyResponse.Code != http.StatusSeeOther {
-		t.Fatalf("destroy status = %d, want %d; body: %s", destroyResponse.Code, http.StatusSeeOther, destroyResponse.Body)
+		t.Fatalf(
+			"destroy status = %d, want %d; body: %s",
+			destroyResponse.Code,
+			http.StatusSeeOther,
+			destroyResponse.Body,
+		)
 	}
 	archived, err := models.Resource.Find(t.Context(), db.Executor(), resourceID)
 	if err != nil {

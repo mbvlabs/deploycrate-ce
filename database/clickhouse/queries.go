@@ -242,7 +242,10 @@ func (client Queries) CaddyRequests(
 		nanoseconds, timestampErr := strconv.ParseInt(row.TimestampNanoseconds, 10, 64)
 		fingerprint, fingerprintErr := strconv.ParseUint(row.Fingerprint, 10, 64)
 		if timestampErr != nil || fingerprintErr != nil {
-			return nil, fmt.Errorf("decode Caddy request identity: %w", errors.Join(timestampErr, fingerprintErr))
+			return nil, fmt.Errorf(
+				"decode Caddy request identity: %w",
+				errors.Join(timestampErr, fingerprintErr),
+			)
 		}
 		result = append(result, CaddyRequest{
 			ObservedAt: time.Unix(0, nanoseconds).UTC(), Fingerprint: fingerprint,

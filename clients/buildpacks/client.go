@@ -203,12 +203,16 @@ func ProfileForArchitecture(buildpackRuntime, architecture string) (Profile, err
 	switch buildpackRuntime {
 	case "rails":
 		if architecture != "amd64" {
-			return Profile{}, errors.New("Rails Buildpacks are currently available only on amd64 Servers")
+			return Profile{}, errors.New(
+				"Rails Buildpacks are currently available only on amd64 Servers",
+			)
 		}
 		return Profile{Builder: builder, Buildpack: RubyBuildpackAMD64, RunImage: runImage}, nil
 	case "laravel":
 		if architecture != "amd64" {
-			return Profile{}, errors.New("Laravel Buildpacks are currently available only on amd64 Servers")
+			return Profile{}, errors.New(
+				"Laravel Buildpacks are currently available only on amd64 Servers",
+			)
 		}
 		return Profile{
 			Builder: builder, Buildpack: PHPBuildpackAMD64, RunImage: runImage,

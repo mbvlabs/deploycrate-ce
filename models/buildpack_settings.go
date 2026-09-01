@@ -68,7 +68,9 @@ func ParseBuildpackSettings(value json.RawMessage) (BuildpackSettings, error) {
 		settings.Runtime = BuildpackRuntimeGo
 	}
 	settings.SchemaVersion = BuildpackSettingsSchemaVersion
-	settings.Runtime = BuildpackRuntime(strings.ToLower(strings.TrimSpace(string(settings.Runtime))))
+	settings.Runtime = BuildpackRuntime(
+		strings.ToLower(strings.TrimSpace(string(settings.Runtime))),
+	)
 	if !IsSupportedBuildpackRuntime(settings.Runtime) {
 		return settings, errors.New("Buildpacks runtime must be go, rails, laravel, or django")
 	}

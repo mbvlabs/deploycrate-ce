@@ -51,20 +51,22 @@ func TestAcquireReleaseApplicationBinary(t *testing.T) {
 		Version:       "1.2.3",
 		Artifacts:     map[string]releaseArtifact{},
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		switch request.URL.Path {
-		case "/manifest.json":
-			if err := json.NewEncoder(writer).Encode(manifest); err != nil {
-				t.Errorf("encode manifest: %v", err)
+	server := httptest.NewServer(
+		http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			switch request.URL.Path {
+			case "/manifest.json":
+				if err := json.NewEncoder(writer).Encode(manifest); err != nil {
+					t.Errorf("encode manifest: %v", err)
+				}
+			case "/releases/1.2.3/deploycrate-ce":
+				if _, err := writer.Write(binary); err != nil {
+					t.Errorf("write binary: %v", err)
+				}
+			default:
+				http.NotFound(writer, request)
 			}
-		case "/releases/1.2.3/deploycrate-ce":
-			if _, err := writer.Write(binary); err != nil {
-				t.Errorf("write binary: %v", err)
-			}
-		default:
-			http.NotFound(writer, request)
-		}
-	}))
+		}),
+	)
 	defer server.Close()
 
 	manifest.Artifacts[runtime.GOOS+"/"+runtime.GOARCH] = releaseArtifact{

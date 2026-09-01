@@ -1459,10 +1459,14 @@ func (service *ResourceManagement) DestroyDatabase(
 		return err
 	}
 	if _, err := models.Resource.Update(ctx, tx, models.UpdateResourceData{
-		ID: resource.ID, Name: resource.Name, Slug: resource.Slug,
-		ResourceType: resource.ResourceType, Configuration: encoded,
-		SystemManaged: resource.SystemManaged, EnvironmentAttachable: resource.EnvironmentAttachable,
-		ArchivedAt: resource.ArchivedAt,
+		ID:                    resource.ID,
+		Name:                  resource.Name,
+		Slug:                  resource.Slug,
+		ResourceType:          resource.ResourceType,
+		Configuration:         encoded,
+		SystemManaged:         resource.SystemManaged,
+		EnvironmentAttachable: resource.EnvironmentAttachable,
+		ArchivedAt:            resource.ArchivedAt,
 	}); err != nil {
 		return err
 	}

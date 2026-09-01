@@ -34,7 +34,11 @@ type ResourceDNSStatus struct {
 	Records        []DNSRecordStatus `json:"records"`
 }
 
-func NewResourceDNS(db storage.Pool, connections *DNSConnections, client CloudflareDNSClient) *ResourceDNS {
+func NewResourceDNS(
+	db storage.Pool,
+	connections *DNSConnections,
+	client CloudflareDNSClient,
+) *ResourceDNS {
 	return &ResourceDNS{db: db, connections: connections, client: client}
 }
 
@@ -42,20 +46,36 @@ func (service *ResourceDNS) Options(ctx context.Context) ([]EnvironmentDNSOption
 	return models.DNSZone.EnvironmentOptions(ctx, service.db.Executor())
 }
 
-func (service *ResourceDNS) ValidateSelection(ctx context.Context, hostname, mode string, zoneID *uuid.UUID) error {
+func (service *ResourceDNS) ValidateSelection(
+	ctx context.Context,
+	hostname, mode string,
+	zoneID *uuid.UUID,
+) error {
 	mode = strings.ToLower(strings.TrimSpace(mode))
 	if mode == "" || mode == DNSModeManual {
 		return nil
 	}
 	if mode != DNSModeCloudflare || zoneID == nil || *zoneID == uuid.Nil {
-		return domainError("dnsZoneId", "required", "select a Cloudflare DNS zone or use manual DNS")
+		return domainError(
+			"dnsZoneId",
+			"required",
+			"select a Cloudflare DNS zone or use manual DNS",
+		)
 	}
 	zone, err := models.DNSZone.Find(ctx, service.db.Executor(), *zoneID)
 	if err != nil || zone.ArchivedAt.Valid || zone.Status != "active" {
-		return domainError("dnsZoneId", "unavailable", "selected Cloudflare DNS zone is unavailable")
+		return domainError(
+			"dnsZoneId",
+			"unavailable",
+			"selected Cloudflare DNS zone is unavailable",
+		)
 	}
 	if !hostnameBelongsToZone(hostname, zone.Name) {
-		return domainError("hostname", "zone", fmt.Sprintf("hostname must be %s or a subdomain of %s", zone.Name, zone.Name))
+		return domainError(
+			"hostname",
+			"zone",
+			fmt.Sprintf("hostname must be %s or a subdomain of %s", zone.Name, zone.Name),
+		)
 	}
 	return nil
 }
@@ -100,7 +120,11 @@ func (service *ResourceDNS) Reconcile(ctx context.Context, endpointID uuid.UUID)
 	if err != nil {
 		return err
 	}
-	binding, err := models.ResourceDNSBinding.ActiveForEndpoint(ctx, service.db.Executor(), endpointID)
+	binding, err := models.ResourceDNSBinding.ActiveForEndpoint(
+		ctx,
+		service.db.Executor(),
+		endpointID,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -108,7 +132,14 @@ func (service *ResourceDNS) Reconcile(ctx context.Context, endpointID uuid.UUID)
 		return err
 	}
 	now := time.Now().UTC()
-	if err := models.ResourceDNSBinding.MarkState(ctx, service.db.Executor(), binding.ID, models.EnvironmentDNSReconciling, "", now); err != nil {
+	if err := models.ResourceDNSBinding.MarkState(
+		ctx,
+		service.db.Executor(),
+		binding.ID,
+		models.EnvironmentDNSReconciling,
+		"",
+		now,
+	); err != nil {
 		return err
 	}
 	if err := service.reconcile(ctx, endpoint, binding); err != nil {
@@ -120,20 +151,42 @@ func (service *ResourceDNS) Reconcile(ctx context.Context, endpointID uuid.UUID)
 		if errors.Is(err, errResourceDNSConflict) {
 			state = models.EnvironmentDNSConflict
 		}
-		_ = models.ResourceDNSBinding.MarkState(ctx, service.db.Executor(), binding.ID, state, message, time.Now().UTC())
+		_ = models.ResourceDNSBinding.MarkState(
+			ctx,
+			service.db.Executor(),
+			binding.ID,
+			state,
+			message,
+			time.Now().UTC(),
+		)
 		return err
 	}
-	return models.ResourceDNSBinding.MarkState(ctx, service.db.Executor(), binding.ID, models.EnvironmentDNSApplied, "", time.Now().UTC())
+	return models.ResourceDNSBinding.MarkState(
+		ctx,
+		service.db.Executor(),
+		binding.ID,
+		models.EnvironmentDNSApplied,
+		"",
+		time.Now().UTC(),
+	)
 }
 
 var errResourceDNSConflict = errors.New("Resource DNS hostname has unmanaged address records")
 
-func (service *ResourceDNS) reconcile(ctx context.Context, endpoint models.ResourceEndpointEntity, binding models.ResourceDNSBindingEntity) error {
+func (service *ResourceDNS) reconcile(
+	ctx context.Context,
+	endpoint models.ResourceEndpointEntity,
+	binding models.ResourceDNSBindingEntity,
+) error {
 	zone, err := models.DNSZone.Find(ctx, service.db.Executor(), binding.DNSZoneID)
 	if err != nil || zone.ArchivedAt.Valid || zone.Status != "active" {
 		return errors.New("selected Cloudflare DNS zone is unavailable")
 	}
-	_, token, err := service.connections.connectionToken(ctx, service.db.Executor(), zone.DNSConnectionID)
+	_, token, err := service.connections.connectionToken(
+		ctx,
+		service.db.Executor(),
+		zone.DNSConnectionID,
+	)
 	if err != nil {
 		return err
 	}
@@ -145,7 +198,11 @@ func (service *ResourceDNS) reconcile(ctx context.Context, endpoint models.Resou
 	if err != nil {
 		return err
 	}
-	tracked, err := models.ResourceDNSRecord.ActiveForBinding(ctx, service.db.Executor(), binding.ID)
+	tracked, err := models.ResourceDNSRecord.ActiveForBinding(
+		ctx,
+		service.db.Executor(),
+		binding.ID,
+	)
 	if err != nil {
 		return err
 	}
@@ -167,15 +224,33 @@ func (service *ResourceDNS) reconcile(ctx context.Context, endpoint models.Resou
 		}
 	}
 	if unmanaged > 0 {
-		return fmt.Errorf("%w: %d unmanaged Cloudflare address record(s) already use %s", errResourceDNSConflict, unmanaged, endpoint.Address)
+		return fmt.Errorf(
+			"%w: %d unmanaged Cloudflare address record(s) already use %s",
+			errResourceDNSConflict,
+			unmanaged,
+			endpoint.Address,
+		)
 	}
 	sort.Slice(owned, func(i, j int) bool { return owned[i].ID < owned[j].ID })
 	applied := make([]cloudflareclient.DNSRecord, 0, len(desired))
 	for index, address := range desired {
-		input := cloudflareclient.DNSRecordInput{Type: "A", Name: endpoint.Address, Content: address, TTL: 1, Proxied: true, Comment: marker}
+		input := cloudflareclient.DNSRecordInput{
+			Type:    "A",
+			Name:    endpoint.Address,
+			Content: address,
+			TTL:     1,
+			Proxied: true,
+			Comment: marker,
+		}
 		var record cloudflareclient.DNSRecord
 		if index < len(owned) && strings.EqualFold(owned[index].Type, "A") {
-			record, err = service.client.UpdateARecord(ctx, token, zone.ExternalID, owned[index].ID, input)
+			record, err = service.client.UpdateARecord(
+				ctx,
+				token,
+				zone.ExternalID,
+				owned[index].ID,
+				input,
+			)
 		} else {
 			if index < len(owned) {
 				err = service.client.DeleteRecord(ctx, token, zone.ExternalID, owned[index].ID)
@@ -190,7 +265,12 @@ func (service *ResourceDNS) reconcile(ctx context.Context, endpoint models.Resou
 		applied = append(applied, record)
 	}
 	for index := len(desired); index < len(owned); index++ {
-		if err := service.client.DeleteRecord(ctx, token, zone.ExternalID, owned[index].ID); err != nil {
+		if err := service.client.DeleteRecord(
+			ctx,
+			token,
+			zone.ExternalID,
+			owned[index].ID,
+		); err != nil {
 			return err
 		}
 	}
@@ -214,21 +294,38 @@ func (service *ResourceDNS) reconcile(ctx context.Context, endpoint models.Resou
 			return err
 		}
 	}
-	if err := models.ResourceDNSRecord.ArchiveMissing(ctx, tx, binding.ID, externalIDs, time.Now().UTC()); err != nil {
+	if err := models.ResourceDNSRecord.ArchiveMissing(
+		ctx,
+		tx,
+		binding.ID,
+		externalIDs,
+		time.Now().UTC(),
+	); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
 
-func (service *ResourceDNS) desiredIPv4(ctx context.Context, resourceID uuid.UUID) ([]string, error) {
-	servers, err := models.ResourceInstallation.ActiveDNSServerAddresses(ctx, service.db.Executor(), resourceID)
+func (service *ResourceDNS) desiredIPv4(
+	ctx context.Context,
+	resourceID uuid.UUID,
+) ([]string, error) {
+	servers, err := models.ResourceInstallation.ActiveDNSServerAddresses(
+		ctx,
+		service.db.Executor(),
+		resourceID,
+	)
 	if err != nil {
 		return nil, err
 	}
 	values := make([]string, 0, len(servers))
 	seen := make(map[string]struct{}, len(servers))
 	for _, server := range servers {
-		value, err := (&EnvironmentDNS{db: service.db}).resolvePublicIPv4(ctx, service.db.Executor(), server)
+		value, err := (&EnvironmentDNS{db: service.db}).resolvePublicIPv4(
+			ctx,
+			service.db.Executor(),
+			server,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -238,14 +335,21 @@ func (service *ResourceDNS) desiredIPv4(ctx context.Context, resourceID uuid.UUI
 		}
 	}
 	if len(values) == 0 {
-		return nil, errors.Join(models.ErrDomainValidation, errors.New("Cloudflare-managed DNS requires an active Resource installation Server"))
+		return nil, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("Cloudflare-managed DNS requires an active Resource installation Server"),
+		)
 	}
 	sort.Strings(values)
 	return values, nil
 }
 
 func (service *ResourceDNS) Remove(ctx context.Context, endpointID uuid.UUID) error {
-	binding, err := models.ResourceDNSBinding.ActiveForEndpoint(ctx, service.db.Executor(), endpointID)
+	binding, err := models.ResourceDNSBinding.ActiveForEndpoint(
+		ctx,
+		service.db.Executor(),
+		endpointID,
+	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -253,7 +357,14 @@ func (service *ResourceDNS) Remove(ctx context.Context, endpointID uuid.UUID) er
 		return err
 	}
 	if err := service.removeTracked(ctx, binding.ID, nil); err != nil {
-		_ = models.ResourceDNSBinding.MarkState(ctx, service.db.Executor(), binding.ID, models.EnvironmentDNSRemovalFailed, err.Error(), time.Now().UTC())
+		_ = models.ResourceDNSBinding.MarkState(
+			ctx,
+			service.db.Executor(),
+			binding.ID,
+			models.EnvironmentDNSRemovalFailed,
+			err.Error(),
+			time.Now().UTC(),
+		)
 		return err
 	}
 	now := time.Now().UTC()
@@ -271,7 +382,11 @@ func (service *ResourceDNS) Remove(ctx context.Context, endpointID uuid.UUID) er
 	return tx.Commit()
 }
 
-func (service *ResourceDNS) removeTracked(ctx context.Context, bindingID uuid.UUID, remove func(dnsTrackedRemoval) bool) error {
+func (service *ResourceDNS) removeTracked(
+	ctx context.Context,
+	bindingID uuid.UUID,
+	remove func(dnsTrackedRemoval) bool,
+) error {
 	records, err := models.ResourceDNSRecord.TrackedRemovals(ctx, service.db.Executor(), bindingID)
 	if err != nil {
 		return err
@@ -280,18 +395,30 @@ func (service *ResourceDNS) removeTracked(ctx context.Context, bindingID uuid.UU
 		if remove != nil && !remove(record) {
 			continue
 		}
-		token, err := secretcrypto.DecryptForPurpose(record.CredentialPayload, service.connections.config.App.SessionEncryptionKey, cloudflareTokenEncryptionPurpose)
+		token, err := secretcrypto.DecryptForPurpose(
+			record.CredentialPayload,
+			service.connections.config.App.SessionEncryptionKey,
+			cloudflareTokenEncryptionPurpose,
+		)
 		if err != nil {
 			return errors.New("Cloudflare account-owned API token could not be decrypted")
 		}
-		if err := service.client.DeleteRecord(ctx, string(token), record.ZoneExternalID, record.ExternalID); err != nil {
+		if err := service.client.DeleteRecord(
+			ctx,
+			string(token),
+			record.ZoneExternalID,
+			record.ExternalID,
+		); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (service *ResourceDNS) Status(ctx context.Context, endpointID uuid.UUID) (ResourceDNSStatus, error) {
+func (service *ResourceDNS) Status(
+	ctx context.Context,
+	endpointID uuid.UUID,
+) (ResourceDNSStatus, error) {
 	status := ResourceDNSStatus{Mode: DNSModeManual, State: "manual", Records: []DNSRecordStatus{}}
 	row, err := models.ResourceDNSBinding.StatusForEndpoint(ctx, service.db.Executor(), endpointID)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -309,10 +436,14 @@ func (service *ResourceDNS) Status(ctx context.Context, endpointID uuid.UUID) (R
 	return status, err
 }
 
-func (service *ResourceDNS) resourceRecordStatus(ctx context.Context, bindingID uuid.UUID) ([]DNSRecordStatus, error) {
+func (service *ResourceDNS) resourceRecordStatus(
+	ctx context.Context,
+	bindingID uuid.UUID,
+) ([]DNSRecordStatus, error) {
 	rows := make([]DNSRecordStatus, 0)
 	err := service.db.Executor().NewSelect().TableExpr("resource_dns_records").
-		ColumnExpr("record_type, observed_name, content").Where("resource_dns_binding_id = ?", bindingID).
+		ColumnExpr("record_type, observed_name, content").
+		Where("resource_dns_binding_id = ?", bindingID).
 		Where("archived_at IS NULL").OrderExpr("content").Scan(ctx, &rows)
 	return rows, err
 }

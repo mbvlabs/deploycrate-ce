@@ -91,7 +91,12 @@ func TestEnvironmentsControllerDestroyDeletesEnvironmentAndEmptyApplication(t *t
 		controller.Destroy,
 	)
 	if response.Code != http.StatusSeeOther {
-		t.Fatalf("destroy status = %d, want %d; body: %s", response.Code, http.StatusSeeOther, response.Body)
+		t.Fatalf(
+			"destroy status = %d, want %d; body: %s",
+			response.Code,
+			http.StatusSeeOther,
+			response.Body,
+		)
 	}
 	if location := response.Header().Get("Location"); location != routes.Applications.URL() {
 		t.Fatalf("destroy location = %q, want %q", location, routes.Applications.URL())

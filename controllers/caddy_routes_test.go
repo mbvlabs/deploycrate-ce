@@ -94,7 +94,12 @@ func TestCaddyRoutesControllerUpdateAndDestroyReconcileDatabaseRoute(t *testing.
 		controller.Update,
 	)
 	if updateResponse.Code != http.StatusSeeOther {
-		t.Fatalf("update status = %d, want %d; body: %s", updateResponse.Code, http.StatusSeeOther, updateResponse.Body)
+		t.Fatalf(
+			"update status = %d, want %d; body: %s",
+			updateResponse.Code,
+			http.StatusSeeOther,
+			updateResponse.Body,
+		)
 	}
 	if len(client.appliedRoutes) != 1 {
 		t.Fatalf("Caddy apply calls = %d, want 1", len(client.appliedRoutes))
@@ -109,7 +114,12 @@ func TestCaddyRoutesControllerUpdateAndDestroyReconcileDatabaseRoute(t *testing.
 		controller.Destroy,
 	)
 	if destroyResponse.Code != http.StatusSeeOther {
-		t.Fatalf("destroy status = %d, want %d; body: %s", destroyResponse.Code, http.StatusSeeOther, destroyResponse.Body)
+		t.Fatalf(
+			"destroy status = %d, want %d; body: %s",
+			destroyResponse.Code,
+			http.StatusSeeOther,
+			destroyResponse.Body,
+		)
 	}
 	if len(client.deletedRoutes) != 1 || client.deletedRoutes[0] != route.ExternalID {
 		t.Fatalf("Caddy delete calls = %v, want [%s]", client.deletedRoutes, route.ExternalID)

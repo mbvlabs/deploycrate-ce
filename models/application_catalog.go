@@ -23,8 +23,8 @@ type ApplicationBuildServerOption struct {
 	Kind         string             `json:"kind"         bun:"kind"`
 	Address      string             `json:"address"      bun:"address"`
 	Architecture string             `json:"architecture" bun:"architecture"`
-	Buildpacks   []BuildpackRuntime `json:"buildpacks"    bun:"-"`
-	Capabilities json.RawMessage    `json:"-"             bun:"capabilities"`
+	Buildpacks   []BuildpackRuntime `json:"buildpacks"   bun:"-"`
+	Capabilities json.RawMessage    `json:"-"            bun:"capabilities"`
 }
 
 type ApplicationEnvironmentRow struct {
@@ -105,7 +105,10 @@ const applicationDeploymentActiveExpression = `EXISTS (
 		AND active_route.removed_at IS NULL
 )`
 
-func (application) EnvironmentRows(ctx context.Context, db storage.Executor) ([]ApplicationEnvironmentRow, error) {
+func (application) EnvironmentRows(
+	ctx context.Context,
+	db storage.Executor,
+) ([]ApplicationEnvironmentRow, error) {
 	rows := make([]ApplicationEnvironmentRow, 0)
 	err := db.NewSelect().TableExpr("applications AS application").
 		ColumnExpr("application.id AS application_id, application.name AS application_name, application.slug AS application_slug").
@@ -120,8 +123,10 @@ func (application) EnvironmentRows(ctx context.Context, db storage.Executor) ([]
 		Join("LEFT JOIN github_installations AS installation ON installation.id = repository.github_installation_id").
 		Join("LEFT JOIN image_configurations AS image ON image.environment_source_id = source.id").
 		Join("LEFT JOIN resources AS registry_resource ON registry_resource.id = image.registry_resource_id").
-		Where("application.archived_at IS NULL").Where("application.slug <> ?", SystemApplicationSlug).
-		OrderExpr("application.name ASC, CASE environment.kind WHEN 'staging' THEN 0 WHEN 'production' THEN 1 ELSE 2 END, environment.name ASC").Scan(ctx, &rows)
+		Where("application.archived_at IS NULL").
+		Where("application.slug <> ?", SystemApplicationSlug).
+		OrderExpr("application.name ASC, CASE environment.kind WHEN 'staging' THEN 0 WHEN 'production' THEN 1 ELSE 2 END, environment.name ASC").
+		Scan(ctx, &rows)
 	return rows, err
 }
 

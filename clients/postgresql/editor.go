@@ -110,7 +110,8 @@ func (Client) Catalog(
 
 	catalog := Catalog{Relations: make([]CatalogRelation, 0)}
 	for rows.Next() {
-		if len(catalog.Relations) > 0 && catalogColumnCount(catalog.Relations) >= catalogColumnLimit {
+		if len(catalog.Relations) > 0 &&
+			catalogColumnCount(catalog.Relations) >= catalogColumnLimit {
 			catalog.Truncated = true
 			break
 		}

@@ -588,7 +588,13 @@ func (service *DeploymentExecution) advance(
 	step, message string,
 ) error {
 	now := time.Now().UTC()
-	if err := models.Deployment.SetCurrentStep(ctx, service.db.Executor(), deploymentID, step, now); err != nil {
+	if err := models.Deployment.SetCurrentStep(
+		ctx,
+		service.db.Executor(),
+		deploymentID,
+		step,
+		now,
+	); err != nil {
 		return err
 	}
 	return service.recordEvent(ctx, deploymentID, "progress", "running", step, message, nil)

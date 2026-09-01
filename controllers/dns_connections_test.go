@@ -118,14 +118,20 @@ func TestDNSConnectionsControllerDatabaseLifecycle(t *testing.T) {
 		controller.Create,
 	)
 	if createResponse.Code != http.StatusSeeOther {
-		t.Fatalf("create status = %d, want %d; body: %s", createResponse.Code, http.StatusSeeOther, createResponse.Body)
+		t.Fatalf(
+			"create status = %d, want %d; body: %s",
+			createResponse.Code,
+			http.StatusSeeOther,
+			createResponse.Body,
+		)
 	}
 
 	connections, err := service.List(t.Context())
 	if err != nil {
 		t.Fatalf("list DNS connections: %v", err)
 	}
-	if len(connections) != 1 || connections[0].Name != "Production Cloudflare" || connections[0].ActiveZones != 2 {
+	if len(connections) != 1 || connections[0].Name != "Production Cloudflare" ||
+		connections[0].ActiveZones != 2 {
 		t.Fatalf("created DNS connections = %+v", connections)
 	}
 	connectionID := connections[0].ID
@@ -176,7 +182,12 @@ func TestDNSConnectionsControllerDatabaseLifecycle(t *testing.T) {
 		controller.Sync,
 	)
 	if syncResponse.Code != http.StatusSeeOther {
-		t.Fatalf("sync status = %d, want %d; body: %s", syncResponse.Code, http.StatusSeeOther, syncResponse.Body)
+		t.Fatalf(
+			"sync status = %d, want %d; body: %s",
+			syncResponse.Code,
+			http.StatusSeeOther,
+			syncResponse.Body,
+		)
 	}
 	zones, err = service.Zones(t.Context(), connectionID)
 	if err != nil {
@@ -195,7 +206,12 @@ func TestDNSConnectionsControllerDatabaseLifecycle(t *testing.T) {
 		controller.RotateToken,
 	)
 	if rotateResponse.Code != http.StatusSeeOther {
-		t.Fatalf("rotate status = %d, want %d; body: %s", rotateResponse.Code, http.StatusSeeOther, rotateResponse.Body)
+		t.Fatalf(
+			"rotate status = %d, want %d; body: %s",
+			rotateResponse.Code,
+			http.StatusSeeOther,
+			rotateResponse.Body,
+		)
 	}
 	if len(fake.verifiedWith) != 3 || fake.verifiedWith[2] != "rotated-token" {
 		t.Fatalf("verified tokens = %v", fake.verifiedWith)
@@ -210,7 +226,12 @@ func TestDNSConnectionsControllerDatabaseLifecycle(t *testing.T) {
 		controller.Destroy,
 	)
 	if destroyResponse.Code != http.StatusSeeOther {
-		t.Fatalf("destroy status = %d, want %d; body: %s", destroyResponse.Code, http.StatusSeeOther, destroyResponse.Body)
+		t.Fatalf(
+			"destroy status = %d, want %d; body: %s",
+			destroyResponse.Code,
+			http.StatusSeeOther,
+			destroyResponse.Body,
+		)
 	}
 	connections, err = service.List(t.Context())
 	if err != nil {

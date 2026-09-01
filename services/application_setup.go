@@ -252,7 +252,12 @@ func (service *ApplicationSetup) CreateApplication(
 		return ApplicationCreationResult{}, err
 	}
 	defer tx.Rollback()
-	available, err := models.Application.EnsureSlugAvailable(ctx, tx, data.ApplicationSlug, uuid.Nil)
+	available, err := models.Application.EnsureSlugAvailable(
+		ctx,
+		tx,
+		data.ApplicationSlug,
+		uuid.Nil,
+	)
 	if err != nil {
 		return ApplicationCreationResult{}, err
 	}
@@ -330,7 +335,10 @@ func (service *ApplicationSetup) prepareEnvironment(
 		}
 		settings, settingsErr := models.ParseBuildpackSettings(data.BuildpackSettings)
 		if settingsErr != nil {
-			return preparedApplicationEnvironment{}, errors.Join(models.ErrDomainValidation, settingsErr)
+			return preparedApplicationEnvironment{}, errors.Join(
+				models.ErrDomainValidation,
+				settingsErr,
+			)
 		}
 		server, capabilityErr := models.RequireServerBuildpackCapability(
 			ctx, service.db.Executor(), data.BuildServerID, settings.Runtime,
@@ -341,7 +349,10 @@ func (service *ApplicationSetup) prepareEnvironment(
 		if _, profileErr := buildpacksclient.ProfileForArchitecture(
 			string(settings.Runtime), server.Architecture.String,
 		); profileErr != nil {
-			return preparedApplicationEnvironment{}, errors.Join(models.ErrDomainValidation, profileErr)
+			return preparedApplicationEnvironment{}, errors.Join(
+				models.ErrDomainValidation,
+				profileErr,
+			)
 		}
 	}
 	if err := validateRegistrySelection(

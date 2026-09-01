@@ -251,7 +251,12 @@ func (s *SelfUpdate) fetchReleaseManifest(
 	ctx context.Context,
 	source config.ReleaseSource,
 ) (releaseManifest, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, source.BaseURL+"/manifest.json", nil)
+	request, err := http.NewRequestWithContext(
+		ctx,
+		http.MethodGet,
+		source.BaseURL+"/manifest.json",
+		nil,
+	)
 	if err != nil {
 		return releaseManifest{}, err
 	}
@@ -261,7 +266,10 @@ func (s *SelfUpdate) fetchReleaseManifest(
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return releaseManifest{}, fmt.Errorf("release manifest returned status %d", response.StatusCode)
+		return releaseManifest{}, fmt.Errorf(
+			"release manifest returned status %d",
+			response.StatusCode,
+		)
 	}
 	content, err := io.ReadAll(io.LimitReader(response.Body, (64<<10)+1))
 	if err != nil || len(content) > 64<<10 {
@@ -763,7 +771,11 @@ func (s *SelfUpdate) execute(
 	if stagedVersion != normalizeVersion(deployment.Version) {
 		s.fail(
 			"verify_version",
-			fmt.Errorf("selected version %q does not match binary version %q", deployment.Version, stagedVersion),
+			fmt.Errorf(
+				"selected version %q does not match binary version %q",
+				deployment.Version,
+				stagedVersion,
+			),
 		)
 		return
 	}
