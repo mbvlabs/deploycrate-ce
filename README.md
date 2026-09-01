@@ -1,6 +1,14 @@
 # deploycrate-ce
 
-A full-stack web application built with [Andurel](https://github.com/mbvlabs/andurel), a Rails-like web framework for Go that prioritizes development speed.
+DeployCrate Community Edition is a self-hosted platform for deploying and operating applications on your own infrastructure. It is built with [Andurel](https://github.com/mbvlabs/andurel), a Rails-like web framework for Go that prioritizes development speed.
+
+## Project Status
+
+**DeployCrate CE has not reached a stable release yet.** Until one is published, installers, update paths, and host configuration may change without notice. Fresh installs and in-place updates can fail or require manual recovery, especially when following the edge channel or tracking `master`.
+
+**I (MBV) run all of my sites in production on DeployCrate CE.** This is not a demo stack kept off real hardware—the bootstrap flow, stable channel, and day-to-day operations documented here are what power those hosts. Treat that as confidence in the project's direction, not as a promise that pre-stable releases will be painless in every environment.
+
+If you try CE before the first stable release, prefer the stable channel, keep backups, and read release notes before updating.
 
 ## VPS Bootstrap CLI
 
