@@ -20,6 +20,7 @@
 
 <script lang="ts">
   import AlertTriangleIcon from "@lucide/svelte/icons/triangle-alert";
+  import ArrowRightIcon from "@lucide/svelte/icons/arrow-right";
   import CheckCircleIcon from "@lucide/svelte/icons/circle-check";
   import DownloadIcon from "@lucide/svelte/icons/download";
 
@@ -38,6 +39,7 @@
     open = $bindable(false),
     tracking,
     currentVersion,
+    newVersion,
     update,
     running,
     starting,
@@ -48,6 +50,7 @@
     open?: boolean;
     tracking: boolean;
     currentVersion: string;
+    newVersion: string;
     update: UpdateStatus;
     running: boolean;
     starting: boolean;
@@ -58,6 +61,9 @@
 
   const updateEvents = $derived(update.events ?? []);
   const visibleEvents = $derived(starting && !running ? [] : updateEvents);
+  const targetVersion = $derived(
+    tracking && update.targetVersion ? update.targetVersion : newVersion,
+  );
   const updateProgress = $derived.by(() => {
     if (update.state === "succeeded" || update.state === "failed") return 100;
     if (update.state === "queued") return 10;
@@ -137,11 +143,37 @@
           <p
             class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground"
           >
-            Installed version
+            Version
           </p>
-          <p class="mt-2 font-mono text-lg font-semibold">
-            {versionLabel(currentVersion)}
-          </p>
+          <div
+            class="mt-3 flex items-center justify-center gap-4 sm:gap-6"
+            aria-label="Update from {versionLabel(currentVersion)} to {versionLabel(targetVersion)}"
+          >
+            <div class="min-w-0 flex-1 text-center">
+              <p
+                class="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground"
+              >
+                Current
+              </p>
+              <p class="mt-1 truncate font-mono text-lg font-semibold">
+                {versionLabel(currentVersion)}
+              </p>
+            </div>
+            <ArrowRightIcon
+              class="size-5 shrink-0 text-muted-foreground"
+              aria-hidden="true"
+            />
+            <div class="min-w-0 flex-1 text-center">
+              <p
+                class="text-[10px] font-medium uppercase tracking-[0.12em] text-muted-foreground"
+              >
+                New
+              </p>
+              <p class="mt-1 truncate font-mono text-lg font-semibold">
+                {versionLabel(targetVersion)}
+              </p>
+            </div>
+          </div>
         </div>
         <p class="text-sm leading-6 text-muted-foreground">
           DeployCrate downloads and verifies the new binary, starts it in the
@@ -186,9 +218,25 @@
         <dl
           class="grid gap-4 border border-border bg-muted/20 p-4 text-xs sm:grid-cols-3"
         >
-          <div>
-            <dt class="text-muted-foreground">Installed version</dt>
-            <dd class="mt-1 font-mono">{versionLabel(currentVersion)}</dd>
+          <div class="sm:col-span-3">
+            <dt class="text-muted-foreground">Version</dt>
+            <dd class="mt-2">
+              <div
+                class="flex items-center justify-center gap-4 sm:justify-start sm:gap-6"
+                aria-label="Updating from {versionLabel(currentVersion)} to {versionLabel(targetVersion)}"
+              >
+                <span class="font-mono text-sm font-semibold"
+                  >{versionLabel(currentVersion)}</span
+                >
+                <ArrowRightIcon
+                  class="size-4 shrink-0 text-muted-foreground"
+                  aria-hidden="true"
+                />
+                <span class="font-mono text-sm font-semibold"
+                  >{versionLabel(targetVersion)}</span
+                >
+              </div>
+            </dd>
           </div>
           <div>
             <dt class="text-muted-foreground">Previous instance</dt>

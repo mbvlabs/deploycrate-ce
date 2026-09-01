@@ -395,6 +395,7 @@
       bind:open={updateDialogOpen}
       tracking={updateDialogTracking}
       {currentVersion}
+      newVersion={availableUpdate.version}
       {update}
       {running}
       {starting}
