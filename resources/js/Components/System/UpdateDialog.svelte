@@ -32,6 +32,7 @@
   import { Separator } from "@/Components/ui/separator";
   import { Spinner } from "@/Components/ui/spinner";
   import StatusBadge from "@/Components/StatusBadge.svelte";
+  import { formatVersion } from "@/lib/version";
 
   let {
     open = $bindable(false),
@@ -81,10 +82,7 @@
   }
 
   function versionLabel(version: string) {
-    if (!version) return "Unavailable";
-    return version === "dev"
-      ? "Development build"
-      : `v${version.replace(/^v/, "")}`;
+    return formatVersion(version);
   }
 
   function stepLabel(step: string) {

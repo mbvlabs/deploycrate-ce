@@ -3,6 +3,7 @@ package models
 import (
 	"context"
 	"database/sql"
+	"deploycrate-ce/config"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
 	"encoding/json"
@@ -370,7 +371,7 @@ func (c change) PrepareSystemUpdate(
 	_, err := db.NewUpdate().
 		TableExpr("changes").
 		Set("cause_reference = ?", version).
-		Set("summary = ?", "Update DeployCrate CE to v"+version).
+		Set("summary = ?", config.ReleaseUpdateSummary(version)).
 		Set("updated_at = ?", time.Now().UTC()).
 		Where("id = ?", id).
 		Exec(ctx)

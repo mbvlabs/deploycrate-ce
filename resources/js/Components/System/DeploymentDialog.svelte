@@ -52,6 +52,7 @@
   import { Separator } from "@/Components/ui/separator";
   import JsonCode from "@/Components/JsonCode.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
+  import { formatVersion, releaseUpdateSummary } from "@/lib/version";
 
   let {
     open = $bindable(false),
@@ -60,8 +61,11 @@
 
   const stateLabel = (value: string) =>
     value ? value.replaceAll("_", " ") : "Unknown";
-  const versionLabel = (version: string) =>
-    version ? `v${version.replace(/^v/, "")}` : "Development build";
+  const versionLabel = (version: string) => formatVersion(version);
+  const changeSummaryLabel = (deployment: Deployment) =>
+    deployment.changeKind === "system_update" && deployment.releaseVersion
+      ? releaseUpdateSummary(deployment.releaseVersion)
+      : deployment.changeSummary || "Not recorded";
   const timestamp = (value: string | null) =>
     value ? new Date(value).toLocaleString() : "Not recorded";
   const hasJSONFields = (value: unknown) =>
@@ -84,8 +88,7 @@
           />
         </div>
         <Dialog.Description
-          >{deployment.changeSummary ||
-            "System deployment details and activity."}</Dialog.Description
+          >{changeSummaryLabel(deployment)}</Dialog.Description
         >
       </Dialog.Header>
 
@@ -228,7 +231,7 @@
             <div class="sm:col-span-2 xl:col-span-4">
               <dt class="text-muted-foreground">Summary</dt>
               <dd class="mt-1 text-sm">
-                {deployment.changeSummary || "Not recorded"}
+                {changeSummaryLabel(deployment)}
               </dd>
             </div>
           </dl>

@@ -5,6 +5,27 @@ import (
 	"testing"
 )
 
+func TestFormatReleaseVersion(t *testing.T) {
+	tests := []struct {
+		version string
+		want    string
+	}{
+		{version: "1.2.3", want: "v1.2.3"},
+		{version: "v1.2.3", want: "v1.2.3"},
+		{version: "edge-4cff03ac8c01", want: "edge-4cff03ac8c01"},
+		{version: "development-deadbeef", want: "development-deadbeef"},
+		{version: "dev", want: "dev"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.version, func(t *testing.T) {
+			if got := FormatReleaseVersion(test.version); got != test.want {
+				t.Fatalf("FormatReleaseVersion(%q) = %q, want %q", test.version, got, test.want)
+			}
+		})
+	}
+}
+
 func TestResolveReleaseSource(t *testing.T) {
 	tests := []struct {
 		name    string

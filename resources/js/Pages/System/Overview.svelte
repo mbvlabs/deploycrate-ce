@@ -22,6 +22,7 @@
   import { Spinner } from "@/Components/ui/spinner";
   import * as Table from "@/Components/ui/table";
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
+  import { formatVersion } from "@/lib/version";
   import { routes } from "@/routes";
 
   type SystemOverview = {
@@ -180,8 +181,7 @@
     value ? value.replaceAll("_", " ") : "Unknown";
   const checkLabel = (value: string) =>
     stateLabel(value).replace(/\b\w/g, (letter) => letter.toUpperCase());
-  const versionLabel = (version: string) =>
-    version ? `v${version.replace(/^v/, "")}` : "Development build";
+  const versionLabel = (version: string) => formatVersion(version);
   const credentialSourceLabel = (source: string) =>
     source === "app_env" ? "Application environment" : stateLabel(source);
   const artifactAge = (value: string | null) => {

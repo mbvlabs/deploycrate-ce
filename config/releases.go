@@ -53,3 +53,22 @@ func ResolveReleaseSource(version string) (ReleaseSource, error) {
 		Channel: channel,
 	}, nil
 }
+
+func FormatReleaseVersion(version string) string {
+	version = strings.TrimPrefix(strings.TrimSpace(version), "v")
+	if version == "" || version == "dev" {
+		return version
+	}
+	if strings.HasPrefix(version, "edge-") || strings.HasPrefix(version, "development-") {
+		return version
+	}
+	return "v" + version
+}
+
+func ReleaseUpdateSummary(version string) string {
+	formatted := FormatReleaseVersion(version)
+	if formatted == "" {
+		return "Update DeployCrate CE"
+	}
+	return "Update DeployCrate CE to " + formatted
+}
