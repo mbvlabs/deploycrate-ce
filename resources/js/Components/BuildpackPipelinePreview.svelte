@@ -40,15 +40,15 @@
             : context
           : `${context === "." ? "" : `${context}/`}${settings.frontend.directory}`;
       items.push(
-        `Install dependencies in ${root} with npm, pnpm, Yarn, or Bun`,
+        `Install frontend dependencies in ${root} with npm, pnpm, Yarn, or Bun`,
       );
       for (const script of settings.frontend.scripts) {
-        items.push(`Run ${script} in ${root}`);
+        items.push(`Run frontend script ${script} in ${root}`);
       }
       if (settings.frontend.keep_node_runtime) {
-        items.push("Keep Node.js in the runtime image");
+        items.push("Keep Node.js in the runtime image for frontend workloads");
       } else {
-        items.push("Remove Node dependencies after the asset build");
+        items.push("Remove frontend Node dependencies after the asset build");
       }
     }
     items.push(`Build with the ${runtimeLabels[settings.runtime]} buildpack`);
@@ -68,8 +68,11 @@
   });
 </script>
 
-<div class="border border-border bg-muted/20 p-4 sm:col-span-2">
+<div class="h-full border border-border bg-muted/20 p-4">
   <p class="text-sm font-medium">Build steps preview</p>
+  <p class="mt-1 text-xs text-muted-foreground">
+    Ordered pipeline from checkout through image publish.
+  </p>
   <ol class="mt-3 space-y-2 text-xs text-muted-foreground">
     {#each steps as step, index (step)}
       <li class="flex gap-3">

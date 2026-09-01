@@ -245,51 +245,62 @@
   }
 </script>
 
-<div class="grid gap-5 sm:col-span-2 sm:grid-cols-2">
-  <FormField label="Application framework">
-    <NativeSelect.Root
-      value={settings.runtime}
-      onchange={(event) =>
-        selectRuntime(event.currentTarget.value as BuildpackRuntime)}
-      class="w-full"
-      required
-      disabled={runtimeLocked}
-    >
-      {#each runtimeOptions as [runtime, label] (runtime)}
-        <NativeSelect.Option value={runtime}>{label}</NativeSelect.Option>
-      {/each}
-    </NativeSelect.Root>
-    {#if runtimeLocked}
-      <p class="mt-2 text-xs text-muted-foreground">
-        The framework is fixed after Environment setup.
+<div class="space-y-6 sm:col-span-2">
+  <section class="space-y-4">
+    <div>
+      <h3 class="text-sm font-medium">Application buildpack</h3>
+      <p class="mt-1 text-xs text-muted-foreground">
+        Framework and server used to compile the application image after source
+        checkout.
       </p>
-    {/if}
-  </FormField>
-  <FormField label="Build Server">
-    <NativeSelect.Root bind:value={buildServerId} class="w-full" required>
-      <NativeSelect.Option value=""
-        >Select a compatible Server</NativeSelect.Option
-      >
-      {#each compatibleServers as server (server.id)}
-        <NativeSelect.Option value={server.id}>
-          {server.name} · {server.kind === "worker"
-            ? server.address
-            : "Control plane"} · {server.architecture}
-        </NativeSelect.Option>
-      {/each}
-    </NativeSelect.Root>
-    {#if compatibleServers.length === 0}
-      <p class="mt-2 text-xs text-destructive">
-        No Build Server advertises support for this framework.
-      </p>
-    {/if}
-  </FormField>
+    </div>
+    <div class="grid gap-5 lg:grid-cols-2">
+      <FormField label="Application framework">
+        <NativeSelect.Root
+          value={settings.runtime}
+          onchange={(event) =>
+            selectRuntime(event.currentTarget.value as BuildpackRuntime)}
+          class="w-full"
+          required
+          disabled={runtimeLocked}
+        >
+          {#each runtimeOptions as [runtime, label] (runtime)}
+            <NativeSelect.Option value={runtime}>{label}</NativeSelect.Option>
+          {/each}
+        </NativeSelect.Root>
+        {#if runtimeLocked}
+          <p class="mt-2 text-xs text-muted-foreground">
+            The framework is fixed after Environment setup.
+          </p>
+        {/if}
+      </FormField>
+      <FormField label="Build Server">
+        <NativeSelect.Root bind:value={buildServerId} class="w-full" required>
+          <NativeSelect.Option value=""
+            >Select a compatible Server</NativeSelect.Option
+          >
+          {#each compatibleServers as server (server.id)}
+            <NativeSelect.Option value={server.id}>
+              {server.name} · {server.kind === "worker"
+                ? server.address
+                : "Control plane"} · {server.architecture}
+            </NativeSelect.Option>
+          {/each}
+        </NativeSelect.Root>
+        {#if compatibleServers.length === 0}
+          <p class="mt-2 text-xs text-destructive">
+            No Build Server advertises support for this framework.
+          </p>
+        {/if}
+      </FormField>
+    </div>
+  </section>
 
   {#if githubRepositoryId && reference.trim()}
-    <div class="space-y-3 border border-border p-4 sm:col-span-2">
-      <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <section class="space-y-3 border border-border p-4 lg:p-5">
+      <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <p class="text-sm font-medium">Repository hints</p>
+          <h3 class="text-sm font-medium">Repository hints</h3>
           <p class="mt-1 text-xs text-muted-foreground">
             Detected from the selected repository, ref, and build context.
           </p>
@@ -305,7 +316,7 @@
       {:else if hintsError}
         <p class="text-xs text-destructive">{hintsError}</p>
       {:else if hints}
-        <ul class="space-y-1 text-xs text-muted-foreground">
+        <ul class="grid gap-1 text-xs text-muted-foreground lg:grid-cols-2">
           {#if hints.hasGoMod}<li>Found go.mod in the build context.</li>{/if}
           {#if hints.hasPackageJSON}
             <li>
@@ -314,163 +325,212 @@
                 : ""}{hints.hasLockfile ? " and a lockfile" : ""}.
             </li>
           {/if}
-          {#if hints.hasBuildScript}<li>Found a build script.</li>{/if}
+          {#if hints.hasBuildScript}<li>Found a frontend build script.</li>{/if}
           {#if hints.hasSSRScript}<li>Found a build:ssr script.</li>{/if}
           {#if hints.suggestedGoTargets?.length}
-            <li>
+            <li class="lg:col-span-2">
               Suggested Go targets: {hints.suggestedGoTargets.join(", ")}
             </li>
           {/if}
           {#each hints.warnings ?? [] as warning (warning)}
-            <li class="text-amber-600 dark:text-amber-400">{warning}</li>
+            <li class="text-amber-600 dark:text-amber-400 lg:col-span-2">
+              {warning}
+            </li>
           {/each}
         </ul>
       {/if}
-    </div>
+    </section>
   {/if}
 
-  <label class="flex items-start gap-3 border border-border p-4 sm:col-span-2">
-    <Checkbox
-      class="mt-1"
-      checked={settings.frontend !== null}
-      onCheckedChange={(selected) => toggleFrontend(selected === true)}
-    />
-    <span>
-      <span class="block text-sm font-medium">Build JavaScript assets</span>
-      <span class="mt-1 block text-xs text-muted-foreground">
-        Installs dependencies and runs package scripts before the framework
-        buildpack. Vite, Inertia, and other tooling live in package.json.
-      </span>
-    </span>
-  </label>
+  <div
+    class="grid gap-6 xl:grid-cols-[minmax(0,1.75fr)_minmax(18rem,1fr)] xl:items-start"
+  >
+    <div class="space-y-6">
+      <section class="space-y-5 border border-border bg-muted/10 p-4 lg:p-5">
+        <div>
+          <p class="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+            Node.js
+          </p>
+          <h3 class="mt-1 text-sm font-medium">JavaScript & frontend assets</h3>
+          <p class="mt-1 max-w-3xl text-xs text-muted-foreground">
+            Optional pre-build for package.json projects. Installs frontend
+            dependencies and runs package scripts before the application
+            framework buildpack. Use this for Vite, Inertia, SSR bundles, and
+            other JavaScript tooling.
+          </p>
+        </div>
 
-  {#if settings.frontend}
-    <FormField label="Node project root">
-      <Input
-        bind:value={settings.frontend.directory}
-        placeholder="."
-        required
-      />
-      <p class="mt-2 text-xs text-muted-foreground">
-        Directory containing package.json, relative to the build context.
-      </p>
-    </FormField>
+        <div class="grid gap-4 lg:grid-cols-2">
+          <label class="flex items-start gap-3 border border-border bg-background p-4">
+            <Checkbox
+              class="mt-1"
+              checked={settings.frontend !== null}
+              onCheckedChange={(selected) => toggleFrontend(selected === true)}
+            />
+            <span>
+              <span class="block text-sm font-medium">Build frontend assets</span>
+              <span class="mt-1 block text-xs text-muted-foreground">
+                Run package.json scripts during the image build.
+              </span>
+            </span>
+          </label>
 
-    <div class="space-y-3 sm:col-span-2">
-      <div>
-        <p class="text-sm font-medium">Build commands</p>
-        <p class="mt-1 text-xs text-muted-foreground">
-          Package scripts run in order after dependencies are installed.
-        </p>
-      </div>
-      {#each settings.frontend.scripts as script, index (index)}
-        <div class="grid gap-3 border border-border p-4 sm:grid-cols-[1fr_auto]">
-          <FormField label={`Command ${index + 1}`}>
+          <label
+            class="flex items-start gap-3 border border-border bg-background p-4 {!settings.frontend
+              ? 'opacity-60'
+              : ''}"
+          >
+            <Checkbox
+              class="mt-1"
+              checked={settings.frontend?.keep_node_runtime === true}
+              disabled={!settings.frontend}
+              onCheckedChange={(selected) =>
+                toggleKeepNodeRuntime(selected === true)}
+            />
+            <span>
+              <span class="block text-sm font-medium"
+                >Keep Node.js in runtime image</span
+              >
+              <span class="mt-1 block text-xs text-muted-foreground">
+                Leave Node available in the deployed image for SSR or other
+                runtime JavaScript.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        {#if settings.frontend}
+          <div class="grid gap-5 border-t border-border pt-5 lg:grid-cols-[minmax(12rem,0.45fr)_minmax(0,1fr)] lg:items-start">
+            <FormField label="Node project root">
+              <Input
+                bind:value={settings.frontend.directory}
+                placeholder="."
+                required
+              />
+              <p class="mt-2 text-xs text-muted-foreground">
+                Directory with package.json, relative to the build context.
+              </p>
+            </FormField>
+
+            <div class="space-y-3">
+              <div>
+                <p class="text-sm font-medium">Frontend build commands</p>
+                <p class="mt-1 text-xs text-muted-foreground">
+                  package.json scripts run in order after dependencies install.
+                </p>
+              </div>
+              <div class="space-y-2">
+                {#each settings.frontend.scripts as script, index (index)}
+                  <div
+                    class="grid gap-3 border border-border bg-background p-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end"
+                  >
+                    <FormField label={`Script ${index + 1}`}>
+                      <Input
+                        value={script}
+                        oninput={(event) =>
+                          updateScript(index, event.currentTarget.value)}
+                        placeholder="build"
+                        required
+                      />
+                    </FormField>
+                    <div class="flex flex-wrap gap-2 lg:pb-1">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        disabled={index === 0}
+                        onclick={() => moveScript(index, -1)}>Move up</Button
+                      >
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        disabled={index === settings.frontend.scripts.length - 1}
+                        onclick={() => moveScript(index, 1)}>Move down</Button
+                      >
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="destructive"
+                        disabled={settings.frontend.scripts.length <= 1}
+                        onclick={() => removeScript(index)}>Remove</Button
+                      >
+                    </div>
+                  </div>
+                {/each}
+              </div>
+              <Button type="button" size="sm" variant="outline" onclick={addScript}
+                >Add frontend build command</Button
+              >
+            </div>
+          </div>
+        {:else}
+          <p class="border border-dashed border-border px-4 py-3 text-xs text-muted-foreground">
+            Enable frontend assets to configure package.json scripts, Node
+            project root, and runtime Node options.
+          </p>
+        {/if}
+      </section>
+
+      <Collapsible.Root bind:open={advancedOpen}>
+        <Collapsible.Trigger
+          class="flex w-full items-center justify-between border border-border px-4 py-3 text-left text-sm font-medium"
+        >
+          Advanced build settings
+          <span class="text-xs text-muted-foreground"
+            >{advancedOpen ? "Hide" : "Show"}</span
+          >
+        </Collapsible.Trigger>
+        <Collapsible.Content
+          class="grid gap-5 border border-t-0 border-border p-4 lg:grid-cols-2 lg:p-5"
+        >
+          <FormField label="Buildpack Go version">
             <Input
-              value={script}
-              oninput={(event) => updateScript(index, event.currentTarget.value)}
-              placeholder="build"
-              required
+              value={settings.advanced?.go_version ?? ""}
+              oninput={(event) =>
+                updateAdvanced("go_version", event.currentTarget.value)}
+              placeholder="1.23.4"
             />
             <p class="mt-2 text-xs text-muted-foreground">
-              Non-empty script from package.json, usually vite build.
+              Optional Go toolchain version for the Paketo Go buildpack.
             </p>
           </FormField>
-          <div class="flex flex-wrap items-end gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              disabled={index === 0}
-              onclick={() => moveScript(index, -1)}>Move up</Button
-            >
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              disabled={index === settings.frontend.scripts.length - 1}
-              onclick={() => moveScript(index, 1)}>Move down</Button
-            >
-            <Button
-              type="button"
-              size="sm"
-              variant="destructive"
-              disabled={settings.frontend.scripts.length <= 1}
-              onclick={() => removeScript(index)}>Remove</Button
-            >
+          <FormField label="Buildpack Node version">
+            <Input
+              value={settings.advanced?.node_version ?? ""}
+              oninput={(event) =>
+                updateAdvanced("node_version", event.currentTarget.value)}
+              placeholder="22.11.0"
+            />
+            <p class="mt-2 text-xs text-muted-foreground">
+              Optional Node version for frontend asset builds and runtime image.
+            </p>
+          </FormField>
+          <div class="lg:col-span-2">
+            <FormField label="Buildpack Go build flags">
+              <Input
+                value={settings.advanced?.go_build_flags ?? ""}
+                oninput={(event) =>
+                  updateAdvanced("go_build_flags", event.currentTarget.value)}
+                placeholder="-tags=production"
+              />
+              <p class="mt-2 text-xs text-muted-foreground">
+                Passed to go build through the Paketo Go buildpack.
+              </p>
+            </FormField>
           </div>
-        </div>
-      {/each}
-      <Button type="button" size="sm" variant="outline" onclick={addScript}
-        >Add build command</Button
-      >
+        </Collapsible.Content>
+      </Collapsible.Root>
     </div>
 
-    <label class="flex items-start gap-3 border border-border p-4 sm:col-span-2">
-      <Checkbox
-        class="mt-1"
-        checked={settings.frontend.keep_node_runtime === true}
-        onCheckedChange={(selected) => toggleKeepNodeRuntime(selected === true)}
+    <div class="xl:sticky xl:top-4">
+      <BuildpackPipelinePreview
+        {settings}
+        {contextPath}
+        {reference}
+        {repositoryFullName}
+        {goTargets}
       />
-      <span>
-        <span class="block text-sm font-medium">Keep Node.js in runtime image</span>
-        <span class="mt-1 block text-xs text-muted-foreground">
-          Leaves Node.js available in the deployed image. Use this when the app
-          needs Node at runtime, for example for server-side rendering.
-        </span>
-      </span>
-    </label>
-  {/if}
-
-  <BuildpackPipelinePreview
-    {settings}
-    {contextPath}
-    {reference}
-    {repositoryFullName}
-    {goTargets}
-  />
-
-  <Collapsible.Root bind:open={advancedOpen} class="sm:col-span-2">
-    <Collapsible.Trigger class="flex w-full items-center justify-between border border-border px-4 py-3 text-left text-sm font-medium">
-      Advanced build settings
-      <span class="text-xs text-muted-foreground">{advancedOpen ? "Hide" : "Show"}</span>
-    </Collapsible.Trigger>
-    <Collapsible.Content class="grid gap-5 border border-t-0 border-border p-4 sm:grid-cols-2">
-      <FormField label="Buildpack Go version">
-        <Input
-          value={settings.advanced?.go_version ?? ""}
-          oninput={(event) =>
-            updateAdvanced("go_version", event.currentTarget.value)}
-          placeholder="1.23.4"
-        />
-        <p class="mt-2 text-xs text-muted-foreground">
-          Optional Go toolchain version for the Paketo Go buildpack.
-        </p>
-      </FormField>
-      <FormField label="Buildpack Node version">
-        <Input
-          value={settings.advanced?.node_version ?? ""}
-          oninput={(event) =>
-            updateAdvanced("node_version", event.currentTarget.value)}
-          placeholder="22.11.0"
-        />
-        <p class="mt-2 text-xs text-muted-foreground">
-          Optional Node version for the asset build and runtime image.
-        </p>
-      </FormField>
-      <div class="sm:col-span-2">
-        <FormField label="Buildpack Go build flags">
-          <Input
-            value={settings.advanced?.go_build_flags ?? ""}
-            oninput={(event) =>
-              updateAdvanced("go_build_flags", event.currentTarget.value)}
-            placeholder="-tags=production"
-          />
-          <p class="mt-2 text-xs text-muted-foreground">
-            Passed to go build through the Paketo Go buildpack.
-          </p>
-        </FormField>
-      </div>
-    </Collapsible.Content>
-  </Collapsible.Root>
+    </div>
+  </div>
 </div>
