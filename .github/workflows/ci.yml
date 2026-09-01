@@ -1,11 +1,7 @@
 name: CI
 
-# Successful pushes to master trigger Publish edge via workflow_run after this
-# workflow completes. Edge releases do not start at merge time.
 on:
   pull_request:
-  push:
-    branches: [master]
 
 permissions:
   contents: read
