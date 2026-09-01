@@ -17,7 +17,7 @@
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import { Spinner } from "@/Components/ui/spinner";
   import * as NativeSelect from "@/Components/ui/native-select";
-  import { formatVersion } from "@/lib/version";
+  import { formatVersion, releaseUpdateSummary } from "@/lib/version";
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
   import { routes } from "@/routes";
 
@@ -161,6 +161,13 @@
 
   function versionLabel(version: string) {
     return formatVersion(version);
+  }
+
+  function changeSummaryLabel(deployment: Deployment) {
+    if (deployment.changeKind === "system_update" && deployment.releaseVersion) {
+      return releaseUpdateSummary(deployment.releaseVersion);
+    }
+    return deployment.changeSummary || "No change summary recorded.";
   }
 
   function timestamp(value: string) {
@@ -361,8 +368,7 @@
                     >
                     <Table.Cell class="max-w-md whitespace-normal">
                       <p class="line-clamp-2">
-                        {deployment.changeSummary ||
-                          "No change summary recorded."}
+                        {changeSummaryLabel(deployment)}
                       </p>
                     </Table.Cell>
                     <Table.Cell>{timestamp(deployment.createdAt)}</Table.Cell>
