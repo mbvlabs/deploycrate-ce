@@ -86,12 +86,19 @@ func (s SelfUpdates) Show(etx *echo.Context) error {
 		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
 	}
 
+	channel := etx.QueryParam("channel")
+	availableUpdate := s.service.CheckForUpdates(etx.Request().Context(), channel)
+	if channel == "" {
+		channel = availableUpdate.Channel
+	}
+
 	return inertia.Page(etx, "System/Update", inertia.Props{
 		"auth": inertia.Props{
 			"email": cookies.ExtractFromCookieApp(etx).Email,
 		},
 		"currentVersion":  s.service.CurrentVersion(),
-		"availableUpdate": s.service.CheckForUpdates(etx.Request().Context()),
+		"availableUpdate": availableUpdate,
+		"updateChannel":   channel,
 		"update":          s.service.Status(),
 		"deployments":     deployments,
 	})
@@ -105,9 +112,18 @@ func (s SelfUpdates) Status(etx *echo.Context) error {
 	})
 }
 
+type selfUpdateCreateRequest struct {
+	Channel string `json:"channel" form:"channel"`
+}
+
 func (s SelfUpdates) Create(etx *echo.Context) error {
 	app := cookies.ExtractFromCookieApp(etx)
-	_, err := s.service.Start(etx.Request().Context(), app.UserID)
+	var payload selfUpdateCreateRequest
+	if err := etx.Bind(&payload); err != nil {
+		return inertia.Page(etx, "Errors/InternalError", inertia.Props{})
+	}
+
+	_, err := s.service.Start(etx.Request().Context(), app.UserID, payload.Channel)
 	switch {
 	case err == nil:
 		err = cookies.AddFlash(etx, cookies.FlashSuccess, "DeployCrate CE update started")

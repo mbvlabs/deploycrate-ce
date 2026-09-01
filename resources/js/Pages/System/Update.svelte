@@ -16,6 +16,8 @@
   } from "@/Components/System/UpdateDialog.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
   import { Spinner } from "@/Components/ui/spinner";
+  import * as NativeSelect from "@/Components/ui/native-select";
+  import { formatVersion } from "@/lib/version";
   import DashboardLayout from "@/Layouts/DashboardLayout.svelte";
   import { routes } from "@/routes";
 
@@ -36,14 +38,22 @@
     currentVersion: initialCurrentVersion,
     update: initialUpdate,
     availableUpdate,
+    updateChannel: initialUpdateChannel,
     deployments,
   }: {
     auth: { email: string };
     currentVersion: string;
     update: UpdateStatus;
     availableUpdate: AvailableUpdate;
+    updateChannel: "stable" | "edge";
     deployments: Deployment[];
   } = $props();
+
+  let selectedChannel = $state<"stable" | "edge">("stable");
+
+  $effect(() => {
+    selectedChannel = initialUpdateChannel;
+  });
 
   let liveStatus = $state<UpdateStatusResponse | null>(null);
   let starting = $state(false);
@@ -118,7 +128,8 @@
 
   function checkForUpdates() {
     router.reload({
-      only: ["availableUpdate"],
+      only: ["availableUpdate", "updateChannel"],
+      data: { channel: selectedChannel },
       onStart: () => (checking = true),
       onFinish: () => (checking = false),
     });
@@ -130,7 +141,7 @@
     liveStatus = null;
     router.post(
       routes.systemUpdateCreate(),
-      {},
+      { channel: selectedChannel },
       {
         preserveScroll: true,
         onFinish: () => (starting = false),
@@ -149,10 +160,7 @@
   }
 
   function versionLabel(version: string) {
-    if (!version) return "Unavailable";
-    return version === "dev"
-      ? "Development build"
-      : `v${version.replace(/^v/, "")}`;
+    return formatVersion(version);
   }
 
   function timestamp(value: string) {
@@ -238,6 +246,22 @@
         <div
           class="grid gap-5 border border-border bg-muted/30 p-4 sm:grid-cols-3"
         >
+          <div class="sm:col-span-3">
+            <p
+              class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground"
+            >
+              Update channel
+            </p>
+            <NativeSelect.Root
+              bind:value={selectedChannel}
+              class="mt-2 max-w-xs"
+              disabled={checking || running}
+              onchange={checkForUpdates}
+            >
+              <NativeSelect.Option value="stable">Stable</NativeSelect.Option>
+              <NativeSelect.Option value="edge">Edge</NativeSelect.Option>
+            </NativeSelect.Root>
+          </div>
           <div>
             <p
               class="text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground"

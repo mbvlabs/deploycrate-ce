@@ -1,10 +1,15 @@
 name: Publish edge
 
+# Edge releases are not published on merge directly.
+# This workflow starts only after the CI workflow completes on master.
+# If CI is still running, Publish edge will not appear yet.
 on:
   workflow_run:
     workflows: [CI]
     types: [completed]
     branches: [master]
+
+run-name: Publish edge after CI (${{ github.event.workflow_run.head_sha }})
 
 permissions:
   contents: read
@@ -20,6 +25,12 @@ jobs:
     runs-on: ubuntu-latest
     environment: edge
     steps:
+      - name: Confirm CI completed successfully
+        run: |
+          echo "Publish edge runs only after CI completes on master."
+          echo "Triggering CI run: ${{ github.event.workflow_run.html_url }}"
+          echo "CI conclusion: ${{ github.event.workflow_run.conclusion }}"
+          echo "Publishing commit: ${{ github.event.workflow_run.head_sha }}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
