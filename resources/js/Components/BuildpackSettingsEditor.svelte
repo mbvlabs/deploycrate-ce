@@ -1,7 +1,6 @@
 <script lang="ts" module>
   export type {
     BuildpackAdvancedSettings,
-    BuildpackFrontendSSRSettings,
     BuildpackRepositoryHints,
     BuildpackRuntime,
     BuildpackSettings,
@@ -152,22 +151,59 @@
         ? (settings.frontend ?? {
             runtime: "node",
             directory: ".",
-            script: "build",
-            ssr: null,
+            scripts: ["build"],
+            keep_node_runtime: false,
           })
         : null,
     };
   }
 
-  function toggleSSR(enabled: boolean) {
+  function updateFrontendScripts(scripts: string[]) {
     if (!settings.frontend) return;
     settings = {
       ...settings,
       frontend: {
         ...settings.frontend,
-        ssr: enabled
-          ? (settings.frontend.ssr ?? { enabled: true, script: "build:ssr" })
-          : null,
+        scripts,
+      },
+    };
+  }
+
+  function updateScript(index: number, value: string) {
+    if (!settings.frontend) return;
+    const scripts = [...settings.frontend.scripts];
+    scripts[index] = value;
+    updateFrontendScripts(scripts);
+  }
+
+  function addScript() {
+    if (!settings.frontend) return;
+    updateFrontendScripts([...settings.frontend.scripts, ""]);
+  }
+
+  function removeScript(index: number) {
+    if (!settings.frontend || settings.frontend.scripts.length <= 1) return;
+    updateFrontendScripts(
+      settings.frontend.scripts.filter((_, scriptIndex) => scriptIndex !== index),
+    );
+  }
+
+  function moveScript(index: number, direction: number) {
+    if (!settings.frontend) return;
+    const target = index + direction;
+    if (target < 0 || target >= settings.frontend.scripts.length) return;
+    const scripts = [...settings.frontend.scripts];
+    [scripts[index], scripts[target]] = [scripts[target], scripts[index]];
+    updateFrontendScripts(scripts);
+  }
+
+  function toggleKeepNodeRuntime(enabled: boolean) {
+    if (!settings.frontend) return;
+    settings = {
+      ...settings,
+      frontend: {
+        ...settings.frontend,
+        keep_node_runtime: enabled,
       },
     };
   }
@@ -191,19 +227,18 @@
     if (!hints) return;
     const next = { ...settings };
     if (hints.hasPackageJson) {
+      const scripts: string[] = [];
+      if (hints.hasBuildScript) scripts.push("build");
+      if (hints.hasSSRScript) scripts.push("build:ssr");
       next.frontend = {
         runtime: "node",
         directory: hints.suggestedFrontendDirectory ?? ".",
-        script: hints.hasBuildScript ? "build" : next.frontend?.script ?? "build",
-        ssr:
-          hints.hasSSRScript || next.frontend?.ssr?.enabled
-            ? {
-                enabled: true,
-                script: hints.hasSSRScript
-                  ? "build:ssr"
-                  : (next.frontend?.ssr?.script ?? "build:ssr"),
-              }
-            : null,
+        scripts:
+          scripts.length > 0
+            ? scripts
+            : (next.frontend?.scripts ?? ["build"]),
+        keep_node_runtime:
+          hints.hasSSRScript || next.frontend?.keep_node_runtime === true,
       };
     }
     settings = next;
@@ -303,7 +338,7 @@
     <span>
       <span class="block text-sm font-medium">Build JavaScript assets</span>
       <span class="mt-1 block text-xs text-muted-foreground">
-        Installs dependencies and runs a package script before the framework
+        Installs dependencies and runs package scripts before the framework
         buildpack. Vite, Inertia, and other tooling live in package.json.
       </span>
     </span>
@@ -320,40 +355,71 @@
         Directory containing package.json, relative to the build context.
       </p>
     </FormField>
-    <FormField label="Client build script">
-      <Input bind:value={settings.frontend.script} placeholder="build" required />
-      <p class="mt-2 text-xs text-muted-foreground">
-        Non-empty script from package.json, usually vite build.
-      </p>
-    </FormField>
+
+    <div class="space-y-3 sm:col-span-2">
+      <div>
+        <p class="text-sm font-medium">Build commands</p>
+        <p class="mt-1 text-xs text-muted-foreground">
+          Package scripts run in order after dependencies are installed.
+        </p>
+      </div>
+      {#each settings.frontend.scripts as script, index (index)}
+        <div class="grid gap-3 border border-border p-4 sm:grid-cols-[1fr_auto]">
+          <FormField label={`Command ${index + 1}`}>
+            <Input
+              value={script}
+              oninput={(event) => updateScript(index, event.currentTarget.value)}
+              placeholder="build"
+              required
+            />
+            <p class="mt-2 text-xs text-muted-foreground">
+              Non-empty script from package.json, usually vite build.
+            </p>
+          </FormField>
+          <div class="flex flex-wrap items-end gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={index === 0}
+              onclick={() => moveScript(index, -1)}>Move up</Button
+            >
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={index === settings.frontend.scripts.length - 1}
+              onclick={() => moveScript(index, 1)}>Move down</Button
+            >
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              disabled={settings.frontend.scripts.length <= 1}
+              onclick={() => removeScript(index)}>Remove</Button
+            >
+          </div>
+        </div>
+      {/each}
+      <Button type="button" size="sm" variant="outline" onclick={addScript}
+        >Add build command</Button
+      >
+    </div>
 
     <label class="flex items-start gap-3 border border-border p-4 sm:col-span-2">
       <Checkbox
         class="mt-1"
-        checked={settings.frontend.ssr?.enabled === true}
-        onCheckedChange={(selected) => toggleSSR(selected === true)}
+        checked={settings.frontend.keep_node_runtime === true}
+        onCheckedChange={(selected) => toggleKeepNodeRuntime(selected === true)}
       />
       <span>
-        <span class="block text-sm font-medium">Server-side rendering</span>
+        <span class="block text-sm font-medium">Keep Node.js in runtime image</span>
         <span class="mt-1 block text-xs text-muted-foreground">
-          Runs a second package script and keeps Node.js in the runtime image for
-          SSR. Configure the SSR start command in Processes.
+          Leaves Node.js available in the deployed image. Use this when the app
+          needs Node at runtime, for example for server-side rendering.
         </span>
       </span>
     </label>
-
-    {#if settings.frontend.ssr?.enabled}
-      <FormField label="SSR build script">
-        <Input
-          bind:value={settings.frontend.ssr.script}
-          placeholder="build:ssr"
-          required
-        />
-        <p class="mt-2 text-xs text-muted-foreground">
-          Builds the server bundle after the client build script finishes.
-        </p>
-      </FormField>
-    {/if}
   {/if}
 
   <BuildpackPipelinePreview
@@ -389,7 +455,7 @@
           placeholder="22.11.0"
         />
         <p class="mt-2 text-xs text-muted-foreground">
-          Optional Node version for the asset build and SSR runtime.
+          Optional Node version for the asset build and runtime image.
         </p>
       </FormField>
       <div class="sm:col-span-2">

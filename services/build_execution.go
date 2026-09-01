@@ -540,8 +540,8 @@ func (service *BuildExecution) Execute(ctx context.Context, buildID uuid.UUID) e
 	}
 	frontendScript := ""
 	packEnvironment := snapshot.parsedSettings.PackEnvironment()
-	if snapshot.parsedSettings.Frontend != nil {
-		frontendScript = snapshot.parsedSettings.Frontend.Script
+	if snapshot.parsedSettings.FrontendEnabled() {
+		frontendScript = snapshot.parsedSettings.Frontend.Scripts[0]
 	}
 	packStarted := time.Now()
 	buildSpec := buildpacksclient.BuildSpec{

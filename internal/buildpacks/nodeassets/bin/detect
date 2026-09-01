@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-if [[ -z "${BP_DEPLOYCRATE_FRONTEND_SCRIPT:-}" ]]; then
+if [[ -z "${BP_DEPLOYCRATE_FRONTEND_SCRIPTS:-}" ]]; then
   exit 100
 fi
 
@@ -40,12 +40,8 @@ if (( ${#found_lockfiles[@]} > 1 )); then
   exit 1
 fi
 
-ssr_enabled=false
-if [[ "${BP_DEPLOYCRATE_FRONTEND_SSR:-}" == "true" ]]; then
-  ssr_enabled=true
-fi
 launch_node=false
-if [[ "${ssr_enabled}" == "true" ]]; then
+if [[ "${BP_DEPLOYCRATE_KEEP_NODE_RUNTIME:-}" == "true" ]]; then
   launch_node=true
 fi
 

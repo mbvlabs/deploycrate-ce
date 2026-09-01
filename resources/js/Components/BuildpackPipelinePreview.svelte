@@ -40,14 +40,15 @@
             : context
           : `${context === "." ? "" : `${context}/`}${settings.frontend.directory}`;
       items.push(
-        `Run ${settings.frontend.script} in ${root} with npm, pnpm, Yarn, or Bun`,
+        `Install dependencies in ${root} with npm, pnpm, Yarn, or Bun`,
       );
-      if (settings.frontend.ssr?.enabled) {
-        items.push(
-          `Run ${settings.frontend.ssr.script}, then keep Node.js in the runtime image`,
-        );
+      for (const script of settings.frontend.scripts) {
+        items.push(`Run ${script} in ${root}`);
+      }
+      if (settings.frontend.keep_node_runtime) {
+        items.push("Keep Node.js in the runtime image");
       } else {
-        items.push("Remove Node dependencies after the client asset build");
+        items.push("Remove Node dependencies after the asset build");
       }
     }
     items.push(`Build with the ${runtimeLabels[settings.runtime]} buildpack`);

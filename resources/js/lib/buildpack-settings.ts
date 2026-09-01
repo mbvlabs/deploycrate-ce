@@ -2,16 +2,11 @@ import { routes } from "@/routes";
 
 export type BuildpackRuntime = "go" | "rails" | "laravel" | "django";
 
-export type BuildpackFrontendSSRSettings = {
-  enabled: boolean;
-  script: string;
-};
-
 export type FrontendBuildSettings = {
   runtime: "node";
   directory: string;
-  script: string;
-  ssr?: BuildpackFrontendSSRSettings | null;
+  scripts: string[];
+  keep_node_runtime?: boolean;
 };
 
 export type BuildpackAdvancedSettings = {
@@ -21,7 +16,7 @@ export type BuildpackAdvancedSettings = {
 };
 
 export type BuildpackSettings = {
-  schema_version: 4;
+  schema_version: 5;
   runtime: BuildpackRuntime;
   frontend: FrontendBuildSettings | null;
   advanced?: BuildpackAdvancedSettings | null;
@@ -53,11 +48,23 @@ export function defaultBuildpackSettings(
   runtime: BuildpackRuntime = "go",
 ): BuildpackSettings {
   return {
-    schema_version: 4,
+    schema_version: 5,
     runtime,
     frontend: null,
     advanced: null,
   };
+}
+
+function normalizeScripts(raw: unknown): string[] {
+  if (Array.isArray(raw)) {
+    const scripts = raw
+      .map((script) => (typeof script === "string" ? script.trim() : ""))
+      .filter((script) => script.length > 0);
+    if (scripts.length > 0) {
+      return scripts;
+    }
+  }
+  return ["build"];
 }
 
 export function normalizeBuildpackSettings(raw: unknown): BuildpackSettings {
@@ -65,7 +72,8 @@ export function normalizeBuildpackSettings(raw: unknown): BuildpackSettings {
     raw && typeof raw === "object"
       ? (raw as Partial<BuildpackSettings> & {
           frontend?: Partial<FrontendBuildSettings> & {
-            ssr?: Partial<BuildpackFrontendSSRSettings>;
+            script?: string;
+            ssr?: { enabled?: boolean; script?: string };
           };
           advanced?: Partial<BuildpackAdvancedSettings> | null;
         })
@@ -73,17 +81,25 @@ export function normalizeBuildpackSettings(raw: unknown): BuildpackSettings {
   const runtime = (value.runtime ?? "go") as BuildpackRuntime;
   let frontend: FrontendBuildSettings | null = null;
   if (value.frontend) {
+    let scripts = normalizeScripts(value.frontend.scripts);
+    const legacyScript = value.frontend.script?.trim();
+    if (
+      legacyScript &&
+      (!value.frontend.scripts || value.frontend.scripts.length === 0)
+    ) {
+      scripts = [legacyScript];
+    }
+    if (value.frontend.ssr?.enabled === true) {
+      const ssrScript = value.frontend.ssr.script?.trim() || "build:ssr";
+      scripts = [...scripts, ssrScript];
+    }
     frontend = {
       runtime: "node",
       directory: value.frontend.directory?.trim() || ".",
-      script: value.frontend.script?.trim() || "build",
-      ssr:
-        value.frontend.ssr?.enabled === true
-          ? {
-              enabled: true,
-              script: value.frontend.ssr.script?.trim() || "build:ssr",
-            }
-          : null,
+      scripts,
+      keep_node_runtime:
+        value.frontend.keep_node_runtime === true ||
+        value.frontend.ssr?.enabled === true,
     };
   }
   const advanced = value.advanced
@@ -97,7 +113,7 @@ export function normalizeBuildpackSettings(raw: unknown): BuildpackSettings {
     advanced &&
     (advanced.go_version || advanced.go_build_flags || advanced.node_version);
   return {
-    schema_version: 4,
+    schema_version: 5,
     runtime,
     frontend,
     advanced: hasAdvanced ? advanced : null,
