@@ -873,6 +873,52 @@ type secretRevisionChange struct {
 	previous, requested *models.EnvironmentSecretEntity
 }
 
+func (service *EnvironmentSecrets) secretCommitBaseRevision(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) (models.EnvironmentStateRevisionEntity, error) {
+	latest, err := models.EnvironmentStateRevision.LatestCommitted(ctx, db, environmentID)
+	if err != nil {
+		return models.EnvironmentStateRevisionEntity{}, err
+	}
+	targetStates, err := models.EnvironmentTargetState.ActiveForEnvironment(ctx, db, environmentID)
+	if err != nil {
+		return models.EnvironmentStateRevisionEntity{}, err
+	}
+	if len(targetStates) == 0 {
+		return latest, nil
+	}
+	var consensusDesired *uuid.UUID
+	for _, targetState := range targetStates {
+		if targetState.DesiredRevisionID == nil {
+			return latest, nil
+		}
+		if consensusDesired == nil {
+			consensusDesired = targetState.DesiredRevisionID
+			continue
+		}
+		if *consensusDesired != *targetState.DesiredRevisionID {
+			return latest, nil
+		}
+	}
+	if consensusDesired == nil || *consensusDesired == latest.ID {
+		return latest, nil
+	}
+	allAppliedMatchDesired := true
+	for _, targetState := range targetStates {
+		if targetState.AppliedRevisionID == nil ||
+			*targetState.AppliedRevisionID != *consensusDesired {
+			allAppliedMatchDesired = false
+			break
+		}
+	}
+	if !allAppliedMatchDesired {
+		return latest, nil
+	}
+	return models.EnvironmentStateRevision.Find(ctx, db, *consensusDesired)
+}
+
 func (service *EnvironmentSecrets) commitSecretRevision(
 	ctx context.Context,
 	db storage.Executor,
@@ -902,7 +948,7 @@ func (service *EnvironmentSecrets) commitSecretsRevision(
 	if _, err := models.Environment.Lock(ctx, db, environment.ID); err != nil {
 		return models.EnvironmentStateRevisionEntity{}, err
 	}
-	base, err := models.EnvironmentStateRevision.LatestCommitted(ctx, db, environment.ID)
+	base, err := service.secretCommitBaseRevision(ctx, db, environment.ID)
 	if err != nil {
 		return models.EnvironmentStateRevisionEntity{}, err
 	}
@@ -922,7 +968,19 @@ func (service *EnvironmentSecrets) commitSecretsRevision(
 		if removed {
 			continue
 		}
-		secrets = append(secrets, descriptor)
+		secret, findErr := models.EnvironmentSecret.FindForEnvironment(
+			ctx,
+			db,
+			environment.ID,
+			descriptor.ID,
+		)
+		if findErr != nil {
+			return models.EnvironmentStateRevisionEntity{}, findErr
+		}
+		if secret.ArchivedAt.Valid {
+			continue
+		}
+		secrets = append(secrets, models.EnvironmentSecretDescriptorFromEntity(secret))
 	}
 	for _, change := range changes {
 		if change.requested != nil {

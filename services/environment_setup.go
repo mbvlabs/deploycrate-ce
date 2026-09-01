@@ -633,30 +633,13 @@ func (service *EnvironmentSetup) environmentSecretActivity(
 			return nil, findErr
 		}
 		metadata := secret.Sanitized()
-		status := "pending"
-		deployedEverywhere := true
-		deploying := false
-		for index := range targetStates {
-			if !sameEnvironmentSecretDescriptor(
-				descriptor,
-				appliedByTarget[index][descriptor.Key],
-			) {
-				deployedEverywhere = false
-			}
-			if sameEnvironmentSecretDescriptor(
-				descriptor,
-				applyingByTarget[index][descriptor.Key],
-			) {
-				deploying = true
-			}
-		}
-		if deployedEverywhere {
-			status = "deployed"
-		} else if desiredRevisionFailed {
-			status = "failed"
-		} else if deploying {
-			status = "deploying"
-		}
+		status := environmentSecretDeploymentStatus(
+			descriptor,
+			targetStates,
+			appliedByTarget,
+			applyingByTarget,
+			desiredRevisionFailed,
+		)
 		activity = append(activity, EnvironmentSecretActivity{
 			ID:           metadata.ID,
 			Key:          metadata.Key,
@@ -727,10 +710,6 @@ func (service *EnvironmentSetup) environmentRevisionSecrets(
 		secrets[descriptor.Key] = descriptor
 	}
 	return secrets, nil
-}
-
-func sameEnvironmentSecretDescriptor(left, right models.EnvironmentSecretDescriptor) bool {
-	return right.ID != uuid.Nil && left.Key == right.Key && left.Digest == right.Digest
 }
 
 func (service *EnvironmentSetup) EditData(
