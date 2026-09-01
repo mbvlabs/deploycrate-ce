@@ -1,15 +1,8 @@
 name: Publish edge
 
-# Edge releases are not published on merge directly.
-# This workflow starts only after the CI workflow completes on master.
-# If CI is still running, Publish edge will not appear yet.
 on:
-  workflow_run:
-    workflows: [CI]
-    types: [completed]
+  push:
     branches: [master]
-
-run-name: Publish edge after CI (${{ github.event.workflow_run.head_sha }})
 
 permissions:
   contents: read
@@ -21,19 +14,10 @@ concurrency:
 
 jobs:
   publish:
-    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     environment: edge
     steps:
-      - name: Confirm CI completed successfully
-        run: |
-          echo "Publish edge runs only after CI completes on master."
-          echo "Triggering CI run: ${{ github.event.workflow_run.html_url }}"
-          echo "CI conclusion: ${{ github.event.workflow_run.conclusion }}"
-          echo "Publishing commit: ${{ github.event.workflow_run.head_sha }}"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
@@ -63,7 +47,7 @@ jobs:
           test -n "${R2_SECRET_ACCESS_KEY}" || { echo "R2_SECRET_ACCESS_KEY is not configured" >&2; exit 1; }
       - name: Build edge release
         env:
-          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_SHA: ${{ github.sha }}
         run: scripts/build-release.sh "edge-${RELEASE_SHA::12}" edge "${{ vars.R2_PUBLIC_URL }}"
       - name: Sign and verify edge release
         run: scripts/sign-release.sh dist/release-edge
