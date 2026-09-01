@@ -52,6 +52,7 @@
   import { Separator } from "@/Components/ui/separator";
   import JsonCode from "@/Components/JsonCode.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
+  import { formatVersion } from "@/lib/version";
 
   let {
     open = $bindable(false),
@@ -60,8 +61,7 @@
 
   const stateLabel = (value: string) =>
     value ? value.replaceAll("_", " ") : "Unknown";
-  const versionLabel = (version: string) =>
-    version ? `v${version.replace(/^v/, "")}` : "Development build";
+  const versionLabel = (version: string) => formatVersion(version);
   const timestamp = (value: string | null) =>
     value ? new Date(value).toLocaleString() : "Not recorded";
   const hasJSONFields = (value: unknown) =>

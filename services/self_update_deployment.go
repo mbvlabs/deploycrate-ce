@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"deploycrate-ce/config"
 	"deploycrate-ce/models"
 
 	"github.com/google/uuid"
@@ -78,7 +79,7 @@ func (s *SelfUpdate) createDeploymentRecords(
 		CauseReference:    sql.NullString{String: release.Version, Valid: true},
 		CorrelationID:     uuid.New(),
 		CorrectionContext: json.RawMessage(`{}`),
-		Summary:           fmt.Sprintf("Update DeployCrate CE to v%s", release.Version),
+		Summary:           config.ReleaseUpdateSummary(release.Version),
 		Status:            "queued",
 		RequestedAt:       now,
 		CommittedAt:       sql.NullTime{Time: now, Valid: true},

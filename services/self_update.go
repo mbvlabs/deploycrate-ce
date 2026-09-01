@@ -224,8 +224,8 @@ func (s *SelfUpdate) CurrentVersion() string {
 	return s.currentVersion
 }
 
-func (s *SelfUpdate) CheckForUpdates(ctx context.Context) AvailableUpdate {
-	source, err := config.ResolveReleaseSource(s.currentVersion)
+func (s *SelfUpdate) CheckForUpdates(ctx context.Context, channel string) AvailableUpdate {
+	source, err := config.ResolveReleaseSourceWithChannel(s.currentVersion, channel)
 	if err != nil {
 		return AvailableUpdate{Error: err.Error()}
 	}
@@ -316,7 +316,11 @@ func (s *SelfUpdate) Status() SelfUpdateStatus {
 	return status
 }
 
-func (s *SelfUpdate) Start(ctx context.Context, actorID uuid.UUID) (SelfUpdateStatus, error) {
+func (s *SelfUpdate) Start(
+	ctx context.Context,
+	actorID uuid.UUID,
+	channel string,
+) (SelfUpdateStatus, error) {
 	unresolved, err := s.loadUnresolvedDeployment(ctx)
 	if err != nil {
 		return s.Status(), err
@@ -324,7 +328,7 @@ func (s *SelfUpdate) Start(ctx context.Context, actorID uuid.UUID) (SelfUpdateSt
 	if unresolved != nil {
 		return s.Status(), ErrUpdateInProgress
 	}
-	available := s.CheckForUpdates(ctx)
+	available := s.CheckForUpdates(ctx, channel)
 	if available.Error != "" {
 		return s.Status(), errors.New(available.Error)
 	}
@@ -332,7 +336,7 @@ func (s *SelfUpdate) Start(ctx context.Context, actorID uuid.UUID) (SelfUpdateSt
 		return s.Status(), ErrNoUpdateAvailable
 	}
 
-	_, err = config.ResolveReleaseSource(s.currentVersion)
+	_, err = config.ResolveReleaseSourceWithChannel(s.currentVersion, channel)
 	if err != nil {
 		return s.Status(), err
 	}
@@ -680,7 +684,7 @@ func (s *SelfUpdate) Execute(parent context.Context, deploymentID uuid.UUID) err
 	s.currentDeployment = deployment
 	s.mu.Unlock()
 
-	source, err := config.ResolveReleaseSource(s.currentVersion)
+	source, err := config.ReleaseSourceForChannel(deployment.Checkpoint.ReleaseChannel)
 	if err != nil {
 		s.fail("resolve_release", err)
 		return nil
