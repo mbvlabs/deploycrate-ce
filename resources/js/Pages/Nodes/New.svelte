@@ -3,6 +3,7 @@
   import { Button } from "@/Components/ui/button";
   import * as Card from "@/Components/ui/card";
   import { Checkbox } from "@/Components/ui/checkbox";
+  import * as Field from "@/Components/ui/field";
   import FormField from "@/Components/FormField.svelte";
   import { Input } from "@/Components/ui/input";
   import { Spinner } from "@/Components/ui/spinner";
@@ -11,6 +12,19 @@
   import { routes } from "@/routes";
 
   type BuildpackRuntime = "go" | "rails" | "laravel" | "django";
+  type CapabilityKey =
+    | "build"
+    | "runtime"
+    | "resource"
+    | "database"
+    | "repository";
+  const capabilityOptions: Array<[CapabilityKey, string, string]> = [
+    ["build", "Builds", "Buildpacks and image creation"],
+    ["runtime", "Applications", "Environment workload deployments"],
+    ["resource", "Resources", "Managed Resource installations"],
+    ["database", "Databases", "Database cluster nodes"],
+    ["repository", "Repositories", "OCI registry repositories"],
+  ];
   const buildpackOptions: Array<[BuildpackRuntime, string, string]> = [
     ["go", "Go", "Go modules and Paketo process targets"],
     ["rails", "Rails", "Ruby and Rails applications (amd64)"],
@@ -25,6 +39,8 @@
       "Python applications using requirements.txt or pyproject.toml",
     ],
   ];
+  const capabilityCheckboxClass =
+    "mt-1 data-checked:border-foreground data-checked:bg-foreground data-checked:text-background dark:data-checked:border-foreground dark:data-checked:bg-foreground";
 
   let { auth }: { auth: { email: string } } = $props();
   const form = useForm(() => ({
@@ -50,6 +66,12 @@
     laravel: false,
     django: false,
   });
+  function capabilityCardClass(selected: boolean) {
+    return [
+      "flex cursor-pointer items-start gap-3 border p-3 transition-colors hover:border-foreground/40",
+      selected ? "border-foreground/40 bg-muted/40" : "border-border",
+    ];
+  }
   function submit(event: SubmitEvent) {
     event.preventDefault();
     $form.capabilities.buildpacks.runtimes = $form.capabilities.build
@@ -133,110 +155,78 @@
         <div class="sm:col-span-2">
           <FormField
             label="Private key passphrase"
+            description="Optional. Leave empty if the key is not encrypted."
             error={$form.errors.passphrase}
             ><Input
               type="password"
               bind:value={$form.passphrase}
               autocomplete="off"
+              placeholder="Leave empty if unencrypted"
             /></FormField
           >
         </div>
         <div class="sm:col-span-2 border-t border-border pt-5">
-          <FormField
-            label="Node capabilities"
-            error={$form.errors.capabilities}
-          >
-            <div class="mt-2 grid gap-3 sm:grid-cols-2">
-              <label
-                class="flex cursor-pointer items-start gap-3 border border-border p-3"
-                ><Checkbox
-                  class="mt-1"
-                  bind:checked={$form.capabilities.build}
-                /><span
-                  ><span class="block text-sm font-medium">Builds</span><span
-                    class="mt-1 block text-xs text-muted-foreground"
-                    >Buildpacks and image creation</span
-                  ></span
-                ></label
-              >
-              {#if $form.capabilities.build}
-                <div
-                  class="grid gap-3 border border-border/70 bg-muted/20 p-3 sm:col-span-2 sm:grid-cols-2"
-                >
-                  <div class="sm:col-span-2">
-                    <p class="text-sm font-medium">Buildpack runtimes</p>
-                    <p class="mt-1 text-xs text-muted-foreground">
-                      Select every application framework this Node may build.
-                    </p>
-                  </div>
-                  {#each buildpackOptions as [runtime, label, description] (runtime)}
-                    <label
-                      class="flex cursor-pointer items-start gap-3 border border-border p-3"
+          <Field.Field data-invalid={Boolean($form.errors.capabilities)}>
+            <Field.Set>
+              <Field.Legend variant="label">Node capabilities</Field.Legend>
+              <Field.Description>
+                Choose the workloads this node may run.
+              </Field.Description>
+              <div class="mt-2 grid gap-3 sm:grid-cols-2">
+                {#each capabilityOptions as [key, label, description] (key)}
+                  <label class={capabilityCardClass($form.capabilities[key])}>
+                    <Checkbox
+                      class={capabilityCheckboxClass}
+                      bind:checked={$form.capabilities[key]}
+                    />
+                    <span>
+                      <span class="block text-sm font-medium">{label}</span>
+                      <span class="mt-1 block text-xs text-muted-foreground"
+                        >{description}</span
+                      >
+                    </span>
+                  </label>
+                  {#if key === "build" && $form.capabilities.build}
+                    <div
+                      class="grid gap-3 border border-border bg-muted/20 p-3 sm:col-span-2 sm:grid-cols-2"
                     >
-                      <Checkbox
-                        class="mt-1"
-                        bind:checked={buildpackSelections[runtime]}
-                      />
-                      <span>
-                        <span class="block text-sm font-medium">{label}</span>
-                        <span class="mt-1 block text-xs text-muted-foreground"
-                          >{description}</span
+                      <div class="sm:col-span-2">
+                        <p class="text-sm font-medium">Buildpack runtimes</p>
+                        <p class="mt-1 text-xs text-muted-foreground">
+                          Select every application framework this Node may
+                          build.
+                        </p>
+                      </div>
+                      {#each buildpackOptions as [runtime, runtimeLabel, runtimeDescription] (runtime)}
+                        <label
+                          class={capabilityCardClass(
+                            buildpackSelections[runtime],
+                          )}
                         >
-                      </span>
-                    </label>
-                  {/each}
-                </div>
+                          <Checkbox
+                            class={capabilityCheckboxClass}
+                            bind:checked={buildpackSelections[runtime]}
+                          />
+                          <span>
+                            <span class="block text-sm font-medium"
+                              >{runtimeLabel}</span
+                            >
+                            <span
+                              class="mt-1 block text-xs text-muted-foreground"
+                              >{runtimeDescription}</span
+                            >
+                          </span>
+                        </label>
+                      {/each}
+                    </div>
+                  {/if}
+                {/each}
+              </div>
+              {#if $form.errors.capabilities}
+                <Field.Error>{$form.errors.capabilities}</Field.Error>
               {/if}
-              <label
-                class="flex cursor-pointer items-start gap-3 border border-border p-3"
-                ><Checkbox
-                  class="mt-1"
-                  bind:checked={$form.capabilities.runtime}
-                /><span
-                  ><span class="block text-sm font-medium">Applications</span
-                  ><span class="mt-1 block text-xs text-muted-foreground"
-                    >Environment workload deployments</span
-                  ></span
-                ></label
-              >
-              <label
-                class="flex cursor-pointer items-start gap-3 border border-border p-3"
-                ><Checkbox
-                  class="mt-1"
-                  bind:checked={$form.capabilities.resource}
-                /><span
-                  ><span class="block text-sm font-medium">Resources</span><span
-                    class="mt-1 block text-xs text-muted-foreground"
-                    >Managed Resource installations</span
-                  ></span
-                ></label
-              >
-              <label
-                class="flex cursor-pointer items-start gap-3 border border-border p-3"
-                ><Checkbox
-                  class="mt-1"
-                  bind:checked={$form.capabilities.database}
-                /><span
-                  ><span class="block text-sm font-medium">Databases</span><span
-                    class="mt-1 block text-xs text-muted-foreground"
-                    >Database cluster nodes</span
-                  ></span
-                ></label
-              >
-              <label
-                class="flex cursor-pointer items-start gap-3 border border-border p-3"
-                ><Checkbox
-                  class="mt-1"
-                  bind:checked={$form.capabilities.repository}
-                /><span
-                  ><span class="block text-sm font-medium">Repositories</span
-                  ><span class="mt-1 block text-xs text-muted-foreground"
-                    >OCI registry repositories</span
-                  ></span
-                ></label
-              >
-            </div>
-          </FormField>
+            </Field.Set>
+          </Field.Field>
         </div>
       </Card.Content>
       <Card.Footer class="justify-end gap-3"

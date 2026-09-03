@@ -53,15 +53,6 @@ func Page(etx *echo.Context, component string, props Props, opts ...PageOption) 
 		)))
 	}
 
-	// if flashes := request.ExtractContext[[]cookies.FlashMessage](
-	// 	etx.Request().Context(), request.SessionFlashesKey,
-	// ); len(flashes) > 0 {
-	// 	if props == nil {
-	// 		props = make(Props)
-	// 	}
-	// 	props["flash"] = flashes
-	// }
-
 	if err := gInertia.Render(etx.Response(), etx.Request(), component, props); err != nil {
 		return fmt.Errorf("inertia: render page: %v", err)
 	}

@@ -136,6 +136,7 @@ func (service *NodeEnrollment) Create(
 	input.Name = strings.TrimSpace(input.Name)
 	input.Address = strings.TrimSpace(input.Address)
 	input.Username = strings.TrimSpace(input.Username)
+	input.Passphrase = strings.TrimSpace(input.Passphrase)
 	if err := validateCreateNodeInput(input); err != nil {
 		return NodeEnrollmentDetail{}, errors.Join(models.ErrDomainValidation, err)
 	}
@@ -143,6 +144,9 @@ func (service *NodeEnrollment) Create(
 		[]byte(input.PrivateKey),
 		[]byte(input.Passphrase),
 	); err != nil {
+		if fieldErrors, ok := validation.As(err); ok {
+			return NodeEnrollmentDetail{}, errors.Join(models.ErrDomainValidation, fieldErrors)
+		}
 		return NodeEnrollmentDetail{}, errors.Join(
 			models.ErrDomainValidation,
 			validation.ValidationErrors{
@@ -868,8 +872,18 @@ func validateCreateNodeInput(input CreateNodeInput) error {
 }
 
 func validateSSHPrivateKey(privateKey, passphrase []byte) error {
+	passphrase = bytes.TrimSpace(passphrase)
 	if len(passphrase) == 0 {
 		_, err := ssh.ParsePrivateKey(privateKey)
+		if _, ok := errors.AsType[*ssh.PassphraseMissingError](err); ok {
+			return validation.ValidationErrors{
+				{
+					Field:   "passphrase",
+					Code:    "required",
+					Message: "private key is encrypted; enter the passphrase or use an unencrypted key",
+				},
+			}
+		}
 		return err
 	}
 	_, err := ssh.ParsePrivateKeyWithPassphrase(privateKey, passphrase)
