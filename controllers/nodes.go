@@ -156,8 +156,10 @@ func (controller Nodes) Create(etx *echo.Context) error {
 		if fieldErrors, ok := validation.As(err); ok {
 			return controller.renderNew(etx, inertia.WithValidationErrors(fieldErrors.ToMap()))
 		}
-		_ = cookies.AddFlash(etx, cookies.FlashError, err.Error())
-		return inertia.Redirect(etx, routes.NodeNew.URL(), http.StatusSeeOther)
+		return inertia.Page(etx, "Nodes/New", inertia.Props{
+			"auth":       authProps(etx),
+			"setupError": err.Error(),
+		})
 	}
 	return inertia.Redirect(etx, routes.NodeShow.URL(result.Enrollment.ID), http.StatusSeeOther)
 }

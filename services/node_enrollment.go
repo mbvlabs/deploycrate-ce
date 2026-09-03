@@ -29,6 +29,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/gosimple/slug"
+	"github.com/uptrace/bun"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -285,16 +286,7 @@ func (service *NodeEnrollment) Confirm(
 	); err != nil {
 		return err
 	}
-	inserted, err := service.queue.InsertTx(
-		ctx,
-		tx.Tx,
-		jobs.NodeEnrollmentArgs{EnrollmentID: id},
-		jobs.NodeEnrollmentInsertOpts(id),
-	)
-	if err != nil {
-		return err
-	}
-	if err := models.NodeEnrollment.SetJob(ctx, tx, id, inserted.Job.ID); err != nil {
+	if err := service.enqueue(ctx, tx, id); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -325,6 +317,17 @@ func (service *NodeEnrollment) Retry(ctx context.Context, id uuid.UUID) error {
 	); err != nil {
 		return err
 	}
+	if err := service.enqueue(ctx, tx, id); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (service *NodeEnrollment) enqueue(
+	ctx context.Context,
+	tx bun.Tx,
+	id uuid.UUID,
+) error {
 	inserted, err := service.queue.InsertTx(
 		ctx,
 		tx.Tx,
@@ -334,10 +337,10 @@ func (service *NodeEnrollment) Retry(ctx context.Context, id uuid.UUID) error {
 	if err != nil {
 		return err
 	}
-	if err := models.NodeEnrollment.SetJob(ctx, tx, id, inserted.Job.ID); err != nil {
-		return err
+	if inserted == nil || inserted.Job == nil {
+		return errors.New("node enrollment job was not queued")
 	}
-	return tx.Commit()
+	return models.NodeEnrollment.SetJob(ctx, tx, id, inserted.Job.ID)
 }
 
 func (service *NodeEnrollment) Execute(ctx context.Context, id uuid.UUID) (returnErr error) {
