@@ -15,29 +15,50 @@ import (
 )
 
 type EnvironmentEntity struct {
-	bun.BaseModel  `bun:"table:environments,alias:environments"`
-	ID             uuid.UUID      `bun:"id,pk,type:uuid"`
-	CreatedAt      time.Time      `bun:"created_at"`
-	UpdatedAt      time.Time      `bun:"updated_at"`
-	Name           string         `bun:"name"`
-	Slug           string         `bun:"slug"`
-	Kind           string         `bun:"kind"`
-	APITokenPrefix sql.NullString `bun:"api_token_prefix"`
-	APITokenDigest []byte         `bun:"api_token_digest"`
-	ArchivedAt     sql.NullTime   `bun:"archived_at"`
-	ApplicationID  uuid.UUID      `bun:"application_id,type:uuid"`
+	bun.BaseModel         `bun:"table:environments,alias:environments"`
+	ID                    uuid.UUID                 `bun:"id,pk,type:uuid"`
+	CreatedAt             time.Time                 `bun:"created_at"`
+	UpdatedAt             time.Time                 `bun:"updated_at"`
+	Name                  string                    `bun:"name"`
+	Slug                  string                    `bun:"slug"`
+	Kind                  string                    `bun:"kind"`
+	APITokenPrefix        sql.NullString            `bun:"api_token_prefix"`
+	APITokenDigest        []byte                    `bun:"api_token_digest"`
+	AccessMode            EnvironmentAccessModeEnum `bun:"access_mode"`
+	BasicAuthUsername     string                    `bun:"basic_auth_username"`
+	BasicAuthPasswordHash string                    `bun:"basic_auth_password_hash" json:"-"`
+	ArchivedAt            sql.NullTime              `bun:"archived_at"`
+	ApplicationID         uuid.UUID                 `bun:"application_id,type:uuid"`
 }
 
 func (e *EnvironmentEntity) Validate() error {
 	e.Name = strings.TrimSpace(e.Name)
 	e.Slug = strings.TrimSpace(e.Slug)
 	e.Kind = strings.TrimSpace(e.Kind)
+	e.BasicAuthUsername = strings.TrimSpace(e.BasicAuthUsername)
+	e.BasicAuthPasswordHash = strings.TrimSpace(e.BasicAuthPasswordHash)
+	if e.AccessMode == "" {
+		e.AccessMode = EnvironmentAccessPublic
+	}
 	builder := validation.NewBuilder()
 	builder.Required("name", e.Name)
 	builder.Required("slug", e.Slug)
 	builder.Required("kind", e.Kind)
 	if e.ApplicationID == uuid.Nil {
 		builder.Add("applicationId", "required", "application is required")
+	}
+	if !e.AccessMode.IsValid() {
+		builder.Add("accessMode", "unsupported", "Environment access mode is not supported")
+	}
+	if e.AccessMode == EnvironmentAccessBasicAuth {
+		builder.Required("basicAuthUsername", e.BasicAuthUsername)
+		builder.Required("basicAuthPasswordHash", e.BasicAuthPasswordHash)
+	} else if e.BasicAuthUsername != "" || e.BasicAuthPasswordHash != "" {
+		builder.Add(
+			"accessMode",
+			"conflict",
+			"basic authentication credentials are only valid for basic auth access",
+		)
 	}
 	return builder.Err()
 }
@@ -289,13 +310,16 @@ func (e environment) Deployability(
 }
 
 type CreateEnvironmentData struct {
-	Name           string
-	Slug           string
-	Kind           string
-	APITokenPrefix sql.NullString
-	APITokenDigest []byte
-	ArchivedAt     sql.NullTime
-	ApplicationID  uuid.UUID
+	Name                  string
+	Slug                  string
+	Kind                  string
+	APITokenPrefix        sql.NullString
+	APITokenDigest        []byte
+	AccessMode            EnvironmentAccessModeEnum
+	BasicAuthUsername     string
+	BasicAuthPasswordHash string
+	ArchivedAt            sql.NullTime
+	ApplicationID         uuid.UUID
 }
 
 func (e environment) Create(
@@ -304,16 +328,19 @@ func (e environment) Create(
 	data CreateEnvironmentData,
 ) (EnvironmentEntity, error) {
 	entity := EnvironmentEntity{
-		ID:             uuid.New(),
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
-		Name:           data.Name,
-		Slug:           data.Slug,
-		Kind:           data.Kind,
-		APITokenPrefix: data.APITokenPrefix,
-		APITokenDigest: data.APITokenDigest,
-		ArchivedAt:     data.ArchivedAt,
-		ApplicationID:  data.ApplicationID,
+		ID:                    uuid.New(),
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
+		Name:                  data.Name,
+		Slug:                  data.Slug,
+		Kind:                  data.Kind,
+		APITokenPrefix:        data.APITokenPrefix,
+		APITokenDigest:        data.APITokenDigest,
+		AccessMode:            data.AccessMode,
+		BasicAuthUsername:     data.BasicAuthUsername,
+		BasicAuthPasswordHash: data.BasicAuthPasswordHash,
+		ArchivedAt:            data.ArchivedAt,
+		ApplicationID:         data.ApplicationID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -328,15 +355,34 @@ func (e environment) Create(
 }
 
 type UpdateEnvironmentData struct {
-	ID             uuid.UUID
-	UpdatedAt      time.Time
-	Name           string
-	Slug           string
-	Kind           string
-	APITokenPrefix sql.NullString
-	APITokenDigest []byte
-	ArchivedAt     sql.NullTime
-	ApplicationID  uuid.UUID
+	ID                    uuid.UUID
+	UpdatedAt             time.Time
+	Name                  string
+	Slug                  string
+	Kind                  string
+	APITokenPrefix        sql.NullString
+	APITokenDigest        []byte
+	AccessMode            EnvironmentAccessModeEnum
+	BasicAuthUsername     string
+	BasicAuthPasswordHash string
+	ArchivedAt            sql.NullTime
+	ApplicationID         uuid.UUID
+}
+
+func (e EnvironmentEntity) UpdateData() UpdateEnvironmentData {
+	return UpdateEnvironmentData{
+		ID:                    e.ID,
+		Name:                  e.Name,
+		Slug:                  e.Slug,
+		Kind:                  e.Kind,
+		APITokenPrefix:        e.APITokenPrefix,
+		APITokenDigest:        e.APITokenDigest,
+		AccessMode:            e.AccessMode,
+		BasicAuthUsername:     e.BasicAuthUsername,
+		BasicAuthPasswordHash: e.BasicAuthPasswordHash,
+		ArchivedAt:            e.ArchivedAt,
+		ApplicationID:         e.ApplicationID,
+	}
 }
 
 func (e environment) Update(
@@ -345,15 +391,18 @@ func (e environment) Update(
 	data UpdateEnvironmentData,
 ) (EnvironmentEntity, error) {
 	entity := EnvironmentEntity{
-		ID:             data.ID,
-		UpdatedAt:      time.Now(),
-		Name:           data.Name,
-		Slug:           data.Slug,
-		Kind:           data.Kind,
-		APITokenPrefix: data.APITokenPrefix,
-		APITokenDigest: data.APITokenDigest,
-		ArchivedAt:     data.ArchivedAt,
-		ApplicationID:  data.ApplicationID,
+		ID:                    data.ID,
+		UpdatedAt:             time.Now(),
+		Name:                  data.Name,
+		Slug:                  data.Slug,
+		Kind:                  data.Kind,
+		APITokenPrefix:        data.APITokenPrefix,
+		APITokenDigest:        data.APITokenDigest,
+		AccessMode:            data.AccessMode,
+		BasicAuthUsername:     data.BasicAuthUsername,
+		BasicAuthPasswordHash: data.BasicAuthPasswordHash,
+		ArchivedAt:            data.ArchivedAt,
+		ApplicationID:         data.ApplicationID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -368,6 +417,9 @@ func (e environment) Update(
 		Column("kind").
 		Column("api_token_prefix").
 		Column("api_token_digest").
+		Column("access_mode").
+		Column("basic_auth_username").
+		Column("basic_auth_password_hash").
 		Column("archived_at").
 		Column("application_id").
 		WherePK().
@@ -477,16 +529,19 @@ func (e environment) Upsert(
 	data CreateEnvironmentData,
 ) (EnvironmentEntity, error) {
 	entity := EnvironmentEntity{
-		ID:             uuid.New(),
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
-		Name:           data.Name,
-		Slug:           data.Slug,
-		Kind:           data.Kind,
-		APITokenPrefix: data.APITokenPrefix,
-		APITokenDigest: data.APITokenDigest,
-		ArchivedAt:     data.ArchivedAt,
-		ApplicationID:  data.ApplicationID,
+		ID:                    uuid.New(),
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
+		Name:                  data.Name,
+		Slug:                  data.Slug,
+		Kind:                  data.Kind,
+		APITokenPrefix:        data.APITokenPrefix,
+		APITokenDigest:        data.APITokenDigest,
+		AccessMode:            data.AccessMode,
+		BasicAuthUsername:     data.BasicAuthUsername,
+		BasicAuthPasswordHash: data.BasicAuthPasswordHash,
+		ArchivedAt:            data.ArchivedAt,
+		ApplicationID:         data.ApplicationID,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -501,6 +556,9 @@ func (e environment) Upsert(
 		Set("kind = excluded.kind").
 		Set("api_token_prefix = excluded.api_token_prefix").
 		Set("api_token_digest = excluded.api_token_digest").
+		Set("access_mode = excluded.access_mode").
+		Set("basic_auth_username = excluded.basic_auth_username").
+		Set("basic_auth_password_hash = excluded.basic_auth_password_hash").
 		Set("archived_at = excluded.archived_at").
 		Set("application_id = excluded.application_id").
 		Returning("*").

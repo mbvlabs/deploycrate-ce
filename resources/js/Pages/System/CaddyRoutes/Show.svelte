@@ -87,6 +87,7 @@
     healthPath: string;
     appliedAt: string;
     observedAt: string;
+    accessMode: string;
     backends: Backend[];
     configuration: unknown;
     configurationError: string;
@@ -348,6 +349,23 @@
             <dt class="text-muted-foreground">Health path</dt>
             <dd class="mt-1 font-mono text-xs">{route.healthPath || "None"}</dd>
           </div>
+          {#if route.kind === "environment"}
+            <div>
+              <dt class="text-muted-foreground">HTTP access</dt>
+              <dd class="mt-1">
+                <StatusBadge
+                  status={route.accessMode === "basic_auth"
+                    ? "warning"
+                    : route.accessMode === "private_network"
+                      ? "active"
+                      : "applied"}
+                  label={route.accessMode
+                    ? route.accessMode.replaceAll("_", " ")
+                    : "public"}
+                />
+              </dd>
+            </div>
+          {/if}
           <div>
             <dt class="text-muted-foreground">Applied</dt>
             <dd class="mt-1">{formatTime(route.appliedAt)}</dd>

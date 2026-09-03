@@ -23,13 +23,16 @@ type EnvironmentOption func(*EnvironmentFactory)
 func BuildEnvironment(applicationID uuid.UUID, opts ...EnvironmentOption) models.EnvironmentEntity {
 	f := &EnvironmentFactory{
 		EnvironmentEntity: models.EnvironmentEntity{
-			Name:           faker.Word(),
-			Slug:           faker.Word(),
-			Kind:           faker.Word(),
-			APITokenPrefix: sql.NullString{String: faker.Word(), Valid: true},
-			APITokenDigest: []byte{},
-			ArchivedAt:     sql.NullTime{Time: time.Now(), Valid: true},
-			ApplicationID:  applicationID,
+			Name:                  faker.Word(),
+			Slug:                  faker.Word(),
+			Kind:                  faker.Word(),
+			APITokenPrefix:        sql.NullString{String: faker.Word(), Valid: true},
+			APITokenDigest:        []byte{},
+			AccessMode:            models.EnvironmentAccessPublic,
+			BasicAuthUsername:     "",
+			BasicAuthPasswordHash: "",
+			ArchivedAt:            sql.NullTime{Time: time.Now(), Valid: true},
+			ApplicationID:         applicationID,
 		},
 	}
 
@@ -49,16 +52,19 @@ func CreateEnvironment(
 	built := BuildEnvironment(applicationID, opts...)
 
 	entity := models.EnvironmentEntity{
-		ID:             uuid.New(),
-		CreatedAt:      time.Now(),
-		UpdatedAt:      time.Now(),
-		Name:           built.Name,
-		Slug:           built.Slug,
-		Kind:           built.Kind,
-		APITokenPrefix: built.APITokenPrefix,
-		APITokenDigest: built.APITokenDigest,
-		ArchivedAt:     built.ArchivedAt,
-		ApplicationID:  built.ApplicationID,
+		ID:                    uuid.New(),
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
+		Name:                  built.Name,
+		Slug:                  built.Slug,
+		Kind:                  built.Kind,
+		APITokenPrefix:        built.APITokenPrefix,
+		APITokenDigest:        built.APITokenDigest,
+		AccessMode:            built.AccessMode,
+		BasicAuthUsername:     built.BasicAuthUsername,
+		BasicAuthPasswordHash: built.BasicAuthPasswordHash,
+		ArchivedAt:            built.ArchivedAt,
+		ApplicationID:         built.ApplicationID,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -115,6 +121,24 @@ func WithEnvironmentsAPITokenPrefix(value sql.NullString) EnvironmentOption {
 func WithEnvironmentsAPITokenDigest(value []byte) EnvironmentOption {
 	return func(f *EnvironmentFactory) {
 		f.EnvironmentEntity.APITokenDigest = value
+	}
+}
+
+func WithEnvironmentsAccessMode(value models.EnvironmentAccessModeEnum) EnvironmentOption {
+	return func(f *EnvironmentFactory) {
+		f.EnvironmentEntity.AccessMode = value
+	}
+}
+
+func WithEnvironmentsBasicAuthUsername(value string) EnvironmentOption {
+	return func(f *EnvironmentFactory) {
+		f.EnvironmentEntity.BasicAuthUsername = value
+	}
+}
+
+func WithEnvironmentsBasicAuthPasswordHash(value string) EnvironmentOption {
+	return func(f *EnvironmentFactory) {
+		f.EnvironmentEntity.BasicAuthPasswordHash = value
 	}
 }
 

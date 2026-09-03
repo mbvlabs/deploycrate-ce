@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"deploycrate-ce/internal/wireguard"
 	"deploycrate-ce/telemetry"
 )
 
@@ -45,6 +46,7 @@ type Route struct {
 	UpstreamTLS               bool
 	DisableActiveHealthChecks bool
 	Authentication            *BasicAuthentication
+	PrivateNetworkOnly        bool
 }
 
 type BasicAuthentication struct {
@@ -76,12 +78,13 @@ func (client *Client) ApplyRoute(ctx context.Context, route Route) error {
 	if healthPath == "" {
 		healthPath = "/api/health"
 	}
-	handles := []routeHandle{
+	logs := []routeHandle{
 		{Handler: "log_append", Key: "deploycrate_route", Value: route.ID},
 		{Handler: "log_append", Key: "deploycrate_domain", Value: route.Domain},
 	}
+	inner := make([]routeHandle, 0, 2)
 	if route.Authentication != nil {
-		handles = append(handles, routeHandle{
+		inner = append(inner, routeHandle{
 			Handler: "authentication",
 			Providers: map[string]authenticationProvider{
 				"http_basic": {Accounts: []authenticationAccount{
@@ -109,7 +112,26 @@ func (client *Client) ApplyRoute(ctx context.Context, route Route) error {
 	if route.UpstreamTLS {
 		proxy.Transport = &httpTransport{Protocol: "http", TLS: &tlsTransport{}}
 	}
-	handles = append(handles, proxy)
+	inner = append(inner, proxy)
+	handles := logs
+	if route.PrivateNetworkOnly {
+		handles = append(handles, routeHandle{
+			Handler: "subroute",
+			Routes: []subrouteEntry{
+				{
+					Match: []routeMatch{{
+						RemoteIP: &remoteIPMatch{
+							Ranges: []string{wireguard.MeshCIDR, "127.0.0.1/32", "::1/128"},
+						},
+					}},
+					Handle: inner,
+				},
+				{Handle: []routeHandle{{Handler: "static_response", StatusCode: 403}}},
+			},
+		})
+	} else {
+		handles = append(handles, inner...)
+	}
 	entry := routeEntry{
 		ID:       route.ID,
 		Match:    []routeMatch{{Host: []string{route.Domain}}},
@@ -527,6 +549,13 @@ type routeHandle struct {
 	Upstreams     []upstream                        `json:"upstreams,omitempty"`
 	Providers     map[string]authenticationProvider `json:"providers,omitempty"`
 	Transport     *httpTransport                    `json:"transport,omitempty"`
+	Routes        []subrouteEntry                   `json:"routes,omitempty"`
+	StatusCode    int                               `json:"status_code,omitempty"`
+}
+
+type subrouteEntry struct {
+	Match  []routeMatch  `json:"match,omitempty"`
+	Handle []routeHandle `json:"handle"`
 }
 
 type httpTransport struct {
@@ -546,7 +575,12 @@ type authenticationAccount struct {
 }
 
 type routeMatch struct {
-	Host []string `json:"host"`
+	Host     []string       `json:"host,omitempty"`
+	RemoteIP *remoteIPMatch `json:"remote_ip,omitempty"`
+}
+
+type remoteIPMatch struct {
+	Ranges []string `json:"ranges"`
 }
 
 type loadBalancing struct {
