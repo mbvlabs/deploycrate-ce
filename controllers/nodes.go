@@ -107,7 +107,11 @@ func (controller Nodes) Index(etx *echo.Context) error {
 	for _, item := range items {
 		props = append(props, nodeProps(item))
 	}
-	return inertia.Page(etx, "Nodes/Index", inertia.Props{"auth": authProps(etx), "nodes": props})
+	return inertia.Page(
+		etx,
+		"Nodes/Index",
+		inertia.Props{"auth": authProps(etx), "flash": environmentFlashProps(etx), "nodes": props},
+	)
 }
 
 func (controller Nodes) New(etx *echo.Context) error {
@@ -115,7 +119,12 @@ func (controller Nodes) New(etx *echo.Context) error {
 }
 
 func (controller Nodes) renderNew(etx *echo.Context, options ...inertia.PageOption) error {
-	return inertia.Page(etx, "Nodes/New", inertia.Props{"auth": authProps(etx)}, options...)
+	return inertia.Page(
+		etx,
+		"Nodes/New",
+		inertia.Props{"auth": authProps(etx), "flash": environmentFlashProps(etx)},
+		options...,
+	)
 }
 
 type createNodePayload struct {
@@ -165,7 +174,9 @@ func (controller Nodes) Show(etx *echo.Context) error {
 	return inertia.Page(
 		etx,
 		"Nodes/Show",
-		inertia.Props{"auth": authProps(etx), "node": nodeProps(detail)},
+		inertia.Props{
+			"auth": authProps(etx), "flash": environmentFlashProps(etx), "node": nodeProps(detail),
+		},
 	)
 }
 
