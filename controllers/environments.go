@@ -770,6 +770,8 @@ func environmentOverviewProps(overview services.EnvironmentOverview) map[string]
 		"apiTokenPrefix":               overview.APITokenPrefix,
 		"accessMode":                   overview.AccessMode,
 		"basicAuthUsername":            overview.BasicAuthUsername,
+		"hasApplicationBasicAuth":      overview.HasApplicationBasicAuth,
+		"applicationBasicAuthUsername": overview.ApplicationBasicAuthUsername,
 		"privateNetworkAddress":        overview.PrivateNetworkAddress,
 		"dns":                          overview.DNS,
 		"canPromoteToProduction":       overview.CanPromoteToProduction,

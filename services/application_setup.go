@@ -86,11 +86,13 @@ type ApplicationListEnvironment struct {
 type ApplicationDetails = models.ApplicationDetails
 
 type ApplicationOverview struct {
-	ID           uuid.UUID                       `json:"id"`
-	Name         string                          `json:"name"`
-	Slug         string                          `json:"slug"`
-	Environments []ApplicationDetails            `json:"environments"`
-	Deployments  []ApplicationDeploymentActivity `json:"deployments"`
+	ID                  uuid.UUID                       `json:"id"`
+	Name                string                          `json:"name"`
+	Slug                string                          `json:"slug"`
+	BasicAuthUsername   string                          `json:"basicAuthUsername"`
+	HasBasicAuthDefault bool                            `json:"hasBasicAuthDefault"`
+	Environments        []ApplicationDetails            `json:"environments"`
+	Deployments         []ApplicationDeploymentActivity `json:"deployments"`
 }
 
 type ApplicationDeploymentActivity = models.ApplicationDeploymentActivity
@@ -609,8 +611,13 @@ func (service *ApplicationSetup) Overview(
 		return ApplicationOverview{}, err
 	}
 	return ApplicationOverview{
-		ID: application.ID, Name: application.Name, Slug: application.Slug,
-		Environments: environments, Deployments: deployments,
+		ID:                  application.ID,
+		Name:                application.Name,
+		Slug:                application.Slug,
+		BasicAuthUsername:   application.BasicAuthUsername,
+		HasBasicAuthDefault: application.HasBasicAuthDefault(),
+		Environments:        environments,
+		Deployments:         deployments,
 	}, nil
 }
 
@@ -663,19 +670,69 @@ func (service *ApplicationSetup) UpdatePresentation(
 			errors.New("application slug is already in use"),
 		)
 	}
-	if _, err := models.Application.Update(
-		ctx,
-		tx,
-		models.UpdateApplicationData{
-			ID:         application.ID,
-			Name:       strings.TrimSpace(name),
-			Slug:       applicationSlug,
-			ArchivedAt: application.ArchivedAt,
-		},
-	); err != nil {
+	update := application.UpdateData()
+	update.Name = strings.TrimSpace(name)
+	update.Slug = applicationSlug
+	if _, err := models.Application.Update(ctx, tx, update); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+type ApplicationBasicAuthInput struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Generate bool   `json:"generate"`
+	Clear    bool   `json:"clear"`
+}
+
+type ApplicationBasicAuthResult struct {
+	Username string `json:"username"`
+	Password string `json:"password,omitempty"`
+}
+
+func (service *ApplicationSetup) UpdateBasicAuth(
+	ctx context.Context,
+	applicationID uuid.UUID,
+	input ApplicationBasicAuthInput,
+) (ApplicationBasicAuthResult, error) {
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return ApplicationBasicAuthResult{}, err
+	}
+	defer tx.Rollback()
+	application, err := models.Application.Find(ctx, tx, applicationID)
+	if err != nil || application.ArchivedAt.Valid {
+		return ApplicationBasicAuthResult{}, errors.New("application is unavailable")
+	}
+	update := application.UpdateData()
+	result := ApplicationBasicAuthResult{}
+	if input.Clear {
+		update.BasicAuthUsername = ""
+		update.BasicAuthPasswordHash = ""
+	} else {
+		resolved, resolveErr := resolveBasicAuth(
+			application.BasicAuthUsername,
+			application.BasicAuthPasswordHash,
+			input.Username,
+			input.Password,
+			input.Generate,
+		)
+		if resolveErr != nil {
+			return ApplicationBasicAuthResult{}, resolveErr
+		}
+		update.BasicAuthUsername = resolved.Username
+		update.BasicAuthPasswordHash = resolved.Hash
+		result.Username = resolved.Username
+		result.Password = resolved.Password
+	}
+	if _, err := models.Application.Update(ctx, tx, update); err != nil {
+		return ApplicationBasicAuthResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return ApplicationBasicAuthResult{}, err
+	}
+	return result, nil
 }
 
 func (service *ApplicationSetup) UpdateSource(

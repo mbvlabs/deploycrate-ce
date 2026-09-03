@@ -241,6 +241,8 @@ export type Overview = {
   apiTokenPrefix: string;
   accessMode: "public" | "basic_auth" | "private_network";
   basicAuthUsername: string;
+  hasApplicationBasicAuth: boolean;
+  applicationBasicAuthUsername: string;
   privateNetworkAddress: string;
   dns: DNSStatus;
   canPromoteToProduction: boolean;

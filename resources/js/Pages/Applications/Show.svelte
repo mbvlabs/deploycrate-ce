@@ -1,9 +1,12 @@
 <script lang="ts">
   import ArrowUpRightIcon from "@lucide/svelte/icons/arrow-up-right";
   import { Link, router } from "@inertiajs/svelte";
+  import { untrack } from "svelte";
   import { Button } from "@/Components/ui/button";
   import * as Card from "@/Components/ui/card";
+  import * as Dialog from "@/Components/ui/dialog";
   import * as Empty from "@/Components/ui/empty";
+  import { Input } from "@/Components/ui/input";
   import * as Table from "@/Components/ui/table";
   import ConfirmActionDialog from "@/Components/ConfirmActionDialog.svelte";
   import StatusBadge from "@/Components/StatusBadge.svelte";
@@ -48,6 +51,8 @@
     id: string;
     name: string;
     slug: string;
+    basicAuthUsername: string;
+    hasBasicAuthDefault: boolean;
     environments: Environment[];
     deployments: Deployment[];
   };
@@ -65,6 +70,110 @@
   let promotionDialogOpen = $state(false);
   let promotionProcessing = $state(false);
   let promotionError = $state("");
+  let basicAuthUsernameDraft = $state(
+    untrack(() => application.basicAuthUsername || "deploycrate"),
+  );
+  let basicAuthPasswordDraft = $state("");
+  let basicAuthProcessing = $state(false);
+  let basicAuthError = $state("");
+  let basicAuthPassword = $state("");
+  let basicAuthPasswordOpen = $state(false);
+  let clearBasicAuthOpen = $state(false);
+
+  function generateLocalPassword() {
+    const bytes = new Uint8Array(18);
+    crypto.getRandomValues(bytes);
+    basicAuthPasswordDraft = btoa(String.fromCharCode(...bytes))
+      .replaceAll("+", "")
+      .replaceAll("/", "")
+      .replaceAll("=", "")
+      .slice(0, 24);
+  }
+
+  async function saveBasicAuth(generate: boolean) {
+    if (basicAuthProcessing) return;
+    basicAuthProcessing = true;
+    basicAuthError = "";
+    const submittedPassword = generate ? "" : basicAuthPasswordDraft.trim();
+    try {
+      const response = await window.fetch(
+        routes.applicationBasicAuthUpdate(application.id),
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            username: basicAuthUsernameDraft,
+            password: submittedPassword,
+            generate,
+            clear: false,
+          }),
+        },
+      );
+      const payload = (await response.json()) as {
+        username?: string;
+        password?: string;
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(
+          payload.error || "Default basic authentication could not be saved",
+        );
+      if (payload.username) basicAuthUsernameDraft = payload.username;
+      basicAuthPasswordDraft = "";
+      if (payload.password || submittedPassword) {
+        basicAuthPassword = payload.password || submittedPassword;
+        basicAuthPasswordOpen = true;
+      }
+      router.reload({ only: ["application"], preserveScroll: true });
+    } catch (error) {
+      basicAuthError =
+        error instanceof Error
+          ? error.message
+          : "Default basic authentication could not be saved";
+    } finally {
+      basicAuthProcessing = false;
+    }
+  }
+
+  async function clearBasicAuth() {
+    if (basicAuthProcessing) return;
+    basicAuthProcessing = true;
+    basicAuthError = "";
+    try {
+      const response = await window.fetch(
+        routes.applicationBasicAuthUpdate(application.id),
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ clear: true }),
+        },
+      );
+      const payload = (await response.json()) as { error?: string };
+      if (!response.ok)
+        throw new Error(
+          payload.error || "Default basic authentication could not be cleared",
+        );
+      basicAuthUsernameDraft = "deploycrate";
+      basicAuthPasswordDraft = "";
+      clearBasicAuthOpen = false;
+      router.reload({ only: ["application"], preserveScroll: true });
+    } catch (error) {
+      basicAuthError =
+        error instanceof Error
+          ? error.message
+          : "Default basic authentication could not be cleared";
+    } finally {
+      basicAuthProcessing = false;
+    }
+  }
 
   const staging = $derived(
     application.environments.find(
@@ -206,6 +315,77 @@
         >
       </div>
     </header>
+
+    <Card.Root>
+      <Card.Header
+        ><Card.Action
+          ><StatusBadge
+            status={application.hasBasicAuthDefault ? "warning" : "applied"}
+            label={application.hasBasicAuthDefault ? "Configured" : "None"}
+          /></Card.Action
+        ><Card.Title>Default basic authentication</Card.Title><Card.Description
+          >Store a username and password you can apply to any Environment from
+          its HTTP access card. Changing this default does not update
+          Environments that already have credentials.</Card.Description
+        ></Card.Header
+      >
+      <Card.Content class="space-y-4">
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div class="space-y-2">
+            <p class="text-sm font-medium">Username</p>
+            <Input
+              bind:value={basicAuthUsernameDraft}
+              autocomplete="off"
+              aria-label="Default basic auth username"
+            />
+          </div>
+          <div class="space-y-2">
+            <p class="text-sm font-medium">Password</p>
+            <Input
+              bind:value={basicAuthPasswordDraft}
+              type="text"
+              autocomplete="off"
+              placeholder={application.hasBasicAuthDefault
+                ? "Leave blank to keep the current password"
+                : "Enter a password or generate one"}
+              aria-label="Default basic auth password"
+            />
+          </div>
+        </div>
+        <p class="text-sm text-muted-foreground">
+          A generated password is shown once. DeployCrate stores only the hash.
+        </p>
+        {#if basicAuthError}
+          <p class="text-sm text-destructive">{basicAuthError}</p>
+        {/if}
+        <div class="flex flex-wrap gap-2">
+          <Button
+            disabled={basicAuthProcessing}
+            aria-busy={basicAuthProcessing}
+            onclick={() => void saveBasicAuth(false)}
+            >{#if basicAuthProcessing}<Spinner />{/if}Save default</Button
+          >
+          <Button
+            variant="outline"
+            disabled={basicAuthProcessing}
+            onclick={generateLocalPassword}>Generate password</Button
+          >
+          <Button
+            variant="outline"
+            disabled={basicAuthProcessing}
+            onclick={() => void saveBasicAuth(true)}
+            >{#if basicAuthProcessing}<Spinner />{/if}Rotate password</Button
+          >
+          {#if application.hasBasicAuthDefault}
+            <Button
+              variant="outline"
+              disabled={basicAuthProcessing}
+              onclick={() => (clearBasicAuthOpen = true)}>Clear default</Button
+            >
+          {/if}
+        </div>
+      </Card.Content>
+    </Card.Root>
 
     <section aria-labelledby="featured-environments-heading" class="space-y-4">
       <div>
@@ -493,4 +673,36 @@
     error={promotionError}
     onconfirm={promoteToProduction}
   />
+
+  <ConfirmActionDialog
+    bind:open={clearBasicAuthOpen}
+    title="Clear default basic authentication?"
+    description="Environments that already use these credentials keep working. New Environments will no longer have a default to apply."
+    confirmLabel="Clear default"
+    destructive
+    processing={basicAuthProcessing}
+    error={basicAuthError}
+    onconfirm={clearBasicAuth}
+  />
+
+  <Dialog.Root bind:open={basicAuthPasswordOpen}>
+    <Dialog.Content
+      ><Dialog.Header
+        ><Dialog.Title>Default basic auth password</Dialog.Title><Dialog.Description
+          >Copy this password now. DeployCrate stores only its hash and cannot
+          show it again.</Dialog.Description
+        ></Dialog.Header
+      >
+      <pre
+        class="whitespace-pre-wrap break-all border border-border bg-muted/30 p-3 font-mono text-xs">{basicAuthPassword}</pre>
+      <Dialog.Footer
+        ><Button
+          variant="outline"
+          onclick={() => navigator.clipboard.writeText(basicAuthPassword)}
+          >Copy password</Button
+        ><Button onclick={() => (basicAuthPasswordOpen = false)}>Done</Button
+        ></Dialog.Footer
+      ></Dialog.Content
+    >
+  </Dialog.Root>
 </DashboardLayout>

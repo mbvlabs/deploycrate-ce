@@ -9,6 +9,7 @@ export const routes = {
   applicationSourceEdit: (id: string) => `/applications/${id}/source/edit`,
   applicationSourceUpdate: (id: string) => `/applications/${id}/source`,
   applicationUpdate: (id: string) => `/applications/${id}`,
+  applicationBasicAuthUpdate: (id: string) => `/applications/${id}/basic-auth`,
   applications: () => '/applications',
   caddyCustomRouteDestroy: (id: string) => `/infrastructure/caddy/custom-routes/${id}`,
   caddyCustomRouteUpdate: (id: string) => `/infrastructure/caddy/custom-routes/${id}`,

@@ -30,7 +30,6 @@ import (
 	"github.com/gosimple/slug"
 	"github.com/riverqueue/river/rivertype"
 	"github.com/uptrace/bun"
-	"golang.org/x/crypto/bcrypt"
 )
 
 var goTargetsPattern = regexp.MustCompile(`^[A-Za-z0-9_./,:*-]*$`)
@@ -267,6 +266,8 @@ type EnvironmentOverview struct {
 	APITokenPrefix               string                              `json:"apiTokenPrefix"`
 	AccessMode                   string                              `json:"accessMode"`
 	BasicAuthUsername            string                              `json:"basicAuthUsername"`
+	HasApplicationBasicAuth      bool                                `json:"hasApplicationBasicAuth"`
+	ApplicationBasicAuthUsername string                              `json:"applicationBasicAuthUsername"`
 	PrivateNetworkAddress        string                              `json:"privateNetworkAddress"`
 	DNS                          EnvironmentDNSStatus                `json:"dns"`
 	CanPromoteToProduction       bool                                `json:"canPromoteToProduction"`
@@ -437,36 +438,42 @@ func (service *EnvironmentSetup) Overview(
 	if accessMode == "" {
 		accessMode = models.EnvironmentAccessPublic
 	}
+	application, err := models.Application.FindIncludingSystem(ctx, service.db.Executor(), applicationID)
+	if err != nil {
+		return EnvironmentOverview{}, err
+	}
 	return EnvironmentOverview{
-		ApplicationID:         applicationID,
-		ApplicationName:       source.ApplicationName,
-		Environment:           environment,
-		SetupComplete:         setupComplete,
-		SourceType:            source.SourceType,
-		Repository:            source.Repository,
-		Reference:             source.Reference,
-		ContextPath:           source.ContextPath,
-		RegistryName:          source.RegistryName,
-		RegistryEndpoint:      source.RegistryEndpoint,
-		RuntimeServerIDs:      runtimeServerIDs,
-		RuntimeTargetIDs:      runtimeTargetIDs,
-		RuntimeServers:        runtimeServerNames,
-		Deployability:         deployability,
-		Secrets:               secretActivity,
-		Variables:             variables,
-		Domain:                domain,
-		Resources:             resources,
-		Builds:                builds,
-		Releases:              releases,
-		Deployments:           deployments,
-		Instances:             instances,
-		Processes:             processes,
-		ReleaseCommands:       releaseCommands,
-		APITokenPrefix:        environment.APITokenPrefix.String,
-		AccessMode:            accessMode.String(),
-		BasicAuthUsername:     environment.BasicAuthUsername,
-		PrivateNetworkAddress: WireGuardPrivateAddress,
-		DNS:                   dnsStatus,
+		ApplicationID:                applicationID,
+		ApplicationName:              source.ApplicationName,
+		Environment:                  environment,
+		SetupComplete:                setupComplete,
+		SourceType:                   source.SourceType,
+		Repository:                   source.Repository,
+		Reference:                    source.Reference,
+		ContextPath:                  source.ContextPath,
+		RegistryName:                 source.RegistryName,
+		RegistryEndpoint:             source.RegistryEndpoint,
+		RuntimeServerIDs:             runtimeServerIDs,
+		RuntimeTargetIDs:             runtimeTargetIDs,
+		RuntimeServers:               runtimeServerNames,
+		Deployability:                deployability,
+		Secrets:                      secretActivity,
+		Variables:                    variables,
+		Domain:                       domain,
+		Resources:                    resources,
+		Builds:                       builds,
+		Releases:                     releases,
+		Deployments:                  deployments,
+		Instances:                    instances,
+		Processes:                    processes,
+		ReleaseCommands:              releaseCommands,
+		APITokenPrefix:               environment.APITokenPrefix.String,
+		AccessMode:                   accessMode.String(),
+		BasicAuthUsername:            environment.BasicAuthUsername,
+		HasApplicationBasicAuth:      application.HasBasicAuthDefault(),
+		ApplicationBasicAuthUsername: application.BasicAuthUsername,
+		PrivateNetworkAddress:        WireGuardPrivateAddress,
+		DNS:                          dnsStatus,
 
 		CanPromoteToProduction:       canPromote,
 		PromotionTargetName:          promotionTargetName,
@@ -1541,9 +1548,11 @@ func (service *EnvironmentSetup) RotateAPIToken(
 }
 
 type EnvironmentHTTPAccessInput struct {
-	AccessMode     string `json:"accessMode"`
-	Username       string `json:"username"`
-	RotatePassword bool   `json:"rotatePassword"`
+	AccessMode              string `json:"accessMode"`
+	Username                string `json:"username"`
+	Password                string `json:"password"`
+	RotatePassword          bool   `json:"rotatePassword"`
+	ApplyApplicationDefault bool   `json:"applyApplicationDefault"`
 }
 
 type EnvironmentHTTPAccessResult struct {
@@ -1557,12 +1566,16 @@ func (service *EnvironmentSetup) UpdateHTTPAccess(
 	applicationID, environmentID uuid.UUID,
 	input EnvironmentHTTPAccessInput,
 ) (EnvironmentHTTPAccessResult, error) {
-	mode, err := models.ParseEnvironmentAccessModeEnum(input.AccessMode)
-	if err != nil {
-		return EnvironmentHTTPAccessResult{}, errors.Join(
-			models.ErrDomainValidation,
-			err,
-		)
+	var mode models.EnvironmentAccessModeEnum
+	if !input.ApplyApplicationDefault {
+		parsed, parseErr := models.ParseEnvironmentAccessModeEnum(input.AccessMode)
+		if parseErr != nil {
+			return EnvironmentHTTPAccessResult{}, errors.Join(
+				models.ErrDomainValidation,
+				parseErr,
+			)
+		}
+		mode = parsed
 	}
 	username := strings.TrimSpace(input.Username)
 	tx, err := service.db.BeginTx(ctx, nil)
@@ -1579,28 +1592,37 @@ func (service *EnvironmentSetup) UpdateHTTPAccess(
 	update.BasicAuthUsername = ""
 	update.BasicAuthPasswordHash = ""
 	password := ""
-	if mode == models.EnvironmentAccessBasicAuth {
-		if username == "" {
-			username = strings.TrimSpace(environment.BasicAuthUsername)
+	if input.ApplyApplicationDefault {
+		application, appErr := models.Application.Find(ctx, tx, applicationID)
+		if appErr != nil {
+			return EnvironmentHTTPAccessResult{}, appErr
 		}
-		if username == "" {
-			username = "deploycrate"
+		if !application.HasBasicAuthDefault() {
+			return EnvironmentHTTPAccessResult{}, errors.Join(
+				models.ErrDomainValidation,
+				errors.New("this application has no default basic authentication"),
+			)
 		}
-		update.BasicAuthUsername = username
-		if input.RotatePassword || environment.BasicAuthPasswordHash == "" {
-			generated, generateErr := models.GenerateSecureToken()
-			if generateErr != nil {
-				return EnvironmentHTTPAccessResult{}, generateErr
-			}
-			password = strings.ToLower(generated)
-			hash, hashErr := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
-			if hashErr != nil {
-				return EnvironmentHTTPAccessResult{}, hashErr
-			}
-			update.BasicAuthPasswordHash = string(hash)
-		} else {
-			update.BasicAuthPasswordHash = environment.BasicAuthPasswordHash
+		mode = models.EnvironmentAccessBasicAuth
+		update.AccessMode = mode
+		update.BasicAuthUsername = application.BasicAuthUsername
+		update.BasicAuthPasswordHash = application.BasicAuthPasswordHash
+		username = application.BasicAuthUsername
+	} else if mode == models.EnvironmentAccessBasicAuth {
+		resolved, resolveErr := resolveBasicAuth(
+			environment.BasicAuthUsername,
+			environment.BasicAuthPasswordHash,
+			username,
+			input.Password,
+			input.RotatePassword,
+		)
+		if resolveErr != nil {
+			return EnvironmentHTTPAccessResult{}, resolveErr
 		}
+		update.BasicAuthUsername = resolved.Username
+		update.BasicAuthPasswordHash = resolved.Hash
+		username = resolved.Username
+		password = resolved.Password
 	}
 	if _, err := models.Environment.Update(ctx, tx, update); err != nil {
 		return EnvironmentHTTPAccessResult{}, err

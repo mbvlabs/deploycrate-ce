@@ -98,6 +98,7 @@
   let basicAuthUsernameDraft = $state(
     untrack(() => environment.basicAuthUsername || "deploycrate"),
   );
+  let basicAuthPasswordDraft = $state("");
   let httpAccessProcessing = $state(false);
   let httpAccessError = $state("");
   let httpAccessPassword = $state("");
@@ -673,10 +674,26 @@
       apiTokenProcessing = false;
     }
   }
-  async function saveHTTPAccess(rotatePassword: boolean) {
+  function generateLocalPassword() {
+    const bytes = new Uint8Array(18);
+    crypto.getRandomValues(bytes);
+    basicAuthPasswordDraft = btoa(String.fromCharCode(...bytes))
+      .replaceAll("+", "")
+      .replaceAll("/", "")
+      .replaceAll("=", "")
+      .slice(0, 24);
+  }
+  async function saveHTTPAccess(
+    rotatePassword: boolean,
+    applyApplicationDefault = false,
+  ) {
     if (httpAccessProcessing) return;
     httpAccessProcessing = true;
     httpAccessError = "";
+    const submittedPassword =
+      rotatePassword || applyApplicationDefault
+        ? ""
+        : basicAuthPasswordDraft.trim();
     try {
       const response = await window.fetch(
         routes.environmentHTTPAccessUpdate(
@@ -691,9 +708,16 @@
             "Content-Type": "application/json",
           },
           body: JSON.stringify({
-            accessMode: accessModeDraft,
+            accessMode: applyApplicationDefault
+              ? "basic_auth"
+              : accessModeDraft,
             username: basicAuthUsernameDraft,
+            password:
+              rotatePassword || applyApplicationDefault
+                ? ""
+                : basicAuthPasswordDraft,
             rotatePassword,
+            applyApplicationDefault,
           }),
         },
       );
@@ -707,8 +731,9 @@
         throw new Error(payload.error || "HTTP access could not be updated");
       if (payload.accessMode) accessModeDraft = payload.accessMode;
       if (payload.username) basicAuthUsernameDraft = payload.username;
-      if (payload.password) {
-        httpAccessPassword = payload.password;
+      basicAuthPasswordDraft = "";
+      if (payload.password || submittedPassword) {
+        httpAccessPassword = payload.password || submittedPassword;
         httpAccessPasswordOpen = true;
       }
       router.reload({ only: ["environment"], preserveScroll: true });
@@ -1549,13 +1574,25 @@
                   aria-label="Basic auth username"
                 />
               </div>
+              <div class="space-y-2 sm:col-span-2">
+                <p class="text-sm font-medium">Password</p>
+                <Input
+                  bind:value={basicAuthPasswordDraft}
+                  type="text"
+                  autocomplete="off"
+                  placeholder={environment.accessMode === "basic_auth"
+                    ? "Leave blank to keep the current password"
+                    : "Enter a password or generate one"}
+                  aria-label="Basic auth password"
+                />
+              </div>
             {/if}
           </div>
           {#if accessModeDraft === "basic_auth"}
             <p class="text-sm text-muted-foreground">
               Visitors to {environment.domain || "this hostname"} must sign in
-              with HTTP basic authentication. The password is shown only when
-              it is created or rotated.
+              with HTTP basic authentication. Enter a password or generate one.
+              A generated password is shown once.
             </p>
           {:else if accessModeDraft === "private_network"}
             <p class="text-sm text-muted-foreground">
@@ -1584,7 +1621,21 @@
               onclick={() => void saveHTTPAccess(false)}
               >{#if httpAccessProcessing}<Spinner />{/if}Save access</Button
             >
+            {#if environment.hasApplicationBasicAuth}
+              <Button
+                variant="outline"
+                disabled={httpAccessProcessing}
+                onclick={() => void saveHTTPAccess(false, true)}
+                >Use {environment.applicationBasicAuthUsername ||
+                  "application"} default</Button
+              >
+            {/if}
             {#if accessModeDraft === "basic_auth"}
+              <Button
+                variant="outline"
+                disabled={httpAccessProcessing}
+                onclick={generateLocalPassword}>Generate password</Button
+              >
               <Button
                 variant="outline"
                 disabled={httpAccessProcessing}

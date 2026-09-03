@@ -6,6 +6,7 @@ import (
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,17 +20,34 @@ var ErrSystemApplicationImmutable = errors.New(
 )
 
 type ApplicationEntity struct {
-	bun.BaseModel `bun:"table:applications,alias:applications"`
-	ID            uuid.UUID    `bun:"id,pk,type:uuid"`
-	CreatedAt     time.Time    `bun:"created_at"`
-	UpdatedAt     time.Time    `bun:"updated_at"`
-	Name          string       `bun:"name"`
-	Slug          string       `bun:"slug"`
-	ArchivedAt    sql.NullTime `bun:"archived_at"`
+	bun.BaseModel         `bun:"table:applications,alias:applications"`
+	ID                    uuid.UUID    `bun:"id,pk,type:uuid"`
+	CreatedAt             time.Time    `bun:"created_at"`
+	UpdatedAt             time.Time    `bun:"updated_at"`
+	Name                  string       `bun:"name"`
+	Slug                  string       `bun:"slug"`
+	BasicAuthUsername     string       `bun:"basic_auth_username"`
+	BasicAuthPasswordHash string       `bun:"basic_auth_password_hash" json:"-"`
+	ArchivedAt            sql.NullTime `bun:"archived_at"`
 }
 
 func (e *ApplicationEntity) Validate() error {
-	return nil
+	e.BasicAuthUsername = strings.TrimSpace(e.BasicAuthUsername)
+	e.BasicAuthPasswordHash = strings.TrimSpace(e.BasicAuthPasswordHash)
+	builder := validation.NewBuilder()
+	if (e.BasicAuthUsername == "") != (e.BasicAuthPasswordHash == "") {
+		builder.Add(
+			"basicAuthUsername",
+			"conflict",
+			"application basic authentication requires both a username and a password",
+		)
+	}
+	return builder.Err()
+}
+
+func (e ApplicationEntity) HasBasicAuthDefault() bool {
+	return strings.TrimSpace(e.BasicAuthUsername) != "" &&
+		strings.TrimSpace(e.BasicAuthPasswordHash) != ""
 }
 
 func (e ApplicationEntity) IsSystem() bool {
@@ -112,9 +130,11 @@ func (application) EnsureSlugAvailable(
 }
 
 type CreateApplicationData struct {
-	Name       string
-	Slug       string
-	ArchivedAt sql.NullTime
+	Name                  string
+	Slug                  string
+	BasicAuthUsername     string
+	BasicAuthPasswordHash string
+	ArchivedAt            sql.NullTime
 }
 
 func (a application) Create(
@@ -123,12 +143,14 @@ func (a application) Create(
 	data CreateApplicationData,
 ) (ApplicationEntity, error) {
 	entity := ApplicationEntity{
-		ID:         uuid.New(),
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
-		Name:       data.Name,
-		Slug:       data.Slug,
-		ArchivedAt: data.ArchivedAt,
+		ID:                    uuid.New(),
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
+		Name:                  data.Name,
+		Slug:                  data.Slug,
+		BasicAuthUsername:     data.BasicAuthUsername,
+		BasicAuthPasswordHash: data.BasicAuthPasswordHash,
+		ArchivedAt:            data.ArchivedAt,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -143,11 +165,24 @@ func (a application) Create(
 }
 
 type UpdateApplicationData struct {
-	ID         uuid.UUID
-	UpdatedAt  time.Time
-	Name       string
-	Slug       string
-	ArchivedAt sql.NullTime
+	ID                    uuid.UUID
+	UpdatedAt             time.Time
+	Name                  string
+	Slug                  string
+	BasicAuthUsername     string
+	BasicAuthPasswordHash string
+	ArchivedAt            sql.NullTime
+}
+
+func (e ApplicationEntity) UpdateData() UpdateApplicationData {
+	return UpdateApplicationData{
+		ID:                    e.ID,
+		Name:                  e.Name,
+		Slug:                  e.Slug,
+		BasicAuthUsername:     e.BasicAuthUsername,
+		BasicAuthPasswordHash: e.BasicAuthPasswordHash,
+		ArchivedAt:            e.ArchivedAt,
+	}
 }
 
 func (a application) Update(
@@ -164,11 +199,13 @@ func (a application) Update(
 	}
 
 	entity := ApplicationEntity{
-		ID:         data.ID,
-		UpdatedAt:  time.Now(),
-		Name:       data.Name,
-		Slug:       data.Slug,
-		ArchivedAt: data.ArchivedAt,
+		ID:                    data.ID,
+		UpdatedAt:             time.Now(),
+		Name:                  data.Name,
+		Slug:                  data.Slug,
+		BasicAuthUsername:     data.BasicAuthUsername,
+		BasicAuthPasswordHash: data.BasicAuthPasswordHash,
+		ArchivedAt:            data.ArchivedAt,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -180,6 +217,8 @@ func (a application) Update(
 		Column("updated_at").
 		Column("name").
 		Column("slug").
+		Column("basic_auth_username").
+		Column("basic_auth_password_hash").
 		Column("archived_at").
 		WherePK().
 		Returning("*").
@@ -291,12 +330,14 @@ func (a application) Upsert(
 	data CreateApplicationData,
 ) (ApplicationEntity, error) {
 	entity := ApplicationEntity{
-		ID:         uuid.New(),
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
-		Name:       data.Name,
-		Slug:       data.Slug,
-		ArchivedAt: data.ArchivedAt,
+		ID:                    uuid.New(),
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
+		Name:                  data.Name,
+		Slug:                  data.Slug,
+		BasicAuthUsername:     data.BasicAuthUsername,
+		BasicAuthPasswordHash: data.BasicAuthPasswordHash,
+		ArchivedAt:            data.ArchivedAt,
 	}
 
 	if err := validation.Validate(&entity); err != nil {
@@ -308,6 +349,8 @@ func (a application) Upsert(
 		On("CONFLICT (id) DO UPDATE").
 		Set("name = excluded.name").
 		Set("slug = excluded.slug").
+		Set("basic_auth_username = excluded.basic_auth_username").
+		Set("basic_auth_password_hash = excluded.basic_auth_password_hash").
 		Set("archived_at = excluded.archived_at").
 		Returning("*").
 		Scan(ctx); err != nil {
