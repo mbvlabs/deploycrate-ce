@@ -78,7 +78,9 @@
   }));
   const confirmForm = useForm(() => ({ fingerprint: node.fingerprint }));
   function confirm() {
-    $confirmForm.post(routes.nodeConfirm(node.id));
+    $confirmForm
+      .transform(() => ({ fingerprint: node.fingerprint }))
+      .post(routes.nodeConfirm(node.id));
   }
   function retry() {
     retrying = true;
