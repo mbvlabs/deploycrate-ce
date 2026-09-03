@@ -1,5 +1,6 @@
 <script lang="ts">
   import { useForm } from "@inertiajs/svelte";
+  import * as Alert from "@/Components/ui/alert";
   import { Button } from "@/Components/ui/button";
   import * as Card from "@/Components/ui/card";
   import { Checkbox } from "@/Components/ui/checkbox";
@@ -13,11 +14,7 @@
 
   type BuildpackRuntime = "go" | "rails" | "laravel" | "django";
   type CapabilityKey =
-    | "build"
-    | "runtime"
-    | "resource"
-    | "database"
-    | "repository";
+    "build" | "runtime" | "resource" | "database" | "repository";
   const capabilityOptions: Array<[CapabilityKey, string, string]> = [
     ["build", "Builds", "Buildpacks and image creation"],
     ["runtime", "Applications", "Environment workload deployments"],
@@ -42,7 +39,10 @@
   const capabilityCheckboxClass =
     "mt-1 data-checked:border-foreground data-checked:bg-foreground data-checked:text-background dark:data-checked:border-foreground dark:data-checked:bg-foreground";
 
-  let { auth }: { auth: { email: string } } = $props();
+  let {
+    auth,
+    setupError = "",
+  }: { auth: { email: string }; setupError?: string } = $props();
   const form = useForm(() => ({
     name: "",
     address: "",
@@ -98,6 +98,12 @@
         Connect an existing Debian 13 VPS. DeployCrate does not create the VPS.
       </p>
     </header>
+    {#if setupError}
+      <Alert.Root variant="destructive">
+        <Alert.Title>The node could not be created</Alert.Title>
+        <Alert.Description>{setupError}</Alert.Description>
+      </Alert.Root>
+    {/if}
     <Card.Root>
       <Card.Header
         ><Card.Title>Server access</Card.Title><Card.Description
@@ -234,7 +240,7 @@
           type="submit"
           disabled={$form.processing}
           aria-busy={$form.processing}
-          >{#if $form.processing}<Spinner />{/if}Inspect host key</Button
+          >{#if $form.processing}<Spinner />{/if}Create Node</Button
         ></Card.Footer
       >
     </Card.Root>

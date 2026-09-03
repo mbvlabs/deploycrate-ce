@@ -6,10 +6,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"strings"
 	"testing"
 
 	"deploycrate-ce/database/seeds"
+	"deploycrate-ce/internal/setup"
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/models"
 	"deploycrate-ce/queue"
@@ -154,6 +157,81 @@ func TestNodesControllerCreateValidationDoesNotWriteDatabase(t *testing.T) {
 	}
 	if serverCount != 0 {
 		t.Fatalf("Server count after invalid create = %d, want 0", serverCount)
+	}
+}
+
+func TestNodesControllerCreateShowsSSHProbeError(t *testing.T) {
+	db := newControllerTestDB(t, nil)
+	configuration := controllerTestConfig(t)
+	controller := NewNodes(
+		services.NewNodeEnrollment(
+			db,
+			queue.InsertOnly{},
+			configuration,
+			services.CurrentVersion("integration"),
+			services.NewSSHCAService(configuration),
+			nil,
+		),
+		services.NewServerManagement(db, nil),
+	)
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen for incomplete SSH handshake: %v", err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	accepted := make(chan error, 1)
+	go func() {
+		connection, acceptErr := listener.Accept()
+		if acceptErr == nil {
+			acceptErr = connection.Close()
+		}
+		accepted <- acceptErr
+	}()
+	address := listener.Addr().(*net.TCPAddr)
+	_, privateKey, err := setup.GenerateSSHKeyPair()
+	if err != nil {
+		t.Fatalf("generate Node private key: %v", err)
+	}
+
+	page := requireControllerComponent(t, controllerRequest(
+		t,
+		http.MethodPost,
+		routes.NodeCreate.URL(),
+		map[string]any{
+			"name":       "Incomplete SSH server",
+			"address":    address.IP.String(),
+			"port":       address.Port,
+			"username":   "root",
+			"privateKey": privateKey,
+			"capabilities": map[string]any{
+				"runtime": true, "resource": true, "telemetry": true,
+			},
+		},
+		nil,
+		controller.Create,
+	), "Nodes/New")
+	if err := listener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("close incomplete SSH listener: %v", err)
+	}
+	if err := <-accepted; err != nil {
+		t.Fatalf("accept incomplete SSH connection: %v", err)
+	}
+	var setupError string
+	if err := json.Unmarshal(page.Props["setupError"], &setupError); err != nil {
+		t.Fatalf("decode Node setup error: %v", err)
+	}
+	if !strings.Contains(setupError, "read SSH host key") {
+		t.Fatalf("Node setup error = %q, want SSH host-key error", setupError)
+	}
+	serverCount, err := db.Executor().
+		NewSelect().
+		Model((*models.ServerEntity)(nil)).
+		Count(t.Context())
+	if err != nil {
+		t.Fatalf("count Servers after SSH probe failure: %v", err)
+	}
+	if serverCount != 0 {
+		t.Fatalf("Server count after SSH probe failure = %d, want 0", serverCount)
 	}
 }
 
