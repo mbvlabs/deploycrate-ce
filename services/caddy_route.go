@@ -100,6 +100,14 @@ func (service CaddyRouteService) Reconcile(ctx context.Context, routeID uuid.UUI
 	if domain.ArchivedAt.Valid {
 		return "", errors.New("cannot reconcile a Caddy route for an archived domain")
 	}
+	environment, err := models.Environment.Find(
+		ctx,
+		service.db.Executor(),
+		domain.EnvironmentID,
+	)
+	if err != nil {
+		return "", fmt.Errorf("load Caddy route Environment: %w", err)
+	}
 	healthPath, err := models.CaddyRoute.DesiredHealthPath(
 		ctx,
 		service.db.Executor(),
@@ -141,9 +149,18 @@ func (service CaddyRouteService) Reconcile(ctx context.Context, routeID uuid.UUI
 		})
 	}
 
-	if err := service.caddy.ApplyRoute(ctx, caddyclients.Route{
+	applied := caddyclients.Route{
 		ID: route.ExternalID, Domain: domain.Hostname, Backends: backends, HealthPath: healthPath,
-	}); err != nil {
+	}
+	if environment.AccessMode == models.EnvironmentAccessBasicAuth {
+		applied.Authentication = &caddyclients.BasicAuthentication{
+			Username: environment.BasicAuthUsername, PasswordHash: environment.BasicAuthPasswordHash,
+		}
+	}
+	if environment.AccessMode == models.EnvironmentAccessPrivateNetwork {
+		applied.PrivateNetworkOnly = true
+	}
+	if err := service.caddy.ApplyRoute(ctx, applied); err != nil {
 		return "", fmt.Errorf("apply Caddy route desired state: %w", err)
 	}
 	now := sql.NullTime{Time: time.Now().UTC(), Valid: true}
@@ -416,6 +433,7 @@ type ManagedCaddyRoute struct {
 	ReleaseLabel        string                     `json:"releaseLabel"`
 	ServerName          string                     `json:"serverName"`
 	HealthPath          string                     `json:"healthPath"`
+	AccessMode          string                     `json:"accessMode"`
 	AppliedAt           string                     `json:"appliedAt"`
 	ObservedAt          string                     `json:"observedAt"`
 	Backends            []ManagedCaddyRouteBackend `json:"backends"`
@@ -474,6 +492,7 @@ type ManagedCaddyRouteDetail struct {
 	Source             string                     `json:"source"`
 	Target             string                     `json:"target"`
 	HealthPath         string                     `json:"healthPath"`
+	AccessMode         string                     `json:"accessMode"`
 	AppliedAt          string                     `json:"appliedAt"`
 	ObservedAt         string                     `json:"observedAt"`
 	Backends           []ManagedCaddyRouteBackend `json:"backends"`
@@ -503,8 +522,8 @@ func (service CaddyRouteService) RouteDetail(
 			ExternalID: route.ExternalID, Kind: "environment", Hostname: route.Hostname,
 			State: route.State, Source: route.ApplicationName + " / " + route.EnvironmentName,
 			Target: route.ServerName + " / " + route.ReleaseLabel, HealthPath: route.HealthPath,
-			AppliedAt: route.AppliedAt, ObservedAt: route.ObservedAt, Backends: route.Backends,
-			EnvironmentRoute: &route, Options: snapshot.Options,
+			AccessMode: route.AccessMode, AppliedAt: route.AppliedAt, ObservedAt: route.ObservedAt,
+			Backends: route.Backends, EnvironmentRoute: &route, Options: snapshot.Options,
 		}
 		break
 	}
@@ -584,6 +603,7 @@ func (service CaddyRouteService) ManagementSnapshot(
 			ReleaseLabel:        row.ReleaseLabel,
 			ServerName:          row.ServerName,
 			HealthPath:          row.HealthPath,
+			AccessMode:          row.AccessMode,
 			AppliedAt:           nullableTimeString(row.AppliedAt),
 			ObservedAt:          nullableTimeString(row.ObservedAt),
 			Backends:            make([]ManagedCaddyRouteBackend, 0),

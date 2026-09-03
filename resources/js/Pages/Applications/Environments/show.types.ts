@@ -239,6 +239,9 @@ export type Overview = {
   processes: Process[];
   releaseCommands: ReleaseCommand[];
   apiTokenPrefix: string;
+  accessMode: "public" | "basic_auth" | "private_network";
+  basicAuthUsername: string;
+  privateNetworkAddress: string;
   dns: DNSStatus;
   canPromoteToProduction: boolean;
   promotionTargetName: string;

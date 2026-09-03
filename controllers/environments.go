@@ -100,6 +100,7 @@ func (c Environments) RegisterRoutes(router *router.Router) error {
 		{http.MethodPost, routes.EnvironmentDeploymentRetry, c.RetryDeployment},
 		{http.MethodPost, routes.EnvironmentDeploymentStop, c.StopDeployment},
 		{http.MethodPost, routes.EnvironmentAPITokenRotate, c.RotateAPIToken},
+		{http.MethodPost, routes.EnvironmentHTTPAccessUpdate, c.UpdateHTTPAccess},
 		{http.MethodPost, routes.EnvironmentDNSAdopt, c.AdoptDNS},
 		{http.MethodPost, routes.EnvironmentDNSRetry, c.RetryDNS},
 		{http.MethodPost, routes.EnvironmentDNSRefresh, c.RefreshDNS},
@@ -143,6 +144,36 @@ func (c Environments) RotateAPIToken(etx *echo.Context) error {
 	}
 	etx.Response().Header().Set("Cache-Control", "no-store")
 	return etx.JSON(http.StatusCreated, map[string]string{"token": token})
+}
+
+func (c Environments) UpdateHTTPAccess(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	if err != nil {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Environment not found"})
+	}
+	var payload services.EnvironmentHTTPAccessInput
+	if bindErr := etx.Bind(&payload); bindErr != nil {
+		return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "invalid request"})
+	}
+	result, err := c.envSetupSvc.UpdateHTTPAccess(
+		etx.Request().Context(),
+		params.ApplicationID,
+		params.EnvironmentID,
+		payload,
+	)
+	if err != nil {
+		status := http.StatusUnprocessableEntity
+		if errors.Is(err, models.ErrNotFound) {
+			status = http.StatusNotFound
+		}
+		return etx.JSON(status, map[string]string{"error": err.Error()})
+	}
+	etx.Response().Header().Set("Cache-Control", "no-store")
+	response := map[string]string{"accessMode": result.AccessMode, "username": result.Username}
+	if result.Password != "" {
+		response["password"] = result.Password
+	}
+	return etx.JSON(http.StatusOK, response)
 }
 
 func (c Environments) Logs(etx *echo.Context) error {
@@ -737,6 +768,9 @@ func environmentOverviewProps(overview services.EnvironmentOverview) map[string]
 		"processes":                    overview.Processes,
 		"releaseCommands":              overview.ReleaseCommands,
 		"apiTokenPrefix":               overview.APITokenPrefix,
+		"accessMode":                   overview.AccessMode,
+		"basicAuthUsername":            overview.BasicAuthUsername,
+		"privateNetworkAddress":        overview.PrivateNetworkAddress,
 		"dns":                          overview.DNS,
 		"canPromoteToProduction":       overview.CanPromoteToProduction,
 		"promotionTargetName":          overview.PromotionTargetName,

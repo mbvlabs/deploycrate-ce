@@ -30,6 +30,7 @@ import (
 	"github.com/gosimple/slug"
 	"github.com/riverqueue/river/rivertype"
 	"github.com/uptrace/bun"
+	"golang.org/x/crypto/bcrypt"
 )
 
 var goTargetsPattern = regexp.MustCompile(`^[A-Za-z0-9_./,:*-]*$`)
@@ -264,6 +265,9 @@ type EnvironmentOverview struct {
 	Processes                    []models.EnvironmentProcessState    `json:"processes"`
 	ReleaseCommands              []EnvironmentReleaseCommandActivity `json:"releaseCommands"`
 	APITokenPrefix               string                              `json:"apiTokenPrefix"`
+	AccessMode                   string                              `json:"accessMode"`
+	BasicAuthUsername            string                              `json:"basicAuthUsername"`
+	PrivateNetworkAddress        string                              `json:"privateNetworkAddress"`
 	DNS                          EnvironmentDNSStatus                `json:"dns"`
 	CanPromoteToProduction       bool                                `json:"canPromoteToProduction"`
 	PromotionTargetName          string                              `json:"promotionTargetName"`
@@ -429,33 +433,40 @@ func (service *EnvironmentSetup) Overview(
 	if err != nil {
 		return EnvironmentOverview{}, err
 	}
+	accessMode := environment.AccessMode
+	if accessMode == "" {
+		accessMode = models.EnvironmentAccessPublic
+	}
 	return EnvironmentOverview{
-		ApplicationID:    applicationID,
-		ApplicationName:  source.ApplicationName,
-		Environment:      environment,
-		SetupComplete:    setupComplete,
-		SourceType:       source.SourceType,
-		Repository:       source.Repository,
-		Reference:        source.Reference,
-		ContextPath:      source.ContextPath,
-		RegistryName:     source.RegistryName,
-		RegistryEndpoint: source.RegistryEndpoint,
-		RuntimeServerIDs: runtimeServerIDs,
-		RuntimeTargetIDs: runtimeTargetIDs,
-		RuntimeServers:   runtimeServerNames,
-		Deployability:    deployability,
-		Secrets:          secretActivity,
-		Variables:        variables,
-		Domain:           domain,
-		Resources:        resources,
-		Builds:           builds,
-		Releases:         releases,
-		Deployments:      deployments,
-		Instances:        instances,
-		Processes:        processes,
-		ReleaseCommands:  releaseCommands,
-		APITokenPrefix:   environment.APITokenPrefix.String,
-		DNS:              dnsStatus,
+		ApplicationID:         applicationID,
+		ApplicationName:       source.ApplicationName,
+		Environment:           environment,
+		SetupComplete:         setupComplete,
+		SourceType:            source.SourceType,
+		Repository:            source.Repository,
+		Reference:             source.Reference,
+		ContextPath:           source.ContextPath,
+		RegistryName:          source.RegistryName,
+		RegistryEndpoint:      source.RegistryEndpoint,
+		RuntimeServerIDs:      runtimeServerIDs,
+		RuntimeTargetIDs:      runtimeTargetIDs,
+		RuntimeServers:        runtimeServerNames,
+		Deployability:         deployability,
+		Secrets:               secretActivity,
+		Variables:             variables,
+		Domain:                domain,
+		Resources:             resources,
+		Builds:                builds,
+		Releases:              releases,
+		Deployments:           deployments,
+		Instances:             instances,
+		Processes:             processes,
+		ReleaseCommands:       releaseCommands,
+		APITokenPrefix:        environment.APITokenPrefix.String,
+		AccessMode:            accessMode.String(),
+		BasicAuthUsername:     environment.BasicAuthUsername,
+		PrivateNetworkAddress: WireGuardPrivateAddress,
+		DNS:                   dnsStatus,
 
 		CanPromoteToProduction:       canPromote,
 		PromotionTargetName:          promotionTargetName,
@@ -1517,25 +1528,107 @@ func (service *EnvironmentSetup) RotateAPIToken(
 	if err != nil || environment.ApplicationID != applicationID || environment.ArchivedAt.Valid {
 		return "", errors.New("Environment is unavailable")
 	}
-	if _, err := models.Environment.Update(ctx, tx, models.UpdateEnvironmentData{
-		ID:   environment.ID,
-		Name: environment.Name,
-		Slug: environment.Slug,
-		Kind: environment.Kind,
-		APITokenPrefix: sql.NullString{
-			String: token[:prefixLength],
-			Valid:  true,
-		},
-		APITokenDigest: digest,
-		ArchivedAt:     environment.ArchivedAt,
-		ApplicationID:  environment.ApplicationID,
-	}); err != nil {
+	update := environment.UpdateData()
+	update.APITokenPrefix = sql.NullString{String: token[:prefixLength], Valid: true}
+	update.APITokenDigest = digest
+	if _, err := models.Environment.Update(ctx, tx, update); err != nil {
 		return "", err
 	}
 	if err := tx.Commit(); err != nil {
 		return "", err
 	}
 	return token, nil
+}
+
+type EnvironmentHTTPAccessInput struct {
+	AccessMode     string `json:"accessMode"`
+	Username       string `json:"username"`
+	RotatePassword bool   `json:"rotatePassword"`
+}
+
+type EnvironmentHTTPAccessResult struct {
+	AccessMode string `json:"accessMode"`
+	Username   string `json:"username"`
+	Password   string `json:"password,omitempty"`
+}
+
+func (service *EnvironmentSetup) UpdateHTTPAccess(
+	ctx context.Context,
+	applicationID, environmentID uuid.UUID,
+	input EnvironmentHTTPAccessInput,
+) (EnvironmentHTTPAccessResult, error) {
+	mode, err := models.ParseEnvironmentAccessModeEnum(input.AccessMode)
+	if err != nil {
+		return EnvironmentHTTPAccessResult{}, errors.Join(
+			models.ErrDomainValidation,
+			err,
+		)
+	}
+	username := strings.TrimSpace(input.Username)
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return EnvironmentHTTPAccessResult{}, err
+	}
+	defer tx.Rollback()
+	environment, err := models.Environment.Lock(ctx, tx, environmentID)
+	if err != nil || environment.ApplicationID != applicationID || environment.ArchivedAt.Valid {
+		return EnvironmentHTTPAccessResult{}, errors.New("Environment is unavailable")
+	}
+	update := environment.UpdateData()
+	update.AccessMode = mode
+	update.BasicAuthUsername = ""
+	update.BasicAuthPasswordHash = ""
+	password := ""
+	if mode == models.EnvironmentAccessBasicAuth {
+		if username == "" {
+			username = strings.TrimSpace(environment.BasicAuthUsername)
+		}
+		if username == "" {
+			username = "deploycrate"
+		}
+		update.BasicAuthUsername = username
+		if input.RotatePassword || environment.BasicAuthPasswordHash == "" {
+			generated, generateErr := models.GenerateSecureToken()
+			if generateErr != nil {
+				return EnvironmentHTTPAccessResult{}, generateErr
+			}
+			password = strings.ToLower(generated)
+			hash, hashErr := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+			if hashErr != nil {
+				return EnvironmentHTTPAccessResult{}, hashErr
+			}
+			update.BasicAuthPasswordHash = string(hash)
+		} else {
+			update.BasicAuthPasswordHash = environment.BasicAuthPasswordHash
+		}
+	}
+	if _, err := models.Environment.Update(ctx, tx, update); err != nil {
+		return EnvironmentHTTPAccessResult{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return EnvironmentHTTPAccessResult{}, err
+	}
+	routes, err := models.CaddyRoute.ActiveForEnvironment(
+		ctx,
+		service.db.Executor(),
+		environmentID,
+	)
+	if err != nil {
+		return EnvironmentHTTPAccessResult{}, fmt.Errorf("load Environment Caddy routes: %w", err)
+	}
+	for _, route := range routes {
+		if _, reconcileErr := service.caddy.Reconcile(ctx, route.ID); reconcileErr != nil {
+			if strings.Contains(reconcileErr.Error(), "no active backends") {
+				continue
+			}
+			return EnvironmentHTTPAccessResult{}, reconcileErr
+		}
+	}
+	return EnvironmentHTTPAccessResult{
+		AccessMode: mode.String(),
+		Username:   username,
+		Password:   password,
+	}, nil
 }
 
 func (service *EnvironmentSetup) AuthenticateAPIToken(
@@ -2851,11 +2944,11 @@ func (service *EnvironmentSetup) UpdateEnvironment(
 			errors.New("Environment slug is already in use"),
 		)
 	}
-	if _, err := models.Environment.Update(ctx, tx, models.UpdateEnvironmentData{
-		ID: environment.ID, Name: input.Name, Slug: input.Slug, Kind: input.Kind,
-		APITokenPrefix: environment.APITokenPrefix, APITokenDigest: environment.APITokenDigest,
-		ArchivedAt: environment.ArchivedAt, ApplicationID: applicationID,
-	}); err != nil {
+	update := environment.UpdateData()
+	update.Name = input.Name
+	update.Slug = input.Slug
+	update.Kind = input.Kind
+	if _, err := models.Environment.Update(ctx, tx, update); err != nil {
 		return err
 	}
 	persistedRuntime, err := models.RuntimeConfiguration.FindForEnvironment(ctx, tx, environmentID)

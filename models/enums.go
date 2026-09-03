@@ -1,6 +1,9 @@
 package models
 
-import "errors"
+import (
+	"errors"
+	"strings"
+)
 
 type ResourceTypeEnum string
 
@@ -60,4 +63,33 @@ func ParseCaddyRouteStateEnum(value string) (CaddyRouteStateEnum, error) {
 		return "", errors.New("invalid Caddy route state")
 	}
 	return state, nil
+}
+
+type EnvironmentAccessModeEnum string
+
+const (
+	EnvironmentAccessPublic         EnvironmentAccessModeEnum = "public"
+	EnvironmentAccessBasicAuth      EnvironmentAccessModeEnum = "basic_auth"
+	EnvironmentAccessPrivateNetwork EnvironmentAccessModeEnum = "private_network"
+)
+
+func (mode EnvironmentAccessModeEnum) IsValid() bool {
+	switch mode {
+	case EnvironmentAccessPublic, EnvironmentAccessBasicAuth, EnvironmentAccessPrivateNetwork:
+		return true
+	default:
+		return false
+	}
+}
+
+func (mode EnvironmentAccessModeEnum) String() string {
+	return string(mode)
+}
+
+func ParseEnvironmentAccessModeEnum(value string) (EnvironmentAccessModeEnum, error) {
+	mode := EnvironmentAccessModeEnum(strings.TrimSpace(value))
+	if !mode.IsValid() {
+		return "", errors.New("invalid Environment access mode")
+	}
+	return mode, nil
 }

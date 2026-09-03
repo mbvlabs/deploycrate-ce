@@ -27,6 +27,7 @@ export const routes = {
   dnsConnectionTokenUpdate: (id: string) => `/connections/dns/${id}/token`,
   dnsConnections: () => '/connections/dns',
   environmentAPITokenRotate: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/api-token`,
+  environmentHTTPAccessUpdate: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/http-access`,
   environmentBuildLogs: (environmentID: string, buildID: string) => `/environments/${environmentID}/builds/${buildID}/logs`,
   environmentBuildRetry: (applicationID: string, environmentID: string, buildID: string) => `/applications/${applicationID}/environments/${environmentID}/builds/${buildID}/retry`,
   environmentBuildStart: (applicationID: string, environmentID: string, buildID: string) => `/applications/${applicationID}/environments/${environmentID}/builds/${buildID}/start`,

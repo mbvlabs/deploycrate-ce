@@ -92,6 +92,16 @@
   let apiTokenDialogOpen = $state(false);
   let apiTokenConfirmOpen = $state(false);
   let apiTokenProcessing = $state(false);
+  let accessModeDraft = $state<"public" | "basic_auth" | "private_network">(
+    untrack(() => environment.accessMode || "public"),
+  );
+  let basicAuthUsernameDraft = $state(
+    untrack(() => environment.basicAuthUsername || "deploycrate"),
+  );
+  let httpAccessProcessing = $state(false);
+  let httpAccessError = $state("");
+  let httpAccessPassword = $state("");
+  let httpAccessPasswordOpen = $state(false);
   let deploymentCreationProcessing = $state(false);
   let containerActionProcessing = $state(false);
   let dnsActionProcessing = $state(false);
@@ -661,6 +671,54 @@
           : "API token could not be created";
     } finally {
       apiTokenProcessing = false;
+    }
+  }
+  async function saveHTTPAccess(rotatePassword: boolean) {
+    if (httpAccessProcessing) return;
+    httpAccessProcessing = true;
+    httpAccessError = "";
+    try {
+      const response = await window.fetch(
+        routes.environmentHTTPAccessUpdate(
+          environment.applicationId,
+          environment.environment.id,
+        ),
+        {
+          method: "POST",
+          credentials: "same-origin",
+          headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            accessMode: accessModeDraft,
+            username: basicAuthUsernameDraft,
+            rotatePassword,
+          }),
+        },
+      );
+      const payload = (await response.json()) as {
+        accessMode?: "public" | "basic_auth" | "private_network";
+        username?: string;
+        password?: string;
+        error?: string;
+      };
+      if (!response.ok)
+        throw new Error(payload.error || "HTTP access could not be updated");
+      if (payload.accessMode) accessModeDraft = payload.accessMode;
+      if (payload.username) basicAuthUsernameDraft = payload.username;
+      if (payload.password) {
+        httpAccessPassword = payload.password;
+        httpAccessPasswordOpen = true;
+      }
+      router.reload({ only: ["environment"], preserveScroll: true });
+    } catch (error) {
+      httpAccessError =
+        error instanceof Error
+          ? error.message
+          : "HTTP access could not be updated";
+    } finally {
+      httpAccessProcessing = false;
     }
   }
   function redeployRelease(releaseId: string) {
@@ -1444,6 +1502,99 @@
           </Card.Content>
         </Card.Root>
       </section>
+
+      <Card.Root>
+        <Card.Header
+          ><Card.Action
+            ><StatusBadge
+              status={environment.accessMode === "basic_auth"
+                ? "warning"
+                : environment.accessMode === "private_network"
+                  ? "active"
+                  : "applied"}
+              label={environment.accessMode === "basic_auth"
+                ? "Basic auth"
+                : environment.accessMode === "private_network"
+                  ? "Private network"
+                  : "Public"}
+            /></Card.Action
+          ><Card.Title>HTTP access</Card.Title><Card.Description
+            >Restrict who can reach this Environment's public hostname.</Card.Description
+          ></Card.Header
+        >
+        <Card.Content class="space-y-4">
+          <div class="grid gap-4 sm:grid-cols-2">
+            <div class="space-y-2">
+              <p class="text-sm font-medium">Access mode</p>
+              <NativeSelect.Root
+                class="w-full"
+                bind:value={accessModeDraft}
+                aria-label="HTTP access mode"
+              >
+                <NativeSelect.Option value="public">Public</NativeSelect.Option>
+                <NativeSelect.Option value="basic_auth"
+                  >Basic auth</NativeSelect.Option
+                >
+                <NativeSelect.Option value="private_network"
+                  >Private network</NativeSelect.Option
+                >
+              </NativeSelect.Root>
+            </div>
+            {#if accessModeDraft === "basic_auth"}
+              <div class="space-y-2">
+                <p class="text-sm font-medium">Username</p>
+                <Input
+                  bind:value={basicAuthUsernameDraft}
+                  autocomplete="off"
+                  aria-label="Basic auth username"
+                />
+              </div>
+            {/if}
+          </div>
+          {#if accessModeDraft === "basic_auth"}
+            <p class="text-sm text-muted-foreground">
+              Visitors to {environment.domain || "this hostname"} must sign in
+              with HTTP basic authentication. The password is shown only when
+              it is created or rotated.
+            </p>
+          {:else if accessModeDraft === "private_network"}
+            <p class="text-sm text-muted-foreground">
+              Caddy only proxies clients on the WireGuard mesh. Public visitors
+              receive 403. Split-tunnel clients should resolve
+              {environment.domain || "the hostname"} to
+              <span class="font-mono">{environment.privateNetworkAddress}</span>
+              while connected. Enroll a device on
+              <a
+                class="underline underline-offset-4"
+                href={routes.networks()}>Networks</a
+              >.
+            </p>
+          {:else}
+            <p class="text-sm text-muted-foreground">
+              Anyone who can reach the public hostname can load the Environment.
+            </p>
+          {/if}
+          {#if httpAccessError}
+            <p class="text-sm text-destructive">{httpAccessError}</p>
+          {/if}
+          <div class="flex flex-wrap gap-2">
+            <Button
+              disabled={httpAccessProcessing}
+              aria-busy={httpAccessProcessing}
+              onclick={() => void saveHTTPAccess(false)}
+              >{#if httpAccessProcessing}<Spinner />{/if}Save access</Button
+            >
+            {#if accessModeDraft === "basic_auth"}
+              <Button
+                variant="outline"
+                disabled={httpAccessProcessing}
+                onclick={() => void saveHTTPAccess(true)}
+                >{#if httpAccessProcessing}<Spinner />{/if}Rotate password</Button
+              >
+            {/if}
+          </div>
+        </Card.Content>
+      </Card.Root>
 
       <Card.Root>
         <Card.Header
@@ -2585,6 +2736,26 @@
           onclick={() => navigator.clipboard.writeText(apiToken)}
           >Copy token</Button
         ><Button onclick={() => (apiTokenDialogOpen = false)}>Done</Button
+        ></Dialog.Footer
+      ></Dialog.Content
+    >
+  </Dialog.Root>
+  <Dialog.Root bind:open={httpAccessPasswordOpen}>
+    <Dialog.Content
+      ><Dialog.Header
+        ><Dialog.Title>HTTP basic auth password</Dialog.Title><Dialog.Description
+          >Copy this password now. DeployCrate stores only its hash and cannot
+          show it again.</Dialog.Description
+        ></Dialog.Header
+      >
+      <pre
+        class="whitespace-pre-wrap break-all border border-border bg-muted/30 p-3 font-mono text-xs">{httpAccessPassword}</pre>
+      <Dialog.Footer
+        ><Button
+          variant="outline"
+          onclick={() => navigator.clipboard.writeText(httpAccessPassword)}
+          >Copy password</Button
+        ><Button onclick={() => (httpAccessPasswordOpen = false)}>Done</Button
         ></Dialog.Footer
       ></Dialog.Content
     >
