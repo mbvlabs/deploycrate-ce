@@ -42,7 +42,7 @@ func (e *InstanceEntity) Validate() error {
 	}
 	if strings.TrimSpace(e.ExternalID) == "" || strings.TrimSpace(e.ReplicaKey) == "" ||
 		!environmentProcessNamePattern.MatchString(e.ProcessName) ||
-		!slices.Contains([]string{EnvironmentProcessWeb, EnvironmentProcessWorker}, e.ProcessKind) {
+		!IsLongRunningProcessKind(e.ProcessKind) {
 		builder.Add("externalId", "required", "Instance identity is required")
 	}
 	if !slices.Contains(

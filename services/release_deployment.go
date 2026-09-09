@@ -267,14 +267,13 @@ func (service *ReleaseDeployment) QueueTargetTx(
 		return models.DeploymentEntity{}, err
 	}
 	for _, process := range processes {
-		if process.Kind != models.EnvironmentProcessWeb &&
-			process.Kind != models.EnvironmentProcessWorker {
+		if !models.IsLongRunningProcessKind(process.Kind) {
 			continue
 		}
 		for replica := int32(1); replica <= process.Replicas; replica++ {
 			replicaName := fmt.Sprintf("%d", replica)
 			replicaKey := process.Kind + "/" + process.Name + "/" + replicaName
-			if process.Kind == models.EnvironmentProcessWeb {
+			if models.IsIngressProcessKind(process.Kind) {
 				replicaKey = "web/primary"
 			}
 			if _, err := models.Instance.Create(ctx, tx, models.CreateInstanceData{

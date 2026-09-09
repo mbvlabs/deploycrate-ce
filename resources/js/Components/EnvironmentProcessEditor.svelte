@@ -1,7 +1,7 @@
 <script lang="ts" module>
   export type ProcessInput = {
     name: string;
-    kind: "web" | "worker" | "release";
+    kind: "web" | "worker" | "service" | "release";
     command: string | null;
     arguments: string[];
     replicas: number;
@@ -29,6 +29,9 @@
   } = $props();
 
   const web = $derived(processes.find((process) => process.kind === "web"));
+  const services = $derived(
+    processes.filter((process) => process.kind === "service"),
+  );
   const workers = $derived(
     processes.filter((process) => process.kind === "worker"),
   );
@@ -58,6 +61,23 @@
     if (!target) return null;
     const base = target.split("/").pop() ?? target;
     return `/layers/paketo-buildpacks_go-build/targets/bin/${base}`;
+  }
+
+  function addService() {
+    let suffix = services.length + 1;
+    while (processes.some((process) => process.name === `service-${suffix}`))
+      suffix++;
+    processes = [
+      ...processes,
+      {
+        name: `service-${suffix}`,
+        kind: "service",
+        command: "",
+        arguments: [],
+        replicas: 1,
+        target: "",
+      },
+    ];
   }
 
   function addWorker() {
@@ -94,17 +114,29 @@
         ];
   }
 
-  function moveWorker(worker: ProcessInput, direction: number) {
+  function moveProcess(
+    process: ProcessInput,
+    kind: ProcessInput["kind"],
+    direction: number,
+  ) {
     const indexes = processes
-      .map((process, index) => (process.kind === "worker" ? index : -1))
+      .map((candidate, index) => (candidate.kind === kind ? index : -1))
       .filter((index) => index >= 0);
-    const current = processes.findIndex((process) => process === worker);
+    const current = processes.findIndex((candidate) => candidate === process);
     const position = indexes.indexOf(current);
     const target = indexes[position + direction];
     if (target === undefined) return;
     const next = [...processes];
     [next[current], next[target]] = [next[target], next[current]];
     processes = next;
+  }
+
+  function moveWorker(worker: ProcessInput, direction: number) {
+    moveProcess(worker, "worker", direction);
+  }
+
+  function moveService(service: ProcessInput, direction: number) {
+    moveProcess(service, "service", direction);
   }
 </script>
 
@@ -193,6 +225,164 @@
   <div class="space-y-3">
     <div class="flex items-center justify-between gap-3">
       <div>
+        <p class="font-medium">Services</p>
+        <p class="mt-1 text-xs text-muted-foreground">
+          Private in-network HTTP processes. Other processes reach them as
+          http://name:port on the Environment network.
+        </p>
+      </div>
+      <Button type="button" variant="outline" size="sm" onclick={addService}
+        >Add service</Button
+      >
+    </div>
+    {#each services as service, index (service.name)}
+      <div class="grid gap-4 border border-border p-4 sm:grid-cols-2">
+        <FormField label="Name" error={errors[errorKey(service, "name")]}
+          ><Input
+            value={service.name}
+            oninput={(event) =>
+              replace(service, { name: event.currentTarget.value })}
+            required
+          /></FormField
+        >
+        <FormField label="Replicas"
+          ><Input
+            type="number"
+            min="1"
+            max="32"
+            value={service.replicas}
+            oninput={(event) =>
+              replace(service, { replicas: Number(event.currentTarget.value) })}
+            required
+          /></FormField
+        >
+        {#if showGoTargets}
+          <FormField
+            label="Go target"
+            error={errors[errorKey(service, "target")]}
+            ><Input
+              value={service.target ?? ""}
+              oninput={(event) =>
+                replace(service, {
+                  target: targetFrom(event.currentTarget.value),
+                })}
+              placeholder="./cmd/ssr"
+            /></FormField
+          >
+          {#if service.target}<div
+              class="border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground"
+            >
+              <span class="font-medium text-foreground">Executable</span><span
+                class="mt-1 block font-mono break-all"
+                >{executableFor(service.target)}</span
+              >
+            </div>{:else}<FormField
+              label="Command override"
+              error={errors[errorKey(service, "command")]}
+              ><Input
+                value={service.command ?? ""}
+                oninput={(event) =>
+                  replace(service, { command: event.currentTarget.value })}
+                placeholder="Executable in the image"
+                required
+              />
+              <p class="mt-2 text-xs text-muted-foreground">
+                Use the bare executable name (e.g. migrate, not ./migrate) — the
+                launcher resolves bare names through its PATH, which includes
+                the buildpack's launch-layer bin dir.
+              </p></FormField
+            >{/if}
+        {:else}
+          <FormField
+            label="Executable"
+            error={errors[errorKey(service, "command")]}
+            ><Input
+              value={service.command ?? ""}
+              oninput={(event) =>
+                replace(service, { command: event.currentTarget.value })}
+              required
+            />
+            <p class="mt-2 text-xs text-muted-foreground">
+              Use the bare executable name (e.g. migrate, not ./migrate) — the
+              launcher resolves bare names through its PATH, which includes the
+              buildpack's launch-layer bin dir.
+            </p></FormField
+          >
+        {/if}
+        <FormField label="Arguments, one per line"
+          ><Textarea
+            value={service.arguments.join("\n")}
+            oninput={(event) =>
+              replace(service, {
+                arguments: argumentsFrom(event.currentTarget.value),
+              })}
+          /></FormField
+        >
+        <FormField
+          label="Container port"
+          error={errors[errorKey(service, "containerPort")]}
+          ><Input
+            type="number"
+            min="1"
+            max="65535"
+            value={service.containerPort ?? ""}
+            oninput={(event) =>
+              replace(service, {
+                containerPort: Number(event.currentTarget.value),
+              })}
+            required
+          />
+          <p class="mt-2 text-xs text-muted-foreground">
+            Listen port inside the container. It is not published to the host.
+          </p></FormField
+        >
+        <FormField
+          label="Health path"
+          error={errors[errorKey(service, "healthPath")]}
+          ><Input
+            value={service.healthPath ?? ""}
+            oninput={(event) =>
+              replace(service, { healthPath: event.currentTarget.value })}
+            placeholder="/health"
+          />
+          <p class="mt-2 text-xs text-muted-foreground">
+            Optional. Stored with the formation; Deploycrate does not probe it
+            and does not route public traffic to this process.
+          </p></FormField
+        >
+        <div class="flex flex-wrap gap-2 sm:col-span-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={index === 0}
+            onclick={() => moveService(service, -1)}>Move up</Button
+          ><Button
+            type="button"
+            size="sm"
+            variant="ghost"
+            disabled={index === services.length - 1}
+            onclick={() => moveService(service, 1)}>Move down</Button
+          ><Button
+            type="button"
+            size="sm"
+            variant="destructive"
+            onclick={() =>
+              (processes = processes.filter((process) => process !== service))}
+            >Archive service</Button
+          >
+        </div>
+      </div>
+    {:else}<p
+        class="border border-dashed border-border p-4 text-sm text-muted-foreground"
+      >
+        No service processes configured.
+      </p>{/each}
+  </div>
+
+  <div class="space-y-3">
+    <div class="flex items-center justify-between gap-3">
+      <div>
         <p class="font-medium">Workers</p>
         <p class="mt-1 text-xs text-muted-foreground">
           Long-running private processes deployed on every target.
@@ -202,7 +392,7 @@
         >Add worker</Button
       >
     </div>
-    {#each workers as worker, index}
+    {#each workers as worker, index (worker.name)}
       <div class="grid gap-4 border border-border p-4 sm:grid-cols-2">
         <FormField label="Name" error={errors[errorKey(worker, "name")]}
           ><Input

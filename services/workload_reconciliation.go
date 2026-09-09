@@ -101,7 +101,7 @@ func (service *WorkloadReconciliation) Reconcile(ctx context.Context) error {
 			}
 			if state.Exists {
 				ports := json.RawMessage(`{}`)
-				if instance.ProcessKind == models.EnvironmentProcessWeb {
+				if models.IsIngressProcessKind(instance.ProcessKind) {
 					encodedPorts, _ := json.Marshal(
 						map[string]any{"host": state.HostAddress, "http": state.HostPort},
 					)
@@ -282,7 +282,7 @@ func (service *WorkloadReconciliation) reconcileServingInstances(ctx context.Con
 		}
 		if state.Exists {
 			ports := json.RawMessage(`{}`)
-			if instance.ProcessKind == models.EnvironmentProcessWeb {
+			if models.IsIngressProcessKind(instance.ProcessKind) {
 				encodedPorts, _ := json.Marshal(
 					map[string]any{"host": state.HostAddress, "http": state.HostPort},
 				)

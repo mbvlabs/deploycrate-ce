@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/netip"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -44,6 +45,8 @@ const (
 	WorkloadLabelProcessReplica = labelProcessReplica
 	WorkloadLabelReleaseCommand = labelReleaseCommand
 )
+
+var workloadNetworkAliasPattern = regexp.MustCompile(`^[a-z][a-z0-9_-]{0,62}$`)
 
 type WorkloadRunSpec struct {
 	ApplicationID        uuid.UUID
@@ -382,7 +385,7 @@ func PrepareWorkloadRun(spec WorkloadRunSpec) (PreparedWorkloadRun, error) {
 		spec.DeploymentID == uuid.Nil ||
 		spec.InstanceID == uuid.Nil ||
 		spec.ReleaseID == uuid.Nil ||
-		strings.TrimSpace(spec.ProcessName) == "" ||
+		!validWorkloadNetworkAlias(spec.ProcessName) ||
 		strings.TrimSpace(spec.ProcessReplica) == "" ||
 		!strings.Contains(spec.ImageReference, "@sha256:") ||
 		spec.RestartPolicy != "unless-stopped" ||
@@ -391,9 +394,15 @@ func PrepareWorkloadRun(spec WorkloadRunSpec) (PreparedWorkloadRun, error) {
 		!validWorkloadCommand(spec.Command, false) {
 		return PreparedWorkloadRun{}, errors.New("workload Docker specification is invalid")
 	}
-	if spec.ProcessKind == "web" && (spec.ContainerPort < 1 || spec.ContainerPort > 65535) ||
-		spec.ProcessKind == "worker" && spec.ContainerPort != 0 ||
-		spec.ProcessKind != "web" && spec.ProcessKind != "worker" {
+	if spec.ProcessKind == "web" || spec.ProcessKind == "service" {
+		if spec.ContainerPort < 1 || spec.ContainerPort > 65535 {
+			return PreparedWorkloadRun{}, errors.New("workload process specification is invalid")
+		}
+	} else if spec.ProcessKind == "worker" {
+		if spec.ContainerPort != 0 {
+			return PreparedWorkloadRun{}, errors.New("workload process specification is invalid")
+		}
+	} else {
 		return PreparedWorkloadRun{}, errors.New("workload process specification is invalid")
 	}
 	arguments := []string{"run", "--detach", "--name", spec.ContainerName,
@@ -407,7 +416,11 @@ func PrepareWorkloadRun(spec WorkloadRunSpec) (PreparedWorkloadRun, error) {
 		"--label", labelProcessKind + "=" + spec.ProcessKind,
 		"--label", labelProcessReplica + "=" + spec.ProcessReplica,
 		"--label", labelOpenTelemetryEnabled + "=" + strconv.FormatBool(spec.OpenTelemetryEnabled),
-		"--network", spec.NetworkName, "--restart", spec.RestartPolicy}
+		"--network", spec.NetworkName}
+	if spec.ProcessKind == "web" || spec.ProcessKind == "service" {
+		arguments = append(arguments, "--network-alias", spec.ProcessName)
+	}
+	arguments = append(arguments, "--restart", spec.RestartPolicy)
 	if spec.ProcessKind == "web" {
 		arguments = append(
 			arguments,
@@ -804,6 +817,10 @@ func validWorkloadPublishAddress(value string) bool {
 func validWorkloadObjectName(value string) bool {
 	return value != "" && value == strings.TrimSpace(value) && !strings.HasPrefix(value, "-") &&
 		!strings.ContainsAny(value, " \t\r\n\x00")
+}
+
+func validWorkloadNetworkAlias(value string) bool {
+	return workloadNetworkAliasPattern.MatchString(value)
 }
 
 func validWorkloadCommand(command []string, requireExecutable bool) bool {

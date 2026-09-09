@@ -3747,7 +3747,9 @@ func deriveGoProcessCommands(
 			continue
 		}
 		switch process.Kind {
-		case models.EnvironmentProcessWorker, models.EnvironmentProcessRelease:
+		case models.EnvironmentProcessWorker,
+			models.EnvironmentProcessService,
+			models.EnvironmentProcessRelease:
 			command := goTargetExecutableDirectory + "/" + path.Base(*process.Target)
 			process.Command = &command
 		}
@@ -3759,6 +3761,7 @@ func goProcessTargetsFromProcesses(
 	processes []models.EnvironmentProcessInput,
 ) []models.GoProcessTarget {
 	var web *models.GoProcessTarget
+	services := make([]models.GoProcessTarget, 0, len(processes))
 	workers := make([]models.GoProcessTarget, 0, len(processes))
 	var release *models.GoProcessTarget
 	for _, process := range processes {
@@ -3769,6 +3772,8 @@ func goProcessTargetsFromProcesses(
 		switch process.Kind {
 		case models.EnvironmentProcessWeb:
 			web = &target
+		case models.EnvironmentProcessService:
+			services = append(services, target)
 		case models.EnvironmentProcessWorker:
 			workers = append(workers, target)
 		case models.EnvironmentProcessRelease:
@@ -3779,6 +3784,7 @@ func goProcessTargetsFromProcesses(
 	if web != nil {
 		targets = append(targets, *web)
 	}
+	targets = append(targets, services...)
 	targets = append(targets, workers...)
 	if release != nil {
 		targets = append(targets, *release)
@@ -3823,7 +3829,7 @@ func processInputsFromState(
 			Replicas:   state.Replicas,
 			HealthPath: state.HealthPath,
 		}
-		if state.Kind == models.EnvironmentProcessWeb {
+		if models.ProcessKindUsesContainerPort(state.Kind) {
 			port := state.ContainerPort
 			input.ContainerPort = &port
 		}
