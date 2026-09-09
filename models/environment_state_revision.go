@@ -188,7 +188,7 @@ func validateEnvironmentDesiredState(state *EnvironmentDesiredState) error {
 			Replicas:   process.Replicas,
 			HealthPath: process.HealthPath,
 		}
-		if process.Kind == EnvironmentProcessWeb {
+		if ProcessKindUsesContainerPort(process.Kind) {
 			input.ContainerPort = &process.ContainerPort
 		}
 		if process.Kind == EnvironmentProcessRelease {
@@ -389,7 +389,7 @@ func (state EnvironmentDesiredState) ReleaseProcess() (EnvironmentProcessState, 
 func (state EnvironmentDesiredState) LongRunningProcesses() []EnvironmentProcessState {
 	processes := make([]EnvironmentProcessState, 0, len(state.Processes))
 	for _, process := range state.Processes {
-		if process.Kind == EnvironmentProcessWeb || process.Kind == EnvironmentProcessWorker {
+		if IsLongRunningProcessKind(process.Kind) {
 			processes = append(processes, process)
 		}
 	}

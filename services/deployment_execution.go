@@ -263,7 +263,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 			),
 			nil,
 		)
-		includePort := process.Kind == models.EnvironmentProcessWeb
+		includePort := models.IsIngressProcessKind(process.Kind)
 		environment, _, err := service.composeEnvironment(ctx, scope, resolved, includePort)
 		if err != nil {
 			return err
@@ -347,6 +347,43 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		candidates[instance.ID] = candidate
 		return nil
 	}
+	if hasProcessKind(scope.Instances, models.EnvironmentProcessService) {
+		if err := service.advance(
+			ctx,
+			deploymentID,
+			"service_candidates",
+			"Starting service processes",
+		); err != nil {
+			return err
+		}
+		servicesStarted := time.Now()
+		for _, instance := range scope.Instances {
+			if instance.ProcessKind != models.EnvironmentProcessService {
+				continue
+			}
+			if err := startInstance(instance); err != nil {
+				service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
+				return fail(err)
+			}
+		}
+		if err := service.stabilizeProcesses(
+			ctx,
+			scope,
+			candidates,
+			models.EnvironmentProcessService,
+		); err != nil {
+			service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
+			return fail(err)
+		}
+		service.recordTiming(
+			ctx,
+			deploymentID,
+			"service_candidates",
+			"Service startup",
+			servicesStarted,
+		)
+		candidateStarted = time.Now()
+	}
 	if err := startInstance(scope.Instance); err != nil {
 		service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
 		return fail(err)
@@ -409,7 +446,12 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 			return fail(err)
 		}
 	}
-	if err := service.stabilizeWorkers(ctx, scope, candidates); err != nil {
+	if err := service.stabilizeProcesses(
+		ctx,
+		scope,
+		candidates,
+		models.EnvironmentProcessWorker,
+	); err != nil {
 		service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
 		return fail(err)
 	}
@@ -530,7 +572,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 			)
 			continue
 		}
-		if old.ProcessKind == models.EnvironmentProcessWeb {
+		if models.IsIngressProcessKind(old.ProcessKind) {
 			if err := service.caddy.RemoveBackend(ctx, route.ID, old.ID); err != nil {
 				_ = service.recordEvent(
 					ctx,
@@ -733,7 +775,7 @@ func (service *DeploymentExecution) FinishCancellation(
 	}
 	var webCandidate *models.InstanceEntity
 	for index := range instances {
-		if instances[index].ProcessKind == models.EnvironmentProcessWeb {
+		if models.IsIngressProcessKind(instances[index].ProcessKind) {
 			webCandidate = &instances[index]
 			break
 		}
@@ -1009,7 +1051,7 @@ func (service *DeploymentExecution) loadScope(
 			Replicas:   process.Replicas,
 			HealthPath: process.HealthPath,
 		}
-		if process.Kind == models.EnvironmentProcessWeb {
+		if models.ProcessKindUsesContainerPort(process.Kind) {
 			port := process.ContainerPort
 			input.ContainerPort = &port
 		}
@@ -1031,13 +1073,12 @@ func (service *DeploymentExecution) loadScope(
 	}
 	expectedInstances := make(map[string]string)
 	for _, process := range processSnapshot {
-		if process.Kind != models.EnvironmentProcessWeb &&
-			process.Kind != models.EnvironmentProcessWorker {
+		if !models.IsLongRunningProcessKind(process.Kind) {
 			continue
 		}
 		for replica := int32(1); replica <= process.Replicas; replica++ {
 			replicaKey := fmt.Sprintf("%s/%s/%d", process.Kind, process.Name, replica)
-			if process.Kind == models.EnvironmentProcessWeb {
+			if models.IsIngressProcessKind(process.Kind) {
 				replicaKey = "web/primary"
 			}
 			expectedInstances[process.Name+"\x00"+replicaKey] = process.Kind
@@ -1061,7 +1102,7 @@ func (service *DeploymentExecution) loadScope(
 			)
 		}
 		delete(expectedInstances, key)
-		if instance.ProcessKind == models.EnvironmentProcessWeb {
+		if models.IsIngressProcessKind(instance.ProcessKind) {
 			if scope.Instance.ID != uuid.Nil {
 				return scope, errors.New("Deployment has multiple web Instances")
 			}
@@ -1448,6 +1489,8 @@ func (service *DeploymentExecution) prepareCaddy(
 		if err != nil {
 			return route, nil, false, err
 		}
+		// Public traffic attaches only to the web Instance. Service processes
+		// are reachable on the Environment network and are not Caddy backends.
 		_, err = models.CaddyRouteBackend.Create(
 			ctx,
 			service.db.Executor(),
@@ -1510,7 +1553,7 @@ func (service *DeploymentExecution) markSucceeded(
 			return errors.New("candidate formation observation is incomplete")
 		}
 		ports := json.RawMessage(`{}`)
-		if instance.ProcessKind == models.EnvironmentProcessWeb {
+		if models.IsIngressProcessKind(instance.ProcessKind) {
 			encoded, _ := json.Marshal(
 				map[string]any{"host": candidate.HostAddress, "http": candidate.HostPort},
 			)
@@ -1578,11 +1621,15 @@ func (service *DeploymentExecution) removeCandidateFormation(
 	}
 }
 
-func (service *DeploymentExecution) stabilizeWorkers(
+func (service *DeploymentExecution) stabilizeProcesses(
 	ctx context.Context,
 	scope deploymentScope,
 	candidates map[uuid.UUID]containerclient.WorkloadState,
+	kind string,
 ) error {
+	if !hasProcessKind(scope.Instances, kind) {
+		return nil
+	}
 	timer := time.NewTimer(5 * time.Second)
 	defer timer.Stop()
 	select {
@@ -1591,7 +1638,7 @@ func (service *DeploymentExecution) stabilizeWorkers(
 	case <-timer.C:
 	}
 	for _, instance := range scope.Instances {
-		if instance.ProcessKind != models.EnvironmentProcessWorker {
+		if instance.ProcessKind != kind {
 			continue
 		}
 		state, err := service.workloads.Find(
@@ -1605,7 +1652,8 @@ func (service *DeploymentExecution) stabilizeWorkers(
 		}
 		if !state.Exists || !state.Running {
 			return fmt.Errorf(
-				"worker process %s replica %s exited during stabilization",
+				"%s process %s replica %s exited during stabilization",
+				kind,
 				instance.ProcessName,
 				instance.ReplicaKey,
 			)
@@ -1613,6 +1661,15 @@ func (service *DeploymentExecution) stabilizeWorkers(
 		candidates[instance.ID] = state
 	}
 	return nil
+}
+
+func hasProcessKind(instances []models.InstanceEntity, kind string) bool {
+	for _, instance := range instances {
+		if instance.ProcessKind == kind {
+			return true
+		}
+	}
+	return false
 }
 
 func (service *DeploymentExecution) previousFormation(

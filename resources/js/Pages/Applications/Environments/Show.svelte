@@ -1322,6 +1322,8 @@
                   <p class="mt-1 text-xs text-muted-foreground">
                     {process.kind === "web"
                       ? `${process.container_port ? `Port ${process.container_port}` : "Port unavailable"}${process.health_path ? ` · ${process.health_path}` : ""}`
+                      : process.kind === "service"
+                        ? `${process.container_port ? `In-network ${process.name}:${process.container_port}` : "Port unavailable"}${process.health_path ? ` · ${process.health_path}` : ""}`
                       : process.kind === "release"
                         ? process.timeout_seconds
                           ? `${process.timeout_seconds}s timeout`
