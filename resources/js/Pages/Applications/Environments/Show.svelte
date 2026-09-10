@@ -142,6 +142,9 @@
   let secretActionError = $state("");
   let archiveSecretDialogOpen = $state(false);
   let archivingSecret = $state<Secret | null>(null);
+  let exportSecretsDialogOpen = $state(false);
+  let exportSecretsProcessing = $state(false);
+  let exportSecretsError = $state("");
   let releaseCommandLogs = $state<Record<string, ReleaseCommandLog[]>>({});
   let releaseCommandLoading = $state("");
   let releaseCommandRetrying = $state("");
@@ -817,6 +820,32 @@
             Object.values(errors).map(String).join("\n") ||
             "The secret could not be archived."),
         onFinish: () => (secretActionProcessing = false),
+      },
+    );
+  }
+  function askToExportSecrets() {
+    exportSecretsError = "";
+    exportSecretsDialogOpen = true;
+  }
+  function exportSecretsToProduction() {
+    if (exportSecretsProcessing) return;
+    exportSecretsProcessing = true;
+    exportSecretsError = "";
+    router.post(
+      routes.environmentSecretsExportToProduction(
+        environment.applicationId,
+        environment.environment.id,
+      ),
+      {},
+      {
+        headers: { "X-Deploycrate-Section": section },
+        preserveScroll: true,
+        onSuccess: () => (exportSecretsDialogOpen = false),
+        onError: (errors) =>
+          (exportSecretsError =
+            Object.values(errors).map(String).join("\n") ||
+            "Staging secrets could not be exported to production."),
+        onFinish: () => (exportSecretsProcessing = false),
       },
     );
   }
@@ -1975,11 +2004,21 @@
       <Card.Root
         ><Card.Header
           ><Card.Action
-            ><Button
-              type="button"
-              variant="outline"
-              onclick={() => (bulkSecretDialogOpen = true)}
-              >Import secrets</Button
+            ><div class="flex flex-wrap justify-end gap-2"
+              >{#if environment.canExportSecretsToProduction}<Button
+                  type="button"
+                  variant="outline"
+                  disabled={exportSecretsProcessing}
+                  aria-busy={exportSecretsProcessing}
+                  onclick={askToExportSecrets}
+                  >{#if exportSecretsProcessing}<Spinner />{/if}Export to
+                  production</Button
+                >{/if}<Button
+                type="button"
+                variant="outline"
+                onclick={() => (bulkSecretDialogOpen = true)}
+                >Import secrets</Button
+              ></div
             ></Card.Action
           ><Card.Title>Environment secrets</Card.Title><Card.Description
             >Status compares each desired value fingerprint with the revision
@@ -2694,6 +2733,17 @@
     processing={secretActionProcessing}
     error={secretActionError}
     onconfirm={archiveSecret}
+  />
+
+  <ConfirmActionDialog
+    bind:open={exportSecretsDialogOpen}
+    title="Replace production secrets?"
+    description={`Replace user secrets in ${environment.promotionTargetName} with the user secrets from this staging Environment. Resource-managed secrets in production are left unchanged. The change takes effect on the next production deployment.`}
+    confirmLabel="Export to production"
+    destructive
+    processing={exportSecretsProcessing}
+    error={exportSecretsError}
+    onconfirm={exportSecretsToProduction}
   />
 
   <BulkEnvironmentSecretsDialog

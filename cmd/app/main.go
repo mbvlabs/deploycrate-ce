@@ -87,7 +87,7 @@ func run(arguments []string, stdout io.Writer) error {
 }
 
 func appOptions(ctx context.Context) []fx.Option {
-	return []fx.Option{
+	options := []fx.Option{
 		sharedOptions(ctx),
 		queue.WorkersModule,
 		controllers.Module,
@@ -97,6 +97,13 @@ func appOptions(ctx context.Context) []fx.Option {
 		fx.Invoke(reconcileWorkloadsOnStartup),
 		fx.Invoke(startServer),
 	}
+	// Production web slots only enqueue River jobs. The independent job runner
+	// owns execution so a slot stop cannot cancel enrollments or updates.
+	// Development has no separate jobs process, so the web app must run them.
+	if config.Env != server.ProdEnvironment {
+		options = append(options, fx.Invoke(startQueueProcessor))
+	}
+	return options
 }
 
 func jobRunnerOptions(ctx context.Context) []fx.Option {

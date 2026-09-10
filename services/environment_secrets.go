@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 	"time"
 
@@ -445,6 +446,221 @@ func (service *EnvironmentSecrets) ArchiveUser(
 	return EnvironmentSecretMutation{Secret: current.Sanitized(), Revision: revision.ID}, nil
 }
 
+func (service *EnvironmentSecrets) ExportUserSecretsToProduction(
+	ctx context.Context,
+	applicationID, stagingEnvironmentID, userID uuid.UUID,
+) (EnvironmentSecretMutation, error) {
+	staging, err := models.Environment.FindForApplication(
+		ctx,
+		service.db.Executor(),
+		applicationID,
+		stagingEnvironmentID,
+	)
+	if err != nil || staging.ArchivedAt.Valid {
+		return EnvironmentSecretMutation{}, errors.New("Environment is unavailable")
+	}
+	if !strings.EqualFold(strings.TrimSpace(staging.Kind), "staging") {
+		return EnvironmentSecretMutation{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("Only a staging Environment can export secrets to production"),
+		)
+	}
+	production, err := productionEnvironmentForApplication(
+		ctx,
+		service.db.Executor(),
+		applicationID,
+	)
+	if err != nil {
+		return EnvironmentSecretMutation{}, err
+	}
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return EnvironmentSecretMutation{}, err
+	}
+	defer tx.Rollback()
+	staging, err = models.Environment.Lock(ctx, tx, staging.ID)
+	if err != nil || staging.ApplicationID != applicationID || staging.ArchivedAt.Valid {
+		return EnvironmentSecretMutation{}, errors.New("Environment is unavailable")
+	}
+	if !strings.EqualFold(strings.TrimSpace(staging.Kind), "staging") {
+		return EnvironmentSecretMutation{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("Only a staging Environment can export secrets to production"),
+		)
+	}
+	production, err = models.Environment.Lock(ctx, tx, production.ID)
+	if err != nil || production.ApplicationID != applicationID || production.ArchivedAt.Valid {
+		return EnvironmentSecretMutation{}, errors.New("Production environment is unavailable")
+	}
+	stagingComplete, err := models.Environment.SetupComplete(ctx, tx, staging.ID)
+	if err != nil {
+		return EnvironmentSecretMutation{}, err
+	}
+	productionComplete, err := models.Environment.SetupComplete(ctx, tx, production.ID)
+	if err != nil {
+		return EnvironmentSecretMutation{}, err
+	}
+	if !stagingComplete || !productionComplete {
+		return EnvironmentSecretMutation{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("Environment setup must be complete"),
+		)
+	}
+	stagingRevision, err := models.EnvironmentStateRevision.LatestCommitted(ctx, tx, staging.ID)
+	if err != nil {
+		return EnvironmentSecretMutation{}, err
+	}
+	stagingState, err := models.ParseEnvironmentDesiredState(stagingRevision.State)
+	if err != nil {
+		return EnvironmentSecretMutation{}, err
+	}
+	stagingUserSecrets := make([]models.EnvironmentSecretEntity, 0)
+	seenStagingKeys := make(map[string]struct{})
+	for _, descriptor := range stagingState.Secrets {
+		if descriptor.SourceType != models.EnvironmentSecretSourceUser {
+			continue
+		}
+		secret, findErr := models.EnvironmentSecret.FindForEnvironment(
+			ctx,
+			tx,
+			staging.ID,
+			descriptor.ID,
+		)
+		if findErr != nil {
+			return EnvironmentSecretMutation{}, findErr
+		}
+		if secret.ArchivedAt.Valid || secret.SourceType != models.EnvironmentSecretSourceUser {
+			return EnvironmentSecretMutation{}, errors.Join(
+				models.ErrDomainValidation,
+				errors.New("Staging secret "+secret.Key+" is unavailable"),
+			)
+		}
+		if _, exists := seenStagingKeys[secret.Key]; exists {
+			return EnvironmentSecretMutation{}, errors.Join(
+				models.ErrDomainValidation,
+				validation.ValidationErrors{{
+					Field:   "key",
+					Code:    "duplicate",
+					Message: fmt.Sprintf("secret key %q is listed more than once", secret.Key),
+				}},
+			)
+		}
+		seenStagingKeys[secret.Key] = struct{}{}
+		stagingUserSecrets = append(stagingUserSecrets, secret)
+	}
+	slices.SortFunc(stagingUserSecrets, func(left, right models.EnvironmentSecretEntity) int {
+		return strings.Compare(left.Key, right.Key)
+	})
+	productionSecrets, err := models.EnvironmentSecret.ActiveForEnvironment(ctx, tx, production.ID)
+	if err != nil {
+		return EnvironmentSecretMutation{}, err
+	}
+	productionUserByKey := make(map[string]models.EnvironmentSecretEntity)
+	productionResourceKeys := make(map[string]struct{})
+	for _, secret := range productionSecrets {
+		if secret.SourceType == models.EnvironmentSecretSourceUser {
+			productionUserByKey[secret.Key] = secret
+			continue
+		}
+		productionResourceKeys[secret.Key] = struct{}{}
+	}
+	changes := make([]secretRevisionChange, 0, len(stagingUserSecrets)+len(productionUserByKey))
+	for _, stagingSecret := range stagingUserSecrets {
+		if _, conflict := productionResourceKeys[stagingSecret.Key]; conflict {
+			return EnvironmentSecretMutation{}, errors.Join(
+				models.ErrDomainValidation,
+				validation.ValidationErrors{{
+					Field: "key",
+					Code:  "reserved",
+					Message: fmt.Sprintf(
+						"secret key %q conflicts with a Resource-managed secret in production",
+						stagingSecret.Key,
+					),
+				}},
+			)
+		}
+		plaintext, decryptErr := service.decryptValue(stagingSecret)
+		if decryptErr != nil {
+			return EnvironmentSecretMutation{}, decryptErr
+		}
+		prepared, prepareErr := service.Prepare(
+			production.ID,
+			stagingSecret.Key,
+			plaintext,
+			models.EnvironmentSecretSourceUser,
+			userID,
+		)
+		if prepareErr != nil {
+			return EnvironmentSecretMutation{}, prepareErr
+		}
+		current, exists := productionUserByKey[stagingSecret.Key]
+		delete(productionUserByKey, stagingSecret.Key)
+		if exists && hmac.Equal(current.Digest, prepared.Digest) {
+			continue
+		}
+		if exists {
+			if archiveErr := models.EnvironmentSecret.Archive(
+				ctx,
+				tx,
+				production.ID,
+				current.ID,
+			); archiveErr != nil {
+				return EnvironmentSecretMutation{}, archiveErr
+			}
+		}
+		next, createErr := service.CreatePrepared(ctx, tx, prepared)
+		if createErr != nil {
+			return EnvironmentSecretMutation{}, createErr
+		}
+		change := secretRevisionChange{requested: &next, action: "create"}
+		if exists {
+			previous := current
+			change.previous = &previous
+			change.action = "rotate"
+		}
+		changes = append(changes, change)
+	}
+	remainingKeys := make([]string, 0, len(productionUserByKey))
+	for key := range productionUserByKey {
+		remainingKeys = append(remainingKeys, key)
+	}
+	slices.Sort(remainingKeys)
+	for _, key := range remainingKeys {
+		current := productionUserByKey[key]
+		if archiveErr := models.EnvironmentSecret.Archive(
+			ctx,
+			tx,
+			production.ID,
+			current.ID,
+		); archiveErr != nil {
+			return EnvironmentSecretMutation{}, archiveErr
+		}
+		previous := current
+		changes = append(changes, secretRevisionChange{previous: &previous, action: "archive"})
+	}
+	if len(changes) == 0 {
+		if err := tx.Commit(); err != nil {
+			return EnvironmentSecretMutation{}, err
+		}
+		return EnvironmentSecretMutation{NoOp: true}, nil
+	}
+	revision, err := service.commitSecretsRevision(
+		ctx,
+		tx,
+		production,
+		userID,
+		"secret_export",
+		changes,
+	)
+	if err != nil {
+		return EnvironmentSecretMutation{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return EnvironmentSecretMutation{}, err
+	}
+	return EnvironmentSecretMutation{Revision: revision.ID}, nil
+}
+
 func (service *EnvironmentSecrets) ResolveRevision(
 	ctx context.Context,
 	revision models.EnvironmentStateRevisionEntity,
@@ -459,17 +675,13 @@ func (service *EnvironmentSecrets) ResolveRevision(
 	}
 	resolved := make([]ResolvedEnvironmentSecret, 0, len(secrets))
 	for _, secret := range secrets {
-		plaintext, err := secretcrypto.DecryptForPurpose(
-			secret.EncValue,
-			service.config.App.SessionEncryptionKey,
-			environmentSecretEncryptionPurpose,
-		)
+		plaintext, err := service.decryptValue(secret)
 		if err != nil {
-			return nil, fmt.Errorf("decrypt Environment secret %s: %w", secret.Key, err)
+			return nil, err
 		}
 		resolved = append(
 			resolved,
-			ResolvedEnvironmentSecret{Key: secret.Key, Value: string(plaintext)},
+			ResolvedEnvironmentSecret{Key: secret.Key, Value: plaintext},
 		)
 	}
 	return resolved, nil
@@ -848,6 +1060,20 @@ func (service *EnvironmentSecrets) ReconcileManagedResource(
 	return service.queueRevisionDeployment(ctx, db, change, revision)
 }
 
+func (service *EnvironmentSecrets) decryptValue(
+	secret models.EnvironmentSecretEntity,
+) (string, error) {
+	plaintext, err := secretcrypto.DecryptForPurpose(
+		secret.EncValue,
+		service.config.App.SessionEncryptionKey,
+		environmentSecretEncryptionPurpose,
+	)
+	if err != nil {
+		return "", fmt.Errorf("decrypt Environment secret %s: %w", secret.Key, err)
+	}
+	return string(plaintext), nil
+}
+
 func (service *EnvironmentSecrets) digest(
 	environmentID uuid.UUID,
 	key, value string,
@@ -871,6 +1097,7 @@ func (service *EnvironmentSecrets) digest(
 
 type secretRevisionChange struct {
 	previous, requested *models.EnvironmentSecretEntity
+	action              string
 }
 
 func (service *EnvironmentSecrets) secretCommitBaseRevision(
@@ -1030,8 +1257,12 @@ func (service *EnvironmentSecrets) commitSecretsRevision(
 		} else if item.previous != nil {
 			subjectID = item.previous.ID
 		}
+		action := item.action
+		if action == "" {
+			action = kind
+		}
 		if _, err := models.ChangeItem.Create(ctx, db, models.CreateChangeItemData{
-			Action:         kind,
+			Action:         action,
 			SubjectType:    "environment_secret",
 			SubjectID:      subjectID,
 			PreviousValue:  changeValue(item.previous),

@@ -106,6 +106,7 @@ func (c Environments) RegisterRoutes(router *router.Router) error {
 		{http.MethodPost, routes.EnvironmentDNSRefresh, c.RefreshDNS},
 		{http.MethodPost, routes.EnvironmentSecretsCreate, c.CreateSecret},
 		{http.MethodPost, routes.EnvironmentSecretsBulkCreate, c.BulkCreateSecrets},
+		{http.MethodPost, routes.EnvironmentSecretsExportToProduction, c.ExportSecretsToProduction},
 		{http.MethodPost, routes.EnvironmentSecretRotate, c.RotateSecret},
 		{http.MethodDelete, routes.EnvironmentSecretDestroy, c.ArchiveSecret},
 	}
@@ -775,6 +776,7 @@ func environmentOverviewProps(overview services.EnvironmentOverview) map[string]
 		"privateNetworkAddress":        overview.PrivateNetworkAddress,
 		"dns":                          overview.DNS,
 		"canPromoteToProduction":       overview.CanPromoteToProduction,
+		"canExportSecretsToProduction": overview.CanExportSecretsToProduction,
 		"promotionTargetName":          overview.PromotionTargetName,
 		"latestSuccessfulDeploymentId": overview.LatestSuccessfulDeploymentID,
 		"latestSuccessfulReleaseId":    overview.LatestSuccessfulReleaseID,
@@ -1439,6 +1441,24 @@ func (c Environments) BulkCreateSecrets(etx *echo.Context) error {
 		)
 	}
 	return c.secretRedirect(etx, params, err, "Secrets added")
+}
+
+func (c Environments) ExportSecretsToProduction(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	var result services.EnvironmentSecretMutation
+	if err == nil {
+		result, err = c.envSecretsSvc.ExportUserSecretsToProduction(
+			etx.Request().Context(),
+			params.ApplicationID,
+			params.EnvironmentID,
+			cookies.ExtractFromCookieApp(etx).UserID,
+		)
+	}
+	success := "Staging secrets exported to production"
+	if err == nil && result.NoOp {
+		success = "Production already has the same user secrets as staging"
+	}
+	return c.secretRedirect(etx, params, err, success)
 }
 
 func (c Environments) RotateSecret(etx *echo.Context) error {

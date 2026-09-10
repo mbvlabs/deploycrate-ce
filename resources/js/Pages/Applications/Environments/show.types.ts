@@ -246,6 +246,7 @@ export type Overview = {
   privateNetworkAddress: string;
   dns: DNSStatus;
   canPromoteToProduction: boolean;
+  canExportSecretsToProduction: boolean;
   promotionTargetName: string;
   latestSuccessfulDeploymentId?: string;
   latestSuccessfulReleaseId?: string;
