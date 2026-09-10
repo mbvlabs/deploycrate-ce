@@ -241,6 +241,7 @@ export type Overview = {
   apiTokenPrefix: string;
   dns: DNSStatus;
   canPromoteToProduction: boolean;
+  canExportSecretsToProduction: boolean;
   promotionTargetName: string;
   latestSuccessfulDeploymentId?: string;
   latestSuccessfulReleaseId?: string;

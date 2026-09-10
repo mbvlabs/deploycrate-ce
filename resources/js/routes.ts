@@ -55,6 +55,7 @@ export const routes = {
   environmentSecrets: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/secrets`,
   environmentSecretsBulkCreate: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/secrets/bulk`,
   environmentSecretsCreate: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/secrets`,
+  environmentSecretsExportToProduction: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/secrets/export-to-production`,
   environmentShow: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}`,
   environmentSourceEdit: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/source/edit`,
   environmentSourceUpdate: (applicationID: string, environmentID: string) => `/applications/${applicationID}/environments/${environmentID}/source`,

@@ -266,6 +266,7 @@ type EnvironmentOverview struct {
 	APITokenPrefix               string                              `json:"apiTokenPrefix"`
 	DNS                          EnvironmentDNSStatus                `json:"dns"`
 	CanPromoteToProduction       bool                                `json:"canPromoteToProduction"`
+	CanExportSecretsToProduction bool                                `json:"canExportSecretsToProduction"`
 	PromotionTargetName          string                              `json:"promotionTargetName"`
 	LatestSuccessfulDeploymentID *uuid.UUID                          `json:"latestSuccessfulDeploymentId,omitempty"`
 	LatestSuccessfulReleaseID    *uuid.UUID                          `json:"latestSuccessfulReleaseId,omitempty"`
@@ -429,6 +430,16 @@ func (service *EnvironmentSetup) Overview(
 	if err != nil {
 		return EnvironmentOverview{}, err
 	}
+	canExportSecrets, err := secretExportOverview(
+		ctx,
+		service.db.Executor(),
+		applicationID,
+		environment.Kind,
+		setupComplete,
+	)
+	if err != nil {
+		return EnvironmentOverview{}, err
+	}
 	return EnvironmentOverview{
 		ApplicationID:    applicationID,
 		ApplicationName:  source.ApplicationName,
@@ -458,6 +469,7 @@ func (service *EnvironmentSetup) Overview(
 		DNS:              dnsStatus,
 
 		CanPromoteToProduction:       canPromote,
+		CanExportSecretsToProduction: canExportSecrets,
 		PromotionTargetName:          promotionTargetName,
 		LatestSuccessfulDeploymentID: latestSuccessfulDeploymentID,
 		LatestSuccessfulReleaseID:    latestSuccessfulReleaseID,
@@ -2461,6 +2473,27 @@ func promotionOverview(
 		sourceRelease,
 		productionRelease,
 	), production.Name, &deployment.ID, &deployment.ReleaseID, nil
+}
+
+func secretExportOverview(
+	ctx context.Context,
+	exec storage.Executor,
+	applicationID uuid.UUID,
+	kind string,
+	setupComplete bool,
+) (bool, error) {
+	if !strings.EqualFold(strings.TrimSpace(kind), "staging") || !setupComplete {
+		return false, nil
+	}
+	production, err := productionEnvironmentForApplication(ctx, exec, applicationID)
+	if err != nil {
+		return false, nil
+	}
+	complete, err := models.Environment.SetupComplete(ctx, exec, production.ID)
+	if err != nil {
+		return false, err
+	}
+	return complete && !production.ArchivedAt.Valid, nil
 }
 
 func sameArtifact(a, b models.ReleaseEntity) bool {
