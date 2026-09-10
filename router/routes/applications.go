@@ -21,6 +21,12 @@ var ApplicationUpdate = routing.NewRouteWithUUIDID(
 	ApplicationsPrefix,
 )
 
+var ApplicationBasicAuthUpdate = routing.NewRouteWithUUIDID(
+	"/:id/basic-auth",
+	"applications.basic-auth.update",
+	ApplicationsPrefix,
+)
+
 var ApplicationSourceEdit = routing.NewRouteWithUUIDID(
 	"/:id/source/edit",
 	"applications.source.edit",

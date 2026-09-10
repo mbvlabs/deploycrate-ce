@@ -203,6 +203,12 @@ var EnvironmentAPITokenRotate = routing.NewRouteWithParams[EnvironmentParams](
 	ApplicationsPrefix,
 )
 
+var EnvironmentHTTPAccessUpdate = routing.NewRouteWithParams[EnvironmentParams](
+	"/:applicationID/environments/:environmentID/http-access",
+	"applications.environments.http-access.update",
+	ApplicationsPrefix,
+)
+
 var EnvironmentDNSAdopt = routing.NewRouteWithParams[EnvironmentParams](
 	"/:applicationID/environments/:environmentID/dns/adopt",
 	"applications.environments.dns.adopt",

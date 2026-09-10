@@ -44,12 +44,14 @@ func CreateApplication(
 	built := BuildApplication(opts...)
 
 	entity := models.ApplicationEntity{
-		ID:         uuid.New(),
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
-		Name:       built.Name,
-		Slug:       built.Slug,
-		ArchivedAt: built.ArchivedAt,
+		ID:                    uuid.New(),
+		CreatedAt:             time.Now(),
+		UpdatedAt:             time.Now(),
+		Name:                  built.Name,
+		Slug:                  built.Slug,
+		BasicAuthUsername:     built.BasicAuthUsername,
+		BasicAuthPasswordHash: built.BasicAuthPasswordHash,
+		ArchivedAt:            built.ArchivedAt,
 	}
 
 	if err := exec.NewInsert().Model(&entity).Returning("*").Scan(ctx); err != nil {
@@ -93,5 +95,17 @@ func WithApplicationsSlug(value string) ApplicationOption {
 func WithApplicationsArchivedAt(value sql.NullTime) ApplicationOption {
 	return func(f *ApplicationFactory) {
 		f.ApplicationEntity.ArchivedAt = value
+	}
+}
+
+func WithApplicationsBasicAuthUsername(value string) ApplicationOption {
+	return func(f *ApplicationFactory) {
+		f.ApplicationEntity.BasicAuthUsername = value
+	}
+}
+
+func WithApplicationsBasicAuthPasswordHash(value string) ApplicationOption {
+	return func(f *ApplicationFactory) {
+		f.ApplicationEntity.BasicAuthPasswordHash = value
 	}
 }

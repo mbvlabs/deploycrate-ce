@@ -172,6 +172,7 @@ type ManagedCaddyRouteRow struct {
 	ReleaseLabel        string       `bun:"release_label"`
 	ServerName          string       `bun:"server_name"`
 	HealthPath          string       `bun:"health_path"`
+	AccessMode          string       `bun:"access_mode"`
 	AppliedAt           sql.NullTime `bun:"applied_at"`
 	ObservedAt          sql.NullTime `bun:"observed_at"`
 }
@@ -184,6 +185,7 @@ func (caddyRoute) ManagementRows(
 	err := db.NewSelect().TableExpr("caddy_routes AS route").
 		ColumnExpr("route.id, route.external_id, route.state, route.environment_domain_id, route.environment_target_id, route.release_id, route.applied_at, route.observed_at").
 		ColumnExpr("domain.hostname, environment.id AS environment_id, environment.name AS environment_name, application.name AS application_name").
+		ColumnExpr("COALESCE(environment.access_mode, 'public') AS access_mode").
 		ColumnExpr("server.name AS server_name").
 		ColumnExpr("COALESCE(NULLIF(release.version, ''), release.artifact_reference) AS release_label").
 		ColumnExpr("COALESCE(process.health_path, configuration.settings ->> 'health_path', '/api/health') AS health_path").

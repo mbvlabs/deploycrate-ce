@@ -48,6 +48,7 @@ func (c Applications) RegisterRoutes(r *router.Router) error {
 		{http.MethodGet, routes.ApplicationShow, c.Show},
 		{http.MethodGet, routes.ApplicationEdit, c.Edit},
 		{http.MethodPatch, routes.ApplicationUpdate, c.Update},
+		{http.MethodPost, routes.ApplicationBasicAuthUpdate, c.UpdateBasicAuth},
 		{http.MethodGet, routes.ApplicationSourceEdit, c.EditSource},
 		{http.MethodPatch, routes.ApplicationSourceUpdate, c.UpdateSource},
 		{http.MethodGet, routes.GitHubRepositoryBuildHints, c.RepositoryBuildHints},
@@ -432,6 +433,27 @@ func (c Applications) Update(etx *echo.Context) error {
 	}
 	_ = cookies.AddFlash(etx, cookies.FlashSuccess, "Application updated")
 	return inertia.Redirect(etx, routes.ApplicationShow.URL(id), http.StatusSeeOther)
+}
+
+func (c Applications) UpdateBasicAuth(etx *echo.Context) error {
+	id, err := uuid.Parse(etx.Param("id"))
+	if err != nil {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "application not found"})
+	}
+	var payload services.ApplicationBasicAuthInput
+	if bindErr := etx.Bind(&payload); bindErr != nil {
+		return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": "invalid request"})
+	}
+	result, err := c.service.UpdateBasicAuth(etx.Request().Context(), id, payload)
+	if err != nil {
+		return etx.JSON(http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+	}
+	etx.Response().Header().Set("Cache-Control", "no-store")
+	response := map[string]string{"username": result.Username}
+	if result.Password != "" {
+		response["password"] = result.Password
+	}
+	return etx.JSON(http.StatusOK, response)
 }
 
 func (c Applications) EditSource(etx *echo.Context) error {

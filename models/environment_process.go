@@ -21,6 +21,7 @@ import (
 const (
 	EnvironmentProcessWeb     = "web"
 	EnvironmentProcessWorker  = "worker"
+	EnvironmentProcessService = "service"
 	EnvironmentProcessRelease = "release"
 	MaxProcessArguments       = 128
 	MaxProcessArgumentBytes   = 4096
@@ -64,6 +65,20 @@ type EnvironmentProcessInput struct {
 type GoProcessTarget struct {
 	Process string `json:"process"`
 	Target  string `json:"target"`
+}
+
+func IsLongRunningProcessKind(kind string) bool {
+	return kind == EnvironmentProcessWeb ||
+		kind == EnvironmentProcessWorker ||
+		kind == EnvironmentProcessService
+}
+
+func IsIngressProcessKind(kind string) bool {
+	return kind == EnvironmentProcessWeb
+}
+
+func ProcessKindUsesContainerPort(kind string) bool {
+	return kind == EnvironmentProcessWeb || kind == EnvironmentProcessService
 }
 
 func NormalizeEnvironmentProcessInput(input EnvironmentProcessInput) EnvironmentProcessInput {
@@ -157,7 +172,12 @@ func ValidateEnvironmentProcessFormation(
 		}
 		names[value.Name] = struct{}{}
 		if !slices.Contains(
-			[]string{EnvironmentProcessWeb, EnvironmentProcessWorker, EnvironmentProcessRelease},
+			[]string{
+				EnvironmentProcessWeb,
+				EnvironmentProcessWorker,
+				EnvironmentProcessService,
+				EnvironmentProcessRelease,
+			},
 			value.Kind,
 		) {
 			builder.Add(field+".kind", "invalid", "process kind is invalid")
@@ -200,8 +220,7 @@ func ValidateEnvironmentProcessFormation(
 			if value.TimeoutSeconds != nil {
 				builder.Add(field+".timeoutSeconds", "unsupported", "web does not use a timeout")
 			}
-			if value.HealthPath != "" &&
-				(!strings.HasPrefix(value.HealthPath, "/") || len(value.HealthPath) > 2048 || strings.ContainsAny(value.HealthPath, " \t\r\n\x00") || !utf8.ValidString(value.HealthPath)) {
+			if !validEnvironmentProcessHealthPath(value.HealthPath) {
 				builder.Add(
 					field+".healthPath",
 					"invalid",
@@ -228,6 +247,38 @@ func ValidateEnvironmentProcessFormation(
 					field,
 					"unsupported",
 					"worker cannot publish a port, health path, or timeout",
+				)
+			}
+		case EnvironmentProcessService:
+			if value.Command == nil || value.Replicas < 1 || value.Replicas > 32 ||
+				value.ContainerPort == nil ||
+				*value.ContainerPort < 1 ||
+				*value.ContainerPort > 65535 {
+				builder.Add(
+					field,
+					"invalid",
+					"service requires a command, between 1 and 32 replicas, and a valid container port",
+				)
+			}
+			if value.Name == EnvironmentProcessWeb || value.Name == EnvironmentProcessRelease {
+				builder.Add(
+					field+".name",
+					"reserved",
+					"web and release are reserved process names",
+				)
+			}
+			if value.TimeoutSeconds != nil {
+				builder.Add(
+					field+".timeoutSeconds",
+					"unsupported",
+					"service does not use a timeout",
+				)
+			}
+			if !validEnvironmentProcessHealthPath(value.HealthPath) {
+				builder.Add(
+					field+".healthPath",
+					"invalid",
+					"service health path must be an absolute path without whitespace",
 				)
 			}
 		case EnvironmentProcessRelease:
@@ -296,6 +347,14 @@ func (entity *EnvironmentProcessEntity) Validate() error {
 		)
 	}
 	return err
+}
+
+func validEnvironmentProcessHealthPath(value string) bool {
+	return value == "" ||
+		(strings.HasPrefix(value, "/") &&
+			len(value) <= 2048 &&
+			!strings.ContainsAny(value, " \t\r\n\x00") &&
+			utf8.ValidString(value))
 }
 
 func defaultCompanionForValidation(kind string) EnvironmentProcessInput {

@@ -119,7 +119,7 @@ export type EnvironmentLogSnapshot = {
 
 export type Process = {
   name: string;
-  kind: "web" | "worker" | "release";
+    kind: "web" | "worker" | "service" | "release";
   command?: string | null;
   arguments: string[];
   replicas: number;
@@ -133,7 +133,7 @@ export type Instance = {
   state: string;
   slot: string;
   processName: string;
-  processKind: "web" | "worker";
+  processKind: "web" | "worker" | "service";
   replicaKey: string;
   ports: { host?: string; http?: number };
   releaseId: string;
@@ -239,6 +239,11 @@ export type Overview = {
   processes: Process[];
   releaseCommands: ReleaseCommand[];
   apiTokenPrefix: string;
+  accessMode: "public" | "basic_auth" | "private_network";
+  basicAuthUsername: string;
+  hasApplicationBasicAuth: boolean;
+  applicationBasicAuthUsername: string;
+  privateNetworkAddress: string;
   dns: DNSStatus;
   canPromoteToProduction: boolean;
   canExportSecretsToProduction: boolean;
