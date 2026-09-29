@@ -6,6 +6,7 @@ import (
 	"deploycrate-ce/internal/storage"
 	"deploycrate-ce/internal/validation"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,6 +34,14 @@ func (e *CaddyRouteEntity) Validate() error {
 		builder.Add("state", "unsupported", "Caddy route state is not supported")
 	}
 	return builder.Err()
+}
+
+func EnvironmentCaddyRouteExternalID(environmentID, domainID uuid.UUID, primary bool) string {
+	compactEnv := strings.ReplaceAll(environmentID.String(), "-", "")
+	if primary {
+		return "deploycrate_environment_" + compactEnv
+	}
+	return "deploycrate_environment_" + compactEnv + "_" + strings.ReplaceAll(domainID.String(), "-", "")
 }
 
 func (cr caddyRoute) Find(

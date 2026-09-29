@@ -136,12 +136,34 @@ func (service *WorkloadReconciliation) Reconcile(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("load active workload Caddy routes: %w", err)
 	}
+	attached := make(map[uuid.UUID]struct{})
 	for _, route := range routes {
 		if _, err := service.caddy.Reconcile(ctx, route.ID); err != nil {
 			slog.Error(
 				"workload startup reconciliation could not apply Caddy route",
 				"route_id",
 				route.ID,
+				"error",
+				err,
+			)
+		}
+		domain, err := models.EnvironmentDomain.Find(
+			ctx,
+			service.db.Executor(),
+			route.EnvironmentDomainID,
+		)
+		if err != nil {
+			continue
+		}
+		if _, ok := attached[domain.EnvironmentID]; ok {
+			continue
+		}
+		attached[domain.EnvironmentID] = struct{}{}
+		if err := service.caddy.AttachEnvironmentAliasRoutes(ctx, domain.EnvironmentID); err != nil {
+			slog.Error(
+				"workload startup reconciliation could not attach alias Caddy routes",
+				"environment_id",
+				domain.EnvironmentID,
 				"error",
 				err,
 			)

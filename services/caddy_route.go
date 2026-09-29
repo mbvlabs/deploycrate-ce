@@ -180,6 +180,141 @@ func (service CaddyRouteService) Reconcile(ctx context.Context, routeID uuid.UUI
 	return route.ExternalID, nil
 }
 
+func (service CaddyRouteService) AttachEnvironmentAliasRoutes(
+	ctx context.Context,
+	environmentID uuid.UUID,
+) error {
+	domains, err := models.EnvironmentDomain.ActiveForEnvironment(
+		ctx,
+		service.db.Executor(),
+		environmentID,
+	)
+	if err != nil {
+		return fmt.Errorf("load Environment domains: %w", err)
+	}
+	for _, domain := range domains {
+		if err := service.AttachDomainRoutes(ctx, environmentID, domain); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (service CaddyRouteService) AttachDomainRoutes(
+	ctx context.Context,
+	environmentID uuid.UUID,
+	domain models.EnvironmentDomainEntity,
+) error {
+	if domain.IsPrimary || domain.ArchivedAt.Valid {
+		return nil
+	}
+	primary, err := models.EnvironmentDomain.PrimaryForEnvironment(
+		ctx,
+		service.db.Executor(),
+		environmentID,
+	)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("load primary Environment domain: %w", err)
+	}
+	sources, err := models.CaddyRoute.ActiveForDomain(ctx, service.db.Executor(), primary.ID)
+	if err != nil {
+		return fmt.Errorf("load primary Caddy routes: %w", err)
+	}
+	for _, source := range sources {
+		route, err := service.ensureAliasRoute(ctx, environmentID, domain, source)
+		if err != nil {
+			return err
+		}
+		if _, reconcileErr := service.Reconcile(ctx, route.ID); reconcileErr != nil {
+			if strings.Contains(reconcileErr.Error(), "no active backends") {
+				continue
+			}
+			return fmt.Errorf("apply Caddy route for %s: %w", domain.Hostname, reconcileErr)
+		}
+	}
+	return nil
+}
+
+func (service CaddyRouteService) ensureAliasRoute(
+	ctx context.Context,
+	environmentID uuid.UUID,
+	domain models.EnvironmentDomainEntity,
+	source models.CaddyRouteEntity,
+) (models.CaddyRouteEntity, error) {
+	existing, err := models.CaddyRoute.FindActiveForTargetDomain(
+		ctx,
+		service.db.Executor(),
+		source.EnvironmentTargetID,
+		domain.ID,
+	)
+	if err == nil {
+		return existing, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return models.CaddyRouteEntity{}, fmt.Errorf("load alias Caddy route: %w", err)
+	}
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return models.CaddyRouteEntity{}, fmt.Errorf("begin alias Caddy route transaction: %w", err)
+	}
+	defer tx.Rollback()
+	existing, err = models.CaddyRoute.FindActiveForTargetDomain(
+		ctx,
+		tx,
+		source.EnvironmentTargetID,
+		domain.ID,
+	)
+	if err == nil {
+		if commitErr := tx.Commit(); commitErr != nil {
+			return models.CaddyRouteEntity{}, commitErr
+		}
+		return existing, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return models.CaddyRouteEntity{}, fmt.Errorf("load alias Caddy route: %w", err)
+	}
+	route, err := models.CaddyRoute.Create(
+		ctx,
+		tx,
+		models.CreateCaddyRouteData{
+			ExternalID: models.EnvironmentCaddyRouteExternalID(
+				environmentID, domain.ID, domain.IsPrimary,
+			),
+			State:               "pending",
+			EnvironmentTargetID: source.EnvironmentTargetID,
+			EnvironmentDomainID: domain.ID,
+			ReleaseID:           source.ReleaseID,
+		},
+	)
+	if err != nil {
+		return models.CaddyRouteEntity{}, fmt.Errorf("create alias Caddy route: %w", err)
+	}
+	backends, err := models.CaddyRouteBackend.ActiveForRoute(ctx, tx, source.ID)
+	if err != nil {
+		return models.CaddyRouteEntity{}, fmt.Errorf("load primary Caddy backends: %w", err)
+	}
+	for _, backend := range backends {
+		if _, err := models.CaddyRouteBackend.Create(
+			ctx,
+			tx,
+			models.CreateCaddyRouteBackendData{
+				Weight:       backend.Weight,
+				CaddyRouteID: route.ID,
+				InstanceID:   backend.InstanceID,
+			},
+		); err != nil {
+			return models.CaddyRouteEntity{}, fmt.Errorf("clone Caddy backend: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return models.CaddyRouteEntity{}, fmt.Errorf("commit alias Caddy route: %w", err)
+	}
+	return route, nil
+}
+
 func (service CaddyRouteService) ReconcileRegistry(
 	ctx context.Context,
 	externalID, domain, origin, username, passwordHash string,

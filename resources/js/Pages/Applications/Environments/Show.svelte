@@ -1502,8 +1502,9 @@
             <div>
               <Card.Title>Domains</Card.Title>
               <Card.Description>
-                Public hostnames that Caddy will route to this Environment. New
-                aliases attach on the next deploy.
+                Public hostnames that Caddy routes to this Environment. New
+                aliases attach immediately when a web instance is already
+                serving.
               </Card.Description>
             </div>
           </div>

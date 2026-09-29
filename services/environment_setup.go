@@ -1739,6 +1739,9 @@ func (service *EnvironmentSetup) AddDomainAlias(
 	if err := tx.Commit(); err != nil {
 		return models.EnvironmentDomainEntity{}, err
 	}
+	if err := service.caddy.AttachDomainRoutes(ctx, environmentID, domain); err != nil {
+		return domain, fmt.Errorf("attach Caddy route for %s: %w", domain.Hostname, err)
+	}
 	return domain, nil
 }
 

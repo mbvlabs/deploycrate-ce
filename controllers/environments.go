@@ -1523,7 +1523,7 @@ func (c Environments) CreateDomain(etx *echo.Context) error {
 		etx,
 		params,
 		err,
-		"Hostname added. Caddy will route it on the next deploy.",
+		"Hostname added. Caddy serves it immediately if this Environment is already serving.",
 	)
 }
 

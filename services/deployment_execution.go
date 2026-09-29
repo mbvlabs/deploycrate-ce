@@ -1449,14 +1449,6 @@ func (prepared preparedCaddyRoutes) previous() []models.InstanceEntity {
 	return prepared[0].previous
 }
 
-func environmentCaddyRouteExternalID(environmentID, domainID uuid.UUID, primary bool) string {
-	compactEnv := strings.ReplaceAll(environmentID.String(), "-", "")
-	if primary {
-		return "deploycrate_environment_" + compactEnv
-	}
-	return "deploycrate_environment_" + compactEnv + "_" + strings.ReplaceAll(domainID.String(), "-", "")
-}
-
 func (service *DeploymentExecution) prepareCaddy(
 	ctx context.Context,
 	scope deploymentScope,
@@ -1501,7 +1493,7 @@ func (service *DeploymentExecution) prepareCaddyForDomain(
 			ctx,
 			service.db.Executor(),
 			models.CreateCaddyRouteData{
-				ExternalID: environmentCaddyRouteExternalID(
+				ExternalID: models.EnvironmentCaddyRouteExternalID(
 					scope.Environment.ID, domain.ID, domain.IsPrimary,
 				),
 				State:               "pending",
