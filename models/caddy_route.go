@@ -79,6 +79,20 @@ func (caddyRoute) FindActiveForTargetDomain(
 	return route, err
 }
 
+func (caddyRoute) ActiveForDomain(
+	ctx context.Context,
+	db storage.Executor,
+	domainID uuid.UUID,
+) ([]CaddyRouteEntity, error) {
+	routes := make([]CaddyRouteEntity, 0)
+	err := db.NewSelect().Model(&routes).
+		Where("environment_domain_id = ?", domainID).
+		Where("removed_at IS NULL").
+		OrderExpr("created_at").
+		Scan(ctx)
+	return routes, err
+}
+
 func (caddyRoute) ActiveForEnvironment(
 	ctx context.Context,
 	db storage.Executor,
@@ -88,6 +102,7 @@ func (caddyRoute) ActiveForEnvironment(
 	err := db.NewSelect().Model(&routes).
 		Join("JOIN environment_domains AS domain ON domain.id = caddy_routes.environment_domain_id").
 		Where("domain.environment_id = ?", environmentID).
+		Where("domain.archived_at IS NULL").
 		Where("caddy_routes.removed_at IS NULL").
 		Where("caddy_routes.state IN ('pending', 'applied')").
 		OrderExpr("caddy_routes.created_at").

@@ -456,14 +456,11 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		return fail(err)
 	}
 	service.recordTiming(ctx, deploymentID, "worker_candidates", "Worker startup", workersStarted)
-	route, previous, first, err := service.prepareCaddy(ctx, scope)
+	prepared, err := service.prepareCaddy(ctx, scope)
 	if err != nil {
 		return err
 	}
-	if _, err := service.caddy.Reconcile(ctx, route.ID); err != nil {
-		return err
-	}
-	if err := service.caddy.Verify(ctx, route.ExternalID); err != nil {
+	if err := service.reconcilePreparedCaddy(ctx, prepared); err != nil {
 		return err
 	}
 	if err := service.advance(
@@ -475,21 +472,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		return err
 	}
 	trafficStarted := time.Now()
-	if !first {
-		weights := map[uuid.UUID]int32{scope.Instance.ID: 100}
-		for _, old := range previous {
-			weights[old.ID] = 0
-		}
-		if err := service.caddy.SwitchTraffic(
-			ctx,
-			route.ID,
-			scope.Release.ID,
-			weights,
-		); err != nil {
-			return err
-		}
-	}
-	if err := service.caddy.Verify(ctx, route.ExternalID); err != nil {
+	if err := service.switchPreparedCaddy(ctx, scope, prepared); err != nil {
 		return err
 	}
 	service.recordTiming(
@@ -504,34 +487,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 		webCandidate.HostPort,
 		webProcess.HealthPath,
 	); err != nil {
-		if !first && len(previous) > 0 {
-			rollback := map[uuid.UUID]int32{scope.Instance.ID: 0}
-			fallback := uuid.Nil
-			for _, old := range previous {
-				rollback[old.ID] = 0
-				if fallback == uuid.Nil && old.State == "serving" {
-					fallback = old.ID
-				}
-			}
-			if fallback != uuid.Nil {
-				rollback[fallback] = 100
-				_ = service.caddy.SwitchTraffic(
-					context.WithoutCancel(ctx),
-					route.ID,
-					previousRelease(previous, fallback),
-					rollback,
-				)
-				service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
-				_ = service.caddy.RemoveBackend(
-					context.WithoutCancel(ctx),
-					route.ID,
-					scope.Instance.ID,
-				)
-			}
-		} else if first {
-			_ = service.caddy.DestroyManaged(context.WithoutCancel(ctx), route.ID)
-			service.removeCandidateFormation(context.WithoutCancel(ctx), scope)
-		}
+		service.rollbackPreparedCaddy(context.WithoutCancel(ctx), scope, prepared)
 		return fail(
 			fmt.Errorf("workload health verification after route configuration failed: %w", err),
 		)
@@ -550,7 +506,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 	); err != nil {
 		return err
 	}
-	previousFormation, err := service.previousFormation(ctx, previous)
+	previousFormation, err := service.previousFormation(ctx, prepared.previous())
 	if err != nil {
 		return err
 	}
@@ -573,7 +529,7 @@ func (service *DeploymentExecution) Execute(ctx context.Context, deploymentID uu
 			continue
 		}
 		if models.IsIngressProcessKind(old.ProcessKind) {
-			if err := service.caddy.RemoveBackend(ctx, route.ID, old.ID); err != nil {
+			if err := service.removePreparedBackends(ctx, prepared, old.ID); err != nil {
 				_ = service.recordEvent(
 					ctx,
 					deploymentID,
@@ -867,17 +823,27 @@ func (service *DeploymentExecution) rollbackCandidateRoute(
 	ctx context.Context,
 	candidate models.InstanceEntity,
 ) error {
-	route, err := models.CaddyRoute.FindActiveForInstance(
+	routes, err := models.CaddyRoute.ActiveForInstance(
 		ctx,
 		service.db.Executor(),
 		candidate.ID,
 	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
 	if err != nil {
 		return err
 	}
+	for _, route := range routes {
+		if err := service.rollbackCandidateOnRoute(ctx, candidate, route); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (service *DeploymentExecution) rollbackCandidateOnRoute(
+	ctx context.Context,
+	candidate models.InstanceEntity,
+	route models.CaddyRouteEntity,
+) error {
 	backends, err := models.CaddyRouteBackend.ActiveForRoute(
 		ctx,
 		service.db.Executor(),
@@ -1463,31 +1429,89 @@ func probeWorkloadHealth(
 	return true, "HTTP probe returned " + response.Status
 }
 
+type preparedCaddyRoute struct {
+	route    models.CaddyRouteEntity
+	previous []models.InstanceEntity
+	first    bool
+}
+
+type preparedCaddyRoutes []preparedCaddyRoute
+
+func (prepared preparedCaddyRoutes) previous() []models.InstanceEntity {
+	for _, item := range prepared {
+		if !item.first {
+			return item.previous
+		}
+	}
+	if len(prepared) == 0 {
+		return nil
+	}
+	return prepared[0].previous
+}
+
+func environmentCaddyRouteExternalID(environmentID, domainID uuid.UUID, primary bool) string {
+	compactEnv := strings.ReplaceAll(environmentID.String(), "-", "")
+	if primary {
+		return "deploycrate_environment_" + compactEnv
+	}
+	return "deploycrate_environment_" + compactEnv + "_" + strings.ReplaceAll(domainID.String(), "-", "")
+}
+
 func (service *DeploymentExecution) prepareCaddy(
 	ctx context.Context,
 	scope deploymentScope,
-) (models.CaddyRouteEntity, []models.InstanceEntity, bool, error) {
+) (preparedCaddyRoutes, error) {
+	domains, err := models.EnvironmentDomain.ActiveForEnvironment(
+		ctx, service.db.Executor(), scope.Environment.ID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if len(domains) == 0 {
+		return nil, errors.New("Deployment primary domain is unavailable or mismatched")
+	}
+	prepared := make(preparedCaddyRoutes, 0, len(domains))
+	foundPrimary := false
+	for _, domain := range domains {
+		item, prepareErr := service.prepareCaddyForDomain(ctx, scope, domain)
+		if prepareErr != nil {
+			return nil, prepareErr
+		}
+		if domain.ID == scope.Domain.ID {
+			foundPrimary = true
+		}
+		prepared = append(prepared, item)
+	}
+	if !foundPrimary {
+		return nil, errors.New("Deployment primary domain is unavailable or mismatched")
+	}
+	return prepared, nil
+}
+
+func (service *DeploymentExecution) prepareCaddyForDomain(
+	ctx context.Context,
+	scope deploymentScope,
+	domain models.EnvironmentDomainEntity,
+) (preparedCaddyRoute, error) {
 	route, err := models.CaddyRoute.FindActiveForTargetDomain(
-		ctx, service.db.Executor(), scope.Target.ID, scope.Domain.ID,
+		ctx, service.db.Executor(), scope.Target.ID, domain.ID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		route, err = models.CaddyRoute.Create(
 			ctx,
 			service.db.Executor(),
 			models.CreateCaddyRouteData{
-				ExternalID: "deploycrate_environment_" + strings.ReplaceAll(
-					scope.Environment.ID.String(),
-					"-",
-					"",
+				ExternalID: environmentCaddyRouteExternalID(
+					scope.Environment.ID, domain.ID, domain.IsPrimary,
 				),
 				State:               "pending",
 				EnvironmentTargetID: scope.Target.ID,
-				EnvironmentDomainID: scope.Domain.ID,
+				EnvironmentDomainID: domain.ID,
 				ReleaseID:           scope.Release.ID,
 			},
 		)
 		if err != nil {
-			return route, nil, false, err
+			return preparedCaddyRoute{}, err
 		}
 		// Public traffic attaches only to the web Instance. Service processes
 		// are reachable on the Environment network and are not Caddy backends.
@@ -1500,29 +1524,129 @@ func (service *DeploymentExecution) prepareCaddy(
 				InstanceID:   scope.Instance.ID,
 			},
 		)
-		return route, nil, true, err
+		return preparedCaddyRoute{route: route, first: true}, err
 	}
 	if err != nil {
-		return route, nil, false, err
+		return preparedCaddyRoute{}, err
 	}
 	previous, err := models.Instance.PreviousForRoute(
 		ctx, service.db.Executor(), route.ID, scope.Instance.ID,
 	)
 	if err != nil {
-		return route, nil, false, err
+		return preparedCaddyRoute{}, err
 	}
 	exists, err := models.CaddyRouteBackend.ActiveExists(
 		ctx, service.db.Executor(), route.ID, scope.Instance.ID,
 	)
 	if err != nil {
-		return route, nil, false, err
+		return preparedCaddyRoute{}, err
 	}
 	if !exists {
 		if err := service.caddy.AddBackend(ctx, route.ID, scope.Instance.ID, 0); err != nil {
-			return route, nil, false, err
+			return preparedCaddyRoute{}, err
 		}
 	}
-	return route, previous, false, nil
+	return preparedCaddyRoute{route: route, previous: previous, first: false}, nil
+}
+
+func (service *DeploymentExecution) reconcilePreparedCaddy(
+	ctx context.Context,
+	prepared preparedCaddyRoutes,
+) error {
+	for _, item := range prepared {
+		if _, err := service.caddy.Reconcile(ctx, item.route.ID); err != nil {
+			return err
+		}
+		if err := service.caddy.Verify(ctx, item.route.ExternalID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (service *DeploymentExecution) switchPreparedCaddy(
+	ctx context.Context,
+	scope deploymentScope,
+	prepared preparedCaddyRoutes,
+) error {
+	for _, item := range prepared {
+		if item.first {
+			if err := service.caddy.Verify(ctx, item.route.ExternalID); err != nil {
+				return err
+			}
+			continue
+		}
+		weights := map[uuid.UUID]int32{scope.Instance.ID: 100}
+		for _, old := range item.previous {
+			weights[old.ID] = 0
+		}
+		if err := service.caddy.SwitchTraffic(
+			ctx,
+			item.route.ID,
+			scope.Release.ID,
+			weights,
+		); err != nil {
+			return err
+		}
+		if err := service.caddy.Verify(ctx, item.route.ExternalID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (service *DeploymentExecution) rollbackPreparedCaddy(
+	ctx context.Context,
+	scope deploymentScope,
+	prepared preparedCaddyRoutes,
+) {
+	didRollback := false
+	for _, item := range prepared {
+		if !item.first && len(item.previous) > 0 {
+			rollback := map[uuid.UUID]int32{scope.Instance.ID: 0}
+			fallback := uuid.Nil
+			for _, old := range item.previous {
+				rollback[old.ID] = 0
+				if fallback == uuid.Nil && old.State == "serving" {
+					fallback = old.ID
+				}
+			}
+			if fallback != uuid.Nil {
+				rollback[fallback] = 100
+				_ = service.caddy.SwitchTraffic(
+					ctx,
+					item.route.ID,
+					previousRelease(item.previous, fallback),
+					rollback,
+				)
+				_ = service.caddy.RemoveBackend(ctx, item.route.ID, scope.Instance.ID)
+				didRollback = true
+			}
+			continue
+		}
+		if item.first {
+			_ = service.caddy.DestroyManaged(ctx, item.route.ID)
+			didRollback = true
+		}
+	}
+	if didRollback {
+		service.removeCandidateFormation(ctx, scope)
+	}
+}
+
+func (service *DeploymentExecution) removePreparedBackends(
+	ctx context.Context,
+	prepared preparedCaddyRoutes,
+	instanceID uuid.UUID,
+) error {
+	var firstErr error
+	for _, item := range prepared {
+		if err := service.caddy.RemoveBackend(ctx, item.route.ID, instanceID); err != nil &&
+			firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 func (service *DeploymentExecution) markSucceeded(

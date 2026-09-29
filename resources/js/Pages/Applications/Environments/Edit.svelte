@@ -280,8 +280,9 @@
     <Card.Root>
       <Card.Header
         ><Card.Title>Domain</Card.Title><Card.Description
-          >Edit the Environment's primary public domain. HTTPS and Caddy routing
-          are managed from this value.</Card.Description
+          >Edit the Environment's primary public domain. Extra hostnames are
+          added on the Environment page. HTTPS and Caddy routing are managed
+          from these values.</Card.Description
         ></Card.Header
       >
       <Card.Content class="grid gap-5 sm:grid-cols-2">

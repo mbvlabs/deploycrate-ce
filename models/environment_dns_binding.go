@@ -56,6 +56,9 @@ type EnvironmentDNSBindingEntity struct {
 
 type EnvironmentDNSStatusRow struct {
 	BindingID         uuid.UUID      `bun:"binding_id"`
+	DomainID          uuid.UUID      `bun:"domain_id"`
+	Hostname          string         `bun:"hostname"`
+	Primary           bool           `bun:"is_primary"`
 	ZoneID            uuid.UUID      `bun:"zone_id"`
 	ZoneName          string         `bun:"zone_name"`
 	ConnectionName    string         `bun:"connection_name"`
@@ -93,14 +96,37 @@ func (environmentDNSBinding) StatusForEnvironment(
 ) (EnvironmentDNSStatusRow, error) {
 	var row EnvironmentDNSStatusRow
 	err := db.NewSelect().TableExpr("environment_dns_bindings AS binding").
-		ColumnExpr("binding.id AS binding_id, zone.id AS zone_id, zone.name AS zone_name, connection.name AS connection_name").
+		ColumnExpr("binding.id AS binding_id, domain.id AS domain_id, domain.hostname, domain.is_primary").
+		ColumnExpr("zone.id AS zone_id, zone.name AS zone_name, connection.name AS connection_name").
 		ColumnExpr("binding.state, binding.generation, binding.applied_generation, binding.last_error, binding.applied_at").
 		Join("JOIN environment_domains AS domain ON domain.id = binding.environment_domain_id AND domain.archived_at IS NULL").
 		Join("JOIN dns_zones AS zone ON zone.id = binding.dns_zone_id").
 		Join("JOIN dns_connections AS connection ON connection.id = zone.dns_connection_id").
 		Where("domain.environment_id = ?", environmentID).
-		Where("binding.archived_at IS NULL").Limit(1).Scan(ctx, &row)
+		Where("binding.archived_at IS NULL").
+		OrderExpr("domain.is_primary DESC, domain.hostname ASC").
+		Limit(1).Scan(ctx, &row)
 	return row, err
+}
+
+func (environmentDNSBinding) StatusesForEnvironment(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) ([]EnvironmentDNSStatusRow, error) {
+	rows := make([]EnvironmentDNSStatusRow, 0)
+	err := db.NewSelect().TableExpr("environment_dns_bindings AS binding").
+		ColumnExpr("binding.id AS binding_id, domain.id AS domain_id, domain.hostname, domain.is_primary").
+		ColumnExpr("zone.id AS zone_id, zone.name AS zone_name, connection.name AS connection_name").
+		ColumnExpr("binding.state, binding.generation, binding.applied_generation, binding.last_error, binding.applied_at").
+		Join("JOIN environment_domains AS domain ON domain.id = binding.environment_domain_id AND domain.archived_at IS NULL").
+		Join("JOIN dns_zones AS zone ON zone.id = binding.dns_zone_id").
+		Join("JOIN dns_connections AS connection ON connection.id = zone.dns_connection_id").
+		Where("domain.environment_id = ?", environmentID).
+		Where("binding.archived_at IS NULL").
+		OrderExpr("domain.is_primary DESC, domain.hostname ASC").
+		Scan(ctx, &rows)
+	return rows, err
 }
 
 func (environmentDNSBinding) ReconciliationScope(
@@ -282,10 +308,27 @@ func (environmentDNSBinding) ActiveForEnvironment(
 	if err := db.NewSelect().Model(&entity).
 		Join("JOIN environment_domains AS domain ON domain.id = environment_dns_bindings.environment_domain_id").
 		Where("domain.environment_id = ?", environmentID).Where("domain.archived_at IS NULL").
-		Where("environment_dns_bindings.archived_at IS NULL").Limit(1).Scan(ctx); err != nil {
+		Where("environment_dns_bindings.archived_at IS NULL").
+		OrderExpr("domain.is_primary DESC, domain.hostname ASC").
+		Limit(1).Scan(ctx); err != nil {
 		return EnvironmentDNSBindingEntity{}, err
 	}
 	return entity, nil
+}
+
+func (environmentDNSBinding) ActiveAllForEnvironment(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) ([]EnvironmentDNSBindingEntity, error) {
+	rows := make([]EnvironmentDNSBindingEntity, 0)
+	err := db.NewSelect().Model(&rows).
+		Join("JOIN environment_domains AS domain ON domain.id = environment_dns_bindings.environment_domain_id").
+		Where("domain.environment_id = ?", environmentID).Where("domain.archived_at IS NULL").
+		Where("environment_dns_bindings.archived_at IS NULL").
+		OrderExpr("domain.is_primary DESC, domain.hostname ASC").
+		Scan(ctx)
+	return rows, err
 }
 
 func (environmentDNSBinding) Reconfigure(

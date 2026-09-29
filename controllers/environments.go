@@ -109,6 +109,8 @@ func (c Environments) RegisterRoutes(router *router.Router) error {
 		{http.MethodPost, routes.EnvironmentSecretsExportToProduction, c.ExportSecretsToProduction},
 		{http.MethodPost, routes.EnvironmentSecretRotate, c.RotateSecret},
 		{http.MethodDelete, routes.EnvironmentSecretDestroy, c.ArchiveSecret},
+		{http.MethodPost, routes.EnvironmentDomainsCreate, c.CreateDomain},
+		{http.MethodDelete, routes.EnvironmentDomainDestroy, c.DestroyDomain},
 	}
 	registered := make([]error, 0, len(definitions))
 	for _, definition := range definitions {
@@ -761,6 +763,7 @@ func environmentOverviewProps(overview services.EnvironmentOverview) map[string]
 		"secrets":                      overview.Secrets,
 		"variables":                    overview.Variables,
 		"domain":                       overview.Domain,
+		"domains":                      overview.Domains,
 		"resources":                    overview.Resources,
 		"builds":                       overview.Builds,
 		"releases":                     overview.Releases,
@@ -1500,6 +1503,45 @@ func (c Environments) ArchiveSecret(etx *echo.Context) error {
 		)
 	}
 	return c.secretRedirect(etx, params, err, "Secret archived")
+}
+
+func (c Environments) CreateDomain(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	var payload struct{ Hostname string }
+	if err == nil {
+		err = etx.Bind(&payload)
+	}
+	if err == nil {
+		_, err = c.envSetupSvc.AddDomainAlias(
+			etx.Request().Context(),
+			params.ApplicationID,
+			params.EnvironmentID,
+			payload.Hostname,
+		)
+	}
+	return c.secretRedirect(
+		etx,
+		params,
+		err,
+		"Hostname added. Caddy will route it on the next deploy.",
+	)
+}
+
+func (c Environments) DestroyDomain(etx *echo.Context) error {
+	params, err := environmentPathParams(etx)
+	domainID, parseErr := uuid.Parse(etx.Param("domainID"))
+	if err == nil {
+		err = parseErr
+	}
+	if err == nil {
+		err = c.envSetupSvc.RemoveDomainAlias(
+			etx.Request().Context(),
+			params.ApplicationID,
+			params.EnvironmentID,
+			domainID,
+		)
+	}
+	return c.secretRedirect(etx, params, err, "Hostname removed")
 }
 
 func (c Environments) secretRedirect(

@@ -99,30 +99,90 @@ func (service *EnvironmentDNS) Status(
 	ctx context.Context,
 	environmentID uuid.UUID,
 ) (EnvironmentDNSStatus, error) {
-	status := EnvironmentDNSStatus{
-		Mode:    DNSModeManual,
-		State:   "manual",
-		Records: []DNSRecordStatus{},
-	}
 	row, err := models.EnvironmentDNSBinding.StatusForEnvironment(
 		ctx, service.db.Executor(), environmentID,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
-		return status, nil
+		return manualDNSStatus(), nil
 	}
 	if err != nil {
 		return EnvironmentDNSStatus{}, err
 	}
-	status.Mode = DNSModeCloudflare
-	status.BindingID = &row.BindingID
-	status.ZoneID = &row.ZoneID
-	status.ZoneName = row.ZoneName
-	status.ConnectionName = row.ConnectionName
-	status.State = row.State
-	status.Generation = row.Generation
-	status.AppliedGeneration = row.AppliedGeneration
-	status.LastError = row.LastError.String
-	status.AppliedAt = row.AppliedAt
+	return service.statusFromRow(ctx, row)
+}
+
+func (service *EnvironmentDNS) Statuses(
+	ctx context.Context,
+	environmentID uuid.UUID,
+) (map[uuid.UUID]EnvironmentDNSStatus, error) {
+	rows, err := models.EnvironmentDNSBinding.StatusesForEnvironment(
+		ctx, service.db.Executor(), environmentID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	statuses := make(map[uuid.UUID]EnvironmentDNSStatus, len(rows))
+	for _, row := range rows {
+		status, statusErr := service.statusFromRow(ctx, row)
+		if statusErr != nil {
+			return nil, statusErr
+		}
+		statuses[row.DomainID] = status
+	}
+	return statuses, nil
+}
+
+func (service *EnvironmentDNS) InheritedInput(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) (EnvironmentDNSInput, error) {
+	primary, err := models.EnvironmentDomain.PrimaryForEnvironment(ctx, db, environmentID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return EnvironmentDNSInput{}, errors.Join(
+			models.ErrDomainValidation,
+			errors.New("an Environment requires an active primary domain before aliases can be added"),
+		)
+	}
+	if err != nil {
+		return EnvironmentDNSInput{}, err
+	}
+	binding, err := models.EnvironmentDNSBinding.ActiveForDomain(ctx, db, primary.ID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return EnvironmentDNSInput{Mode: DNSModeManual}, nil
+	}
+	if err != nil {
+		return EnvironmentDNSInput{}, err
+	}
+	zoneID := binding.DNSZoneID
+	return EnvironmentDNSInput{Mode: DNSModeCloudflare, ZoneID: &zoneID}, nil
+}
+
+func manualDNSStatus() EnvironmentDNSStatus {
+	return EnvironmentDNSStatus{
+		Mode:    DNSModeManual,
+		State:   "manual",
+		Records: []DNSRecordStatus{},
+	}
+}
+
+func (service *EnvironmentDNS) statusFromRow(
+	ctx context.Context,
+	row models.EnvironmentDNSStatusRow,
+) (EnvironmentDNSStatus, error) {
+	status := EnvironmentDNSStatus{
+		Mode:              DNSModeCloudflare,
+		BindingID:         &row.BindingID,
+		ZoneID:            &row.ZoneID,
+		ZoneName:          row.ZoneName,
+		ConnectionName:    row.ConnectionName,
+		State:             row.State,
+		Generation:        row.Generation,
+		AppliedGeneration: row.AppliedGeneration,
+		LastError:         row.LastError.String,
+		AppliedAt:         row.AppliedAt,
+		Records:           []DNSRecordStatus{},
+	}
 	queued, err := models.Job.DNSReconciliationQueued(
 		ctx, service.db.Executor(), row.BindingID, row.Generation,
 	)
@@ -745,27 +805,38 @@ func (service *EnvironmentDNS) RemoveForEnvironment(
 		return err
 	}
 	defer tx.Rollback()
-	binding, err := models.EnvironmentDNSBinding.ActiveForEnvironment(ctx, tx, environmentID)
-	if errors.Is(err, sql.ErrNoRows) {
+	bindings, err := models.EnvironmentDNSBinding.ActiveAllForEnvironment(ctx, tx, environmentID)
+	if err != nil {
+		return err
+	}
+	if len(bindings) == 0 {
 		return nil
 	}
-	if err != nil {
-		return err
-	}
-	binding, err = models.EnvironmentDNSBinding.MarkRemoving(ctx, tx, binding.ID, false, nil)
-	if errors.Is(err, sql.ErrNoRows) {
-		return errors.New("DNS reconciliation is in progress; retry deletion shortly")
-	}
-	if err != nil {
-		return err
-	}
-	if err := service.enqueueTx(ctx, tx, binding); err != nil {
-		return err
+	queued := make([]models.EnvironmentDNSBindingEntity, 0, len(bindings))
+	for _, existing := range bindings {
+		binding, markErr := models.EnvironmentDNSBinding.MarkRemoving(
+			ctx, tx, existing.ID, false, nil,
+		)
+		if errors.Is(markErr, sql.ErrNoRows) {
+			return errors.New("DNS reconciliation is in progress; retry deletion shortly")
+		}
+		if markErr != nil {
+			return markErr
+		}
+		if err := service.enqueueTx(ctx, tx, binding); err != nil {
+			return err
+		}
+		queued = append(queued, binding)
 	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	return service.removeTracked(ctx, binding.ID, nil)
+	for _, binding := range queued {
+		if err := service.removeTracked(ctx, binding.ID, nil); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (service *EnvironmentDNS) enqueueTx(

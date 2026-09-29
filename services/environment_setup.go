@@ -256,6 +256,7 @@ type EnvironmentOverview struct {
 	Secrets                      []EnvironmentSecretActivity         `json:"secrets"`
 	Variables                    []EnvironmentVariableActivity       `json:"variables"`
 	Domain                       string                              `json:"domain"`
+	Domains                      []EnvironmentDomainActivity         `json:"domains"`
 	Resources                    []EnvironmentResourceActivity       `json:"resources"`
 	Builds                       []EnvironmentBuildActivity          `json:"builds"`
 	Releases                     []EnvironmentReleaseActivity        `json:"releases"`
@@ -275,6 +276,13 @@ type EnvironmentOverview struct {
 	PromotionTargetName          string                              `json:"promotionTargetName"`
 	LatestSuccessfulDeploymentID *uuid.UUID                          `json:"latestSuccessfulDeploymentId,omitempty"`
 	LatestSuccessfulReleaseID    *uuid.UUID                          `json:"latestSuccessfulReleaseId,omitempty"`
+}
+
+type EnvironmentDomainActivity struct {
+	ID       uuid.UUID            `json:"id"`
+	Hostname string               `json:"hostname"`
+	Primary  bool                 `json:"primary"`
+	DNS      EnvironmentDNSStatus `json:"dns"`
 }
 
 type EnvironmentResourceActivity = models.EnvironmentResourceActivity
@@ -409,6 +417,29 @@ func (service *EnvironmentSetup) Overview(
 	if err != nil {
 		return EnvironmentOverview{}, err
 	}
+	domainRows, err := models.EnvironmentDomain.ActiveForEnvironment(
+		ctx, service.db.Executor(), environmentID,
+	)
+	if err != nil {
+		return EnvironmentOverview{}, err
+	}
+	dnsStatuses, err := service.dns.Statuses(ctx, environmentID)
+	if err != nil {
+		return EnvironmentOverview{}, err
+	}
+	domains := make([]EnvironmentDomainActivity, 0, len(domainRows))
+	for _, row := range domainRows {
+		activity := EnvironmentDomainActivity{
+			ID:       row.ID,
+			Hostname: row.Hostname,
+			Primary:  row.IsPrimary,
+			DNS:      manualDNSStatus(),
+		}
+		if status, ok := dnsStatuses[row.ID]; ok {
+			activity.DNS = status
+		}
+		domains = append(domains, activity)
+	}
 	runtimeServers := overviewRows.RuntimeServers
 	runtimeServerIDs := make([]uuid.UUID, 0, len(runtimeServers))
 	runtimeTargetIDs := make([]uuid.UUID, 0, len(runtimeServers))
@@ -475,6 +506,7 @@ func (service *EnvironmentSetup) Overview(
 		Secrets:                      secretActivity,
 		Variables:                    variables,
 		Domain:                       domain,
+		Domains:                      domains,
 		Resources:                    resources,
 		Builds:                       builds,
 		Releases:                     releases,
@@ -1667,6 +1699,94 @@ func (service *EnvironmentSetup) UpdateHTTPAccess(
 		Username:   username,
 		Password:   password,
 	}, nil
+}
+
+func (service *EnvironmentSetup) AddDomainAlias(
+	ctx context.Context,
+	applicationID, environmentID uuid.UUID,
+	hostname string,
+) (models.EnvironmentDomainEntity, error) {
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return models.EnvironmentDomainEntity{}, err
+	}
+	defer tx.Rollback()
+	environment, err := models.Environment.Lock(ctx, tx, environmentID)
+	if err != nil || environment.ApplicationID != applicationID || environment.ArchivedAt.Valid {
+		return models.EnvironmentDomainEntity{}, errors.New("Environment is unavailable")
+	}
+	dnsInput, err := service.dns.InheritedInput(ctx, tx, environmentID)
+	if err != nil {
+		return models.EnvironmentDomainEntity{}, err
+	}
+	domain, err := models.EnvironmentDomain.Create(
+		ctx,
+		tx,
+		models.CreateEnvironmentDomainData{
+			Hostname:      hostname,
+			IsPrimary:     false,
+			EnvironmentID: environmentID,
+		},
+	)
+	if err != nil {
+		return models.EnvironmentDomainEntity{}, err
+	}
+	if _, err := service.dns.ConfigureTx(
+		ctx, tx, domain, dnsInput, true, true, false, nil,
+	); err != nil {
+		return models.EnvironmentDomainEntity{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return models.EnvironmentDomainEntity{}, err
+	}
+	return domain, nil
+}
+
+func (service *EnvironmentSetup) RemoveDomainAlias(
+	ctx context.Context,
+	applicationID, environmentID, domainID uuid.UUID,
+) error {
+	tx, err := service.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	environment, err := models.Environment.Lock(ctx, tx, environmentID)
+	if err != nil || environment.ApplicationID != applicationID || environment.ArchivedAt.Valid {
+		return errors.New("Environment is unavailable")
+	}
+	domain, err := models.EnvironmentDomain.Find(ctx, tx, domainID)
+	if err != nil || domain.EnvironmentID != environmentID {
+		return models.ErrNotFound
+	}
+	routes, err := models.CaddyRoute.ActiveForDomain(ctx, tx, domainID)
+	if err != nil {
+		return err
+	}
+	if _, err := service.dns.ConfigureTx(
+		ctx,
+		tx,
+		domain,
+		EnvironmentDNSInput{Mode: DNSModeManual},
+		true,
+		true,
+		false,
+		nil,
+	); err != nil {
+		return err
+	}
+	if err := models.EnvironmentDomain.Archive(ctx, tx, environmentID, domainID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	for _, route := range routes {
+		if err := service.caddy.DestroyManaged(ctx, route.ID); err != nil {
+			return fmt.Errorf("remove Caddy route for %s: %w", domain.Hostname, err)
+		}
+	}
+	return nil
 }
 
 func (service *EnvironmentSetup) AuthenticateAPIToken(

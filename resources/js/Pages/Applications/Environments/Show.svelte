@@ -4,6 +4,7 @@
   import DatabaseIcon from "@lucide/svelte/icons/database";
   import EyeIcon from "@lucide/svelte/icons/eye";
   import EyeOffIcon from "@lucide/svelte/icons/eye-off";
+  import GlobeIcon from "@lucide/svelte/icons/globe";
   import ServerIcon from "@lucide/svelte/icons/server";
   import { page, router } from "@inertiajs/svelte";
   import { untrack } from "svelte";
@@ -35,6 +36,7 @@
     ApplicationTelemetry,
     Build,
     Deployment,
+    EnvironmentDomain,
     EnvironmentSection,
     HostUsage,
     Overview,
@@ -107,6 +109,13 @@
   let containerActionProcessing = $state(false);
   let dnsActionProcessing = $state(false);
   let secretCreationProcessing = $state(false);
+  let domainHostname = $state("");
+  let domainAddError = $state("");
+  let domainCreationProcessing = $state(false);
+  let domainActionProcessing = $state(false);
+  let removeDomainDialogOpen = $state(false);
+  let removingDomain = $state<EnvironmentDomain | null>(null);
+  let domainActionError = $state("");
   let deploymentRetrying = $state("");
   let deploymentStopDialogOpen = $state(false);
   let pendingDeploymentStop = $state<Deployment | null>(null);
@@ -194,6 +203,7 @@
     environment.instances.filter((instance) => instance.state === "serving")
       .length,
   );
+  const domains = $derived(environment.domains ?? []);
   const desiredInstanceCount = $derived(
     environment.processes
       .filter((process) => process.kind !== "release")
@@ -436,6 +446,60 @@
             Object.values(errors).map(String).join("\n") ||
             "The secret could not be added."),
         onFinish: () => (secretCreationProcessing = false),
+      },
+    );
+  }
+
+  function addDomain() {
+    const hostname = domainHostname.trim().toLowerCase();
+    if (!hostname || domainCreationProcessing) return;
+    domainCreationProcessing = true;
+    domainAddError = "";
+    router.post(
+      routes.environmentDomainsCreate(
+        environment.applicationId,
+        environment.environment.id,
+      ),
+      { hostname },
+      {
+        preserveScroll: true,
+        onSuccess: () => {
+          domainHostname = "";
+        },
+        onError: (errors) =>
+          (domainAddError =
+            Object.values(errors).map(String).join("\n") ||
+            "The hostname could not be added."),
+        onFinish: () => (domainCreationProcessing = false),
+      },
+    );
+  }
+
+  function askToRemoveDomain(domain: EnvironmentDomain) {
+    removingDomain = domain;
+    domainActionError = "";
+    removeDomainDialogOpen = true;
+  }
+
+  function removeDomain() {
+    if (!removingDomain || domainActionProcessing || removingDomain.primary)
+      return;
+    domainActionProcessing = true;
+    domainActionError = "";
+    router.delete(
+      routes.environmentDomainDestroy(
+        environment.applicationId,
+        environment.environment.id,
+        removingDomain.id,
+      ),
+      {
+        preserveScroll: true,
+        onSuccess: () => (removeDomainDialogOpen = false),
+        onError: (errors) =>
+          (domainActionError =
+            Object.values(errors).map(String).join("\n") ||
+            "The hostname could not be removed."),
+        onFinish: () => (domainActionProcessing = false),
       },
     );
   }
@@ -1420,6 +1484,93 @@
           </Card.Content>
         </Card.Root>
       </section>
+
+      <Card.Root>
+        <Card.Header>
+          <Card.Action>
+            <StatusBadge
+              status={domains.length > 0 ? "available" : "pending"}
+              label={`${domains.length} hostname${domains.length === 1 ? "" : "s"}`}
+            />
+          </Card.Action>
+          <div class="flex items-center gap-2">
+            <div
+              class="grid size-8 place-items-center bg-muted text-muted-foreground"
+            >
+              <GlobeIcon class="size-4" />
+            </div>
+            <div>
+              <Card.Title>Domains</Card.Title>
+              <Card.Description>
+                Public hostnames that Caddy will route to this Environment. New
+                aliases attach on the next deploy.
+              </Card.Description>
+            </div>
+          </div>
+        </Card.Header>
+        <Card.Content class="space-y-3">
+          {#each domains as domain (domain.id)}
+            <div
+              class="flex flex-wrap items-center justify-between gap-3 border border-border/70 bg-card/40 p-3"
+            >
+              <div class="min-w-0">
+                <p class="truncate font-mono text-sm font-medium">
+                  {sensitiveInformationVisible
+                    ? domain.hostname
+                    : "••••••••"}
+                </p>
+                <p class="truncate text-xs text-muted-foreground">
+                  {domain.dns.mode === "manual"
+                    ? "Manual DNS"
+                    : `${domain.dns.connectionName || "Cloudflare"} · ${domain.dns.state.replaceAll("_", " ")}`}
+                </p>
+              </div>
+              <div class="flex items-center gap-2">
+                <StatusBadge
+                  status={domain.primary ? "available" : "alias"}
+                  label={domain.primary ? "Primary" : "Alias"}
+                />
+                {#if !domain.primary}
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    disabled={domainActionProcessing}
+                    onclick={() => askToRemoveDomain(domain)}>Remove</Button
+                  >
+                {/if}
+              </div>
+            </div>
+          {:else}
+            <p
+              class="border border-dashed border-border p-4 text-sm text-muted-foreground"
+            >
+              No hostnames configured.
+            </p>
+          {/each}
+          <div class="grid gap-3 border-t border-border pt-4 sm:grid-cols-[1fr_auto]">
+            <Input
+              bind:value={domainHostname}
+              placeholder="admin.example.com"
+              autocomplete="off"
+              aria-label="Additional hostname"
+            />
+            <Button
+              disabled={!domainHostname.trim() || domainCreationProcessing}
+              aria-busy={domainCreationProcessing}
+              onclick={addDomain}
+              >{#if domainCreationProcessing}<Spinner />{/if}Add hostname</Button
+            >
+          </div>
+          {#if domainAddError}
+            <p
+              class="whitespace-pre-wrap border border-destructive/50 bg-destructive/10 p-3 text-xs text-destructive"
+              role="alert"
+            >
+              {domainAddError}
+            </p>
+          {/if}
+        </Card.Content>
+      </Card.Root>
 
       <section
         aria-label="Environment resources and DNS"
@@ -2733,6 +2884,19 @@
     processing={secretActionProcessing}
     error={secretActionError}
     onconfirm={archiveSecret}
+  />
+
+  <ConfirmActionDialog
+    bind:open={removeDomainDialogOpen}
+    title="Remove hostname?"
+    description={removingDomain
+      ? `Remove ${removingDomain.hostname} from this Environment. DNS records for the alias are torn down now. Caddy stops routing it immediately if a route already exists.`
+      : "Remove this hostname from the Environment."}
+    confirmLabel="Remove hostname"
+    destructive
+    processing={domainActionProcessing}
+    error={domainActionError}
+    onconfirm={removeDomain}
   />
 
   <ConfirmActionDialog

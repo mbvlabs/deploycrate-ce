@@ -44,9 +44,6 @@ func (e *EnvironmentDomainEntity) Validate() error {
 	if !IsValidHostname(e.Hostname) {
 		builder.Add("hostname", "format", "hostname must be a valid fully qualified domain name")
 	}
-	if !e.IsPrimary {
-		builder.Add("isPrimary", "required", "this release requires a primary Environment domain")
-	}
 	if e.EnvironmentID == uuid.Nil {
 		builder.Add("environmentId", "required", "Environment is required")
 	}
@@ -74,18 +71,44 @@ func ensureEnvironmentDomainUnique(
 	); err != nil {
 		return err
 	}
-	return ensureActiveUnique(
-		ctx,
-		db,
-		"environment-domain-primary:"+entity.EnvironmentID.String(),
-		entity.ID,
-		db.NewSelect().
-			Model((*EnvironmentDomainEntity)(nil)).
-			Where("environment_id = ?", entity.EnvironmentID).
-			Where("is_primary = TRUE"),
-		"isPrimary",
-		"the Environment already has an active primary domain",
-	)
+	if entity.IsPrimary {
+		return ensureActiveUnique(
+			ctx,
+			db,
+			"environment-domain-primary:"+entity.EnvironmentID.String(),
+			entity.ID,
+			db.NewSelect().
+				Model((*EnvironmentDomainEntity)(nil)).
+				Where("environment_id = ?", entity.EnvironmentID).
+				Where("is_primary = TRUE"),
+			"isPrimary",
+			"the Environment already has an active primary domain",
+		)
+	}
+	if err := lockUnique(ctx, db, "environment-domain-primary:"+entity.EnvironmentID.String()); err != nil {
+		return err
+	}
+	count, err := db.NewSelect().
+		Model((*EnvironmentDomainEntity)(nil)).
+		Where("environment_id = ?", entity.EnvironmentID).
+		Where("is_primary = TRUE").
+		Where("archived_at IS NULL").
+		Where("id <> ?", entity.ID).
+		Count(ctx)
+	if err != nil {
+		return err
+	}
+	if count == 0 {
+		return errors.Join(
+			ErrDomainValidation,
+			validation.ValidationErrors{{
+				Field:   "isPrimary",
+				Code:    "required",
+				Message: "an Environment requires an active primary domain before aliases can be added",
+			}},
+		)
+	}
+	return nil
 }
 
 func (ed environmentDomain) Find(
@@ -240,6 +263,70 @@ func (ed environmentDomain) Destroy(ctx context.Context, db storage.Executor, id
 		Exec(ctx)
 
 	return err
+}
+
+func (ed environmentDomain) ActiveForEnvironment(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID uuid.UUID,
+) ([]EnvironmentDomainEntity, error) {
+	rows := make([]EnvironmentDomainEntity, 0)
+	err := db.NewSelect().
+		Model(&rows).
+		Where("environment_id = ?", environmentID).
+		Where("archived_at IS NULL").
+		OrderExpr("is_primary DESC, hostname ASC").
+		Scan(ctx)
+	return rows, err
+}
+
+func (ed environmentDomain) Archive(
+	ctx context.Context,
+	db storage.Executor,
+	environmentID, id uuid.UUID,
+) error {
+	var entity EnvironmentDomainEntity
+	if err := db.NewSelect().
+		Model(&entity).
+		Where("id = ?", id).
+		Where("environment_id = ?", environmentID).
+		Scan(ctx); err != nil {
+		return err
+	}
+	if entity.ArchivedAt.Valid {
+		return ErrNotFound
+	}
+	if entity.IsPrimary {
+		return errors.Join(
+			ErrDomainValidation,
+			validation.ValidationErrors{{
+				Field:   "isPrimary",
+				Code:    "required",
+				Message: "the primary Environment domain cannot be removed",
+			}},
+		)
+	}
+	now := time.Now().UTC()
+	result, err := db.NewUpdate().
+		Model((*EnvironmentDomainEntity)(nil)).
+		Set("archived_at = ?", now).
+		Set("updated_at = ?", now).
+		Where("id = ?", id).
+		Where("environment_id = ?", environmentID).
+		Where("archived_at IS NULL").
+		Where("is_primary = FALSE").
+		Exec(ctx)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows != 1 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 func (ed environmentDomain) All(

@@ -184,6 +184,13 @@ export type DNSStatus = {
   records: { type: string; name: string; content: string }[];
 };
 
+export type EnvironmentDomain = {
+  id: string;
+  hostname: string;
+  primary: boolean;
+  dns: DNSStatus;
+};
+
 export type TelemetryPoint = {
   observedAt: string;
   cpuCores: number;
@@ -228,6 +235,7 @@ export type Overview = {
   runtimeTargetIds: string[];
   runtimeServers: string[];
   domain: string;
+  domains: EnvironmentDomain[];
   deployability: { deployable: boolean; missing: string[] };
   secrets: Secret[];
   variables: Variable[];

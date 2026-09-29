@@ -19,6 +19,12 @@ type EnvironmentSecretParams struct {
 	SecretID      string `param:"secretID"`
 }
 
+type EnvironmentDomainParams struct {
+	ApplicationID string `param:"applicationID"`
+	EnvironmentID string `param:"environmentID"`
+	DomainID      string `param:"domainID"`
+}
+
 type EnvironmentDeploymentParams struct {
 	ApplicationID string `param:"applicationID"`
 	EnvironmentID string `param:"environmentID"`
@@ -290,6 +296,18 @@ var EnvironmentSecretsExportToProduction = routing.NewRouteWithParams[Environmen
 var EnvironmentSecretRotate = routing.NewRouteWithParams[EnvironmentSecretParams](
 	"/:applicationID/environments/:environmentID/secrets/:secretID/rotate",
 	"applications.environments.secrets.rotate",
+	ApplicationsPrefix,
+)
+
+var EnvironmentDomainDestroy = routing.NewRouteWithParams[EnvironmentDomainParams](
+	"/:applicationID/environments/:environmentID/domains/:domainID",
+	"applications.environments.domains.destroy",
+	ApplicationsPrefix,
+)
+
+var EnvironmentDomainsCreate = routing.NewRouteWithParams[EnvironmentParams](
+	"/:applicationID/environments/:environmentID/domains",
+	"applications.environments.domains.create",
 	ApplicationsPrefix,
 )
 
