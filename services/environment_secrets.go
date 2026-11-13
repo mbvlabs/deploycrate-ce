@@ -687,6 +687,45 @@ func (service *EnvironmentSecrets) ResolveRevision(
 	return resolved, nil
 }
 
+// Export reveals only the current committed secrets, after reauthenticating the caller.
+func (service *EnvironmentSecrets) Export(
+	ctx context.Context,
+	applicationID, environmentID, userID uuid.UUID,
+	password string,
+) (string, error) {
+	identity := NewIdentity(service.db, nil, service.config)
+	if err := identity.VerifyUserPassword(ctx, userID, password); err != nil {
+		return "", err
+	}
+	environment, err := models.Environment.FindForApplication(ctx, service.db.Executor(), applicationID, environmentID)
+	if err != nil {
+		return "", err
+	}
+	if environment.ArchivedAt.Valid {
+		return "", models.ErrNotFound
+	}
+	revision, err := models.EnvironmentStateRevision.LatestCommitted(ctx, service.db.Executor(), environmentID)
+	if err != nil {
+		return "", err
+	}
+	secrets, err := service.ResolveRevision(ctx, revision)
+	if err != nil {
+		return "", err
+	}
+	return formatEnvironmentSecrets(secrets), nil
+}
+
+func formatEnvironmentSecrets(secrets []ResolvedEnvironmentSecret) string {
+	// Always quote values: numeric-looking secrets must retain leading zeroes.
+	escape := strings.NewReplacer("\\", "\\\\", "\"", "\\\"", "\n", "\\n", "\r", "\\r", "$", "\\$")
+	lines := make([]string, 0, len(secrets))
+	for _, secret := range secrets {
+		lines = append(lines, secret.Key+"=\""+escape.Replace(secret.Value)+"\"")
+	}
+	slices.Sort(lines)
+	return strings.Join(lines, "\n")
+}
+
 func (service *EnvironmentSecrets) ReconcileManagedResource(
 	ctx context.Context,
 	db storage.Executor,

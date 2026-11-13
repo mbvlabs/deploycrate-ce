@@ -106,6 +106,7 @@ func (c Environments) RegisterRoutes(router *router.Router) error {
 		{http.MethodPost, routes.EnvironmentDNSRefresh, c.RefreshDNS},
 		{http.MethodPost, routes.EnvironmentSecretsCreate, c.CreateSecret},
 		{http.MethodPost, routes.EnvironmentSecretsBulkCreate, c.BulkCreateSecrets},
+		{http.MethodPost, routes.EnvironmentSecretsExport, c.ExportSecrets},
 		{http.MethodPost, routes.EnvironmentSecretsExportToProduction, c.ExportSecretsToProduction},
 		{http.MethodPost, routes.EnvironmentSecretRotate, c.RotateSecret},
 		{http.MethodDelete, routes.EnvironmentSecretDestroy, c.ArchiveSecret},
@@ -115,6 +116,9 @@ func (c Environments) RegisterRoutes(router *router.Router) error {
 	registered := make([]error, 0, len(definitions))
 	for _, definition := range definitions {
 		middlewares := auth
+		if definition.route.Name() == routes.EnvironmentSecretsExport.Name() {
+			middlewares = []echo.MiddlewareFunc{middleware.AuthOnly, middleware.IPRateLimiter(10, routes.SessionNew)}
+		}
 		if definition.route.Name() == routes.EnvironmentReleaseCommandRetry.Name() {
 			middlewares = []echo.MiddlewareFunc{middleware.AdminOnly}
 		}
@@ -1444,6 +1448,32 @@ func (c Environments) BulkCreateSecrets(etx *echo.Context) error {
 		)
 	}
 	return c.secretRedirect(etx, params, err, "Secrets added")
+}
+
+func (c Environments) ExportSecrets(etx *echo.Context) error {
+	etx.Response().Header().Set("Cache-Control", "no-store")
+	params, err := environmentPathParams(etx)
+	if err != nil {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Environment not found"})
+	}
+	var payload struct {
+		Password string `json:"password"`
+	}
+	if err := etx.Bind(&payload); err != nil {
+		return etx.JSON(http.StatusBadRequest, map[string]string{"error": "Invalid request"})
+	}
+	text, err := c.envSecretsSvc.Export(etx.Request().Context(), params.ApplicationID, params.EnvironmentID,
+		cookies.ExtractFromCookieApp(etx).UserID, payload.Password)
+	if errors.Is(err, services.ErrInvalidCredentials) || errors.Is(err, services.ErrEmailNotVerified) {
+		return etx.JSON(http.StatusForbidden, map[string]string{"error": "Your password could not be verified"})
+	}
+	if errors.Is(err, models.ErrNotFound) || errors.Is(err, sql.ErrNoRows) {
+		return etx.JSON(http.StatusNotFound, map[string]string{"error": "Environment secrets not found"})
+	}
+	if err != nil {
+		return etx.JSON(http.StatusInternalServerError, map[string]string{"error": "Secrets could not be exported"})
+	}
+	return etx.JSON(http.StatusOK, map[string]string{"text": text})
 }
 
 func (c Environments) ExportSecretsToProduction(etx *echo.Context) error {

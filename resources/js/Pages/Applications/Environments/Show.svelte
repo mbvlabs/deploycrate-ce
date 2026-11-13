@@ -21,6 +21,7 @@
   import TelemetryHistory from "@/Components/Applications/Environments/TelemetryHistory.svelte";
   import UsageDonut from "@/Components/System/UsageDonut.svelte";
   import BulkEnvironmentSecretsDialog from "@/Components/BulkEnvironmentSecretsDialog.svelte";
+  import ExportEnvironmentSecretsDialog from "@/Components/ExportEnvironmentSecretsDialog.svelte";
   import { Input } from "@/Components/ui/input";
   import * as NativeSelect from "@/Components/ui/native-select";
   import { Spinner } from "@/Components/ui/spinner";
@@ -2156,8 +2157,11 @@
       <Card.Root
         ><Card.Header
           ><Card.Action
-            ><div class="flex flex-wrap justify-end gap-2"
-              >{#if environment.canExportSecretsToProduction}<Button
+            ><div class="flex flex-wrap justify-end gap-2">
+              <ExportEnvironmentSecretsDialog
+                applicationId={environment.applicationId}
+                environmentId={environment.environment.id}
+              />{#if environment.canExportSecretsToProduction}<Button
                   type="button"
                   variant="outline"
                   disabled={exportSecretsProcessing}
@@ -2170,8 +2174,8 @@
                 variant="outline"
                 onclick={() => (bulkSecretDialogOpen = true)}
                 >Import secrets</Button
-              ></div
-            ></Card.Action
+              >
+            </div></Card.Action
           ><Card.Title>Environment secrets</Card.Title><Card.Description
             >Status compares each desired value fingerprint with the revision
             running in the serving container. Resource-managed values are
